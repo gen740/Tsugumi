@@ -1,10 +1,13 @@
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 
+#include <algorithm>
 #include <future>
 
 #include "../agent_fixture_server.hh"
 #include "agent/providers.hh"
+#include "agent/store.hh"
+#include "host/access.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
@@ -70,6 +73,49 @@ TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
   store.db.exec("INSERT INTO secrets VALUES('desktop:anthropic','new-key')");
   EXPECT_EQ(resolve().credential, "new-key");
 }
+TEST(HostComponents, PendingApprovalsStayVisibleWithWorkspaceHistory) {
+  namespace A = Tsugumi::Agent;
+  TemporaryDirectory directory;
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::ProjectRegistry registry(gate, store.db,
+                                 [](const auto&) { return std::nullopt; });
+  agent::ConversationStore conversations(
+      gate, store.db, registry, [](auto value) { return value; },
+      [](const auto&, auto) { return false; },
+      [](const auto&) { return false; });
+  bool stopping = false;
+  host::Access access(
+      gate, store.db, registry, conversations, stopping,
+      {[](const auto&, const auto&) {}, [](const auto&, const auto&) {}});
+  std::lock_guard lock(gate.mutex);
+  store.db.exec(
+      "WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids "
+      "WHERE n<501) INSERT INTO workspace_requests "
+      "SELECT n,'project','conversation',0,'old request','denied' FROM ids");
+  const auto approval =
+      access.RequestApproval(host::ApprovalKind::Operation, "project",
+                             "conversation", "call", "digest", "preview");
+  flatbuffers::FlatBufferBuilder b;
+  const auto value = A::CreateAccessListRequest(b);
+  const auto request =
+      A::CreateRequest(b, A::RequestPayload::AccessListRequest, value.Union());
+  A::FinishMessageBuffer(
+      b, A::CreateMessage(b, 1, A::Payload::Request, request.Union()));
+  RequestIn in;
+  in.request_id = 1;
+  in.frame = std::make_shared<const std::string>(
+      reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+  const auto reply = access.Handle(in, true);
+  const auto* listed =
+      A::GetMessage(reply.data())->payload_as_Reply()->value_as_AccessList();
+  ASSERT_NE(listed, nullptr);
+  ASSERT_NE(listed->requests(), nullptr);
+  EXPECT_TRUE(std::ranges::any_of(*listed->requests(), [&](const auto* item) {
+    return item->id()->str() == approval && item->state()->str() == "pending";
+  }));
+}
+
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);

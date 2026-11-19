@@ -447,11 +447,11 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
       A::AccessListT result;
       auto q = db.prepare(
           "SELECT id,project,conversation,access,reason,state,'' AS kind,rowid "
-          "AS seq "
+          "AS seq,state='pending' AS pending "
           "FROM workspace_requests WHERE (?1='' OR conversation=?1) UNION ALL "
-          "SELECT id,project,conversation,0,preview,state,kind,rowid "
-          "FROM approvals WHERE (?1='' OR conversation=?1) "
-          "ORDER BY seq DESC LIMIT 500");
+          "SELECT id,project,conversation,0,preview,state,kind,rowid,"
+          "state='pending' FROM approvals WHERE (?1='' OR conversation=?1) "
+          "ORDER BY pending DESC,seq DESC LIMIT 500");
       q.bind(1, id);
       while (q.step()) {
         auto entry = std::make_unique<A::AccessEntryT>();
