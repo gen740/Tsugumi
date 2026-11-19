@@ -286,7 +286,7 @@ jobs:
     uses: ./.github/workflows/vm-image.yml
     with:
       revision: ${{ github.sha }}
-      use-native-artifact: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
+      use-native-artifact: true
     secrets:
       CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
 

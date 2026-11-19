@@ -45,7 +45,7 @@ jobs:
           package: ci-core
           system: aarch64-linux
           artifact-name: native-aarch64-linux
-          artifact-fallback: ${{ inputs.use-native-artifact }}
+          artifact-fallback: ${{ inputs.use-native-artifact && secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
       - name: Build the guest image from the production archives
         run: |
