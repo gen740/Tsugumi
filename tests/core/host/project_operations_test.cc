@@ -762,7 +762,14 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   const std::string unplaced =
       R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0}}})";
   project.files["layout.json"] = unplaced;
-  project.Apply(untangle);
+  H::ProjectReplaceDocumentsT update;
+  update.expected_rev = project.saves;
+  auto layout = std::make_unique<H::ProjectDocumentT>();
+  layout->path = "layout.json";
+  layout->json =
+      R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"inputOrder":["q","p"]}}})";
+  update.documents.push_back(std::move(layout));
+  project.Apply(std::move(update));
   const auto saved = project.files.at("layout.json");
   EXPECT_EQ(order(), R"(["q","p"])");
   const auto entry = [&](const std::string& layout) {
