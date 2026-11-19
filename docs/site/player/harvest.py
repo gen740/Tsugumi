@@ -131,7 +131,7 @@ def thin(values, most: int) -> list[float]:
 def vega_image(spec: dict, dest: Path) -> str:
     """Writes the figure as an image, drawn by Vega (PNG: the Mac's thumbnails read images with ImageIO, which has no SVG); its file name."""
     drawn = subprocess.run(["node", str(Path(__file__).with_name("vega-svg.mjs"))], input=json.dumps(spec),
-                           check=True, capture_output=True, text=True)
+                           check=True, stdout=subprocess.PIPE, text=True)
     with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
         svg, png = Path(tmp) / "figure.svg", Path(tmp) / "figure.png"
         svg.write_text(drawn.stdout)
