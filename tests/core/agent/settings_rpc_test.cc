@@ -1,5 +1,7 @@
 #include "oauth_fixture.hh"
 
+#include "tsugumi/util/sqlite.hh"
+
 namespace tsugumi::test {
 namespace {
 auto Bytes(const Reply& reply) -> std::string {
@@ -29,6 +31,27 @@ TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
   service.Stop();
   StartHost();
   EXPECT_EQ(value(SettingsGet(*host), "agent.allowUnscopedHelpers"), "true");
+}
+
+TEST_F(AgentFixture, RetiredPermissionSettingCannotBeReadOrWritten) {
+  constexpr auto key = "agent.permissions.allowed";
+  {
+    sql::Db db((directory.path / "state/host-settings.sqlite").string());
+    db.exec(R"(INSERT INTO settings VALUES
+               ('desktop', 3, '{"agent.permissions.allowed":["network"]}'))");
+  }
+  const auto expect_absent = [&] {
+    const auto reply = SettingsGet(*host);
+    ASSERT_TRUE(reply.Code().empty());
+    const auto* settings = reply.HostValue()->value_as_Settings();
+    EXPECT_EQ(settings->revision(), 3u);
+    for (const auto* entry : *settings->values())
+      EXPECT_NE(entry->key()->str(), key);
+  };
+  expect_absent();
+  EXPECT_EQ(SettingsPatch(*host, "desktop", {{key, "[]"}}).Code(),
+            "invalid_request");
+  expect_absent();
 }
 
 TEST_F(AgentFixture,
