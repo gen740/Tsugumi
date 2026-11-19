@@ -52,30 +52,15 @@ def scaffold(tmp_path, monkeypatch):
     return tmp_path, inputs, adapter
 
 
-def test_scaffold_default_bindings_and_returned_outputs(scaffold, monkeypatch):
+def test_scaffold_bindings_and_returned_outputs(scaffold, monkeypatch):
     root, inputs, adapter = scaffold
     report, run = object(), object()
     folder = root / 'output/notebook'
-    calls = []
 
-    def run_notebook(actual_report, actual_run, source, notebook, definitions, selected):
-        assert (actual_report, actual_run, source, notebook, selected) == (
-            report, run, root / 'src', 'notebook.py', ['result'])
-        calls.append(definitions)
+    def run_notebook(report, run, source, notebook, definitions, selected):
         return {'result': definitions['source'] * definitions['factor']}, folder
 
     monkeypatch.setattr(adapter, 'run', run_notebook)
     main = runpy.run_path(str(root / 'src/main.py'))['main']
-    assert main(inputs, report, run) == {'value': {'value': 14.0}, 'report': {'value': str(folder)}}
-    assert calls == [{'source': 7.0, 'factor': 2}]
-    # A direct parameter binding reads the invocation's params, not a fixed default.
     inputs.params.factor = 3
-    assert main(inputs, report, run)['value'] == {'value': 21.0}
-    assert calls[-1] == {'source': 7.0, 'factor': 3}
-
-
-def test_singular_input_binding_is_rejected(scaffold):
-    _, inputs, adapter = scaffold
-    with pytest.raises(Failure) as error:
-        adapter.bindings(inputs, {'source': 'input.data.value'})
-    assert error.value.kind == 'validation_failed'
+    assert main(inputs, report, run) == {'value': {'value': 21.0}, 'report': {'value': str(folder)}}

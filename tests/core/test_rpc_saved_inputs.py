@@ -45,10 +45,7 @@ def saved_file_subgraph(project, core_factory):
     assert missing.state == RunState.failed
     assert missing.failure.kind == FailureKind.input_missing
     run_id, status = run_and_wait(client, "source")
-    if status.state != RunState.succeeded:
-        # Setup failure must not be mistaken for the expected partial-run
-        # assertion below (the xfail only accepts AssertionError).
-        pytest.fail(f"initial full run failed: {status.failure and text(status.failure.diagnostic)}")
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     return client, run_id
 
 

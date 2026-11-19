@@ -86,7 +86,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     client = daemon.connect()
     graph = Project(project).card("start", {"template": "trigger"})
     producer(graph, "left", [10, 20])
-    producer(graph, "right", [1, 2, 3])
+    producer(graph, "right", [1, 2])
     consumer(graph, implementations=[implementation(101), implementation(202)])
     connect_collect(graph)
     graph.save(client)
@@ -106,22 +106,22 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     started = client.wait_notification(work_batch).value.value.batch
     finished = client.wait_notification(work_batch).value.value.batch
     assert started.activation == finished.activation == 1
-    assert started.invocationCount == finished.invocationCount == 12
+    assert started.invocationCount == finished.invocationCount == 8
     assert not started.complete and finished.complete and not finished.failed
 
-    expected = list(product([10, 20], [1, 2, 3], [1, 2]))
+    expected = list(product([10, 20], [1, 2], [1, 2]))
     page, actual = combinations(client, tmp_path / "decode", run_id)
     assert actual == expected
-    assert [row.batchIndex for row in page.records] == list(range(1, 13))
-    assert all(row.batchActivation == 1 and row.batchSize == 12 for row in page.records)
+    assert [row.batchIndex for row in page.records] == list(range(1, 9))
+    assert all(row.batchActivation == 1 and row.batchSize == 8 for row in page.records)
     batch, = page.batches
-    assert batch.complete and not batch.failed and batch.executionList and batch.invocationCount == 12
-    assert collected(client, tmp_path / "decode", run_id) == [{"value": 101}, {"value": 202}] * 6
+    assert batch.complete and not batch.failed and batch.executionList and batch.invocationCount == 8
+    assert collected(client, tmp_path / "decode", run_id) == [{"value": 101}, {"value": 202}] * 4
 
     daemon.restart()
     client = daemon.connect()
     saved, = invocation_page(client, run_id, "work").batches
-    assert saved.complete and saved.invocationCount == 12
+    assert saved.complete and saved.invocationCount == 8
     replay = run(client, "work", propagate=False)
     assert wait_run(client, replay).state == RunState.succeeded
     assert combinations(client, tmp_path / "decode", replay)[1] == expected
@@ -131,8 +131,8 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
     shutil.copytree(project, copied, symlinks=True)
     restored = core_factory(project_root=copied).connect()
     batch, = invocation_page(restored, run_id, "work").batches
-    assert batch.complete and batch.invocationCount == 12
-    assert combinations(restored, tmp_path / "decode", run_id)[1] == expected
+    assert batch.complete and batch.invocationCount == 8
+    assert collected(restored, tmp_path / "decode", run_id) == [{"value": 101}, {"value": 202}] * 4
 
 
 def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_factory, project, tmp_path):

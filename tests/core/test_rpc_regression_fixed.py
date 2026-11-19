@@ -46,28 +46,20 @@ def test_history_write_failure_fails_the_run(tmp_path, core_factory):
         assert all(r.state != CardState.succeeded for r in page.records)  # nothing unrecorded claims success
 
 
-def test_file_passes_through_fork(tmp_path, core_factory):
-    """Both downstream cards receive a file forwarded through a fork."""
-    root = tmp_path / "p"
-    file_fork_project(root)
-    d = core_factory(project_root=root)
-    c = d.connect()
-    run_id, st = run_and_wait(c, "src")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    for k in ("a", "b"):
-        value = recorded_input_json(c, tmp_path / "decode", run_id, k)
-        assert value["value"].endswith("/report.txt")
-
-
 def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factory):
     """Partial runs reuse saved file inputs after cache clearing and restart."""
     root = tmp_path / "p"
     file_fork_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
+    _, missing = run_and_wait(c, "split", propagate=False)
+    assert missing.failure.kind == FailureKind.input_missing
     first, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
-    # Saved inputs have independent copies of the earlier run’s scratch.
+    for branch in ("a", "b"):
+        recorded = recorded_input_json(c, tmp_path / "decode", first, branch)
+        assert Path(recorded["value"]).read_text() == "quarterly numbers\n"
+
     c.call("ProjectCacheClearRequest", opId=new_id())
     _, st2 = run_and_wait(c, "split", propagate=False)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
@@ -80,17 +72,6 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
     # The downstream Card also kept its own saved input.
     _, st4 = run_and_wait(c, "a", propagate=False)
     assert st4.state == RunState.succeeded
-
-
-def test_saved_inputs_missing_port_fails(tmp_path, core_factory):
-    """A partial run reports its missing saved file input."""
-    root = tmp_path / "p"
-    file_fork_project(root)
-    d = core_factory(project_root=root)
-    c = d.connect()
-    _, st = run_and_wait(c, "split", propagate=False)
-    assert st.state == RunState.failed
-    assert st.failure.kind == FailureKind.input_missing
 
 
 def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_factory):

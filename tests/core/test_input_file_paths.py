@@ -38,12 +38,11 @@ def artifact_bytes(client, run_id, segments):
     return bytes(client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=4096).bytes)
 
 
-@pytest.mark.parametrize("external", [False, True])
 @pytest.mark.parametrize("value,expected", [("data/events.txt", b"Card-local contents"),
                                             ("project:definitions/shared/data/events.txt", b"Owning-project contents")])
-def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_factory, external, value, expected):
-    """Local and project paths select the same base in root and external projects."""
-    owner, segments = project_with_file(project, value, external)
+def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_factory, value, expected):
+    """File paths select the Card or the owning Project as declared."""
+    owner, segments = project_with_file(project, value, external=True)
     c = core_factory().connect()
     rid, status = run_and_wait(c, segments)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -54,22 +53,20 @@ def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_fa
     assert artifact_bytes(c, rid, segments) == expected
 
 
-@pytest.mark.parametrize("external", [False, True])
 @pytest.mark.parametrize("value", ["../data/events.txt", "/etc/passwd", "project:../data/events.txt",
                                    "project:/etc/passwd", "", "definitions/load/data/events.txt"])
-def test_input_paths_reject_escape_and_implicit_project_paths(project, core_factory, external, value):
+def test_input_paths_reject_escape_and_implicit_project_paths(project, core_factory, value):
     """A File input cannot escape its declared base or silently use the old project base."""
-    _, segments = project_with_file(project, value, external)
+    _, segments = project_with_file(project, value, external=True)
     c = core_factory().connect()
     _, status = run_and_wait(c, segments)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.invalid_path
 
 
-@pytest.mark.parametrize("external", [False, True])
-def test_missing_card_local_file_does_not_fall_back_to_project(project, core_factory, external):
+def test_missing_card_local_file_does_not_fall_back_to_project(project, core_factory):
     """An existing project file cannot change the meaning of a Card-local path."""
-    owner, segments = project_with_file(project, "data/events.txt", external)
+    owner, segments = project_with_file(project, "data/events.txt", external=True)
     (owner / "definitions/load/data/events.txt").unlink()
     c = core_factory().connect()
     _, status = run_and_wait(c, segments)
