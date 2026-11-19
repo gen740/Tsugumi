@@ -12,7 +12,7 @@ const boundary = new TextEncoder().encode(previous).length
 terminal.apply(terminal.request('tail')!, slice(boundary, '\r完了\nnext\n', 2, false))
 terminal.follow(false)
 const before = new LogHeights(terminal.blocks, new Map(), 20)
-const anchor = before.anchor(27)!
+const anchor = before.anchor(7)!
 assert.equal(anchor.line, 3)
 terminal.apply(terminal.request('earlier')!, slice(0, previous, 1, true, terminal.end))
 const after = new LogHeights(terminal.blocks, new Map([[terminal.blocks[0], 40]]), 20)
@@ -29,6 +29,7 @@ assert.equal(journal.blocks.length, 0)
 journal.follow(false)
 journal.apply(journal.request('earlier')!, slice(0, partial, 7, true, journal.end))
 assert.deepEqual(journal.blocks.flatMap((b) => b.lines), ['save · stored: ok'])
+assert.equal(journal.blocks[0].first, 7)
 
 const paging = new LogWindow('terminal')
 const payload = 'x'.repeat((1 << 20) - 1) + '\n'

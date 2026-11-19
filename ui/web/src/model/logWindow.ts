@@ -152,20 +152,22 @@ export class LogWindow {
       boundary.set(key, { raw, block })
     }
     const finish = () => {
-      const first = pieces[0], last = pieces.at(-1)
-      if (first && (this.form === 'terminal' || (first.starts && last?.ends))) {
-        // Keep stable scroll anchors for the pieces of a very long plain
-        // line. Carriage returns need the whole resident line for redraw.
-        if (this.form === 'terminal' && pieces.reduce((length, piece) => length + piece.text.length, 0) >= 64 * 1024
-            && !pieces.some((piece) => piece.text.includes('\r'))) {
-          for (const piece of pieces) {
-            if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
-          }
-        } else {
-          add(`edge:${first.number}`, first.number, pieces.map((piece) => piece.text).join(''))
-        }
-      }
+      const line = pieces
       pieces = []
+      const first = line[0], last = line.at(-1)
+      if (!first || (this.form === 'journal' && (!first.starts || !last?.ends))) return
+      const long = line.reduce((length, piece) => length + piece.text.length, 0) >= 64 * 1024
+      // Hold a short incomplete leading line until its start is loaded.
+      // Long plain lines can outgrow the window. Keep page-relative anchors
+      // for those pieces, and join a redraw across the resident pages.
+      if (!first.starts && !long) return
+      if (this.form === 'terminal' && long && !line.some((piece) => piece.text.includes('\r'))) {
+        for (const piece of line) {
+          if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
+        }
+      } else {
+        add(`edge:${first.number}`, first.number, line.map((piece) => piece.text).join(''))
+      }
     }
     for (const { head, body, tail } of this.pages) {
       if (head) {
