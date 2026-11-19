@@ -195,24 +195,28 @@ auto Turns::Summarize(const ProviderConfig& config,
            {"outputTokens", std::to_string(result.usage.output_tokens)}})}});
 }
 
+auto Turns::SkillCatalog(const Conversation& c)
+    -> std::pair<std::string, Tsugumi::Host::SkillsListT> {
+  auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
+  root.bind(1, c.project);
+  const auto path = root.step() ? root.text(0) : "";
+  auto sources = db.prepare(
+      "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
+  sources.bind(1, c.id).bind(2, path);
+  std::vector<std::string> folders;
+  if (sources.step())
+    for (const auto& item : json::Array(sources.text(0)))
+      folders.push_back(json::String(item));
+  return {path, host::ListSkills(path, folders, host::ProjectTrusted(db, path))};
+}
+
 auto Turns::SkillContent(const std::string& id,
                          const std::vector<std::string>& requested,
                          bool automatic, std::stop_token stop,
                          std::string* trusted_project) -> ContentBlock {
   std::unique_lock lock(mutex);
   const auto c = conversations->GetConversation(id);
-  auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
-  root.bind(1, c.project);
-  const auto path = root.step() ? root.text(0) : "";
-  auto sources = db.prepare(
-      "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
-  sources.bind(1, id).bind(2, path);
-  std::vector<std::string> folders;
-  if (sources.step())
-    for (const auto& item : json::Array(sources.text(0)))
-      folders.push_back(json::String(item));
-  const auto catalog =
-      host::ListSkills(path, folders, host::ProjectTrusted(db, path));
+  const auto [path, catalog] = SkillCatalog(c);
   std::set<std::string> names;
   for (const auto& name : requested) names.insert(host::SkillNameKey(name));
   const auto selected = names;
@@ -268,12 +272,26 @@ auto Turns::SkillContent(const std::string& id,
   return result;
 }
 
-auto Turns::RequireSkillTrust(const std::string& path) -> void {
-  if (path.empty()) return;
-  std::lock_guard lock(mutex);
-  if (!host::ProjectTrusted(db, path))
-    throw Failure("permission_denied",
-                  "Project Skill trust was revoked; start a new turn");
+auto Turns::AutomaticSkills(const std::string& id, std::stop_token stop,
+                            RuntimeHooks& hooks) -> std::string {
+  std::string trusted_project;
+  auto automatic = SkillContent(id, {}, true, stop, &trusted_project);
+  auto text = automatic.text;
+  hooks.authorize_context =
+      [this, authorize = std::move(hooks.authorize_context),
+       automatic = std::move(automatic), trusted_project](const auto& context) {
+        if (!trusted_project.empty()) {
+          std::lock_guard lock(mutex);
+          if (!host::ProjectTrusted(db, trusted_project))
+            throw Failure("permission_denied",
+                          "Project Skill trust was revoked; start a new turn");
+        }
+        auto with_skills = context;
+        with_skills.push_back(
+            {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
+        authorize(with_skills);
+      };
+  return text;
 }
 
 auto Turns::ScopedSkillTask(const A::ConversationSendRequest* p,
@@ -281,21 +299,7 @@ auto Turns::ScopedSkillTask(const A::ConversationSendRequest* p,
   if ((!p->skill_names() || p->skill_names()->size() == 0) &&
       Text(p->scoped_skill()).empty())
     return {};
-  std::string project_path;
-  std::vector<std::string> folders;
-  {
-    auto root = db.prepare("SELECT path FROM project_paths WHERE id=?");
-    root.bind(1, c.project);
-    if (root.step()) project_path = root.text(0);
-    auto sources = db.prepare(
-        "SELECT folders FROM skill_catalogs WHERE conversation=? AND path=?");
-    sources.bind(1, c.id).bind(2, project_path);
-    if (sources.step())
-      for (const auto& item : json::Array(sources.text(0)))
-        folders.push_back(json::String(item));
-  }
-  const auto skills = host::ListSkills(project_path, folders,
-                                       host::ProjectTrusted(db, project_path));
+  const auto skills = SkillCatalog(c).second;
   std::vector<std::string> names, cards;
   if (p->skill_names())
     for (const auto* name : *p->skill_names()) names.push_back(name->str());
@@ -309,20 +313,16 @@ auto Turns::ScopedSkillTask(const A::ConversationSendRequest* p,
 auto Turns::PrepareSend(const A::ConversationSendRequest* p,
                         std::stop_token stop) -> ContentBlock {
   std::unique_lock lock(mutex);
-  auto require = [&](const std::string& resource,
-                     const std::string& conversation,
-                     Tsugumi::Service::Access access, bool wait,
-                     std::stop_token token, const std::string& reason) {
+  const auto c = conversations->GetConversation(p->conversation_id()->str());
+  auto require = [&](const std::string& resource, const std::string& reason) {
     lock.unlock();
-    access_service.Require(resource, conversation, access, wait, token, reason);
+    access_service.Require(resource, c.id, S::Access::Read, true, stop, reason);
     lock.lock();
   };
-  const auto c = conversations->GetConversation(p->conversation_id()->str());
   std::vector<std::string> resources;
   if ((p->selected_cards() && p->selected_cards()->size()) ||
       (p->selected_displays() && p->selected_displays()->size())) {
-    require(c.project, c.id, Tsugumi::Service::Access::Read, true, stop,
-            "Use selected project references in the conversation");
+    require(c.project, "Use selected project references in the conversation");
     resources.push_back(c.project);
   }
   std::string text = p->text()->str();
@@ -352,18 +352,13 @@ auto Turns::PrepareSend(const A::ConversationSendRequest* p,
     for (const auto* resource : *p->attached_resources()) {
       auto folder = db.prepare("SELECT project,path FROM folders WHERE id=?");
       folder.bind(1, resource->str());
-      if (!folder.step() ||
-          folder.text(0) !=
-              conversations->GetConversation(p->conversation_id()->str())
-                  .project)
+      if (!folder.step() || folder.text(0) != c.project)
         throw Failure("permission_denied",
                       "Attached resource is not registered for this project");
       if (dependencies.excluded &&
           dependencies.excluded(c.project, folder.text(1), stop))
         throw Failure("not_found", "Folder not found");
-      require(resource->str(), p->conversation_id()->str(),
-              Tsugumi::Service::Access::Read, true, stop,
-              "Read the attached folder");
+      require(resource->str(), "Read the attached folder");
       resources.push_back(resource->str());
       text += "\n[User-authorized attached folder] " + folder.text(1);
     }
@@ -379,13 +374,14 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                   std::string pending_frame, const std::string& display)
     -> void {
   auto c = conversations->GetConversation(id);
+  auto& store = conversations->ConversationDatabase(id);
   auto digest_frame = pending_frame;
   if (!digest_frame.empty())
     A::GetMutableMessage(digest_frame.data())->mutate_request_id(0);
   const auto digest =
       crypto::sha256_hex(digest_frame.empty() ? text : digest_frame);
   if (!turn.empty()) {
-    auto old = conversations->ConversationDatabase(id).prepare(
+    auto old = store.prepare(
         "SELECT digest FROM conversation_turns WHERE conversation=? AND id=?");
     old.bind(1, id).bind(2, turn);
     if (old.step()) {
@@ -408,15 +404,14 @@ auto Turns::Start(const std::string& id, const std::string& turn,
     throw Failure("invalid_request", "The conversation has no messages");
   size_t pending_index = messages.size() - 1;
   auto active_turn = turn;
-  if (pending_frame.empty()) {
-    auto pending = conversations->ConversationDatabase(id).prepare(
+  {
+    auto pending = store.prepare(
         "SELECT id,frame,message_index FROM conversation_turns "
         "WHERE conversation=? AND state='interrupted' AND frame IS NOT NULL");
     pending.bind(1, id);
     if (pending.step()) {
-      if (action == A::Action::Compact)
-        throw Failure("busy",
-                      "Resume or clear the pending message before compacting");
+      if (!turn.empty() || action == A::Action::Compact)
+        throw Failure("busy", "Resume or cancel the pending message first");
       active_turn = pending.text(0);
       pending_frame = pending.blob(1);
       pending_index = pending.u64(2);
@@ -442,7 +437,7 @@ auto Turns::Start(const std::string& id, const std::string& turn,
   else
     messages[pending_index].content.front().resource_ids = {c.project};
   if (active_turn.empty() && action == A::Action::Resume) {
-    auto previous = conversations->ConversationDatabase(id).prepare(
+    auto previous = store.prepare(
         "SELECT id,state,action FROM conversation_turns WHERE "
         "conversation=? ORDER BY rowid DESC LIMIT 1");
     previous.bind(1, id);
@@ -451,17 +446,8 @@ auto Turns::Start(const std::string& id, const std::string& turn,
       action = static_cast<A::Action>(previous.i64(2));
     }
   }
-  auto& store = conversations->ConversationDatabase(id);
-  if (!turn.empty()) {
-    auto pending = store.prepare(
-        "SELECT 1 FROM conversation_turns WHERE conversation=? AND frame IS "
-        "NOT NULL");
-    pending.bind(1, id);
-    if (pending.step())
-      throw Failure("busy", "Resume or cancel the pending message first");
-  }
   sql::Transaction tx(store);
-  auto binding = conversations->ConversationDatabase(id).prepare(
+  auto binding = store.prepare(
       "INSERT OR REPLACE INTO model_bindings VALUES(?,?,?,?,?)");
   binding.bind(1, id)
       .bind(2, config.auth == ProviderAuth::ChatGPT         ? "chatgpt"
@@ -499,7 +485,7 @@ auto Turns::Start(const std::string& id, const std::string& turn,
                       : action == A::Action::Compact ? "compact"
                                                      : "model");
   if (c.title.empty() && !text.empty()) {
-    auto q = conversations->ConversationDatabase(id).prepare(
+    auto q = store.prepare(
         "UPDATE conversations SET title=? WHERE id=?");
     q.bind(1, Excerpt(dependencies.scrub(text), 0, 160)).bind(2, id).run();
   }
@@ -560,19 +546,7 @@ auto Turns::Start(const std::string& id, const std::string& turn,
         }
         RecordOperation(id, action == A::Action::Compact ? "compact" : "model");
         auto hooks = dependencies.hooks(id);
-        std::string trusted_project;
-        const auto automatic =
-            SkillContent(id, {}, true, stop, &trusted_project);
-        const auto authorize = hooks.authorize_context;
-        hooks.authorize_context = [this, authorize, automatic,
-                                   trusted_project](const auto& context) {
-          RequireSkillTrust(trusted_project);
-          auto with_skills = context;
-          with_skills.push_back(
-              {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-          authorize(with_skills);
-        };
-        const auto system = System(role == "guide") + automatic.text;
+        const auto system = System(role == "guide") + AutomaticSkills(id, stop, hooks);
         if (action == A::Action::Compact) {
           Runtime().Compact(config, system, messages,
                             dependencies.specs(role == "guide"), stop, hooks,

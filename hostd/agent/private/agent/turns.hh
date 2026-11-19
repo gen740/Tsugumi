@@ -21,8 +21,6 @@
 
 namespace tsugumi::host {
 class Settings;
-}
-namespace tsugumi::host {
 struct Access;
 }
 namespace tsugumi::agent {
@@ -62,7 +60,10 @@ struct Turns {
                     const std::vector<std::string>& names, bool automatic,
                     std::stop_token stop,
                     std::string* trusted_project = nullptr) -> ContentBlock;
-  auto RequireSkillTrust(const std::string& path) -> void;
+  auto SkillCatalog(const Conversation& conversation)
+      -> std::pair<std::string, Tsugumi::Host::SkillsListT>;
+  auto AutomaticSkills(const std::string& id, std::stop_token stop,
+                       RuntimeHooks& hooks) -> std::string;
   auto ScopedSkillTask(const Tsugumi::Agent::ConversationSendRequest* request,
                        const Conversation& conversation) -> std::string;
   auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* request,

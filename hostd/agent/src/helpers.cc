@@ -269,22 +269,9 @@ auto Helpers::RunHelper(
   auto tools = this->tools->catalog.ModelSpecs(
       boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper,
       boundary->depth() > 0 && boundary->count() > 0);
-  std::string trusted_project;
-  const auto automatic =
-      authorization
-          ? ContentBlock{}
-          : turns->SkillContent(conversation, {}, true, stop, &trusted_project);
-  const auto authorize = hooks.authorize_context;
-  hooks.authorize_context = [this, authorize, automatic,
-                             trusted_project](const auto& context) {
-    turns->RequireSkillTrust(trusted_project);
-    auto with_skills = context;
-    with_skills.push_back(
-        {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-    authorize(with_skills);
-  };
-  const auto result = Runtime().Run(config, Turns::System() + automatic.text,
-                                    messages, tools, stop, hooks);
+  auto system = Turns::System();
+  if (!authorization) system += turns->AutomaticSkills(conversation, stop, hooks);
+  const auto result = Runtime().Run(config, system, messages, tools, stop, hooks);
   std::string output;
   {
     std::lock_guard lock(mutex);
