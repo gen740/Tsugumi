@@ -7,6 +7,7 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
+#include <atomic>
 #include <condition_variable>
 #include <deque>
 #include <fstream>

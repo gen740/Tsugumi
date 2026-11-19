@@ -1,14 +1,14 @@
 """Read a real Card's Nix output from run history."""
 
-import re
-import select
+import os
+import socket
+from contextlib import ExitStack
 from uuid import uuid4
 
 import pytest
 
-from harness.file_events import process_exit
 from harness.real_cards import log
-from projects import card, run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import MSG_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -61,34 +61,70 @@ in {
         assert "pre-run: \ufffd\n" in stderr
         assert "post-run: \ufffd\n" in stderr
 
-def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
+@pytest.mark.parametrize("early_card", [False, True], ids=["activation", "unclaimed-early-build"])
+def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path, early_card):
     monkeypatch.setenv("NIX_REMOTE", "daemon")
+    monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "") + "\nmax-jobs = 2")
     root = tmp_path / "project"
-    definition = {
+    with ExitStack() as stack:
+        listener = stack.enter_context(socket.socket())
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        # Bounds for reporting a missing fixture event or a deadlock.
+        listener.settimeout(120)
+        port = listener.getsockname()[1]
+        names = ["probe", "early"] if early_card else ["probe"]
+        defs = {name: blocked_builder(name, port) for name in names}
+        edges = []
+        if early_card:
+            # The early build runs while its Card is still waiting for input
+            # from the blocked probe. No activation will take over its build.
+            defs["early"]["inputs"] = [{"name": "in"}]
+            edges.append(conn("probe", "msg", "early", "in"))
+        write(root, defs, [card(name, name) for name in names], edges)
+        client = core_factory(project_root=root).connect()
+        run_id = start_run(client, "probe", propagate=early_card)
+
+        builders = {}
+        for _ in names:
+            peer, _ = listener.accept()
+            stack.enter_context(peer)
+            peer.settimeout(15)
+            marker = stack.enter_context(peer.makefile("rb"))
+            name = marker.readline().decode().strip()
+            builders[name] = marker
+        assert builders.keys() == set(names)
+        wait_for_log(client, run_id, "probe", LogStream.build,
+                     lambda entry: "builder started" in (text(entry.text) or ""))
+
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
+        # Each blocked builder holds its socket open until the daemon ends it.
+        # This observes its exit independently of the core's Run status.
+        for name, marker in builders.items():
+            assert marker.read(1) == b"", f"the {name} builder is still alive"
+
+
+def blocked_builder(name, port):
+    return {
         "language": "bash",
-        "_outputs": "table Outputs {} root_type Outputs;",
+        "_outputs": MSG_FBS,
+        # Fixed-output derivations can reach loopback in the Nix sandbox.
+        # The fixture checks the connection lifetime across PID namespaces.
         "_nix": r'''
 { pkgs, inputs, params }:
 let
-  probe = pkgs.runCommand "tsugumi-build-stop-@id@" {} ''
-    mkfifo gate
-    printf 'builder started: %s\n' "$$" >&2
-    read -r line < gate
+  probe = pkgs.runCommand "tsugumi-build-stop-@id@" {
+    outputHashMode = "flat";
+    outputHashAlgo = "sha256";
+    outputHash = builtins.hashString "sha256" "";
+  } ''
+    exec 3<>/dev/tcp/127.0.0.1/@port@
+    printf '@card@\n' >&3
+    printf 'builder started\n' >&2
+    read -r line <&3
     touch "$out"
   '';
 in { run = "test -f ${probe}"; }
-'''.replace("@id@", uuid4().hex),
+'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name),
     }
-    write(root, {"probe": definition}, [card("probe", "probe")], [])
-    client = core_factory(project_root=root).connect()
-    run_id = start_run(client, "probe", propagate=False)
-    marker = re.compile(r"builder started: (\d+)")
-    build = wait_for_log(client, run_id, "probe", LogStream.build,
-                         lambda entry: marker.search(text(entry.text) or ""))
-    pid = int(marker.search(text(build.text))[1])
-
-    with process_exit(pid) as exited:
-        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
-        # The upper bounds only make an uninterruptible builder fail the test.
-        assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
-        assert select.select([exited], [], [], 15)[0], f"Nix builder {pid} is still alive"
