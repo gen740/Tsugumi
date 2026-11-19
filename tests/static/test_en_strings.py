@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[2]
 TOOL = ROOT / "ui/shared/i18n/strings.py"
 GENERATOR = runpy.run_path(str(TOOL))
 ARGUMENT = GENERATOR["ARGUMENT"]
-SPEC = re.compile(r"%(?:(\d+)\$)?((?:ll|l|h)?[@dDuUxXoOfeEgGcCsSpaA])")
+SPEC = re.compile(r"%%|%(?:(\d+)\$)?((?:ll|l|h)?[@dDuUxXoOfeEgGcCsSpaA])")
 
 
 def unique_keys(pairs):
@@ -18,9 +18,10 @@ def unique_keys(pairs):
 
 
 def specifiers(text):
+    arguments = (match.groups() for match in SPEC.finditer(text) if match[2])
     return {
         (int(position) if position else index, kind)
-        for index, (position, kind) in enumerate(SPEC.findall(text), 1)
+        for index, (position, kind) in enumerate(arguments, 1)
     }
 
 
@@ -40,3 +41,11 @@ def test_every_translation_takes_the_arguments_of_its_source():
     # A reordered integer must not be read as an object by Swift.
     wrong = {ja: en for ja, en in table.items() if specifiers(ja) != specifiers(en)}
     assert not wrong
+
+
+def test_escaped_percent_does_not_consume_a_mac_argument():
+    table = GENERATOR["mac_strings"]({"結果 {0}": {"text": "Result %{0}", "mac": ["@"]}})
+    ja, en = next(iter(table.items()))
+    assert specifiers(en) == set()
+    assert specifiers(ja) == {(1, "@")}
+    assert specifiers("%% %@") == specifiers("%@")
