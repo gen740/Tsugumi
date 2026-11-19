@@ -1,8 +1,8 @@
-// Owns the confirmed document, its journal and save/reload receipts.
-// Every public mutating member must be called from the mutation lane only.
+// Owns the confirmed document, its pending file writes and save/reload
+// receipts. Every public mutating member must be called from the mutation lane
+// only.
 #pragma once
 
-#include <deque>
 #include <filesystem>
 #include <map>
 #include <memory>
@@ -15,6 +15,7 @@
 #include "model.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi {
 
@@ -72,7 +73,7 @@ struct Receipt {
 
 struct StoreOptions {
   std::filesystem::path root;
-  // Fault injection for tests ("" disables): after_journal, partial_apply,
+  // Fault injection for tests ("" disables): after_prepare, partial_apply,
   // before_commit.
   std::string fault;
 };
@@ -80,11 +81,10 @@ struct StoreOptions {
 class Store {
  public:
   explicit Store(StoreOptions opts);
-  ~Store();
   Store(const Store&) = delete;
   Store& operator=(const Store&) = delete;
 
-  // Recovers the journal and loads the document. Throws on failure.
+  // Recovers pending writes and loads the document. Throws on failure.
   void open();
 
   DocumentPtr current() const;
@@ -136,12 +136,10 @@ class Store {
   std::filesystem::path state_dir() const { return opts_.root / ".tsugumi"; }
 
  private:
-  void recover_journal();
-  void append_record(const std::string& payload);
-  void remember_receipt(Receipt r);  // under mu_
-  // Rewrites the journal as the revisions and the newest receipts once it is
-  // large (committed transactions are in the files already).
-  void compact_journal();
+  auto recover_pending() -> void;
+  auto persist_pending(const Document& doc, const Receipt& receipt,
+                       const std::vector<FileOp>& ops) -> void;
+  auto finish_pending() -> void;  // under mu_ once the Store is open
   void apply_ops(const std::vector<FileOp>& ops, bool inject);
   // Resolves the document. `pending` holds the transaction's file writes,
   // which are read instead of the disk (they are applied after resolution).
@@ -159,10 +157,7 @@ class Store {
   std::string project_id_;
   mutable std::mutex mu_;
   DocumentPtr doc_;
-  std::map<std::string, Receipt> receipts_;
-  std::deque<std::string>
-      receipt_order_;  // op ids, oldest first (the compaction keeps the newest)
-  int journal_fd_ = -1;
+  std::unique_ptr<sql::Db> db_;  // serialized by mu_
   bool halted_ = false;
 };
 
