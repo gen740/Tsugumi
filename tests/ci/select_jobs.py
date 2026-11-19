@@ -15,13 +15,12 @@ from core_platforms import NATIVE_CORE_CASES, NATIVE_CORE_FILES
 
 SYSTEMS = {
     "x86_64-linux": "ubuntu-24.04",
-    "aarch64-linux": "ubuntu-24.04-arm",
     "aarch64-darwin": "macos-26",
 }
 NATIVE_TESTS = {"agent-rpc", "rpc"}
 CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "sdk", "swift", "vm"}
 GUEST = {"vm", "pack-guest"}
-WEB = {"docs", "web-contracts", "adapters", "swift"}
+WEB = {"docs", "web-typecheck", "web-contracts", "adapters"}
 ALL = CORE | GUEST | WEB | {"prompt"}
 ADAPTER_TESTS = {
     "tests/python/test_claude_code_plugin.py",
@@ -51,6 +50,15 @@ def consumers(path):
             "tests/core/cmake/installed/"
         ):
             return NATIVE_TESTS | {"swift", "adapters", "sdk", "vm", "web-contracts"}
+        if path in {
+            "tests/core/agent/project_rpc_test.cc", "tests/core/agent/project_fixture.hh",
+            "tests/core/agent/fixture.hh", "tests/core/agent/view.hh",
+            "tests/core/agent_fixture_server.cc", "tests/core/agent_fixture_server.hh",
+            "tests/core/cmake/host-rpc.cmake",
+        }:
+            return NATIVE_TESTS | {"vm"}
+        if path == "tests/core/test_system.py":
+            return {"rpc", "vm"}
         if path.endswith((".cc", ".hh", ".cmake", "/CMakeLists.txt")):
             return NATIVE_TESTS
         if path.startswith("tests/core/integration/"):
@@ -59,7 +67,7 @@ def consumers(path):
         # test in Agent RPC and by SDK and adapter tests.
         if path.startswith("tests/core/test_"):
             return {"rpc"}
-        return {"agent-rpc", "rpc", "host", "remote-execution", "sdk", "adapters"}
+        return {"agent-rpc", "rpc", "host", "remote-execution", "sdk", "adapters", "vm"}
     if path.startswith(("protocol/", "nix/", ".github/", "tests/ci/")) or path in {
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
@@ -88,6 +96,10 @@ def consumers(path):
         return {"pack-guest"}
     if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
         return {"swift"}
+    if path.startswith(("ui/web/tests/", "ui/web/scripts/test.mjs")):
+        return {"web-contracts"}
+    if path == "ui/web/scripts/check-boundaries.mjs":
+        return {"web-typecheck"}
     if path.startswith("ui/web/"):
         return WEB
     if path.startswith("demos/"):
@@ -109,6 +121,8 @@ def consumers(path):
             asset = path.rsplit("/", 1)[1]
             if asset in WEB_AGENT_ASSETS:
                 jobs.add("web-contracts")
+            if asset in {"agent.json", "demo-skill.md"}:
+                jobs.add("web-typecheck")
             if asset == "helpers-skill.md":
                 jobs.add("prompt")
         return jobs
@@ -145,25 +159,23 @@ def select(paths=None):
     changes = [(path, consumers(path)) for path in paths] if paths else [("", ALL)]
     jobs = set().union(*(selected for _, selected in changes))
     matrix = []
-    for system, runner in SYSTEMS.items():
-        supported = set(ALL) - {"docs", "prompt"}
-        if system == "aarch64-darwin":
-            supported -= GUEST | {"web-contracts", "adapters", "sdk", "remote-execution"}
-        else:
-            supported.remove("swift")
-            if system != "aarch64-linux":
-                supported -= GUEST
-            if system != "x86_64-linux":
-                supported -= {"remote-execution", "web-contracts"}
-        platform_jobs = set().union(*(selected for path, selected in changes
-                                     if system in systems_for(path)))
-        checks = {job: job in platform_jobs and job in supported for job in sorted(ALL - {"docs", "prompt"})}
-        checks["native"] = any(checks[job] for job in CORE)
-        checks["native-tests"] = any(checks[job] for job in NATIVE_TESTS)
-        checks["web"] = checks["web-contracts"] or checks["adapters"]
-        if any(checks.values()):
-            matrix.append({"system": system, "runner": runner, "checks": checks})
-    return {"docs": "docs" in jobs, "prompt": "prompt" in jobs,
+    host_checks = {"host", "adapters", "web-contracts"}
+    for system, groups in {
+        # Linux's host integrations take several minutes. Keep them and their
+        # Web consumers parallel to the cold C++ test build and RPC suites.
+        "x86_64-linux": {"native-checks": NATIVE_TESTS, "host-and-web": host_checks,
+                         "sdk": {"sdk"}, "remote-execution": {"remote-execution"}},
+        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host"}, "swift": {"swift"}},
+    }.items():
+        selected = set().union(*(jobs for path, jobs in changes if system in systems_for(path)))
+        lanes = []
+        for job, checks in groups.items():
+            if suites := selected & checks:
+                lanes.append({"job": job, "checks": {suite: True for suite in sorted(suites)}})
+        if lanes:
+            matrix.append({"system": system, "runner": SYSTEMS[system], "tests": {"include": lanes}})
+    standalone = {"docs", "prompt", "web-typecheck"} | GUEST
+    return {**{job: job in jobs for job in sorted(standalone)},
             "platform": bool(matrix), "matrix": {"include": matrix}}
 
 

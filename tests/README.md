@@ -2,7 +2,7 @@
 
 Run commands from the repository root. Build instructions are in [Installing and building](../docs/INSTALL.md#building-from-source); [core/README.md](core/README.md) gives the core suite's detailed workflow.
 
-Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix check, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
+Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: tests that only read files of the repository, which CI runs first in its own job) and the Web UI Nix checks, including the generated demo player (`--no-nix` skips it). Run the platform checks with `tests/ci-local.sh`. On macOS this runs the Mac checks locally and the Linux checks in Docker or OrbStack. Use `tests/ci-local.sh mac` or `tests/ci-local.sh linux` for one platform, and `tests/ci-local.sh agent` for the public Agent RPC fixtures.
 
 Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path ui/macos`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and names the new entries left in `/tmp`, `/var/tmp` and the shared scratch root (not the per-user temporary folder of macOS, where system services create entries of their own): on a dedicated machine (`CI` set, or inside a Nix build) that fails the run; elsewhere it is a report, because entries made by other work on the same machine cannot be told apart. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Killing the runner itself with SIGKILL cannot execute cleanup.
 
@@ -51,13 +51,41 @@ in this checkout; the switch above is introduced here.
 
 Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `tsugumi-hostd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
 
-The CI definitions are [ci.yml](../.github/workflows/ci.yml), [ci-platform.yml](../.github/workflows/ci-platform.yml) and the reusable [docs.yml](../.github/workflows/docs.yml). [tests/ci/select_jobs.py](ci/select_jobs.py) selects consumers from PR merge-base diffs or push before/after diffs. Static tests run alongside the platform workflow, and the final gate requires both.
+[The CI selector](ci/select_jobs.py) builds the job matrices from the PR
+merge-base or push diff. Static checks run on every change. The final gate also
+requires every selected job to succeed. Unknown paths and scheduled runs select
+the full set.
 
-Build `nix build .#ci-core --out-link build-ci` for the Core and Agent RPC
-suites. Host, remote, SDK, adapter and Swift jobs start with
-`nix build .#ci-runtime --out-link build-ci`. The suite runner builds the input
-description executable for SDK tests and the daemon double for plugin tests.
-The guest workflow builds its lifetime test separately.
+| Runner | Jobs on a full run |
+| --- | --- |
+| x86_64 Linux | Runtime build, Core and Agent RPC, host integration and Web behavior (including CLI/plugin adapters), SDK, real remote execution, Web TypeScript |
+| ARM Linux | Release guest image and VM lifetime tests (plus the native system and seccomp shell probes), tsugumi-pack guest |
+| ARM macOS | Runtime build, Core and Agent RPC with Seatbelt and other Mac integrations, Swift |
+
+Separate runtime consumers reuse Cachix or the current run's read-only artifacts.
+The RPC job builds and executes its C++ tests on one runner. Linux runs every
+RPC case and keeps the several-minute host and Web job parallel to the C++ build.
+Mac builds only the translation units needed by the selected native cases.
+The ARM Linux image job exercises the ARM seccomp audit-architecture branch with
+`ShellHidesControlCredentialsAndCannotSendDirectRPC` and checks the daemon's
+native system with `test_snapshot_lists_the_systems_the_local_service_can_run`.
+
+Build `nix build .#ci-core --out-link build-ci` for full Core and Agent suites.
+Run them with `TSUGUMI_FULL_RULES=1 bash tests/ci/run-suite.sh core aarch64-darwin`
+and the same command with `agent`. To reproduce the shorter Mac CI run, build
+`nix build .#ci-core-native --out-link build-ci` and run `core`, `agent` and `host`
+without `TSUGUMI_FULL_RULES`. Standalone host, remote, SDK, adapter and Swift
+jobs use `nix build .#ci-runtime --out-link build-ci`. The suite runner builds
+the input description executable for SDK tests and the daemon double for plugin
+tests. The local Linux pass runs the full suite selection, including on ARM
+containers. The guest workflows build the distributable images.
+
+`nix build --no-link .#checks.aarch64-darwin.web-typecheck` checks TypeScript
+using pinned npm dependencies and generated bindings. Changes confined to
+`ui/web` have no Mac consumer. Shared UI modules and wire fixtures still select
+Swift. The separate
+`checks.aarch64-darwin.web` runs the behavior suite with the native C++ document
+edit driver and the generated demo player. Use `x86_64-linux` on Linux.
 
 Run the macOS Swift checks with the same runtime and only the daemon double
 used by the app's batch execution tests.
@@ -72,7 +100,7 @@ build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path vm/macos/runtim
 build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path ui/macos
 ```
 
-Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on both Linux architectures and macOS, including guest builds on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
+Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on x86_64 Linux and macOS, including the dedicated guest jobs on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.
 
 `protocol/`, `flake.nix`, `flake.lock`, `nix/`, CMake, CI files and unclassified paths run everything, as do uncertain/empty diffs, nightly runs (03:17 JST) and manual dispatches. Local scripts use the same ownership partition (see Execution ownership and timing below). Branch protection requires only **CI**, the always-running gate: it requires static/selection success and every selected workflow/job to succeed, allowing only intentional skips. Remove individual platform and Documentation checks from required checks.
 
@@ -136,24 +164,22 @@ Like the script's `setting` command, this registers a host setting, which remain
 
 Actions and `ci-local.sh` use [ci/run-suite.sh](ci/run-suite.sh) for the same
 command lists, gtest filters and pytest marker expressions. The canonical CI
-owner of shared rules is **x86_64 Linux**. ARM Linux and macOS retain native
-transport/client, locking, path, process, worker, ABI and sandbox checks. The
-native exceptions are listed in [ci/run-suite.sh](ci/run-suite.sh) and
-[ci/core_platforms.py](ci/core_platforms.py). Add a native exception when a
-test exercises differing OS implementations. The static coverage check audits
+owner of shared rules is **x86_64 Linux**. macOS also exercises native
+transport, locking, paths, process management, workers and sandboxing. Its
+exceptions are listed in [ci/run-suite.sh](ci/run-suite.sh) and
+[ci/core_platforms.py](ci/core_platforms.py). Add an exception when a test
+exercises a different macOS implementation. The static coverage check audits
 the core pytest routes and the unfiltered CI runs of the C++ test targets.
 
-| Checks | Full owner | Further targets |
+| Checks | Full owner | Additional CI coverage |
 | --- | --- | --- |
-| Host settings and public Agent RPC | x86_64 Linux | Native gtest selectors for transport, locks, process lifecycle, credentials and OS adapters |
-| Core RPC and remote results | x86_64 Linux | `native_core` pytest marker and native gtest selectors for scratch and shell tests |
-| Real definition evaluation | x86_64 Linux | Native C++ dependency invalidation tests run on every architecture |
-| Web type and behavior corpus | x86_64 Linux | Web/Wasm package build and packaged server/CLI smoke on ARM Linux |
-| CLI/plugin/Web adapter corpus | x86_64 Linux | `package_smoke`: authenticated packaged server, Wasm policy, resident CLI startup |
-| Python SDK pure libraries | x86_64 Linux | `not sdk_pure or package_smoke`; native plot/notebook import/render and child cleanup remain |
-| SDK ABI/language runtimes, C# sandbox, runnable examples | Both Linux targets | Full native coverage |
-| Swift and Seatbelt | macOS | Full native coverage |
-| Real remote execution | x86_64 Linux | Separate worker admission/protocol and core-to-worker execution suites |
+| Host settings and public Agent RPC | x86_64 Linux | macOS transport, locks, process lifecycle, credentials and OS adapters. ARM Linux guest job exercises the seccomp shell boundary. |
+| Core RPC and remote results | x86_64 Linux | macOS `native_core` pytest marker and scratch and shell gtest filters. ARM Linux guest job checks native system discovery. |
+| Real definition evaluation | x86_64 Linux | The Mac suite also runs the C++ dependency invalidation tests. |
+| Web types, behavior and CLI/plugin/Web adapters | x86_64 Linux | |
+| Python SDK, ABI, language runtimes, C# sandbox and runnable examples | x86_64 Linux | |
+| Swift and Seatbelt | macOS | |
+| Real remote execution | x86_64 Linux | Separate worker admission and core-to-worker suites in the remote job. |
 
 The canonical Agent suite also runs `tsugumi_input_types_tests` for resolver and
 Host input descriptions, and `test_host_projects_rpc.py` for the Host's
@@ -167,8 +193,8 @@ Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
 `tests/core/test_short_identifiers.py`.
 
 `tsugumi_worker_condition_tests` runs with the canonical core suite;
-`tsugumi_definition_evaluation_tests` runs on every native target because it
-validates embedded Nix dependencies and filesystem invalidation.
+`tsugumi_definition_evaluation_tests` runs on x86_64 Linux and macOS to
+validate embedded Nix dependencies and filesystem invalidation.
 
 The local Linux pass represents the canonical full Linux job even on an ARM
 Mac (`TSUGUMI_FULL_RULES=1`); its Mac pass omits shared rules. It runs the same

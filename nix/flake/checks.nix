@@ -16,6 +16,7 @@
     in
     {
       checks = {
+        web-typecheck = web.override { typecheckOnly = true; };
         web = pkgs.callPackage ../web-checks.nix {
           inherit web operationDriver;
         };

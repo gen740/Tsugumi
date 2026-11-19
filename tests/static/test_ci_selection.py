@@ -14,8 +14,14 @@ spec.loader.exec_module(selection)
 
 
 def checks(paths):
-    return {entry["system"]: {job for job, run in entry["checks"].items() if run}
-            for entry in selection.select(paths)["matrix"]["include"]}
+    selected = selection.select(paths)
+    matrix = {
+        entry["system"]: {check for job in entry["tests"]["include"] for check in job["checks"]}
+        for entry in selected["matrix"]["include"]
+    }
+    if selected["vm"] or selected["pack-guest"]:
+        matrix["aarch64-linux"] = {job for job in selection.GUEST if selected[job]}
+    return matrix
 
 
 @pytest.mark.parametrize("path", [
@@ -29,33 +35,41 @@ def test_shared_or_unclassified_paths_run_everything(path):
     assert selection.select([path]) == selection.select()
 
 
-def test_every_selected_job_has_its_build_prerequisites_on_supported_platforms():
-    paths = list(selection.ADAPTER_TESTS) + [
-        "README.md", "docs/CardGuide.md", "docs/site/src/content.config.ts",
-        "vm/guest/vm-system.nix", "ui/macos/Package.swift", "ui/web/package.json",
-        "demos/en/index.json", "ui/shared/modules/viewer.js", "sdk/src/card_runtime.cc",
-        "client/src/client.cc", "tsugumid/runtime/src/service.cc", "hostd/agent/Shared/agent.json",
-        "cli/install.ps1", "plugins/tsugumi/bin/tsugumi-mcp", "tests/python/conftest.py",
-        "tests/remote/test_worker.py", "tests/prompt/inspect_probe.py", "pack/build.sh", "new-path",
-    ]
-    for path in paths:
-        for system, jobs in checks([path]).items():
-            if jobs & selection.CORE:
-                assert "native" in jobs, (path, system)
-            assert ("native-tests" in jobs) == bool(jobs & selection.NATIVE_TESTS), (path, system)
-            if jobs & {"web-contracts", "adapters"}:
-                assert "web" in jobs, (path, system)
-            if system == "aarch64-darwin":
-                assert not jobs & {"web", "sdk", "adapters", "web-contracts", "vm", "pack-guest", "remote-execution"}
-            if jobs & {"vm", "pack-guest"}:
-                assert system == "aarch64-linux"
-            if "remote-execution" in jobs:
-                assert system == "x86_64-linux"
+def test_full_run_schedules_only_supported_jobs():
+    plan = selection.select()
+    assert {entry["system"]: [job["job"] for job in entry["tests"]["include"]]
+            for entry in plan["matrix"]["include"]} == {
+        "x86_64-linux": ["native-checks", "host-and-web", "sdk", "remote-execution"],
+        "aarch64-darwin": ["native-checks", "swift"],
+    }
+    assert checks(None)["aarch64-linux"] == {"vm", "pack-guest"}
+
+
+def test_changed_paths_produce_only_selected_matrix_entries():
+    assert not selection.select(["README.md"])["platform"]
+    assert checks(["ui/macos/Package.swift"]) == {"aarch64-darwin": {"swift"}}
+    assert checks(["tests/remote/test_worker.py"]) == {"x86_64-linux": {"remote-execution"}}
+    assert checks(["pack/build.sh"]) == {"aarch64-linux": {"pack-guest"}}
+    assert checks(["tests/core/agent/project_rpc_test.cc"])["aarch64-linux"] == {"vm"}
+
+    boundary = selection.select(["ui/web/scripts/check-boundaries.mjs"])
+    assert boundary["web-typecheck"] and not boundary["platform"]
+    web = selection.select(["ui/web/src/App.tsx"])
+    assert web["web-typecheck"]
+    assert checks(["ui/web/src/App.tsx"]) == {
+        "x86_64-linux": {"adapters", "web-contracts"},
+    }
+    assert all(
+        job["checks"] and all(job["checks"].values())
+        for plan in (web, selection.select())
+        for entry in plan["matrix"]["include"]
+        for job in entry["tests"]["include"]
+    )
 
 
 def test_a_shared_native_test_fixture_selects_all_its_consumers():
     selected = checks(["tests/core/doubles/nix_eval.cc"])
-    assert {"native", "native-tests", "swift", "rpc", "agent-rpc"} <= selected["aarch64-darwin"]
+    assert {"swift", "rpc", "agent-rpc"} <= selected["aarch64-darwin"]
     assert {"adapters", "sdk"} <= selected["x86_64-linux"]
 
 

@@ -5,10 +5,6 @@ on:
       revision:
         required: true
         type: string
-      runtime-artifact:
-        description: Native runtime artifact from the current CI run.
-        type: string
-        default: ''
     secrets:
       CACHIX_AUTH_TOKEN:
         required: false
@@ -40,17 +36,16 @@ jobs:
           echo "GUEST_BUILD_ROOT=$stage" >> "$GITHUB_ENV"
           identity=$(nix eval --raw "path:$stage#packages.aarch64-linux.vm-boot.outPath")
           echo "identity=${identity##*/}" >> "$GITHUB_OUTPUT"
-      - uses: ./.github/actions/fetch-nix
-        if: inputs.runtime-artifact != ''
-        with:
-          package: ci-runtime
-          system: aarch64-linux
-          artifact-name: ${{ inputs.runtime-artifact }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - name: Build the native runner for a standalone release
-        if: inputs.runtime-artifact == ''
-        run: nix build .#ci-runtime --out-link build-ci
+      - name: Allow user namespaces for bubblewrap
+        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build and test the ARM Linux shell boundary
+        run: |
+          nix build .#ci-runtime --out-link build-ci
+          nix build .#ci-arm-shell --out-link build-ci-arm-shell
+          build-ci/bin/tsugumi-test-env build-ci-arm-shell/libexec/tsugumi-tests/tsugumi_arm_shell_tests \
+            --gtest_filter=AgentProjectFixture.ShellHidesControlCredentialsAndCannotSendDirectRPC
+          build-ci/bin/tsugumi-test-env python3 -m pytest -q \
+            tests/core/test_system.py::test_snapshot_lists_the_systems_the_local_service_can_run
       - name: Build the VM lifetime test
         run: nix build .#ci-vm-tests --out-link build-ci-vm-tests
       - name: Build the guest image from the production archives

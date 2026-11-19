@@ -1,6 +1,8 @@
 include(${CMAKE_CURRENT_LIST_DIR}/remote-result-daemon-sources.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/remote-result-worker-sources.cmake)
-include(${CMAKE_CURRENT_LIST_DIR}/remote-result-versions-sources.cmake)
+if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
+  include(${CMAKE_CURRENT_LIST_DIR}/remote-result-worker-sources.cmake)
+  include(${CMAKE_CURRENT_LIST_DIR}/remote-result-versions-sources.cmake)
+endif()
 include(${CMAKE_CURRENT_LIST_DIR}/remote-result-runtime-support-sources.cmake)
 
 add_executable(tsugumi_remote_result_tests
@@ -17,6 +19,6 @@ gtest_discover_tests(tsugumi_remote_result_tests TEST_PREFIX "core_remote." DISC
   PROPERTIES TIMEOUT 30)
 
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi-environment-daemon-double tsugumi_agent_rpc_tests tsugumi_rpc_cli_tests tsugumi_remote_result_tests
+  install(TARGETS tsugumi-environment-daemon-double tsugumi_rpc_cli_tests tsugumi_remote_result_tests
     RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

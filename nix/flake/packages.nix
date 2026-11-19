@@ -60,6 +60,9 @@ in
         default = core;
         tsugumid = core;
       }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+        ci-core-native = ci-core.override { nativeDarwin = true; };
+      }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
         # The `tsugumi` command (cli/install.sh): the Web UI with tsugumid on this host.
@@ -70,6 +73,7 @@ in
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
         inherit kernel vm-boot vm-system;
+        ci-arm-shell = ci-core.override { target = "tsugumi_arm_shell_tests"; };
         # The guest of tsugumi-pack and of the apps it exports (pack/).
         pack-guest = pkgs.callPackage ../../pack/guest {
           inherit kernel cardNixpkgs;

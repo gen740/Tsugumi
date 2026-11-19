@@ -8,8 +8,8 @@ on:
       system:
         required: true
         type: string
-      checks:
-        description: JSON job selection from tests/ci/select_jobs.py.
+      tests:
+        description: JSON test matrix from tests/ci/select_jobs.py.
         required: true
         type: string
     secrets:
@@ -27,7 +27,6 @@ env:
 jobs:
   native:
     name: Build native runtime
-    if: ${{ fromJSON(inputs.checks).native }}
     runs-on: ${{ inputs.runner }}
     steps:
       - uses: actions/checkout@v4
@@ -41,11 +40,15 @@ jobs:
           artifact-name: native-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
 
-  native-tests:
-    name: Build native RPC tests
-    if: ${{ fromJSON(inputs.checks)['native-tests'] }}
+  tests:
+    name: ${{ matrix.job }}
     needs: native
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJSON(inputs.tests) }}
     runs-on: ${{ inputs.runner }}
+    env:
+      TSUGUMI_CI_SYSTEM: ${{ inputs.system }}
     steps:
       - uses: actions/checkout@v4
       - uses: ./.github/actions/setup-nix
@@ -57,217 +60,58 @@ jobs:
           system: ${{ inputs.system }}
           artifact-name: native-${{ inputs.system }}
           artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-      - uses: ./.github/actions/build-nix
-        with:
-          package: ci-core
-          system: ${{ inputs.system }}
-          artifact-name: native-tests-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-
-  web:
-    name: Build Web and Wasm
-    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).web }}
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/build-nix
-        with:
-          package: web
-          system: ${{ inputs.system }}
-          artifact-name: web-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-
-  agent-rpc:
-    name: Agent RPC
-    if: ${{ fromJSON(inputs.checks)['agent-rpc'] }}
-    needs: native-tests
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-core
-          system: ${{ inputs.system }}
-          artifact-name: native-tests-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
           out-link: build-ci
       - name: Allow user namespaces for bubblewrap
         if: runner.os == 'Linux'
         run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Host rules and public Agent transports
-        run: bash tests/ci/run-suite.sh agent '${{ inputs.system }}'
 
-  rpc:
-    name: Core and CLI RPC
-    if: ${{ fromJSON(inputs.checks).rpc }}
-    needs: native-tests
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-core
-          system: ${{ inputs.system }}
-          artifact-name: native-tests-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - name: Allow user namespaces for bubblewrap
-        if: runner.os == 'Linux'
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+      - name: Build RPC test executables
+        if: matrix.checks.rpc || matrix.checks['agent-rpc']
+        run: |
+          package=ci-core
+          if [[ "$RUNNER_OS" == macOS ]]; then package=ci-core-native; fi
+          nix build -L ".#$package" --out-link build-ci
       - name: Core, CLI, worker and evaluation checks
-        run: bash tests/ci/run-suite.sh core '${{ inputs.system }}'
-
-  host:
-    name: Worker and host isolation
-    if: ${{ fromJSON(inputs.checks).host }}
-    needs: native
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-runtime
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - name: Allow user namespaces for bubblewrap
-        if: runner.os == 'Linux'
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
+        if: matrix.checks.rpc
+        run: bash tests/ci/run-suite.sh core "$TSUGUMI_CI_SYSTEM"
+      - name: Host rules and public Agent transports
+        if: matrix.checks['agent-rpc']
+        run: bash tests/ci/run-suite.sh agent "$TSUGUMI_CI_SYSTEM"
       - name: Native host integrations
-        run: bash tests/ci/run-suite.sh host '${{ inputs.system }}'
+        if: matrix.checks.host
+        run: bash tests/ci/run-suite.sh host "$TSUGUMI_CI_SYSTEM"
+      - name: Build the CLI and Web distribution for adapter tests
+        if: matrix.checks.adapters
+        id: web
+        run: |
+          nix build --no-link .#cli
+          path=$(nix build --no-link --print-out-paths '.#web^out')
+          echo "dist=$path/share/tsugumi/ui/web/dist" >> "$GITHUB_OUTPUT"
+      - name: Adapter behavior
+        if: matrix.checks.adapters
+        env:
+          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.dist }}
+        run: bash tests/ci/run-suite.sh adapters "$TSUGUMI_CI_SYSTEM"
+      - name: Web behavior with the native document edit driver
+        if: matrix.checks['web-contracts']
+        run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.web"
 
-  remote-execution:
-    name: Real remote worker execution
-    if: ${{ inputs.system == 'x86_64-linux' && fromJSON(inputs.checks)['remote-execution'] }}
-    needs: native
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-runtime
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - name: Allow user namespaces for sandboxed jobs
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build and run Cards through loopback tsugumi-workerd
+        if: matrix.job == 'remote-execution'
         run: bash tests/ci-remote-worker.sh
 
-  web-contracts:
-    name: Web types and behavior
-    if: ${{ inputs.system == 'x86_64-linux' && fromJSON(inputs.checks)['web-contracts'] }}
-    needs: web
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: web
-          system: ${{ inputs.system }}
-          artifact-name: web-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-      - name: Typecheck and behavior contracts
-        run: nix build --no-link .#checks.${{ inputs.system }}.web
-
-  adapters:
-    name: Web, plugin and installer adapters
-    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).adapters }}
-    needs: [native, web]
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-runtime
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - uses: ./.github/actions/fetch-nix
-        id: web
-        with:
-          package: web
-          system: ${{ inputs.system }}
-          artifact-name: web-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-      - name: Allow user namespaces for bubblewrap
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-      - name: Assemble the CLI from the cached runtime and Web
-        run: nix build --no-link .#cli
-      - name: Adapter behavior
-        env:
-          TSUGUMI_WEB_DIST: ${{ steps.web.outputs.path }}/share/tsugumi/ui/web/dist
-        run: bash tests/ci/run-suite.sh adapters '${{ inputs.system }}'
-
-  sdk:
-    name: SDK, examples, demos and system behavior
-    if: ${{ inputs.system != 'aarch64-darwin' && fromJSON(inputs.checks).sdk }}
-    needs: native
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-runtime
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
-      - name: Allow user namespaces for bubblewrap
-        run: sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
       - name: Build the SDK Python environment
+        if: matrix.job == 'sdk'
         id: sdk-python
         run: |
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
       - name: SDK libraries, native runtimes, sandbox and examples
+        if: matrix.job == 'sdk'
         run: bash tests/ci/run-suite.sh sdk '${{ inputs.system }}' '${{ steps.sdk-python.outputs.python }}'
 
-  swift:
-    name: Swift adapters and application
-    if: ${{ inputs.system == 'aarch64-darwin' && fromJSON(inputs.checks).swift }}
-    needs: native
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      - uses: ./.github/actions/fetch-nix
-        with:
-          package: ci-runtime
-          system: ${{ inputs.system }}
-          artifact-name: native-${{ inputs.system }}
-          artifact-fallback: ${{ secrets.CACHIX_AUTH_TOKEN == '' }}
-          out-link: build-ci
       - name: Identify the Apple toolchain and native runtime
+        if: matrix.job == 'swift'
         id: toolchain
         run: |
           toolchain=$({ xcodebuild -version; xcrun --sdk macosx --show-sdk-version; swift --version; } | shasum -a 256 | cut -d ' ' -f1)
@@ -275,6 +119,7 @@ jobs:
           runtime=$(nix eval --raw .#tsugumid.drvPath)
           echo "runtime=${runtime##*/}" >> "$GITHUB_OUTPUT"
       - name: Restore the Swift incremental builds
+        if: matrix.job == 'swift'
         uses: actions/cache@v4
         with:
           path: |
@@ -287,50 +132,19 @@ jobs:
           restore-keys: |
             swiftpm-${{ runner.os }}-${{ runner.arch }}-${{ steps.toolchain.outputs.key }}-${{ hashFiles('client/swift/Package.resolved', 'vm/macos/runtime/Package.resolved', 'client/swift/Package.swift', 'vm/macos/runtime/Package.swift', 'cli/vmctl/Package.swift', 'ui/macos/Package.resolved', 'ui/macos/CoreTests/Package.resolved', 'ui/macos/Package.swift', 'ui/macos/CoreTests/Package.swift', 'flake.lock') }}-
       - name: Build the daemon double used by the Swift batch tests
+        if: matrix.job == 'swift'
         run: |
           nix build .#ci-mock --out-link build-ci-mock
           echo "TSUGUMI_MOCK_DAEMON=$PWD/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock" >> "$GITHUB_ENV"
       - name: Build-tool plugin warnings
+        if: matrix.job == 'swift'
         run: bash ui/macos/tools/check-plugin-warnings.sh
       - name: Swift platform adapter tests
+        if: matrix.job == 'swift'
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos/CoreTests'
       - name: Independent VM adapter tests
+        if: matrix.job == 'swift'
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path vm/macos/runtime'
       - name: Application behavior
+        if: matrix.job == 'swift'
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos'
-
-  vm:
-    name: Release-built guest closure
-    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks).vm }}
-    needs: native
-    uses: ./.github/workflows/vm-image.yml
-    with:
-      revision: ${{ github.sha }}
-      runtime-artifact: native-${{ inputs.system }}
-    secrets:
-      CACHIX_AUTH_TOKEN: ${{ secrets.CACHIX_AUTH_TOKEN }}
-
-  pack-guest:
-    name: tsugumi-pack guest
-    if: ${{ inputs.system == 'aarch64-linux' && fromJSON(inputs.checks)['pack-guest'] }}
-    runs-on: ${{ inputs.runner }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: ./.github/actions/setup-nix
-        with:
-          cachix-token: ${{ secrets.CACHIX_AUTH_TOKEN }}
-      # pack/build.sh takes this folder as TSUGUMI_PACK_GUEST, so the guest
-      # need not be built on a Mac.
-      - name: Build the export and runner images
-        run: |
-          nix build -L ".#packages.aarch64-linux.pack-guest" -o build-pack-guest
-          mkdir -p dist/pack-guest
-          cp build-pack-guest/{vmlinux,export.erofs,run.erofs,identity} dist/pack-guest/
-      - uses: actions/upload-artifact@v4
-        with:
-          # The branch's commit, not a pull request's merge commit.
-          name: pack-guest-${{ github.event.pull_request.head.sha || github.sha }}
-          path: dist/pack-guest
-          compression-level: 0
-          retention-days: 7
-          if-no-files-found: error

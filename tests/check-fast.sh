@@ -1,9 +1,9 @@
 #!/usr/bin/env bash
 # The checks CI runs first and cheaply: the static tests (tests/static, which
-# read only files of the repository) and the Nix check that builds the Web UI
-# contract, including the demo player. Run it before every push.
+# read only files of the repository) and the Nix Web typecheck and behavior
+# checks, including the demo player. Run it before every push.
 #
-#   tests/check-fast.sh            static tests, then the Web Nix check
+#   tests/check-fast.sh            static tests, then the Web Nix checks
 #   tests/check-fast.sh --no-nix   only the static tests (a few seconds)
 set -euo pipefail
 root="$(cd "$(dirname "$0")/.." && pwd)"
@@ -26,6 +26,6 @@ nix "${nix_flags[@]}" shell --inputs-from . nixpkgs#python3Packages.pytest -c \
 if $run_nix; then
   system=$(nix "${nix_flags[@]}" eval --raw --impure --expr builtins.currentSystem)
   step "Web UI typecheck and behavior contracts"
-  nix "${nix_flags[@]}" build --no-link ".#checks.$system.web"
+  nix "${nix_flags[@]}" build --no-link ".#checks.$system.web-typecheck" ".#checks.$system.web"
 fi
 step "Fast checks passed"
