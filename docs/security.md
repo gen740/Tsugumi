@@ -318,6 +318,41 @@ VACUUM;
 PRAGMA wal_checkpoint(TRUNCATE);
 ```
 
+When updating from a version with the old permission and turn stores, stop
+hostd and open the existing `host-core/host.sqlite` with `sqlite3`. Run:
+
+```sql
+PRAGMA secure_delete = ON;
+BEGIN IMMEDIATE;
+DROP TABLE IF EXISTS access_prompt_items;
+DROP TABLE IF EXISTS operation_approvals;
+DROP TABLE IF EXISTS access_requests;
+DROP TABLE IF EXISTS pending_sends;
+DROP TABLE IF EXISTS turns;
+COMMIT;
+VACUUM;
+PRAGMA wal_checkpoint(TRUNCATE);
+```
+
+For each existing project `.tsugumi/agent.sqlite`, with hostd still stopped,
+run:
+
+```sql
+PRAGMA secure_delete = ON;
+BEGIN IMMEDIATE;
+DROP TABLE IF EXISTS pending_sends;
+DROP TABLE IF EXISTS turns;
+COMMIT;
+VACUUM;
+```
+
+These tables may contain old approval previews and unprocessed message
+inputs. Pending turns from the old format must be sent again. This procedure
+keeps conversations, their visible messages and events, and all Card run
+history. If a project is offline during the update, apply the project
+procedure when its folder is available. Copies and backups are managed
+separately.
+
 `tsugumi-hostd` writes project conversations through the registered host folder, including on macOS where `tsugumid` runs in the VM. It does not open this database through the VM's shared-folder mount. SQLite uses a rollback journal with full synchronization; a lifetime exclusive lock on `.tsugumi/agent.lock` refuses a second Agent host with `busy` until the first stops. Shared filesystems must honor file locks; independent filesystem copies have separate locks, and file synchronization does not coordinate writers. Registering a second existing folder with the same project identity on one host is refused. Stop the Agent service before copying the project so the database is complete.
 
 Copy the entire project folder, including `.tsugumi/`, to carry the Agent's words, tool outcomes and evidence links with its run records. The app, Web host and plugin use the same hostd store. Listing and search read Home and the available project folders registered with this host, including stopped project environments; they do not discover other folders. A conversation stays with its original project. A moved project needs fresh access grants, including for attached host folders. Permission events record that an approval existed, but access requests, usable approvals, grants, credentials, provider selections and Skill folder registrations stay with the host. Known provisioned credentials are redacted from stored conversation text, pending messages and tool results. Treat conversation contents as project data when sharing the folder; deleting a live conversation does not delete other copies or backups.
