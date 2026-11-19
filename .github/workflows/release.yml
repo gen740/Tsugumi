@@ -106,14 +106,16 @@ jobs:
       - name: Package the tsugumi command
         run: |
           set -euo pipefail
-          cli/package-macos.sh
+          cli/package-macos.sh --release
           cli/package-linux.sh
-          mkdir dist/check
+          mkdir dist/check dist/check-linux
           tar -xzf dist/tsugumi-macos-arm64.tar.gz -C dist/check
           test "$(dist/check/tsugumi/tsugumi --version)" = "$PACKAGE_VERSION"
           codesign --verify --strict dist/check/tsugumi/bin/tsugumi-vmhost
           codesign -d --entitlements - dist/check/tsugumi/bin/tsugumi-vmhost 2>/dev/null | grep -q com.apple.security.virtualization
-          rm -rf dist/check
+          tar -xzf dist/tsugumi-linux.tar.gz -C dist/check-linux
+          nix eval --raw "path:$PWD/dist/check-linux/tsugumi#packages.x86_64-linux.cli.drvPath" >/dev/null
+          rm -rf dist/check dist/check-linux
       - uses: actions/upload-artifact@v4
         with:
           name: release-app

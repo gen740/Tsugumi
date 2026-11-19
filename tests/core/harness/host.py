@@ -59,7 +59,7 @@ class Host:
             raise
 
     def call(self, name, /, **fields):
-        namespace = "Service" if name == "HelloRequest" else "Host"
+        namespace = {"HelloRequest": "Service", "HostTraceRequest": "Trace"}.get(name, "Host")
         value = getattr(importlib.import_module(f"Tsugumi.{namespace}.{name}"), name + "T")()
         for key, item in fields.items():
             if not hasattr(value, key):

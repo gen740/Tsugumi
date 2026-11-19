@@ -1,5 +1,7 @@
 #include "host/execution_broker.hh"
 
+#include "tsugumi/protocol/trace_codec.hh"
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -375,8 +377,14 @@ struct ExecutionBroker::State {
     message.payload.Set(std::move(request));
     auto bytes = W::encode(std::move(message));
     tls.Write(W::length_prefix(static_cast<uint32_t>(bytes.size())) + bytes);
+    trace::Link link;
+    trace::Observe(link, "hostd execution broker", "remote worker service",
+                   true, bytes, &trace::kFlatBufferCodec);
     const auto length = W::frame_length(tls.Read(4));
-    auto reply = W::decode(tls.Read(length));
+    const auto frame = tls.Read(length);
+    auto reply = W::decode(frame);
+    trace::Observe(link, "remote worker service", "hostd execution broker",
+                   false, frame, &trace::kFlatBufferCodec);
     Require(reply->payload.AsReply(), "Expected remote worker reply");
     return std::move(*reply);
   }

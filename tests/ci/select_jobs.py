@@ -33,6 +33,9 @@ WEB_AGENT_ASSETS = {
 
 
 def consumers(path):
+    # Repository metadata (funding, issue templates) is not built or tested.
+    if path.startswith(".github/") and not path.startswith((".github/workflows/", ".github/actions/")):
+        return set()
     if path.startswith("tests/core/"):
         if path in {"tests/core/vm_lifetime_test.cc", "tests/core/cmake/vm.cmake"}:
             return {"vm"}

@@ -187,6 +187,7 @@
 "Python の処理" = "Python step";
 "Quarto レポート（HTML）" = "Quarto Report (HTML)";
 "R Markdown レポート（HTML）" = "R Markdown Report (HTML)";
+"RPC トレース" = "RPC Trace";
 "Return で送信" = "Return sends";
 "Return で送信（⇧Return で改行）" = "Return sends (⇧Return for a new line)";
 "Ruby の処理" = "Ruby Card";
@@ -423,12 +424,15 @@
 "アップデートを確認できませんでした" = "Could not check for updates";
 "アプリ" = "App";
 "アプリに VM イメージが含まれていません。開発中は nix run .#guest-image で用意してください。" = "The app has no VM image. During development, get one with nix run .#guest-image.";
+"イベント" = "Event";
 "インデントガイドを表示" = "Show indent guides";
 "インデント幅" = "Indent width";
 "エディター" = "Editor";
 "エミュレーション: %@" = "Emulated: %@";
 "エミュレーター" = "Emulator";
 "エラー: %@" = "Error: %@";
+"エンドポイント" = "Endpoints";
+"エンドポイント別の件数" = "Count by Endpoint Pair";
 "オフ" = "Off";
 "オフにすると、保存された Card と接続線をすぐに表示します。作業位置の表示と思考の要約、ソースのストリーミングは続きます。設定はこのホストの hostd に保存します。" = "When off, saved Cards and wires appear immediately. The work marker, thought summaries and source streaming continue. This setting is stored in hostd on this host.";
 "オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。" = "When off, the Agent specifies which Cards each helper may read and which it may change or run.";
@@ -452,6 +456,8 @@
 "キャッシュ使用量" = "Cache usage";
 "キャッシュ接続を削除" = "Remove Cache Connection";
 "キャッシュ接続を追加" = "Add Cache Connection";
+"キャプチャ" = "Capture";
+"キャプチャにはファイルの内容や入力が含まれる場合があります。" = "Captured messages can include file contents and inputs.";
 "キャンセル" = "Cancel";
 "キー" = "Key";
 "キーを保存" = "Save Key";
@@ -494,6 +500,7 @@
 "コンソールで詳細を見る" = "Show Details in the Console";
 "コンテナに接続しています…" = "Connecting to the container…";
 "コードと設定の差分" = "Code and settings changes";
+"サイズ上限を超えたため、本文を省略しました。" = "Message content exceeded the size limit.";
 "サインアウト" = "Sign Out";
 "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。" = "You are signed in, but using your ChatGPT plan was not allowed. Allow it with “Allow Plan Use”, or use an API key connection.";
 "サインインはブラウザで行い、Tsugumi は 127.0.0.1 で結果を受け取ります。認証とトークンの保存は hostd が行います。トークンは Card やプロジェクト・設定・ログには残りません。" = "Sign in in your browser. hostd receives the result on 127.0.0.1, validates it and stores the tokens. Tokens are not stored in Cards, projects, settings or logs.";
@@ -575,6 +582,7 @@
 "デモを見せて" = "Show me a demo";
 "デモを見る" = "Browse Demos";
 "デモを見る…" = "Show Demos…";
+"トレース" = "Trace";
 "ドラッグして Canvas に配置できます。" = "Drag onto the canvas to place.";
 "ドラッグしてサイズ変更" = "Drag to resize";
 "ドラッグして入力ポートへ接続" = "Drag to an input port to connect";
@@ -587,9 +595,11 @@
 "ネットワークを設定しています" = "Setting up the network";
 "ノートを読み込めませんでした: %@" = "Could not load note: %@";
 "ノートを読み込んでいます…" = "Loading note…";
+"バイト数" = "Bytes";
 "バイナリ %lld bytes。書き出して確認してください。" = "Binary, %lld bytes. Export it to inspect.";
 "バイナリの成果物です" = "This artifact contains binary data";
 "バイナリキャッシュ" = "Binary Caches";
+"バッファの上限に達したため、本文を消去しました。" = "Message content was evicted from the buffer.";
 "パス" = "Path";
 "パスをコピー" = "Copy Path";
 "パスワード・token" = "Password or Token";
@@ -633,6 +643,7 @@
 "プレビューできません" = "Cannot preview";
 "プレビュー（選択・ドラッグ・折りたたみ・拡大縮小を試せます。プロジェクトは変わりません）" = "Preview (select, drag, collapse and zoom; the project is not changed)";
 "プロジェクト" = "Project";
+"プロジェクト: %@" = "Project: %@";
 "プロジェクトが大きすぎます（64 MB まで）。" = "The project is too large (up to 64 MB).";
 "プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。" = "Applies to every conversation and helper in the project until revoked.";
 "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。" = "Fix the format of the project's files (tsugumi.json, layout.json, files in definitions) and retry; your documents and history are kept.";
@@ -665,7 +676,9 @@
 "ホーム" = "Home";
 "ポインタを置いたときの詳細に、tsugumi.json やログでの Card キーと接続の番号を加えます。" = "Adds the Card key and the connection number, as in tsugumi.json and the logs, to the details shown under the pointer.";
 "ポートの並びを元に戻す" = "Reset Port Order";
+"メッセージの内容" = "Message Content";
 "メッセージの準備" = "Preparing the message";
+"メッセージ型" = "Message Type";
 "メッセージ（%@ で送信）" = "Message (send with %@)";
 "メモ" = "Note";
 "メモリ: %lld GiB" = "Memory: %lld GiB";
@@ -705,6 +718,7 @@
 "一致する依存パスはありません" = "No matching dependencies.";
 "一般" = "General";
 "一覧" = "List";
+"一覧からメッセージを選択してください。" = "Select a message from the list.";
 "一覧から削除" = "Remove from the list";
 "一覧から外す" = "Remove from list";
 "一覧から外すだけで、フォルダは削除しません" = "Only removes it from the list; the folder is not deleted";
@@ -917,6 +931,7 @@
 "取り込む Tsugumi のプロジェクト（tsugumi.json のあるフォルダ）を選んでください。externals にコピーされ、元のフォルダとは連動しません。" = "Choose a Tsugumi project to import (a folder with tsugumi.json). It is copied into externals and does not follow the original folder.";
 "取り込めませんでした" = "Could not import";
 "取得" = "Fetch";
+"取得できないプロジェクト: %@" = "Unavailable projects: %@";
 "取得できませんでした: %@" = "Could not fetch: %@";
 "受け側の入力: 必須" = "Receiving input: required";
 "受け側の入力: 省略可" = "Receiving input: optional";
@@ -1000,6 +1015,7 @@
 "失敗: %@" = "Failed: %@";
 "失敗したので結果はありません" = "It failed, so there is no result";
 "失敗したツール呼び出しに、短い理由に加えて引数と返ってきた結果の全文を出します。" = "Shows a failed tool call's arguments and its whole result, not only the short reason.";
+"失敗のみ" = "Failures Only";
 "失敗の種類" = "Failure kind";
 "宇宙・地球" = "Space and Earth";
 "完了" = "Done";
@@ -1116,6 +1132,7 @@
 "待っていた入力" = "Waited for inputs";
 "待機中" = "Idle";
 "待機列" = "Queued";
+"応答" = "Reply";
 "思考の過程を描きますか？" = "Draw the Agent's thoughts?";
 "思考の過程を描く" = "Draw thoughts";
 "思考の過程を描く: Agent の考えを要約して Canvas に出します（追加の token を使います）" = "Draw thoughts: summarizes the Agent's thinking on the canvas (uses extra tokens)";
@@ -1203,6 +1220,7 @@
 "既定（%@）" = "Default (%@)";
 "日時" = "Date";
 "日本語" = "日本語";
+"時刻" = "Time";
 "更新" = "Update";
 "更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。" = "Update: shows the last chart, dimmed while this Card or a Card upstream of it is running, and replaces it when the new result arrives. Live: replaces the chart with each one that arrives during the run, keeping the previous one on screen until the next is ready.";
 "更新（実行中は薄く表示）" = "Update (dimmed while running)";
@@ -1241,6 +1259,8 @@
 "未選択" = "Not selected";
 "未開始" = "Not started";
 "末尾を追う" = "Follow";
+"本文の記録はありません。" = "No message content was recorded.";
+"本文をデコードできませんでした。" = "Message content could not be decoded.";
 "条件から自動選択" = "Select by condition";
 "条件に合うデモはありません" = "No demo matches";
 "条件に合う実行はありません" = "No matching runs";
@@ -1321,6 +1341,7 @@
 "確定 revision" = "Confirmed revision";
 "確認" = "Check";
 "確認しています" = "Checking";
+"種別" = "Kind";
 "種類" = "Kind";
 "稼働中" = "Running";
 "空の実行リスト" = "Empty execution list";
@@ -1330,6 +1351,7 @@
 "終了" = "Ended";
 "終了して停止" = "Quit and Stop";
 "終了しました" = "Ended";
+"経過時間 (µs)" = "Elapsed (µs)";
 "結果" = "Result";
 "結果はまだありません" = "No result yet";
 "結果を確認" = "Check the result";
@@ -1360,14 +1382,18 @@
 "表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。" = "The display name may be shared by several Cards. Changing it keeps the ID, connections and run history unchanged (saved at once).";
 "表示のみ（開いているプロジェクトの接続先）" = "Display only (the open projects' endpoints)";
 "表示の記録がありません" = "No recorded display";
+"表示オプション" = "Display Options";
 "表示中" = "Shown";
 "表示中の Card" = "Cards Shown";
 "表示中のファイルを削除" = "Delete the file shown";
+"表示中の記録をエクスポート…" = "Export Visible Entries…";
 "表示言語は再起動後に変わります。これからプロジェクトに書く記録には、すでに新しい言語が使われます。再起動すると実行中の処理は停止します。" = "The display language will change after a restart. New records written into the project already use the new language. Restarting stops ongoing work.";
 "表示言語を変えるには再起動が必要です" = "Restart required to change the display language";
 "複製" = "Duplicate";
 "複製できませんでした: " = "Could not duplicate: ";
 "複製を作る場所を選んでください（保存済みの内容を複製します）" = "Choose where to make the copy (the saved contents are copied)";
+"要求" = "Request";
+"要求 ID" = "Request ID";
 "見つからないフォルダ: " = "Missing folders: ";
 "見つかりません" = "Not found";
 "見る" = "Show Me";
@@ -1384,6 +1410,7 @@
 "記録された段階の出来事はありません。" = "No stage events were recorded.";
 "記録と成果物" = "Recording and artifacts";
 "記録なし" = "Not recorded";
+"記録モード" = "Recording Mode";
 "設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。" = "Choose “Retain artifact” and an output in Settings > Ports to keep them.";
 "設定…" = "Settings…";
 "設定しました。Home に戻ると、ツグミが「何をしてみますか？」と尋ねます。" = "Done. Back on Home, Tsugumi will ask what you would like to try.";
@@ -1397,6 +1424,7 @@
 "詳しくはチャットに書きました" = "More in the chat";
 "詳細を閉じる" = "Close details";
 "認証情報はこの Mac のアプリ用ファイル（0600）に保存し、VM の Nix daemon だけに渡します。プロジェクトや実行記録には含めません。" = "Credentials are stored in a private application file on this Mac (0600) and provided only to the VM’s Nix daemon. They are excluded from project files and run history.";
+"認証情報を含むフィールドを除外しました。" = "Credential fields were redacted.";
 "認証（非公開キャッシュ）" = "Authentication (Private Caches)";
 "説明" = "About this";
 "読み取った内容は接続先のモデルに送信される場合があります。" = "Read content may be sent to the connected model.";
@@ -1420,6 +1448,7 @@
 "送信（Return）" = "Send (Return)";
 "送信（⌘Return）" = "Send (⌘Return)";
 "途中の Card を直したら、保存された入力でそこから試し直せるよ" = "Changed a Card midway? Run again from there with the saved inputs.";
+"通知" = "Notification";
 "進行中" = "In progress";
 "進行中の処理を停止して Tsugumi を終了しますか？" = "Quit Tsugumi and stop ongoing work?";
 "進行中の実行を表示" = "Show Active Run";

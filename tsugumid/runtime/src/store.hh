@@ -81,6 +81,9 @@ struct StoreOptions {
 class Store {
  public:
   explicit Store(StoreOptions opts);
+  ~Store();
+  Store(const Store&) = delete;
+  Store& operator=(const Store&) = delete;
 
   // Recovers the journal and loads the document. Throws on failure.
   void open();

@@ -8,10 +8,11 @@
 include "data.fbs";
 
 namespace Tsugumi.Worker;
+attribute "trace_secret";
 
 table EnvVar {
   name:string (id: 0, required);
-  value:string (id: 1, required);
+  value:string (id: 1, required, trace_secret);
 }
 
 table WorkerInput {

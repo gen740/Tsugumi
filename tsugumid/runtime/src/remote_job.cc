@@ -1,5 +1,7 @@
 #include "remote_job.hh"
 
+#include "tsugumi/protocol/trace_codec.hh"
+
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -231,12 +233,17 @@ auto RemoteJobClient::request(R::RequestT q,
   send_exact(socket.fd,
              workerd::length_prefix(static_cast<uint32_t>(bytes.size())), io);
   send_exact(socket.fd, bytes, io);
+  trace::Link link;
+  trace::Observe(link, "project core", "hostd execution broker", true, bytes,
+                 &trace::kFlatBufferCodec);
   ::shutdown(socket.fd, SHUT_WR);
   std::string prefix(4, '\0');
   read_exact(socket.fd, prefix.data(), prefix.size(), io);
   std::string response(workerd::frame_length(prefix), '\0');
   read_exact(socket.fd, response.data(), response.size(), io);
   auto incoming = workerd::decode(response);
+  trace::Observe(link, "hostd execution broker", "project core", false, response,
+                 &trace::kFlatBufferCodec);
   auto* reply = incoming->payload.AsReply();
   if (!reply) throw BrokerDisconnected("expected execution broker reply");
   if (const auto* error = reply->body.AsFailure()) {

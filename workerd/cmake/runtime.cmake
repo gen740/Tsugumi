@@ -10,6 +10,6 @@ set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
 add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc src/worker_execution.cc src/local_transport.cc src/local_client.cc)
 target_include_directories(tsugumi_worker_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
-target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_workerd_support tsugumi_worker_values Threads::Threads)
+target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_trace_codec tsugumi_workerd_support tsugumi_worker_values Threads::Threads)
 target_compile_definitions(tsugumi_worker_runtime PRIVATE TSUGUMI_BWRAP="${TSUGUMI_BWRAP}")
 target_compile_options(tsugumi_worker_runtime PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)

@@ -270,7 +270,7 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
                 flatbuffers::FlatBufferBuilder b;
                 auto hello = R::CreateSessionHelloRequest(
                     b, b.CreateString(ready.project_id),
-                    b.CreateString(ready.token));
+                    b.CreateString(ready.token), Tsugumi::Trace::Client::Host);
                 auto request = R::CreateRequest(
                     b, R::RequestPayload::SessionHelloRequest, hello.Union());
                 R::FinishMessageBuffer(
