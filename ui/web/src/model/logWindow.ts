@@ -16,10 +16,13 @@ export interface LogSlice {
   truncatedAt?: bigint
 }
 
-type Line = { number: number; text: string }
-type Block = { key: string; lines: Line[] }
-type Fragment = Line & { starts: boolean; ends: boolean }
+type Block = { key: string; first: number; lines: string[]; numbers?: number[] }
+type Fragment = { number: number; offset: number; text: string; starts: boolean; ends: boolean }
 type Page = { slice: LogSlice; head?: Fragment; body: Block[]; tail?: Fragment }
+
+export function logLineNumber(block: Block, index: number): number {
+  return block.numbers?.[index] ?? block.first + index
+}
 
 function journalLine(text: string): string | undefined {
   try {
@@ -30,11 +33,6 @@ function journalLine(text: string): string | undefined {
   }
 }
 
-function showLine(raw: Line, form: LogForm): Line | undefined {
-  const text = form === 'terminal' ? terminalText(raw.text) : journalLine(raw.text)
-  if (text !== undefined) return { number: raw.number, text }
-}
-
 function page(slice: LogSlice, form: LogForm): Page {
   const body: Block[] = []
   let number = slice.line
@@ -42,26 +40,35 @@ function page(slice: LogSlice, form: LogForm): Page {
   let start = 0
   if (!slice.startsLine) {
     const lf = slice.text.indexOf('\n')
-    head = { number: number++, text: lf < 0 ? slice.text : slice.text.slice(0, lf), starts: false, ends: lf >= 0 }
+    head = { number: number++, offset: slice.offset, text: lf < 0 ? slice.text : slice.text.slice(0, lf),
+      starts: false, ends: lf >= 0 }
     if (lf < 0) return { slice, head, body }
     start = lf + 1
   }
-  let lines: Line[] = []
+  let block: Block | undefined
   let lf = slice.text.indexOf('\n', start)
   while (lf >= 0) {
-    const line = showLine({ number: number++, text: slice.text.slice(start, lf) }, form)
-    if (line) {
-      lines.push(line)
-      if (lines.length === BLOCK_LINES) {
-        body.push({ key: `lines:${lines[0].number}`, lines })
-        lines = []
+    const raw = slice.text.slice(start, lf)
+    const line = form === 'terminal' ? terminalText(raw) : journalLine(raw)
+    if (line !== undefined) {
+      if (!block || block.lines.length === BLOCK_LINES || (line.length > 4096 && block.lines.length > 0)) {
+        block = { first: number, key: `lines:${number}`, lines: [], numbers: form === 'journal' ? [] : undefined }
+        body.push(block)
       }
+      block.lines.push(line)
+      block.numbers?.push(number)
+      if (line.length > 4096) block = undefined
     }
+    ++number
     start = lf + 1
     lf = slice.text.indexOf('\n', start)
   }
-  if (lines.length) body.push({ key: `lines:${lines[0].number}`, lines })
-  const tail = start < slice.text.length ? { number, text: slice.text.slice(start), starts: true, ends: false } : undefined
+  let tail: Fragment | undefined
+  if (start < slice.text.length) {
+    const text = slice.text.slice(start)
+    const length = new TextEncoder().encode(text).length
+    tail = { number, offset: slice.end - length, text, starts: true, ends: false }
+  }
   return { slice, head, body, tail }
 }
 
@@ -72,7 +79,7 @@ export type LogRead = { kind: ReadKind; offset: number; limit: number }
  *  the starting line of each page, so discarded bytes need not be counted. */
 export class LogWindow {
   private pages: Page[] = []
-  private boundaryBlocks = new Map<number, { raw: Fragment; block: Block }>()
+  private boundaryBlocks = new Map<string, { raw: string; block: Block }>()
   blocks: Block[] = []
   loaded = false
   following = true
@@ -133,29 +140,41 @@ export class LogWindow {
 
   private assemble() {
     const blocks: Block[] = []
-    const boundary = new Map<number, { raw: Fragment; block: Block }>()
-    let pending: Fragment | undefined
+    const boundary = new Map<string, { raw: string; block: Block }>()
+    let pieces: Fragment[] = []
+    const add = (key: string, number: number, raw: string) => {
+      const previous = this.boundaryBlocks.get(key)
+      const text = previous?.raw === raw ? previous.block.lines[0]
+        : this.form === 'terminal' ? terminalText(raw) : journalLine(raw)
+      if (text === undefined) return
+      const block = previous?.raw === raw ? previous.block : { key, first: number, lines: [text] }
+      blocks.push(block)
+      boundary.set(key, { raw, block })
+    }
     const finish = () => {
-      if (!pending || (this.form === 'journal' && (!pending.starts || !pending.ends))) return
-      const { number, text } = pending
-      const previous = this.boundaryBlocks.get(number)
-      const line = previous?.raw.text === text ? previous.block.lines[0] : showLine(pending, this.form)
-      if (line) {
-        const block = previous?.block.lines[0] === line ? previous.block : { key: `edge:${number}`, lines: [line] }
-        blocks.push(block)
-        boundary.set(number, { raw: pending, block })
+      const first = pieces[0], last = pieces.at(-1)
+      if (first && (this.form === 'terminal' || (first.starts && last?.ends))) {
+        const raw = pieces.map((piece) => piece.text).join('')
+        // Keep stable scroll anchors for the pieces of a very long plain
+        // line. Carriage returns need the whole resident line for redraw.
+        if (this.form === 'terminal' && raw.length >= 64 * 1024 && !raw.includes('\r')) {
+          for (const piece of pieces) {
+            if (piece.text) add(`fragment:${piece.offset}`, piece.number, piece.text)
+          }
+        } else {
+          add(`edge:${first.number}`, first.number, raw)
+        }
       }
+      pieces = []
     }
     for (const { head, body, tail } of this.pages) {
       if (head) {
-        pending = pending
-          ? { ...pending, text: pending.text + head.text, ends: head.ends }
-          : head
+        pieces.push(head)
         if (!head.ends) continue
       }
       finish()
       blocks.push(...body)
-      pending = tail
+      if (tail) pieces.push(tail)
     }
     finish()
     this.boundaryBlocks = boundary
@@ -191,10 +210,10 @@ export class LogReadFrames {
   private scheduleFrame() {
     if (this.closed || this.frame !== undefined || this.busy) return
     this.frame = this.schedule(() => {
-      this.frame = undefined
       const result = this.result
       this.result = undefined
       result?.()
+      this.frame = undefined
       if (!this.pending) return
       this.pending = false
       this.busy = true
@@ -233,13 +252,13 @@ export class LogHeights {
   anchor(y: number): LogAnchor | undefined {
     const index = this.index(y)
     const block = this.blocks[index]
-    return block && { key: block.key, line: block.lines[0].number, inset: y - this.top[index] }
+    return block && { key: block.key, line: block.first, inset: y - this.top[index] }
   }
 
   position(anchor: LogAnchor): number {
     const index = this.blocks.findIndex((block) => block.key === anchor.key)
     if (index >= 0) return this.top[index] + anchor.inset
-    const fallback = this.blocks.findIndex((block) => block.lines.at(-1)!.number >= anchor.line)
+    const fallback = this.blocks.findIndex((block) => logLineNumber(block, block.lines.length - 1) >= anchor.line)
     return fallback >= 0 ? this.top[fallback] : this.total
   }
 }

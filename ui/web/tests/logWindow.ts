@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict'
-import { LogHeights, LogReadFrames, LogSlice, LogWindow } from '../src/model/logWindow'
+import { logLineNumber, LogHeights, LogReadFrames, LogSlice, LogWindow } from '../src/model/logWindow'
 
 function slice(offset: number, text: string, line: number, startsLine: boolean, size?: number): LogSlice {
   const end = offset + new TextEncoder().encode(text).length
@@ -17,7 +17,7 @@ assert.equal(anchor.line, 3)
 terminal.apply(terminal.request('earlier')!, slice(0, previous, 1, true, terminal.end))
 const after = new LogHeights(terminal.blocks, new Map([[terminal.blocks[0], 40]]), 20)
 assert.equal(after.position(anchor), 67)
-assert.deepEqual(terminal.blocks.flatMap((b) => b.lines), [
+assert.deepEqual(terminal.blocks.flatMap((b) => b.lines.map((text, i) => ({ text, number: logLineNumber(b, i) }))), [
   { number: 1, text: 'first' }, { number: 2, text: '完了 読み込み' }, { number: 3, text: 'next' },
 ])
 assert.equal(terminal.request('earlier'), undefined)
@@ -28,7 +28,7 @@ journal.apply(journal.request('tail')!, slice(partial.length, 'ored","message":"
 assert.equal(journal.blocks.length, 0)
 journal.follow(false)
 journal.apply(journal.request('earlier')!, slice(0, partial, 7, true, journal.end))
-assert.deepEqual(journal.blocks.flatMap((b) => b.lines), [{ number: 7, text: 'save · stored: ok' }])
+assert.deepEqual(journal.blocks.flatMap((b) => b.lines), ['save · stored: ok'])
 
 const paging = new LogWindow('terminal')
 const payload = 'x'.repeat((1 << 20) - 1) + '\n'
@@ -48,6 +48,16 @@ paging.follow(true)
 paging.apply(paging.request('status')!, slice(3 * length, 'a', 4, true))
 assert.equal(paging.end, 3 * length + 1)
 assert.equal(paging.waiting, false)
+
+const longLine = new LogWindow('terminal')
+const a = 'a'.repeat(256 * 1024), b = 'b'.repeat(256 * 1024)
+longLine.apply(longLine.request('tail')!, slice(a.length, b, 1, false))
+const oldAnchor = new LogHeights(longLine.blocks, new Map(), 20).anchor(13)!
+longLine.follow(false)
+longLine.apply(longLine.request('earlier')!, slice(0, a, 1, true, a.length + b.length))
+const measured = new Map([[longLine.blocks[0], 900]])
+assert.equal(new LogHeights(longLine.blocks, measured, 20).position(oldAnchor), 913)
+assert.deepEqual(longLine.blocks.map((block) => block.first), [1, 1])
 
 const callbacks: (() => void)[] = []
 let reads = 0, applied = 0

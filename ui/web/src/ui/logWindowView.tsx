@@ -1,6 +1,6 @@
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { L } from '../i18n'
-import { LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind } from '../model/logWindow'
+import { logLineNumber, LogAnchor, LogForm, LogHeights, LogReadFrames, LogWindow, ReadKind } from '../model/logWindow'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, key, ProjectSession } from '../model/session'
@@ -91,8 +91,8 @@ export function useLogStream(session: ProjectSession, source: LogSource | undefi
         }
       } catch (failure) {
         return () => {
+          error = failure instanceof RPCFailure && failure.kind === D.FailureKind.not_found && !window.loaded ? undefined : errorText(failure)
           window.loaded = true
-          error = failure instanceof RPCFailure && failure.kind === D.FailureKind.not_found ? undefined : errorText(failure)
           publish()
         }
       }
@@ -128,11 +128,12 @@ const OVERDRAW = 160
 const EDGE = 12
 
 const Rows = memo(function Rows({ block }: { block: View['blocks'][number] }) {
-  return <>{block.lines.map(({ number, text }) => (
-    <div key={number} className="log-row" data-line={number}>
+  return <>{block.lines.map((text, i) => {
+    const number = logLineNumber(block, i)
+    return <div key={number} className="log-row" data-line={number}>
       <span className="log-number" aria-hidden="true">{number}</span><span className="log-line">{text}</span>
     </div>
-  ))}</>
+  })}</>
 })
 
 /** Keep one native scrollbar for the resident window. Only nearby blocks
@@ -141,27 +142,26 @@ export function LogText({ log, placeholder }: { log: View; placeholder: string }
   useObserve(prefs)
   const viewport = useRef<HTMLDivElement>(null)
   const [area, setArea] = useState({ width: 0, height: 0 })
-  const [top, setTop] = useState(0)
+  const [cursor, setCursor] = useState<{ id: string; anchor?: LogAnchor }>()
   const [measurement, remeasure] = useState(0)
   const fontSize = prefs.editorFontSize - 1
   const lineHeight = Math.ceil(fontSize * 1.45)
   const heights = useMemo(() => new WeakMap<View['blocks'][number], number>(), [area.width, lineHeight])
   const layout = useMemo(() => new LogHeights(log.blocks, heights, lineHeight), [log.blocks, heights, lineHeight, measurement])
-  const current = useRef<{ layout: LogHeights; id: string }>()
   const lastScroll = useRef(0)
-  const anchor = current.current?.id === log.id ? current.current.layout.anchor(top) : undefined
+  const anchor = cursor?.id === log.id ? cursor.anchor : undefined
   const maxTop = Math.max(0, layout.total - area.height)
-  const target = log.following ? maxTop : Math.max(0, Math.min(maxTop, anchor ? layout.position(anchor) : top))
+  const target = log.following ? maxTop : Math.max(0, Math.min(maxTop, anchor ? layout.position(anchor) : 0))
   const from = layout.index(Math.max(0, target - OVERDRAW))
   const to = Math.min(layout.blocks.length, layout.index(target + area.height + OVERDRAW) + 1)
 
   useLayoutEffect(() => {
     const element = viewport.current!
-    current.current = { layout, id: log.id }
-    element.scrollTop = log.following ? element.scrollHeight : target
+    const block = anchor && Array.from(element.querySelectorAll<HTMLElement>('[data-log-block]'))
+      .find((item) => layout.blocks[Number(item.dataset.logBlock)].key === anchor.key)
+    element.scrollTop = log.following ? element.scrollHeight : block && anchor ? block.offsetTop + anchor.inset : target
     lastScroll.current = element.scrollTop
-    if (top !== element.scrollTop) setTop(element.scrollTop)
-  }, [layout, target, log.id, log.following, top])
+  }, [layout, target, log.id, log.following, anchor])
 
   useLayoutEffect(() => {
     const element = viewport.current!
@@ -192,8 +192,6 @@ export function LogText({ log, placeholder }: { log: View; placeholder: string }
     }
   }, [layout.blocks, from, to, heights, lineHeight])
 
-  useEffect(() => () => { current.current = undefined }, [])
-
   const atEdge = (element: HTMLElement, direction: number) => {
     if (direction < 0 && element.scrollTop <= EDGE && log.start > 0) {
       log.follow(false)
@@ -211,7 +209,12 @@ export function LogText({ log, placeholder }: { log: View; placeholder: string }
         const movement = next - lastScroll.current
         if (movement === 0) return
         lastScroll.current = next
-        setTop(next)
+        const block = Array.from(el.querySelectorAll<HTMLElement>('[data-log-block]'))
+          .find((item) => item.offsetTop <= next && item.offsetTop + item.offsetHeight > next)
+        const visible = block && layout.blocks[Number(block.dataset.logBlock)]
+        setCursor({ id: log.id, anchor: visible && block
+          ? { key: visible.key, line: visible.first, inset: next - block.offsetTop }
+          : layout.anchor(next) })
         if (movement < 0) log.follow(false)
         atEdge(el, movement)
       }}
