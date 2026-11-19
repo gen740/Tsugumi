@@ -337,7 +337,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     body["params"][0]["data"] = "changed on disk"
     put(root / source, json.dumps(body))
     with pytest.raises(RpcFailure) as error:
-        c.call("RunRequest", baseRev=snap.rev, opId=new_id(), card=path("greet"))
+        c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="test", card=path("greet"))
     assert error.value.kind == "external_change"
     assert c.call("RunStatusRequest").runId is None
     assert subprocess.check_output(["git", "-C", root, "rev-parse", "HEAD"], text=True).strip() == text(first.commit)
