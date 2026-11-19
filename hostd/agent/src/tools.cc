@@ -157,15 +157,16 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
   try {
     // A whole-document save keeps its original revision and input. Never merge
     // or issue another operation id when another writer has moved the document.
-    const auto latest = host::CaptureSaveBase(read("project_inspect", {}));
+    const auto latest = host::CaptureSaveBase(InspectProject(project, stop));
     if (json::String(json::Get(original, "base_rev"),
                      json::Get(original, "base_rev")) !=
         json::Text(latest.snapshot, "rev"))
       return LayoutToolFailure("revision_conflict",
                                "The project changed; read the project again "
                                "and re-apply your input.");
+    const auto policy = ExclusionsFor(project, latest.files.at("tsugumi.json"));
     const host::SourcePatches patches;
-    Exclusions(project, stop).CheckSave(original, latest, patches);
+    policy.CheckSave(original, latest, patches);
     if (check) check(latest);
     original.erase("save_intent");
     auto prepared = PrepareAgentSave(
@@ -185,7 +186,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                                   crypto::sha256_hex(file->second)};
         },
         patches));
-    Exclusions(project, stop).CheckSave(prepared.arguments, latest, patches);
+    policy.CheckSave(prepared.arguments, latest, patches);
     host::RestrictAgentRequest("project_save", prepared.arguments);
     auto result = json::Object(RawProjectCall(
         project, "project_save", json::Encode(prepared.arguments), stop));
@@ -234,18 +235,28 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
   return host::InputTypes(*reply->value_as_InputTypesResult(), language);
 }
 
-auto Tools::Exclusions(const std::string& project, std::stop_token stop)
-    -> host::AgentExclude {
-  if (project.empty())
-    return host::AgentExclude(std::filesystem::current_path(), "{}");
+auto Tools::InspectProject(const std::string& project, std::stop_token stop)
+    -> json::Members {
   const auto reply =
       json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
-  const auto value = json::Object(json::Get(reply, "value", "{}"));
+  auto value = json::Object(json::Get(reply, "value", "{}"));
   if (json::Text(reply, "reply") == "Failure")
     throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+  return value;
+}
+
+auto Tools::ExclusionsFor(const std::string& project,
+                          const std::string& document) -> host::AgentExclude {
+  if (project.empty())
+    return host::AgentExclude(std::filesystem::current_path(), document);
   std::lock_guard lock(mutex);
-  return host::AgentExclude(registry.Root(project),
-                            json::Text(value, "project_json", "{}"));
+  return host::AgentExclude(registry.Root(project), document);
+}
+
+auto Tools::Exclusions(const std::string& project, std::stop_token stop)
+    -> host::AgentExclude {
+  return ExclusionsFor(project, project.empty() ? "{}"
+      : json::Text(InspectProject(project, stop), "project_json", "{}"));
 }
 
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
@@ -283,15 +294,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
       if (!json::Bool(json::Get(value, "eof")))
         throw Failure("invalid_request",
                       "Read the project document in one page");
-      const auto path = json::Text(args, "path");
-      const auto text =
-          path.ends_with("tsugumi.json")
-              ? policy.ProjectText(json::Text(value, "bytes"),
-                                   path.substr(0, path.size() - 12))
-              : json::Text(
-                    json::Object(policy.Filter(json::Encode(json::Members{
-                        {"layout_json", json::Get(value, "bytes")}}))),
-                    "layout_json");
+      const auto text = policy.FileText(file_path, json::Text(value, "bytes"));
       value["bytes"] = json::Quote(text);
       value["size_bytes"] = value["next_offset"] =
           json::Quote(std::to_string(text.size()));
@@ -632,28 +635,51 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
 
 auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
                          const std::string& revision,
-                         const std::string& authorization)
+                         const std::string& authorization,
+                         const host::SaveBase* inspected)
     -> HelperScope::Reader {
   std::string project;
   {
     std::lock_guard lock(mutex);
     project = conversations->GetConversation(conversation).project;
   }
-  auto cache = std::make_shared<std::map<std::string, std::string>>();
-  return [this, project, conversation, stop, revision, authorization,
-          cache](const std::string& path) {
+  struct Context {
+    std::optional<host::SaveBase> inspected;
+    std::optional<host::AgentExclude> policy;
+    std::map<std::string, std::string> files;
+  };
+  auto context = std::make_shared<Context>();
+  return [this, project, conversation, stop, revision, authorization, inspected,
+          context](const std::string& path) {
     access_service.Require(project, conversation,
                            Tsugumi::Service::Access::Read, true, stop,
                            "Read helper Card context", authorization);
-    if (const auto found = cache->find(path); found != cache->end())
+    if (!inspected && !context->inspected)
+      context->inspected = host::CaptureSaveBase(InspectProject(project, stop));
+    const auto& base = inspected ? *inspected : *context->inspected;
+    const auto at_rev = json::Get(base.snapshot, "rev");
+    if (!revision.empty() &&
+        json::UInt(json::String(revision, revision)) !=
+            json::UInt(json::String(at_rev, at_rev)))
+      throw Failure("revision_conflict",
+                    "The project changed; read the project again and "
+                    "re-apply your input.");
+    if (!context->policy)
+      context->policy = ExclusionsFor(project, base.files.at("tsugumi.json"));
+    context->policy->Check(path);
+    auto& cache = context->files;
+    if (const auto found = cache.find(path); found != cache.end())
       return found->second;
-    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"}};
-    if (!revision.empty()) args["at_rev"] = revision;
+    if (const auto found = base.files.find(path); found != base.files.end())
+      return cache.emplace(path, context->policy->FileText(path, found->second))
+          .first->second;
+    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"},
+                       {"at_rev", at_rev}};
     std::string bytes;
     for (;;) {
       args["offset"] = std::to_string(bytes.size());
       const auto reply = json::Object(
-          ProjectCall(project, "project_file_read", json::Encode(args), stop));
+          RawProjectCall(project, "project_file_read", json::Encode(args), stop));
       if (json::Text(reply, "reply") != "FileContent") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
         if (json::Text(failure, "kind") == "revision_conflict")
@@ -662,7 +688,7 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
                         "re-apply your input.");
         if (json::Text(reply, "reply") == "Failure" &&
             json::Text(failure, "kind") == "not_found") {
-          cache->emplace(path, "");
+          cache.emplace(path, "");
           return std::string{};
         }
         throw Failure("permission_denied",
@@ -683,7 +709,7 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
         throw Failure("unavailable",
                       "Helper scope metadata read made no progress");
     }
-    cache->emplace(path, bytes);
+    cache.emplace(path, bytes);
     return bytes;
   };
 }
@@ -981,6 +1007,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
     RequireHelperPermission(conversation, *boundary);
+    std::optional<host::SaveBase> inspected;
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
@@ -988,17 +1015,16 @@ auto Tools::ExecuteTool(const std::string& conversation,
          call.name == "run_plan" || call.name == "card_s_d_k_prepare")) {
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
-        const auto snapshot = json::Object(
-            RawProjectCall(project, "project_inspect", "{}", stop));
-        revision =
-            json::Get(json::Object(json::Get(snapshot, "value", "{}")), "rev");
+        inspected = host::CaptureSaveBase(InspectProject(project, stop));
+        revision = json::Get(inspected->snapshot, "rev");
       }
       args["at_rev"] = revision;
     }
     // Resolve nested file ownership and read the file at one revision. If
     // the parent changes a container link in between, the project rejects
     // the stale at_rev/base_rev instead of reading a different Card.
-    const auto read = HelperReader(conversation, stop, revision, authorization);
+    const auto read = HelperReader(conversation, stop, revision, authorization,
+                                   inspected ? &*inspected : nullptr);
     if (call.name != "project_edit" && call.name != "project_connect" &&
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);

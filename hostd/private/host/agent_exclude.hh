@@ -26,6 +26,8 @@ class AgentExclude {
       -> std::string;
   auto ProjectText(const std::string& raw, const std::string& prefix = "") const
       -> std::string;
+  auto FileText(const std::string& path, const std::string& raw) const
+      -> std::string;
   auto Paths() const -> const std::vector<std::filesystem::path>& {
     return paths_;
   }

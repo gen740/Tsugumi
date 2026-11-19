@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "host/comments.hh"
-
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
@@ -178,6 +177,18 @@ auto AgentExclude::ProjectText(const std::string& raw,
   }
   return j::Encode(project);
 }
+auto AgentExclude::FileText(const std::string& path,
+                            const std::string& raw) const -> std::string {
+  if (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json"))
+    return ProjectText(raw, path.substr(0, path.size() - 12));
+  if (path == "layout.json" || IsExternalDocument(path, "layout.json"))
+    return j::Text(j::Object(Filter(j::Encode(j::Members{
+                           {"layout_json", j::Quote(raw)}}),
+                       path.substr(0, path.size() - 11))),
+                   "layout_json");
+  return raw;
+}
+
 auto AgentExclude::Filter(const std::string& raw,
                           const std::string& prefix) const -> std::string {
   if (raw.starts_with('[')) {
@@ -316,17 +327,9 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
       }
       return full;
     };
-    const auto project_view = [&](const auto& text) {
-      return project_document
-                 ? ProjectText(text, prefix)
-                 : j::Text(
-                       j::Object(Filter(j::Encode(j::Members{
-                                            {"layout_json", j::Quote(text)}}),
-                                        prefix)),
-                       "layout_json");
-    };
-    if (!DocumentsEqual(difference(difference, before, project_view(before)),
-                        difference(difference, bytes, project_view(bytes))))
+    if (!DocumentsEqual(
+            difference(difference, before, FileText(path, before)),
+            difference(difference, bytes, FileText(path, bytes))))
       throw Failure("not_found", "Card not found");
   };
   for (const auto& raw : j::Array(j::Get(plan, "changes", "[]"))) {
