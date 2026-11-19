@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -330,11 +331,26 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     cards = {"/".join(text(s) for s in r.card.segments) for r in snap.resolution}
     assert {"greet", "greet/say", "greet/pass"} <= cards
     assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
+    first = c.call("VersionInitRequest", opId=new_id(), origin="test")
+    source = "externals/greeting/definitions/say/_card.json"
+    body = json.loads((root / source).read_text())
+    body["params"][0]["data"] = "changed on disk"
+    put(root / source, json.dumps(body))
+    with pytest.raises(RpcFailure) as error:
+        c.call("RunRequest", baseRev=snap.rev, opId=new_id(), card=path("greet"))
+    assert error.value.kind == "external_change"
+    assert c.call("RunStatusRequest").runId is None
+    assert subprocess.check_output(["git", "-C", root, "rev-parse", "HEAD"], text=True).strip() == text(first.commit)
+    reloaded = c.call("ProjectReloadRequest", baseRev=snap.rev,
+                      opId=new_id(), origin="test")
     run_id, st = run_and_wait(c, "greet")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert recorded_input_json(c, tmp_path / "decode", run_id, "show")["text"] == "from the external"
+    committed = subprocess.check_output(
+        ["git", "-C", root, "show", f"{text(st.commit)}:{source}"], text=True)
+    result = recorded_input_json(c, tmp_path / "decode", run_id, "show")
+    assert result["text"] == json.loads(committed)["params"][0]["data"] == "changed on disk"
     # The external is this project's copy: its files change here like any other.
-    rev = snap.rev
+    rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
            changes=[change("PutSource", path="externals/greeting/notes.txt", bytes=list(b"x"))])
     assert bytes(c.call("ProjectFileReadRequest", path="externals/greeting/notes.txt").bytes) == b"x"

@@ -17,6 +17,7 @@
 #include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/document/schema.hh"
+#include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/git.hh"
 #include "tsugumi/util/log.hh"
@@ -107,15 +108,17 @@ std::optional<git_oid> head_oid(git_repository* r) {
 struct VersionFiles {
   std::vector<std::string> extra;
 
-  explicit VersionFiles(const stdfs::path& root) {
-    if (auto text = fs::read_file(root / "tsugumi.json")) {
-      schema::Project project;
-      if (auto error = schema::decode(*text, project))
-        throw Failed(FailureKind::invalid_document,
-                     "tsugumi.json: " + error->message);
-      if (const auto* paths = schema::get(project.version_paths))
-        extra = *paths;
-    }
+  explicit VersionFiles(const stdfs::path& root,
+                        const Document* accepted = nullptr) {
+    schema::Project project;
+    if (!accepted)
+      if (auto text = fs::read_file(root / "tsugumi.json"))
+        if (auto error = schema::decode(*text, project))
+          throw Failed(FailureKind::invalid_document,
+                       "tsugumi.json: " + error->message);
+    if (const auto* paths =
+            schema::get((accepted ? accepted->project : project).version_paths))
+      extra = *paths;
   }
 
   auto includes(const std::string& path) const -> bool {
@@ -143,8 +146,20 @@ struct VersionFiles {
 // inheriting unrelated files someone staged with Git. Ignore rules do not
 // override definitions or an explicit opt-in. Never follow symlinks.
 auto stage_project(git_repository* r, const stdfs::path& root,
-                   bool write_index = true) -> git_oid {
-  const VersionFiles files(root);
+                   bool write_index = true, const Document* accepted = nullptr)
+    -> git_oid {
+  const VersionFiles files(root, accepted);
+  std::map<std::string, std::string> expected;
+  if (accepted) {
+    expected = accepted->disk_hashes;
+    for (const auto& [path, source] : accepted->sources)
+      expected.emplace(path, source.hash);
+  }
+  const auto changed = [](const std::string& path) {
+    throw Failed(FailureKind::external_change,
+                 path + " changed outside Tsugumi; Reload before running",
+                 {{"path", path}});
+  };
   Index idx;
   check(git_repository_index(idx.out(), r), "index");
   check(git_index_clear(idx.get()), "clear index");
@@ -157,6 +172,13 @@ auto stage_project(git_repository* r, const stdfs::path& root,
       if (!files.descends(path)) it.disable_recursion_pending();
     } else if (stdfs::is_regular_file(status) && files.includes(path)) {
       const auto bytes = fs::read_beneath(root, path);
+      if (accepted && (Document::is_document_file(path) ||
+                       Document::is_source_area(path))) {
+        auto hash = expected.find(path);
+        if (hash == expected.end() || hash->second != crypto::sha256_hex(bytes))
+          changed(path);
+        expected.erase(hash);
+      }
       git_index_entry entry{};
       entry.path = path.c_str();
       entry.mode = (status.permissions() & stdfs::perms::owner_exec) !=
@@ -169,6 +191,7 @@ auto stage_project(git_repository* r, const stdfs::path& root,
       check(git_index_add(idx.get(), &entry), "add " + path);
     }
   }
+  if (!expected.empty()) changed(expected.begin()->first);
   if (write_index) check(git_index_write(idx.get()), "write index");
   git_oid tree;
   check(git_index_write_tree(&tree, idx.get()), "write tree");
@@ -501,8 +524,9 @@ std::string Versions::init() {
 
 namespace {
 auto commit_worktree(git_repository* repo, const stdfs::path& root,
-                     const std::string& message) -> std::string {
-  auto tree = stage_project(repo, root);
+                     const std::string& message,
+                     const Document* accepted = nullptr) -> std::string {
+  auto tree = stage_project(repo, root, true, accepted);
   auto head = head_oid(repo);
   if (head) {
     Commit c;
@@ -524,11 +548,12 @@ auto commit_worktree(git_repository* repo, const stdfs::path& root,
 }
 }  // namespace
 
-std::string Versions::commit_all(const std::string& message) {
+std::string Versions::commit_all(const std::string& message,
+                                 const Document* accepted) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_)) return "";
-  return commit_worktree(r.get(), root_, message);
+  return commit_worktree(r.get(), root_, message, accepted);
 }
 
 void Versions::note_run(const std::string& commit, const VersionRunNote& run) {

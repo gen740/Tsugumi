@@ -105,14 +105,8 @@ void Service::run(RequestIn& req) {
     if (store_->halted())
       throw Failed(FailureKind::persistence_failed,
                    "changes are halted after a persistence failure");
-    // The version it runs: what is saved, committed when it changed. A git
-    // problem never stops a run (it then records no version).
-    try {
-      p.commit = versions_->commit_all(
-          version_record::commit("run", path_key(p.card)));
-    } catch (const std::exception& e) {
-      log::warn(std::string("versions: no commit for this run: ") + e.what());
-    }
+    p.commit = versions_->commit_all(
+        version_record::commit("run", path_key(p.card)), doc.get());
     std::string receipt = scheduler_->accept(doc, p);
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
