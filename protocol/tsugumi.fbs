@@ -301,7 +301,7 @@ table ProjectSaveRequest {
   /// Local file references; source bytes never travel through the RPC frame.
   transfers:[SourceTransfer] (id: 6);
   /// Opaque host intent for the existing op_id digest, before concrete expansion.
-  /// A revision-conflicted attempt with an intent is retryable under the same id.
+  /// A caller can explicitly retry a revision conflict with the same intent and id.
   save_intent:string (id: 7);
   /// Carried unchanged in SaveResult, including a replay of this operation id.
   /// The project core does not interpret host editing metadata.

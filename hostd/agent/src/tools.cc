@@ -6,7 +6,6 @@
 
 #include "agent/context.hh"
 #include "agent/providers.hh"
-#include "agent/save_policy.hh"
 #include "agent/tool_images.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
@@ -146,14 +145,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                         const std::function<void(const host::SaveBase&)>& check)
     -> std::string {
   std::lock_guard save_lock(save_mutex);
-  auto read = [&](const std::string& method, const json::Members& query) {
-    const auto reply = json::Object(
-        RawProjectCall(project, method, json::Encode(query), stop));
-    const auto value = json::Object(json::Get(reply, "value", "{}"));
-    if (json::Text(reply, "reply") == "Failure")
-      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
-    return value;
-  };
   try {
     // A whole-document save keeps its original revision and input. Never merge
     // or issue another operation id when another writer has moved the document.
@@ -169,30 +160,32 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     policy.CheckSave(original, latest, patches);
     if (check) check(latest);
     original.erase("save_intent");
-    auto prepared = PrepareAgentSave(
-        original, latest, read,
-        [&](const auto& card, const auto& occupied) {
-          std::lock_guard lock(mutex);
-          return host::ReserveOrdinal(
-              db, "annotation:" + project + ":comment:" + card, "", occupied);
+    const host::SavePreparation preparation{
+        .stamp_agent = true,
+        .reserve_comment =
+            [&](const auto& card, const auto& occupied) {
+              std::lock_guard lock(mutex);
+              return host::ReserveOrdinal(
+                  db, "annotation:" + project + ":comment:" + card, "",
+                  occupied);
+            },
+        .finish =
+            [&](auto& prepared) {
+              policy.CheckSave(prepared, latest, patches);
+              host::RestrictAgentRequest("project_save", prepared);
+            }};
+    auto submitted = host::SubmitProjectSave(
+        std::move(original), latest, patches,
+        [&](const auto& method, const auto& arguments) {
+          return host::OperationReply{
+              RawProjectCall(project, method, json::Encode(arguments), stop),
+              {}};
         },
-        patches);
-    prepared.arguments = json::Object(host::PrepareLayoutSave(
-        json::Encode(prepared.arguments),
-        [&](const std::string& path) -> std::optional<host::LayoutFile> {
-          const auto file = latest.files.find(path);
-          if (file == latest.files.end()) return std::nullopt;
-          return host::LayoutFile{file->second,
-                                  crypto::sha256_hex(file->second)};
-        },
-        patches));
-    policy.CheckSave(prepared.arguments, latest, patches);
-    host::RestrictAgentRequest("project_save", prepared.arguments);
-    auto result = json::Object(RawProjectCall(
-        project, "project_save", json::Encode(prepared.arguments), stop));
+        preparation);
+    auto result = json::Object(submitted.reply.json);
     if (json::Text(result, "reply") == "SaveResult") {
       auto value = json::Object(json::Get(result, "value"));
-      value["comments"] = prepared.comments;
+      value["comments"] = submitted.comments;
       result["value"] = json::Encode(value);
     } else if (json::Text(json::Object(json::Get(result, "value", "{}")),
                           "kind") == "revision_conflict") {
@@ -1250,7 +1243,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .run();
   }
   // Keep the original scoped request across permission approval. Expansion and
-  // binding checks are identical on the initial send, resend and CAS retries.
+  // binding checks are identical on the initial send and after approval.
   auto project_call = [&]() {
     if (!boundary || !boundary->scoped() || call.name != "project_save")
       return ProjectCall(

@@ -1527,8 +1527,8 @@ void Service::save(RequestIn& req) {
     complete_save(req, op_id, "save", digest, *base, staged, response,
                   check_cancelled);
   } catch (const Failed& f) {
-    // A host operation re-reads and re-applies after a failed CAS. No write
-    // happened, so keep this same op id available for its next save attempt.
+    // The caller can explicitly retry a host operation after a revision
+    // conflict. No write happened, so the operation ID remains available.
     if (r->save_intent() && f.failure.kind == FailureKind::revision_conflict)
       finish_op(op_id, failure_receipt(op_id, f.failure));
     else

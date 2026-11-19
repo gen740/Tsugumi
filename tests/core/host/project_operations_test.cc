@@ -35,7 +35,7 @@ TEST(ProjectOperations, CoreRejectsInvalidOperationIdentity) {
       Failure);
   EXPECT_EQ(calls, 1);
 }
-TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
+TEST(ProjectOperations, RevisionConflictReturnsBeforeAnotherSave) {
   H::ProjectTextEditT edit;
   edit.file_path = "definitions/a/main.py";
   edit.old_string = "old";
@@ -102,6 +102,12 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
         {}};
   };
   ProjectOperations operations;
+  const auto rejected = operations.Execute(request, {"ui", {}, {}, {}}, call);
+  const auto reply = json::Object(rejected.json);
+  EXPECT_EQ(json::Text(reply, "reply"), "Failure");
+  EXPECT_EQ(json::Text(json::Object(reply.at("value")), "kind"),
+            "revision_conflict");
+  ASSERT_EQ(saves, 1);
   const auto result = operations.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(result.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 2);

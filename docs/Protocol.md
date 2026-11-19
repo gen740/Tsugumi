@@ -92,7 +92,7 @@ No fields.
 | `approved_permissions` | `[string]` |  | Permission widenings explicitly approved by the caller, as named by approval_required. |
 | `check_permissions` | `bool` |  | Compare the proposed permissions with the accepted document and reject every widening absent from approved_permissions, regardless of origin. |
 | `transfers` | `[SourceTransfer]` |  | Local file references; source bytes never travel through the RPC frame. |
-| `save_intent` | `string` |  | Opaque host intent for the existing op_id digest, before concrete expansion. A revision-conflicted attempt with an intent is retryable under the same id. |
+| `save_intent` | `string` |  | Opaque host intent for the existing op_id digest, before concrete expansion. A caller can explicitly retry a revision conflict with the same intent and id. |
 | `operation_data` | `[ubyte]` |  | Carried unchanged in SaveResult, including a replay of this operation id. The project core does not interpret host editing metadata. |
 
 ### ProjectReload

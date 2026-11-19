@@ -852,6 +852,32 @@ auto Preserve(json::Members plan, const SaveBase& base) -> json::Members {
 }
 }  // namespace
 
+auto SubmitProjectSave(json::Members plan, const SaveBase& base,
+                       const SourcePatches& patches, const OperationCall& call,
+                       const SavePreparation& preparation) -> SubmittedSave {
+  std::string comments;
+  if (preparation.stamp_agent) {
+    auto stamped = agent::PrepareAgentSave(
+        std::move(plan), base,
+        [&](const auto& method, const auto& args) {
+          return Value(call(method, args));
+        },
+        preparation.reserve_comment, patches);
+    plan = std::move(stamped.arguments);
+    comments = std::move(stamped.comments);
+  }
+  plan = json::Object(PrepareLayoutSave(
+      json::Encode(plan),
+      [&](const std::string& path) -> std::optional<LayoutFile> {
+        const auto file = base.files.find(path);
+        if (file == base.files.end()) return std::nullopt;
+        return LayoutFile{file->second, crypto::sha256_hex(file->second)};
+      },
+      patches));
+  preparation.finish(plan);
+  return {call("project_save", plan), std::move(comments)};
+}
+
 auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                 const OperationContext& context,
                                 const OperationCall& call) -> OperationReply {
@@ -880,126 +906,108 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                  {"base_rev", "0"},
                                  {"origin", json::Quote(context.origin)},
                                  {"changes", "[]"}});
-  for (int attempt = 0; attempt < 8; ++attempt) {
-    try {
-      const auto snapshot = Value(call("project_inspect", {}));
-      const auto base = CaptureSaveBase(snapshot);
-      auto read = [&](const std::string& path) -> std::optional<std::string> {
-        std::string hash;
-        for (const auto& raw :
-             json::Array(json::Get(snapshot, "sources", "[]"))) {
-          const auto source = json::Object(raw);
-          if (json::Text(source, "path") == path)
-            hash = json::Text(source, "hash");
-        }
-        if (hash.empty()) return std::nullopt;
-        std::string bytes;
-        uint64_t offset = 0;
-        for (;;) {
-          const auto page = Value(
-              call("project_file_read", {{"path", json::Quote(path)},
-                                         {"at_rev", json::Get(snapshot, "rev")},
-                                         {"if_hash", json::Quote(hash)},
-                                         {"offset", std::to_string(offset)},
-                                         {"limit_bytes", "1048576"}}));
-          const auto chunk = Bytes(json::Get(page, "bytes"));
-          bytes += chunk;
-          if (json::Bool(json::Get(page, "eof"))) break;
-          const auto next = json::Get(page, "next_offset");
-          offset = json::UInt(json::String(next, next));
-        }
-        return bytes;
-      };
-      auto plan = Prepare(
-          operation.body, base, read,
-          [&](const auto& path) {
-            if (context.authorize_file) context.authorize_file(path, base);
-          },
-          context.demo);
-      if (json::Array(plan.at("changes")).empty())
-        plan["changes"] = json::Encode(std::vector<std::string>{
-            Change("SetProject",
-                   {{"json", json::Quote(base.files.at("tsugumi.json"))}})});
-      const auto authored = Authored(plan, base);
-      plan["op_id"] = json::Quote(operation.op_id);
-      plan["origin"] = json::Quote(context.origin);
-      if (context.origin == "agent" && operation.body.AsProjectEdits())
-        plan =
-            agent::PrepareAgentSave(plan, base,
-                                    [&](const auto& method, const auto& args) {
-                                      return Value(call(method, args));
-                                    })
-                .arguments;
-      auto layout_read =
-          [&](const std::string& path) -> std::optional<LayoutFile> {
-        const auto bytes = base.files.find(path);
-        if (bytes == base.files.end()) return std::nullopt;
-        return LayoutFile{bytes->second, crypto::sha256_hex(bytes->second)};
-      };
-      plan = Preserve(
-          json::Object(PrepareLayoutSave(json::Encode(plan), layout_read)),
-          authored);
-      if (context.authorize) context.authorize(plan, base);
-      plan["check_permissions"] = context.origin == "agent" ? "true" : "false";
-      plan["save_intent"] = json::Quote(intent);
-      if (context.origin == "ui") {
-        // Opaque to the core: carried in its existing save reply and replay.
-        const auto inverse = ReverseProjectChanges(plan, base, read);
-        flatbuffers::FlatBufferBuilder undo_builder;
-        undo_builder.Finish(H::ProjectEdits::Pack(undo_builder, &inverse));
-        plan["operation_data"] = json::Encode(json::Members{
-            {"base64",
-             json::Quote(crypto::base64(std::string(
-                 reinterpret_cast<const char*>(undo_builder.GetBufferPointer()),
-                 undo_builder.GetSize())))}});
+  try {
+    const auto snapshot = Value(call("project_inspect", {}));
+    const auto base = CaptureSaveBase(snapshot);
+    auto read = [&](const std::string& path) -> std::optional<std::string> {
+      std::string hash;
+      for (const auto& raw :
+           json::Array(json::Get(snapshot, "sources", "[]"))) {
+        const auto source = json::Object(raw);
+        if (json::Text(source, "path") == path)
+          hash = json::Text(source, "hash");
       }
-      const auto result = call("project_save", plan);
-      const auto envelope = json::Object(result.json);
-      if (operation.body.AsProjectReplaceDocuments()) return result;
-      if (json::Text(envelope, "reply") != "Failure" ||
-          json::Text(json::Object(json::Get(envelope, "value", "{}")),
-                     "kind") != "revision_conflict")
-        return result;
-    } catch (const Failure& failure) {
-      if (context.origin == "ui" && (failure.code == "value_conflict" ||
-                                     failure.code == "source_changed")) {
-        // Host guards fail before a core save. UIs receive the same typed
-        // operation outcome as a conflict returned by core.
-        Tsugumi::Data::FailureT value;
-        value.kind = failure.code == "value_conflict"
-                         ? Tsugumi::Data::FailureKind::value_conflict
-                         : Tsugumi::Data::FailureKind::source_changed;
-        value.diagnostic = failure.what();
-        Tsugumi::RPC::ReplyT reply;
-        reply.value.Set(std::move(value));
-        Tsugumi::RPC::MessageT message;
-        message.payload.Set(std::move(reply));
-        flatbuffers::FlatBufferBuilder builder;
-        Tsugumi::RPC::FinishMessageBuffer(
-            builder, Tsugumi::RPC::Message::Pack(builder, &message));
-        return {
-            json::Encode(json::Members{
-                {"reply", json::Quote("Failure")},
-                {"value", json::Encode(json::Members{
-                              {"kind", json::Quote(failure.code)},
-                              {"diagnostic", json::Quote(failure.what())}})}}),
-            std::string(
-                reinterpret_cast<const char*>(builder.GetBufferPointer()),
-                builder.GetSize())};
+      if (hash.empty()) return std::nullopt;
+      std::string bytes;
+      uint64_t offset = 0;
+      for (;;) {
+        const auto page = Value(
+            call("project_file_read", {{"path", json::Quote(path)},
+                                       {"at_rev", json::Get(snapshot, "rev")},
+                                       {"if_hash", json::Quote(hash)},
+                                       {"offset", std::to_string(offset)},
+                                       {"limit_bytes", "1048576"}}));
+        const auto chunk = Bytes(json::Get(page, "bytes"));
+        bytes += chunk;
+        if (json::Bool(json::Get(page, "eof"))) break;
+        const auto next = json::Get(page, "next_offset");
+        offset = json::UInt(json::String(next, next));
       }
-      if (operation.body.AsProjectReplaceDocuments() ||
-          failure.code != "revision_conflict")
-        throw;
-    } catch (const agent::Cancelled&) {
-      throw;
-    } catch (const ProjectFailure& failure) {
-      throw Failure(failure.code, failure.what());
-    } catch (const LayoutFailure& failure) {
-      throw Failure("invalid_document", failure.what());
-    } catch (const std::exception& failure) {
-      throw Failure("validation_failed", failure.what());
+      return bytes;
+    };
+    auto plan = Prepare(
+        operation.body, base, read,
+        [&](const auto& path) {
+          if (context.authorize_file) context.authorize_file(path, base);
+        },
+        context.demo);
+    if (json::Array(plan.at("changes")).empty())
+      plan["changes"] = json::Encode(std::vector<std::string>{
+          Change("SetProject",
+                 {{"json", json::Quote(base.files.at("tsugumi.json"))}})});
+    const auto authored = Authored(plan, base);
+    plan["op_id"] = json::Quote(operation.op_id);
+    plan["origin"] = json::Quote(context.origin);
+    const SourcePatches patches;
+    const SavePreparation preparation{
+        .stamp_agent =
+            context.origin == "agent" && operation.body.AsProjectEdits(),
+        .reserve_comment = {},
+        .finish = [&](auto& prepared) {
+          prepared = Preserve(std::move(prepared), authored);
+          if (context.authorize) context.authorize(prepared, base);
+          prepared["check_permissions"] =
+              context.origin == "agent" ? "true" : "false";
+          prepared["save_intent"] = json::Quote(intent);
+          if (context.origin == "ui") {
+            // Opaque to the core, carried in its save reply and replay.
+            const auto inverse = ReverseProjectChanges(prepared, base, read);
+            flatbuffers::FlatBufferBuilder undo;
+            undo.Finish(H::ProjectEdits::Pack(undo, &inverse));
+            prepared["operation_data"] = json::Encode(json::Members{
+                {"base64",
+                 json::Quote(crypto::base64(std::string(
+                     reinterpret_cast<const char*>(undo.GetBufferPointer()),
+                     undo.GetSize())))}});
+          }
+        }};
+    return SubmitProjectSave(std::move(plan), base, patches, call, preparation)
+        .reply;
+  } catch (const Failure& failure) {
+    if (context.origin == "ui" && (failure.code == "value_conflict" ||
+                                   failure.code == "source_changed")) {
+      // Host guards fail before a core save. UIs receive the same typed
+      // operation outcome as a conflict returned by core.
+      Tsugumi::Data::FailureT value;
+      value.kind = failure.code == "value_conflict"
+                       ? Tsugumi::Data::FailureKind::value_conflict
+                       : Tsugumi::Data::FailureKind::source_changed;
+      value.diagnostic = failure.what();
+      Tsugumi::RPC::ReplyT reply;
+      reply.value.Set(std::move(value));
+      Tsugumi::RPC::MessageT message;
+      message.payload.Set(std::move(reply));
+      flatbuffers::FlatBufferBuilder builder;
+      Tsugumi::RPC::FinishMessageBuffer(
+          builder, Tsugumi::RPC::Message::Pack(builder, &message));
+      return {
+          json::Encode(json::Members{
+              {"reply", json::Quote("Failure")},
+              {"value", json::Encode(json::Members{
+                            {"kind", json::Quote(failure.code)},
+                            {"diagnostic", json::Quote(failure.what())}})}}),
+          std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                      builder.GetSize())};
     }
+    throw;
+  } catch (const agent::Cancelled&) {
+    throw;
+  } catch (const ProjectFailure& failure) {
+    throw Failure(failure.code, failure.what());
+  } catch (const LayoutFailure& failure) {
+    throw Failure("invalid_document", failure.what());
+  } catch (const std::exception& failure) {
+    throw Failure("validation_failed", failure.what());
   }
-  throw Failure("busy", "Project kept changing; retry the same operation id");
 }
 }  // namespace tsugumi::host
