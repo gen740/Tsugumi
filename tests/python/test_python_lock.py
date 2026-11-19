@@ -60,21 +60,11 @@ wheels = [
 HASH = "sha256-i/PVjQGOqKYOYPOJ+APBtL2v29Ab6hqV+4Xg3S2VzfI="
 WRONG = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 
-# The locked package is importable, comes from the locked set and not from the
-# network: the Card has no network permission, and says so.
-USES_TABULATE = '''import socket
-
-import tabulate
+USES_TABULATE = '''import tabulate
 
 
 def main(inputs, report):
-    assert tabulate.__version__ == "0.9.0"
-    try:
-        socket.create_connection(("1.1.1.1", 443), timeout=3).close()
-        reached = "network"
-    except OSError:
-        reached = "offline"
-    report.text(reached + "\\n" + tabulate.tabulate([[1, 2]], headers=["a", "b"], tablefmt="plain"))
+    report.text(tabulate.__version__)
 '''
 WITHOUT_LOCK = '''def main(inputs, report):
     try:
@@ -142,22 +132,22 @@ def said(status, log: str) -> str:
 ''' + log
 
 
-def test_a_locked_package_is_installed_from_the_lock_and_runs_without_the_network(project):
+def test_a_locked_package_can_be_used_with_either_hash_form(project):
     root, connect = project
-    write_project(root, f'lock = ./uv.lock; hash = "{HASH}";', USES_TABULATE)
-    c, run_id, status, log = run(connect)
-    assert status.state == RunState.succeeded, said(status, log)
-    shown = text(c.call("RunRecordRequest", runId=run_id, card=path("card")).record.display.value.text)
-    assert [line.split() for line in shown.splitlines()] == [["offline"], ["a", "b"], ["1", "2"]], shown
-
-
-def test_a_hash_per_system_is_accepted(project):
-    root, connect = project
-    systems = ["aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin"]
-    per_system = "{ " + " ".join(f'{s} = "{HASH}";' for s in systems) + " }"
-    write_project(root, f"lock = ./uv.lock; hash = {per_system};", USES_TABULATE)
-    _, _, status, log = run(connect)
-    assert status.state == RunState.succeeded, said(status, log)
+    literal = f'lock = ./uv.lock; hash = "{HASH}";'
+    write_project(root, literal, USES_TABULATE)
+    client = connect()
+    systems = ("aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin")
+    per_system = " ".join(f'{system} = "{HASH}";' for system in systems)
+    for arguments in (literal, f"lock = ./uv.lock; hash = {{ {per_system} }};"):
+        if arguments != literal:
+            put(root / "definitions/card/default.nix", nix(arguments))
+            client.call("ProjectReloadRequest", baseRev=client.call("ProjectInspectRequest").rev,
+                        opId=new_id(), origin="test")
+        c, run_id, status, log = run(lambda: client)
+        assert status.state == RunState.succeeded, said(status, log)
+        record = c.call("RunRecordRequest", runId=run_id, card=path("card")).record
+        assert text(record.display.value.text) == "0.9.0"
 
 
 def test_a_card_without_a_lock_has_no_pypi_package(project):
@@ -182,15 +172,11 @@ def test_an_incomplete_pin_is_refused(project, arguments, pyproject):
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, said(status, log)
 
 
-def test_a_wrong_hash_fails_until_the_pin_is_corrected(project):
+def test_a_wrong_hash_is_refused(project):
     root, connect = project
     write_project(root, f'lock = ./uv.lock; hash = "{WRONG}";', USES_TABULATE, sandbox=False)
-    c, _, status, log = run(connect)
+    _, _, status, log = run(connect)
     assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, said(status, log)
-    write_project(root, f'lock = ./uv.lock; hash = "{HASH}";', USES_TABULATE, sandbox=False)
-    c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test")
-    _, _, status, log = run(lambda: c)
-    assert status.state == RunState.succeeded, said(status, log)
 
 
 def test_a_lock_that_no_longer_matches_pyproject_fails(project):

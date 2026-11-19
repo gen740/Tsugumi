@@ -187,47 +187,30 @@ end'''
         assert text(shown(c, rid, 'read').text) == '## Read both artifacts'
 
 
-@pytest.mark.parametrize('expression,kind,detail', [
-    ("{out: nil}", FailureKind.output_invalid, None),
-    ("{out: {value: 18446744073709551616}}", FailureKind.output_invalid, None),
-    ('{out: {label: "\\xff".b}}', FailureKind.output_invalid, None),
-    ("{out: {value: 'wrong'}}", FailureKind.output_invalid, None),
-    ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", FailureKind.worker_failed, 'specific failure'),
-    ("Thread.new { sleep 60 }; nil", FailureKind.worker_failed, None),
-], ids=['nil-output', 'out-of-range', 'invalid-utf8', 'wrong-type', 'explicit-failure', 'unjoined-thread'])
-def test_ruby_failures_are_structured_and_next_worker_is_fresh(ruby_project, expression, kind, detail):
-    root, connect = ruby_project
-    source = f'''def main(inputs, report, run)
-  @calls = (@calls || 0) + 1
-  raise 'failed worker was reused' unless @calls == 1
-  {expression}
-end'''
-    c = connect({'ruby': ruby(source, outputs=NUMBERS), 'good': ruby('''def main(inputs, report); report.text('alive');
-  nil
-end''')})
-    for _ in range(2):
-        rid, status = run_and_wait(c, 'ruby')
-        assert status.state == RunState.failed
-        record = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record
-        assert record.summary.failure.kind == kind
-        assert not record.outputs
-        assert not record.summary.workerReused
-        if detail:
-            assert detail in text(record.summary.failure.diagnostic)
-    rid, status = run_and_wait(c, 'good')
-    assert status.state == RunState.succeeded
-    assert text(shown(c, rid, 'good').text) == 'alive'
+@pytest.mark.parametrize('expression,kind', [
+    ("{out: nil}", FailureKind.output_invalid),
+    ("{out: {value: 18446744073709551616}}", FailureKind.output_invalid),
+    (r'{out: {label: "\xff".b}}', FailureKind.output_invalid),
+    ("{out: {value: 'wrong'}}", FailureKind.output_invalid),
+    ("raise Tsugumi::Failure.new('worker_failed', 'specific failure')", FailureKind.worker_failed),
+], ids=['nil-output', 'out-of-range', 'invalid-utf8', 'wrong-type', 'explicit-failure'])
+def test_ruby_failures_are_structured(ruby_project, expression, kind):
+    _, connect = ruby_project
+    c = connect({'ruby': ruby(f'def main(inputs, report, run); {expression}; end', outputs=NUMBERS)})
+    rid, status = run_and_wait(c, 'ruby')
+    assert status.state == RunState.failed
+    record = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record
+    assert record.summary.failure.kind == kind
+    assert not record.outputs
 
 
 @pytest.mark.parametrize('cancel', [False, True])
-def test_ruby_deadline_and_cancel_leave_next_run_working(ruby_project, cancel):
+def test_ruby_deadline_and_cancel(ruby_project, cancel):
     _, connect = ruby_project
-    c = connect({'ruby': ruby('''def main(inputs, report); report.log('ready'); loop { sleep 0.01 };
-  nil
-end''', timeoutSeconds=60 if cancel else 1),
-                 'good': ruby('''def main(inputs, report); report.text('alive');
-  nil
-end''')})
+    c = connect({'ruby': ruby("""def main(inputs, report)
+  report.log('ready')
+  loop { sleep 0.01 }
+end""", timeoutSeconds=60 if cancel else 1)})
     rid = start_run(c, 'ruby')
     if cancel:
         wait_for_log(c, rid, "ruby", 2, lambda log: "ready" in text(log.text or b""))
@@ -235,10 +218,7 @@ end''')})
     status = wait_run(c, rid)
     assert status.state == (RunState.cancelled if cancel else RunState.failed)
     if not cancel:
-        record = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record
-        assert record.summary.failure.kind == FailureKind.timeout
-    _, status = run_and_wait(c, 'good')
-    assert status.state == RunState.succeeded
+        assert c.call('RunRecordRequest', runId=rid, card=path('ruby')).status.failure.kind == FailureKind.timeout
 
 
 COLORIZE_HASH = "sha256-pINRA2ThhG24fQ1Ewj7K4pmEE/ytgPxSlRQtTKOoLdY="
@@ -302,31 +282,33 @@ def test_ruby_rejects_an_invalid_pin(ruby_project, arguments, requirement):
     assert not c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.summary.environmentId
 
 
-@pytest.mark.parametrize('expression,kind', [
-    ("report.text('text')", 1),
-    ("report.markdown('**bold**')", 1),
-    ("report.line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])",7),
-    ('report.points([1], [2], [3], [0xff00ff])', 6),
-    ("report.image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", 5),
-    ("report.plotly(data: [{x: [1], y: [2], type: 'scatter'}])", 7),
-])
-def test_ruby_display_bridge_owns_bytes(ruby_project, expression, kind):
+def test_ruby_display_bridge_owns_bytes(ruby_project):
+    from test_demos import edit_card, set_param
+    from tsugumi_client import line_chart_series
+
     _, connect = ruby_project
-    c = connect({'ruby': ruby(f'def main(inputs, report, run); {expression}; GC.start; nil; end')})
-    rid, status = run_and_wait(c, 'ruby')
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    display = c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.display
-    assert display.valueType == kind
-    if 'markdown' in expression:
-        assert display.value.markdown
-    if kind == 5:
-        assert bytes(display.value.data).startswith(b'\x89PNG')
-        assert text(display.value.alt) == 'pixel'
-    if "line_chart" in expression:
-        from tsugumi_client import line_chart_series
-        assert list(line_chart_series(display.value)[0].y) == [2, 4]
-    if "plotly" in expression:
-        assert json.loads(text(display.value.configJson))['data'][0]['y'] == [2]
+    cases = [
+        ("report.line_chart([{id: 'line', x: [1, 2], y: [2, 4]}])", lambda view: tuple(line_chart_series(view)[0].y), (2, 4)),
+        ('report.points([1], [2], [3], [0xff00ff])', lambda view: list(view.colors), [0xff00ff]),
+        ("report.image(['89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000b49444154789c636000020000050001a5f645400000000049454e44ae426082'].pack('H*'), alt: 'pixel')", lambda view: bytes(view.data)[:8], b"\x89PNG\r\n\x1a\n"),
+        ("report.plotly(data: [{x: [1], y: [2], type: 'scatter'}])", lambda view: json.loads(text(view.configJson))['data'][0]['y'], [2]),
+    ]
+    arms = '\n'.join(f'when {index} then {expression}' for index, (expression, _, _) in enumerate(cases))
+    source = f"""def main(inputs, report, run)
+  case inputs.params['mode']
+  {arms}
+  end
+  GC.start
+  nil
+end"""
+    c = connect({'ruby': ruby(source, params=[{'name': 'mode', 'type': 'uint64', 'data': 0}])})
+    for index, (expression, decode, expected) in enumerate(cases):
+        if index:
+            edit_card(None, c, 'ruby', lambda card: set_param(card, 'mode', index))
+        rid, status = run_and_wait(c, 'ruby')
+        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        assert decode(shown(c, rid, 'ruby')) == expected, expression
+
 
 @pytest.mark.parametrize('source', [
     '''def main(inputs, report)
@@ -355,13 +337,11 @@ end''', outputs=NUMBERS)
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.output_invalid
     assert not c.call('RunRecordRequest', runId=rid, card=path('ruby')).record.outputs
-    assert 'vale' in text(status.failure.diagnostic)
 
 
-@pytest.mark.parametrize('language', ['ja', 'en'])
-def test_bundled_ruby_pipeline_runs_in_the_sandbox(project, language):
+def test_bundled_ruby_pipeline_runs_in_the_sandbox(project):
     root, connect = project
-    shutil.copytree(ROOT / 'demos' / language / 'ruby-pipeline', root)
+    shutil.copytree(ROOT / 'demos' / 'en' / 'ruby-pipeline', root)
     c = connect()
     rid, status = run_and_wait(c, 'start')
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)

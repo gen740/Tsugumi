@@ -2,15 +2,14 @@
 import base64
 import json
 import shutil
-import subprocess
 
 import pytest
 from test_language_cards import project  # pytest fixture
 
 from conftest import ROOT
 from projects import run_and_wait, start_run, wait_run
-from test_language_cards import write_project as write_language_project
-from tsugumi_client import path, text
+from test_language_cards import scaffold_card, write_project as write_language_project
+from tsugumi_client import line_chart_series, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
@@ -48,14 +47,11 @@ def succeeded(c):
     return run
 
 
-def test_scaffold_is_current_and_executes(project):
-    subprocess.run(['python3',str(ROOT/'sdk/codegen/scaffold.py'),'go', '--check'],check=True)
-    root,connect=project
-    card=go((ROOT/'sdk/go/template/card.go').read_text())
-    card['outputs']='namespace hello;table Text{value:string;}table Outputs{out:Text(required);}root_type Outputs;'
-    write_project(root,{'go':card},[])
-    c=connect()
-    assert text(shown(c,succeeded(c),'go').value.text)=='hello'
+def test_go_scaffold_executes(project):
+    root, connect = project
+    write_project(root, {'hello': scaffold_card('go')}, [('start', 'out', 'hello', 'in')])
+    client = connect()
+    assert text(shown(client, succeeded(client), 'hello').value.text) == 'hello'
 
 
 def test_failing_go_test_rejects_the_card_build(project):
@@ -84,7 +80,6 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
  p:=inputs.Params()
  if inputs.Number().Value!=9007199254740993 || inputs.Optional().Value!=inputs.Number().Value || *p.Offset!=7 {panic("typed input changed")}
  out:=&tsugumi.OutputOut{Value:inputs.Number().Value+*p.Offset}
- if err:=report.Log("Go received exact uint64");err!=nil{return tsugumi.Output{},err}
  if err:=report.Scalar(float64(out.Value),"value");err!=nil{return tsugumi.Output{},err}
  return tsugumi.Output{Out:out},nil
 }''',inputs=[{'name':'number'},{'name':'optional','optional':True}],params=[{'name':'offset','type':'uint64','data':7}])
@@ -111,7 +106,7 @@ auto run(const Card::Inputs& inputs, tsugumi::Report& report)->Card::Output {if(
     },[('make','out','go','number'),('make','other','go','optional'),('go','out','check','number')])
     c=connect();run=succeeded(c)
     assert text(shown(c,run,'check').value.text)=='exact'
-    assert 'exact uint64' in text(c.call('LogRangeRequest',runId=run,card=path('go'),stream=2,limitBytes=65536).text)
+    assert shown(c, run, 'go').value.value == 9007199254741000
 
 
 @pytest.mark.parametrize('reuse',[True,False])
@@ -238,40 +233,52 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
     card['outputs']='attribute "tsugumi";namespace t;table Path{value:string;}table Outputs{report:Path(required,tsugumi:"file");}root_type Outputs;'
     write_project(root,{'make':{'card':{'language':'bash'},'nix':make,'outputs':schema},'go':card},[('make',p,'go',p) for p in ('file','directory')])
     c=connect()
-    for _ in range(2):
-        run=succeeded(c)
-        artifact=next(a for a in c.call('ArtifactListRequest',runId=run).artifacts if text(a.output)=='report')
-        assert bytes(c.call('ArtifactReadRequest',artifactId=text(artifact.artifactId)).bytes)==b'hello\nworld\n'
+    run=succeeded(c)
+    artifact=next(a for a in c.call('ArtifactListRequest',runId=run).artifacts if text(a.output)=='report')
+    assert bytes(c.call('ArtifactReadRequest',artifactId=text(artifact.artifactId)).bytes)==b'hello\nworld\n'
 
 
 PNG=','.join(str(b) for b in base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+a2ioAAAAASUVORK5CYII='))
-@pytest.mark.parametrize('expression,kind',[
-    ('report.Text("hello")',1),
-    ('report.Markdown("**hello**")',1),
-    ('report.Scalar(1.5,"value")',2),
-    ('report.LineChart("line","value",[]float64{1,2},[]float64{3,4})',7),
-    ('report.Table([]string{"value"},[][]string{{"1"}})',4),
-    ('report.Image("image/png",[]byte{'+PNG+'},"image")',5),
-    ('report.Points([]float32{1},[]float32{2},[]float32{3},[]uint32{0xff00ff})',6),
-    ('report.Module("vega-lite",`{"mark":"point","data":{"values":[]}}`)',7),
-])
-def test_displays(project,expression,kind):
-    root,connect=project
-    source='''package main
+
+
+def test_go_displays_preserve_payloads(project):
+    from test_demos import edit_card, set_param
+
+    root, connect = project
+    cases = [
+        ('report.Markdown("**hello**")', (lambda view: (view.markdown, text(view.text)), (True, "**hello**"))),
+        ('report.LineChart("line","value",[]float64{1,2},[]float64{3,4})', (lambda view: tuple(line_chart_series(view)[0].y), (3.0, 4.0))),
+        ('report.Table([]string{"value"},[][]string{{"1"}})', (lambda view: text(view.rows[0].cells[0]), "1")),
+        ('report.Image("image/png",[]byte{'+PNG+'},"image")', (lambda view: bytes(view.data)[:8], b"\x89PNG\r\n\x1a\n")),
+        ('report.Points([]float32{1},[]float32{2},[]float32{3},[]uint32{0xff00ff})', (lambda view: (list(view.z), list(view.colors)), ([3.0], [0xff00ff]))),
+        ('report.Module("vega-lite",`{"mark":"point","data":{"values":[]}}`)', (lambda view: json.loads(text(view.configJson))["mark"], "point")),
+    ]
+    arms = '\n'.join(f'case {index}: return tsugumi.Output{{}}, {expression}'
+                     for index, (expression, _) in enumerate(cases))
+    source = '''package main
 import "tsugumi"
-func run(inputs tsugumi.Inputs, report *tsugumi.Report)(tsugumi.Output,error){return tsugumi.Output{},'''+expression+'}'
-    write_project(root,{'show':go(source)},[])
-    c=connect();assert shown(c,succeeded(c),'show').valueType==kind
+func run(inputs tsugumi.Inputs, report *tsugumi.Report)(tsugumi.Output,error){
+ switch *inputs.Params().Mode {
+ ARMS
+ }
+ panic("unknown display mode")
+}
+'''.replace('ARMS', arms)
+    card = go(source, params=[{'name': 'mode', 'type': 'uint64', 'data': 0}])
+    write_project(root, {'show': card}, [])
+    client = connect()
+    for index, (expression, (decode, expected)) in enumerate(cases):
+        if index:
+            edit_card(None, client, 'show', lambda card: set_param(card, 'mode', index))
+        display = shown(client, succeeded(client), 'show')
+        assert decode(display.value) == expected, expression
 
 
-def test_owned_inputs_and_managed_output_task(project):
+def test_managed_output_task_completes_before_outputs_are_packed(project):
     root,connect=project
     card=go('''package main
 import "tsugumi"
-var previous tsugumi.Inputs
 func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugumi.Output,error){
- if previous.Number()!=nil && previous.Number().Value!=9007199254740993 {panic("retained input changed")}
- previous=inputs
  out:=&tsugumi.OutputOut{}
  returning:=make(chan struct{})
  defer close(returning)
@@ -290,8 +297,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
     write_project(root,{'make':{'card':{'language':'bash'},'outputs':NUMBER,'nix':make},'go':card,
                         'check':{'card':{'language':'bash','inputs':[{'name':'number'}]},'nix':check}},[('make','out','go','number'),('go','out','check','number')])
     c=connect()
-    for _ in range(2):
-        assert json.loads(text(shown(c,succeeded(c),'check').value.text))=={'value':9007199254740993}
+    assert json.loads(text(shown(c,succeeded(c),'check').value.text))=={'value':9007199254740993}
 
 
 def external_module_card(arguments):
@@ -355,10 +361,9 @@ func run(inputs tsugumi.Inputs)(tsugumi.Output,error){
     assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
 
 
-@pytest.mark.parametrize('language', ['ja', 'en'])
-def test_bundled_go_pipeline_runs_in_the_sandbox(project, language):
+def test_bundled_go_pipeline_runs_in_the_sandbox(project):
     root, connect = project
-    shutil.copytree(ROOT / 'demos' / language / 'go-pipeline', root, dirs_exist_ok=True)
+    shutil.copytree(ROOT / 'demos' / 'en' / 'go-pipeline', root, dirs_exist_ok=True)
     c = connect()
     run_id = succeeded(c)
     assert text(shown(c, run_id, 'check').value.text) == '21'

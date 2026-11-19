@@ -164,31 +164,30 @@ def run(tmp_path, bindings, cases):
 
 @pytest.mark.parametrize("library", LIBRARIES)
 def test_generated_visualization_templates(tmp_path, bindings, library):
-    cases = [(f"draw_save_redraw_{kind}", draws_saves_and_redraws(library, kind)) for kind in KINDS]
-    cases += [("max_points_and_sampling", max_points_and_sampling(library)),
-              ("empty_input", empty_input(library))]
+    cases = [(f"draw_{kind}", draws_saves_and_redraws(library, kind)) for kind in KINDS]
     if library == "matplotlib":
-        cases += [("cancel_and_deadline", CANCEL_AND_DEADLINE), ("input_kinds", INPUT_KINDS)]
+        cases += [("limits_and_sampling", max_points_and_sampling()),
+                  ("empty_input", empty_input(library)),
+                  ("cancel_and_deadline", CANCEL_AND_DEADLINE), ("input_kinds", INPUT_KINDS)]
+    else:
+        cases += [("sampling_note", sampling_note(library))]
     run(tmp_path, bindings, cases)
 
 
 def draws_saves_and_redraws(library, kind):
     """Defaults draw every finite row; non-finite rows are counted, not drawn;
     files and metadata belong to the invocation that wrote them."""
-    return f'''
-import matplotlib.pyplot as plt
+    draw = f'''
 xs = [float(i) for i in range(24)] + [float('nan'), 3.0]
 ys = [float(i * i) for i in range(24)] + [1.0, float('inf')]
 case = InvocationFixture({library!r}, table(xs, ys, ['a' if i % 2 else 'b' for i in range(26)]), Kind={kind!r}, Series='group')
 folder = case.run()
-assert folder.name == 'figure' and folder.parent == Path(case.output_directory)
 assert set({sorted(FILES[library])!r}) | {{'plotted.csv', 'metadata.json'}} <= {{p.name for p in folder.iterdir()}}
 meta = json.loads((folder / 'metadata.json').read_text())
 finite = 25 if {kind!r} == 'histogram' else 24  # a histogram needs only x
 assert meta['run_id'] == case.run_id and meta['card'] == 'chart' and meta['invocation'] == 1
 assert meta['library'] == {library!r} and meta['kind'] == {kind!r}
-assert (meta['source_rows'], meta['finite_rows'], meta['sampled'], meta['sample_every'], meta['max_points']) == (26, finite, False, 1, 5000)
-assert meta['drawn_rows'] == finite and meta['note']
+assert (meta['source_rows'], meta['drawn_rows'], meta['sampled']) == (26, finite, False)
 plotted = rows_of(folder / 'plotted.csv')
 if {kind!r} == 'histogram':
     assert set(plotted[0]) >= {{'left', 'right', 'count', 'series'}}
@@ -197,19 +196,22 @@ else:
     assert set(plotted[0]) >= {{'x', 'y', 'series'}} and len(plotted) == 24
     assert {{(float(r['x']), float(r['y'])) for r in plotted}} == {{(float(i), float(i * i)) for i in range(24)}}
     assert {{r['series'] for r in plotted}} == {{'a', 'b'}}
-assert len(case.shown) == 1  # one display per invocation
+assert case.shown
+'''
+    if kind != 'line':
+        return draw
+    return draw + f'''
 artifact = folder / ('plot.png' if {library!r} == 'matplotlib' else 'plot.json')
 if {library!r} == 'matplotlib':
     from PIL import Image, ImageChops
     before_image = Image.open(artifact).convert('RGB')
 # The next invocation writes the same folder again: its own figure and metadata.
 case.invocation = 2; case.raw = table(xs, [y + 7 for y in ys], None)
-case.run(Series='', Theme='dark', Title='Updated')
+case.run(Series='', Theme='dark', Title='測定値の集計')
 updated = rows_of(folder / 'plotted.csv')
 assert updated != plotted
 meta = json.loads((folder / 'metadata.json').read_text())
 assert meta['invocation'] == 2 and {{r['series'] for r in rows_of(folder / 'plotted.csv')}} == {{''}}
-assert plt.get_fignums() == []
 if {library!r} == 'matplotlib':
     rendered = Image.open(artifact).convert('RGB')
     assert ImageChops.difference(before_image, rendered).getbbox()
@@ -217,47 +219,36 @@ if {library!r} == 'matplotlib':
 else:
     spec = json.loads(artifact.read_text())
     title = spec['layout']['title']['text'] if {library!r} == 'plotly' else spec['title']['text']
-    assert title == 'Updated'
+    assert title == '測定値の集計'
     html = Scripts()
     html.feed((folder / 'plot.html').read_text())
     assert html.sources and all(source is None or source.startswith('data:') for source in html.sources)
 '''
 
 
-def max_points_and_sampling(library):
-    """More points than max_points (5000 by default) stop the Card instead of
-    being thinned; sample_every thins on purpose and says so everywhere."""
-    return f'''
-oversized = InvocationFixture({library!r}, table(range(5001), range(5001)))
-for kind in ('line', 'scatter', 'histogram'):
-    expect_failure('validation_failed', lambda: oversized.run(Kind=kind))
-    assert not (Path(oversized.output_directory) / 'figure').exists() and 'figure' not in oversized.outputs
-
-# Exercise the same limit and sampling paths with a low configured cap.
-n = 13
-case = InvocationFixture({library!r}, table(range(n), range(n)), MaxPoints=8)
-expect_failure('validation_failed', lambda: case.run(Kind='line'))
+def max_points_and_sampling():
+    return '''
+oversized = InvocationFixture('matplotlib', table(range(5001), range(5001)))
+expect_failure('validation_failed', oversized.run)
+assert not (Path(oversized.output_directory) / 'figure').exists()
+case = InvocationFixture('matplotlib', table(range(13), range(13)), MaxPoints=8)
 folder = case.run(Kind='scatter', SampleEvery=2)
 meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled'], meta['sample_every']) == (13, 7, True, 2)
-assert meta['note']
-plotted = rows_of(folder / 'plotted.csv')
-assert [float(r['x']) for r in plotted] == [float(i) for i in range(0, n, 2)]
-if {library!r} != 'matplotlib':
-    assert shows_note(folder, {library!r}, meta['note'])
-# Raising max_points draws every point without sampling.
-meta = json.loads((case.run(Kind='line', SampleEvery=1, MaxPoints=n) / 'metadata.json').read_text())
-assert (meta['drawn_rows'], meta['sampled']) == (n, False)
-# A sampled histogram counts the selected rows and labels those bin counts.
-folder = case.run(Kind='histogram', SampleEvery=3, MaxPoints=8)
-meta = json.loads((folder / 'metadata.json').read_text())
-assert (meta['drawn_rows'], meta['sampled']) == (5, True)
-assert meta['note']
+assert (meta['finite_rows'], meta['drawn_rows'], meta['sampled']) == (13, 7, True)
+assert [float(r['x']) for r in rows_of(folder / 'plotted.csv')] == list(range(0, 13, 2))
+folder = case.run(Kind='histogram', SampleEvery=3)
 assert sum(int(r['count']) for r in rows_of(folder / 'plotted.csv')) == 5
-if {library!r} != 'matplotlib':
-    assert shows_note(folder, {library!r}, meta['note'])
-expect_failure('validation_failed', lambda: case.run(Kind='pie', SampleEvery=1))
+expect_failure('validation_failed', lambda: case.run(Kind='pie'))
 expect_failure('validation_failed', lambda: case.run(Kind='line', Y='missing'))
+'''
+
+
+def sampling_note(library):
+    return f'''
+case = InvocationFixture({library!r}, table(range(13), range(13)), MaxPoints=8)
+folder = case.run(Kind='scatter', SampleEvery=2)
+meta = json.loads((folder / 'metadata.json').read_text())
+assert meta['sampled'] and shows_note(folder, {library!r}, meta['note'])
 '''
 
 

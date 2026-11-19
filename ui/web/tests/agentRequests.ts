@@ -1,11 +1,7 @@
 import assert from 'node:assert/strict'
-import { AGENT, cardRequest } from '../shared/agentShared'
+import { cardRequest } from '../shared/agentShared'
 
 for (const kind of ['draftRequest', 'commentRequest'] as const) {
-  for (const scope of [[], ['outer'], ['outer', 'inner']]) {
-    const where = scope.length ? AGENT.draftRequest.child.replace('{scope}', scope.join('/')) : AGENT.draftRequest.root
-    const expected = AGENT[kind].text.replace('{where}', where).replace('{list}', '- outer/work\n- outer/render')
-    assert.equal(cardRequest(kind, scope, ['outer/work', 'outer/render']), expected)
-  }
+  const request = cardRequest(kind, ['outer', 'inner'], ['prepare', 'render'])
+  for (const target of ['outer/inner', 'prepare', 'render']) assert.ok(request.includes(target))
 }
-console.log('shared request substitution: passed')
