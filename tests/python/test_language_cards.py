@@ -258,24 +258,6 @@ def test_bash_display_validates_the_report(project):
             assert display is None
 
 
-@pytest.mark.parametrize("language", ["r", "julia"])
-def test_an_interpreter_error_fails_the_card(project, language):
-    root, connect = project
-    nix, name, source = (R_NIX, "main.R", '''main <- function(inputs, report, run) stop("on purpose")
-''') if language == "r" else (JULIA_NIX, "main.jl", '''function main(inputs, report)
- error("on purpose")
-
-    return nothing
-end''')
-    write_project(root, {"boom": {
-        "card": {"language": language, "inputs": [{"name": "start"}]}, "nix": nix,
-        "src": {name: source}}}, [("start", "out", "boom", "start")])
-    c = connect()
-    run_id, status = run_and_wait(c, "start")
-    assert status.state == RunState.failed
-    assert "on purpose" in text(c.call("LogRangeRequest", runId=run_id, card=path("boom"), stream=2, limitBytes=65536).text)
-
-
 LIFECYCLE = {
     "r": (R_NIX, "main.R", '''
 runs <- 0L
@@ -646,6 +628,9 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
             assert status.state == RunState.failed
             failure = c.call("RunRecordRequest", runId=run_id, card=path(how)).status.failure
             assert failure is not None and failure.kind != FailureKind.timeout
+            if how == "fail" and language in ("r", "julia"):
+                log = c.call("LogRangeRequest", runId=run_id, card=path(how), stream=2, limitBytes=65536)
+                assert "on purpose" in text(log.text)
         run_id, status = run_and_wait(c, how)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
         assert shown_text(c, run_id, how) == "call 1" and not reused(c, run_id, how)

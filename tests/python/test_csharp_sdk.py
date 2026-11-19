@@ -91,7 +91,8 @@ public sealed class Card : ICard {
       report.Log("waiting for cancellation");
       await Task.Delay(60000, run.CancellationToken);
     }
-    await Task.Delay(1, run.CancellationToken);
+    await Task.Yield();
+    run.CancellationToken.ThrowIfCancellationRequested();
     var values = received.Values.Select(x => x * (inputs.Params.Factor ?? throw new Failure("validation_failed", "factor is required"))).ToList();
     var roundTrip = Newtonsoft.Json.JsonConvert.DeserializeObject<double[]>(Newtonsoft.Json.JsonConvert.SerializeObject(values));
     if (roundTrip == null || !values.SequenceEqual(roundTrip)) throw new Exception("NuGet reflection round trip failed");
