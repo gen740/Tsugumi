@@ -70,6 +70,7 @@ clangStdenv.mkDerivation {
       "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
       "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"
       "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
+      "-DTSUGUMI_NIX=${nix}/bin/nix"
       "-DTSUGUMI_BASH=${bash}/bin/bash"
     ]
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];

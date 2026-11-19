@@ -507,7 +507,7 @@ table RunPlanRequest {
   propagate:bool = null (id: 2);
 }
 
-/// -> RunAccepted. Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64), nix_jobs and nix_cores to 1.
+/// -> RunAccepted. Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds.
 table RunRequest {
   base_rev:uint64 = null (id: 0);
   op_id:string (id: 1, required);

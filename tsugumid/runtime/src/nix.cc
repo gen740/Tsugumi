@@ -627,6 +627,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
   call.system = req.target.system;
+  call.jobs = req.jobs;
+  call.cores = req.cores;
   call.max_implementations = req.max_implementations;
   call.definition_dir = def;
   call.args =

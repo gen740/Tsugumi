@@ -84,13 +84,15 @@ void Service::run(RequestIn& req) {
     p.card = wire::card_arg(r->card());
     p.propagate = r->propagate().value_or(true);
     p.max_concurrency = r->max_concurrency().value_or(4);
-    p.nix_jobs = r->nix_jobs().value_or(1);
-    p.nix_cores = r->nix_cores().value_or(1);
+    if (auto jobs = r->nix_jobs()) p.nix_jobs = *jobs;
+    if (auto cores = r->nix_cores()) p.nix_cores = *cores;
     if (p.max_concurrency < 1 || p.max_concurrency > 64)
       throw Failed(FailureKind::invalid_request,
                    "max_concurrency must be 1..64");
-    if (p.nix_jobs < 1 || p.nix_cores < 1 || p.nix_jobs > opts_.env_cpus ||
-        p.nix_cores > opts_.env_cpus)
+    const auto invalid_parallelism = [&](std::optional<uint32_t> value) {
+      return value && (*value < 1 || *value > opts_.env_cpus);
+    };
+    if (invalid_parallelism(p.nix_jobs) || invalid_parallelism(p.nix_cores))
       throw Failed(
           FailureKind::invalid_request,
           "nix_jobs and nix_cores must be between 1 and the environment's " +

@@ -51,8 +51,6 @@ const std::map<std::string, std::string>& digest_defaults() {
       {"Tsugumi.RPC.RunPlanRequest.propagate", "1"},
       {"Tsugumi.RPC.RunRequest.propagate", "1"},
       {"Tsugumi.RPC.RunRequest.max_concurrency", "4"},
-      {"Tsugumi.RPC.RunRequest.nix_jobs", "1"},
-      {"Tsugumi.RPC.RunRequest.nix_cores", "1"},
   };
   return d;
 }

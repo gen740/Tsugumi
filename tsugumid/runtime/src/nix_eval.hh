@@ -1,9 +1,8 @@
 // The Nix evaluator inside tsugumid (libnixexpr / libnixstore): one evaluator
 // and store connection per process, used from a single thread of its own, so
 // that nixpkgs is read once and evaluation state is reused between Cards and
-// runs. Builds and transfers run on the caller's thread, each build on a daemon
-// connection of its own: how many build at once is the Nix daemon's choice. No
-// Nix CLI is involved.
+// runs. Transfers use libnix on the caller's thread. Native builds use a
+// separate Nix client so each connection has its own build options.
 #pragma once
 
 #include <atomic>
@@ -43,6 +42,8 @@ struct NixCall {
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
   std::string root_prefix;
+  std::optional<uint32_t> jobs;
+  std::optional<uint32_t> cores;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;

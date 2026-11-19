@@ -23,11 +23,11 @@
 #include <nix/flake/flakeref.hh>
 #include <nix/flake/settings.hh>
 #include <nix/store/derivations.hh>
-#include <nix/store/derived-path.hh>
 #include <nix/store/globals.hh>
 #include <nix/store/indirect-root-store.hh>
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
+#include <nix/util/environment-variables.hh>
 #include <nix/util/logging.hh>
 #include <nix/util/serialise.hh>
 #include <nix/util/signals.hh>
@@ -37,6 +37,7 @@
 #include <thread>
 
 #include "nix_eval.hh"
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
@@ -714,11 +715,63 @@ struct NixEvaluator::Impl {
     return r;
   }
 
-  // On the caller's thread, with a daemon connection of its own: nix-daemon
-  // decides how many builds run at a time, and evaluation goes on meanwhile.
+  // The Nix client sends these options with its own daemon connection. The
+  // evaluator and the other builds can keep using their own settings.
+  static auto build(const NixCall& c, const std::string& drv) -> void {
+    proc::Spec spec;
+    spec.argv = {TSUGUMI_NIX, "--extra-experimental-features", "nix-command",
+                 "build", "--no-link", "--option", "print-missing", "false",
+                 "--log-format", "internal-json", drv + "^*"};
+    if (c.jobs)
+      spec.argv.insert(spec.argv.end(),
+                       {"--max-jobs", std::to_string(*c.jobs)});
+    if (c.cores)
+      spec.argv.insert(spec.argv.end(), {"--cores", std::to_string(*c.cores)});
+    // Use the same store, Nix configuration and environment as the evaluator.
+    for (const auto& [key, value] : nix::getEnv())
+      spec.env.push_back(key + "=" + value);
+
+    std::string error;
+    const auto result =
+        proc::run(spec, c.cancel, c.deadline, [&](const std::string& line) {
+          std::string text;
+          if (line.starts_with("@nix ")) {
+            const auto entry = nlohmann::json::parse(line.substr(5));
+            const auto action = entry.at("action").get<std::string>();
+            if (action == "msg" && entry.at("level") <= nix::lvlInfo) {
+              text = entry.at("msg").get<std::string>();
+              if (entry.at("level") == nix::lvlError)
+                error = nix::filterANSIEscapes(text, true);
+            } else if (action == "start" && entry.at("level") <= nix::lvlInfo) {
+              text = entry.at("text").get<std::string>();
+              if (text.empty()) return;
+            } else if (action == "result" &&
+                       (entry.at("type") == nix::resBuildLogLine ||
+                        entry.at("type") == nix::resPostBuildLogLine)) {
+              text = entry.at("fields").at(0).get<std::string>();
+            } else {
+              return;
+            }
+            text += '\n';
+          } else {
+            // Early client errors can precede setup of its JSON logger.
+            text = line;
+            error = nix::filterANSIEscapes(text, true);
+          }
+          if (c.log)
+            c.log(tsugumi::text::replace_invalid_utf8(
+                nix::filterANSIEscapes(text, true)));
+        });
+    if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
+    if (result.timed_out)
+      throw NixInterrupted(true, "Nix exceeded buildTimeoutSeconds");
+    if (!proc::exited_ok(result.status))
+      throw std::runtime_error(error.empty() ? "Nix build failed: " +
+                                                   proc::describe(result.status)
+                                             : error);
+  }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
-    const auto drv_path = store->parseStorePath(r.derivation.path);
     const auto out = store->parseStorePath(r.derivation.output);
     // Held by this connection from here: a concurrent GC never removes it
     // between the check, the build and the permanent root. The evaluator's
@@ -726,9 +779,7 @@ struct NixEvaluator::Impl {
     store->addTempRoot(out);
     if (!store->isValidPath(out)) {
       if (c.on_phase) c.on_phase(true);
-      store->buildPaths({nix::DerivedPath::Built{
-          .drvPath = nix::makeConstantStorePathRef(drv_path),
-          .outputs = nix::OutputsSpec::All{}}});
+      build(c, r.derivation.path);
       r.built = true;
     }
     nix::StorePathSet closure;

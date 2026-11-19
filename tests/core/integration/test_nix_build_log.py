@@ -57,3 +57,51 @@ in {
         stderr = log(client, run_id, "probe", LogStream.standard_error)
         assert "pre-run: \ufffd\n" in stderr
         assert "post-run: \ufffd\n" in stderr
+
+
+@pytest.mark.parametrize(
+    ("max_jobs", "options", "expected"),
+    [
+        ("1", {}, "2\n"),
+        ("0", {}, None),
+        ("0", {"nixJobs": 1, "nixCores": 1}, "1\n"),
+    ],
+    ids=["defaults", "local-builds-disabled", "explicit-jobs-and-cores"],
+)
+def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, options, expected):
+    import os
+
+    from projects import wait_run
+    from tsugumi_client import new_id, text
+
+    config = os.environ.get("NIX_CONFIG", "")
+    monkeypatch.setenv("NIX_CONFIG", f"{config}\nmax-jobs = {max_jobs}\ncores = 2\nbuilders =")
+    root = tmp_path / "project"
+    definition = {
+        "language": "bash",
+        "_outputs": "table Outputs {} root_type Outputs;",
+        "_nix": r'''
+{ pkgs, inputs, params }:
+let
+  probe = pkgs.runCommand "tsugumi-build-cores-@id@" {} ''
+    printf '%s\n' "$NIX_BUILD_CORES" > "$out"
+  '';
+in {
+  run = "cat ${probe}";
+}
+'''.replace("@id@", uuid4().hex),
+    }
+    write(root, {"probe": definition}, [card("probe", "probe")], [])
+    client = core_factory(project_root=root).connect()
+    rev = client.call("ProjectInspectRequest").rev
+    accepted = client.call("RunRequest", baseRev=rev, opId=new_id(), origin="test",
+                           card=path("probe"), propagate=False, **options)
+    run_id = text(accepted.run.runId)
+    outcome = wait_run(client, run_id)
+    if expected is None:
+        record = client.call("RunRecordRequest", runId=run_id, card=path("probe"), invocation=1).record
+        assert outcome.state == RunState.failed
+        assert record.summary.failure.kind == FailureKind.nix_failed
+    else:
+        assert outcome.state == RunState.succeeded, log(client, run_id, "probe", LogStream.build)
+        assert log(client, run_id, "probe", LogStream.standard_output) == expected

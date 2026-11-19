@@ -24,8 +24,6 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
     BuildRequest request;
     request.node = &node;
     request.doc = doc;
-    request.jobs = opts_.env_cpus;
-    request.cores = 1;
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.log = [&](const std::string& line) {
       log::info("build " + card + ": " + line);

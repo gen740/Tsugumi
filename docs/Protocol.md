@@ -235,7 +235,7 @@ No fields.
 | Request | Response | Description |
 | --- | --- | --- |
 | [`RunPlan`](#runplan) | RunPlanResult | Preview the Cards a run reaches; propagate defaults to true. |
-| [`Run`](#run) | RunAccepted | Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64), nix_jobs and nix_cores to 1. |
+| [`Run`](#run) | RunAccepted | Start a run at base_rev. propagate defaults to true, max_concurrency to 4 (1..64). Omitted nix_jobs and nix_cores use the environment defaults for local builds. |
 | [`RunCancel`](#runcancel) | RunStatus | Cancel run_id. |
 | [`RunStatus`](#runstatus) | RunStatus | Read run_id; omitted selects the active run, then the latest locally started run, then idle. |
 

@@ -65,8 +65,8 @@ struct CardBuildPlan {
 struct BuildRequest {
   const Node* node = nullptr;
   DocumentPtr doc;
-  uint32_t jobs = 1;
-  uint32_t cores = 1;
+  std::optional<uint32_t> jobs;
+  std::optional<uint32_t> cores;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   std::optional<uint64_t> timeout_seconds;
   ExecutionTarget target;
