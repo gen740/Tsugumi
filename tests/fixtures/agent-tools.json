@@ -372,7 +372,7 @@
   {
     "name": "log_range",
     "payloadType": 27,
-    "description": "LogRange: -> LogSlice. limit_bytes = 65536 (4..256 KiB). tail with offset != 0 is  rejected. invocation requires card.",
+    "description": "-> LogSlice. Read run logs; invocation requires card. tail=true reads the end with offset=0. Agent pages default to 2048 bytes; continue with next_offset.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -418,7 +418,10 @@
           "type": "boolean"
         },
         "limit_bytes": {
-          "type": "integer"
+          "type": "integer",
+          "minimum": 4,
+          "maximum": 1048576,
+          "description": "Maximum number of bytes to read. Accepted range is 4 to 1048576 bytes."
         }
       },
       "additionalProperties": false,

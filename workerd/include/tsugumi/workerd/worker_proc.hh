@@ -16,20 +16,10 @@
 #include <thread>
 #include <vector>
 
+#include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
-
-// Incremental UTF-8 decoder: emits complete characters only and replaces
-// invalid sequences with U+FFFD, so chunk boundaries never split or lose text.
-class Utf8Decoder {
- public:
-  std::string feed(std::string_view bytes);
-  std::string finish();
-
- private:
-  std::string pending_;
-};
 
 // Only the realised program enters worker ownership; evaluation, build keys
 // and recorded environments remain with the caller.
@@ -152,8 +142,8 @@ class WorkerProc {
   uint64_t call_id_ = 0;
   LogSink logs_;
   std::mutex log_mu_;
-  Utf8Decoder out_dec_;
-  Utf8Decoder err_dec_;
+  text::Utf8Decoder out_dec_;
+  text::Utf8Decoder err_dec_;
   std::thread log_thread_;
   std::array<int, 2> log_wake_{-1, -1};
   std::atomic<bool> stop_logs_{false};

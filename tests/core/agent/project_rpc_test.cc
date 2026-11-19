@@ -1,6 +1,7 @@
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include <unistd.h>
 
+#include <cstdint>
 #include <cstdlib>
 #include <cstring>
 #include <iostream>
@@ -22,6 +23,48 @@ namespace {
 
 class CancelledCopy : public AgentProjectFixture,
                       public ::testing::WithParamInterface<bool> {};
+
+TEST_F(AgentProjectFixture, LogRangeSchemaMatchesCoreValidation) {
+  StartProject();
+  const auto conversation = Conversation("log-range");
+  Grant(conversation);
+  const auto listed = Tool(conversation, "tools", R"({"family":"runs"})");
+  ASSERT_TRUE(listed.Code().empty()) << listed.Code();
+  json::Members schema;
+  for (const auto& raw :
+       json::Array(listed.Value()->value_as_ToolResult()->text()->str())) {
+    const auto tool = json::Object(raw);
+    if (json::Text(tool, "action") != "logs") continue;
+    const auto properties = json::Object(
+        json::Get(json::Object(json::Get(tool, "input_schema")), "properties"));
+    schema = json::Object(json::Get(properties, "limit_bytes"));
+    break;
+  }
+  ASSERT_TRUE(schema.contains("minimum"));
+  ASSERT_TRUE(schema.contains("maximum"));
+  const auto minimum = json::UInt(schema.at("minimum"));
+  const auto maximum = json::UInt(schema.at("maximum"));
+  ASSERT_GT(minimum, 0u);
+  ASSERT_GT(maximum, minimum);
+  ASSERT_LT(maximum, UINT32_MAX);
+
+  const auto failure = [&](uint64_t limit) {
+    const auto arguments =
+        R"({"run_id":"1","stream":"standard_output","limit_bytes":)" +
+        std::to_string(limit) + "}";
+    const auto reply = Tool(conversation, "log_range", arguments);
+    EXPECT_TRUE(reply.Code().empty()) << reply.Code();
+    const auto raw = JsonString(reply.View(), "/text");
+    EXPECT_EQ(JsonString(raw, "/reply"), "Failure");
+    return JsonString(raw, "/value/kind");
+  };
+  // Valid limits get through core validation to the lookup of an absent run.
+  EXPECT_EQ(failure(minimum - 1), "invalid_request");
+  EXPECT_EQ(failure(minimum), "not_found");
+  EXPECT_EQ(failure(maximum), "not_found");
+  EXPECT_EQ(failure(maximum + 1), "invalid_request");
+}
+
 TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   StartProject();
   const auto first = Conversation("settings-first");

@@ -49,4 +49,4 @@ add_custom_target(tsugumi_protocol_gen DEPENDS ${_gen_cpp} ${_gen_bfbs})
 
 add_library(tsugumi_protocol INTERFACE)
 add_dependencies(tsugumi_protocol tsugumi_protocol_gen)
-target_include_directories(tsugumi_protocol INTERFACE ${TSUGUMI_GEN_DIR}/cpp)
+target_include_directories(tsugumi_protocol INTERFACE ${TSUGUMI_GEN_DIR}/cpp ${TSUGUMI_PROTOCOL_DIR}/include)
