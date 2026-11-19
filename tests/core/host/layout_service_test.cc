@@ -257,12 +257,26 @@ TEST(HostLayout, VersionCanvasGuessesFlowAndReadsCollapsedState) {
   EXPECT_EQ(result.flow, "leftToRight");
 }
 
+TEST(HostLayout, VersionCanvasCompletesOnlyMissingPositions) {
+  const auto result = canvas(
+      R"({"flow":"topToBottom","cards":{"a":{"x":407,"y":609,"collapsed":true},"b":{"collapsed":true}}})");
+  EXPECT_EQ(result.flow, "topToBottom");
+  const auto& a = *result.cards.at(0);
+  const auto& b = *result.cards.at(1);
+  EXPECT_DOUBLE_EQ(a.x, 407);
+  EXPECT_DOUBLE_EQ(a.y, 609);
+  EXPECT_TRUE(a.collapsed);
+  EXPECT_TRUE(b.collapsed);
+  EXPECT_TRUE(std::abs(a.x - b.x) >= 320 || std::abs(a.y - b.y) >= 120);
+}
+
 TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
-  for (const auto* layout :
-       {"{}", R"({"cards":{"a":{"x":7,"y":9}}})", R"({"future":true})"}) {
+  for (const auto* layout : {"{}", R"({"cards":[]})"}) {
     const auto result = canvas(layout);
     EXPECT_EQ(result.flow, "leftToRight");
-    EXPECT_LT(result.cards.at(0)->x, result.cards.at(1)->x);
+    const auto& a = *result.cards.at(0);
+    const auto& b = *result.cards.at(1);
+    EXPECT_TRUE(std::abs(a.x - b.x) >= 320 || std::abs(a.y - b.y) >= 120);
   }
 }
 
