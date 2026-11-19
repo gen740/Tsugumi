@@ -120,12 +120,12 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
   for (const auto* name : {"private", "public"}) {
     const auto folder = root / "externals" / name;
     Write(folder / "tsugumi.json",
-          R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
+          R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
     Write(folder / "definitions/leaf/_card.json", R"({"template":"trigger"})");
   }
   StartProject(
       false,
-      R"({"agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
+      R"({"pkgsPath":"tsugumi:default","agentExclude":["externals/private/definitions/leaf/_card.json"],"canvas":{"cards":[{"id":"group"}],"connections":[]}})");
   const auto conversation = Conversation("confirmed-exclusions");
   for (const auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})
