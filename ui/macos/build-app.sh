@@ -95,9 +95,11 @@ cp -R "$repo/demos" "$app/Contents/Resources/demos"
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"
 cp "$repo/ui/shared/modules/viewer.html" "$repo/ui/shared/modules/viewer.js" "$mods/"
-# UI strings: Japanese source strings, English table generated from tools/en_strings.py.
-python3 "$repo/ui/macos/Resources/tools/en_strings.py" >/dev/null
-cp -R "$repo/ui/macos/Resources/ja.lproj" "$repo/ui/macos/Resources/en.lproj" "$app/Contents/Resources/"
+# Japanese source strings and the generated English table.
+resources="$app/Contents/Resources"
+cp -R "$repo/ui/macos/Resources/ja.lproj" "$resources/"
+mkdir -p "$resources/en.lproj"
+python3 "$repo/ui/shared/i18n/strings.py" > "$resources/en.lproj/Localizable.strings"
 # The app carries one guest payload; the helper extracts it in private support.
 mkdir -p "$app/Contents/Resources/tsugumi-vm"
 cp "$vm/tsugumi-vm.tar.gz" "$vm/vm-manifest.json" "$app/Contents/Resources/tsugumi-vm/"

@@ -11,7 +11,7 @@ public enum LauncherError: Error, CustomStringConvertible, Sendable {
   case deleteFailed(what: String, log: String)
 
   /// Shown in the app: Japanese source strings, English from the app's
-  /// string table (ui/macos/Resources/tools/en_strings.py).
+  /// string table (ui/shared/i18n/en.json).
   public var description: String {
     switch self {
     case .imageMissing:

@@ -38,6 +38,7 @@ buildNpmPackage {
         ../ui/web/tsconfig.server.json
         ../hostd/agent/Shared/agent.json
         ../hostd/agent/Shared/demo-skill.md
+        ../ui/shared/i18n/en.json
         ../ui/shared/modules
         ../ui/shared/templates
         (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)

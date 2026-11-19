@@ -96,7 +96,7 @@ mac_job() {
   core_run /usr/bin/swift test --package-path ui/macos/CoreTests
   core_run /usr/bin/swift test --package-path vm/macos/runtime
   step "App logic (ui/macos/Tests)"
-  core_run /usr/bin/swift test --package-path ui/macos
+  core_run bash ui/macos/tools/test-app.sh
 }
 
 case "${1:-all}" in
