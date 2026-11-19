@@ -192,6 +192,8 @@ def test_cancel_before_submit_and_release_tombstone(worker):
     assert cancelled.body.state == R.JobState.Cancelled
     submitted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert submitted.body.state == R.JobState.Cancelled
+    status = worker.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job)
+    assert status.body.state == R.JobState.Cancelled
     released = worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=job)
     assert released.bodyType == R.ReplyBody.Ack
     worker.restart()

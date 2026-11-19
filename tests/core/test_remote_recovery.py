@@ -66,6 +66,8 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.stall = None
         self.skip_stall = 0
         self.hold_cancel = False
+        self.defer_submit = False
+        self.submit_applied = threading.Event()
         self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
         self.stalls = 0
@@ -165,11 +167,15 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.specs[job] = spec
             assert {R.string(d) for d in spec.inputBlobs} <= self.blobs
             assert R.string(spec.system) == self.system
-            self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
+            fingerprint = hashlib.sha256(bytes(body.spec)).hexdigest()
+            receipt = self.receipts.setdefault(job, {"state": "running", "fingerprint": fingerprint})
+            assert receipt["fingerprint"] == fingerprint
+            self.submit_applied.set()
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
-            receipt = self.receipts[job]
-            assert receipt["fingerprint"] == R.string(body.fingerprint)
+            fingerprint = R.string(body.fingerprint)
+            receipt = self.receipts.setdefault(job, {"state": "cancelled", "fingerprint": fingerprint})
+            assert receipt["fingerprint"] == fingerprint
             if receipt["state"] not in {"succeeded", "failed", "cancelled"}:
                 receipt["state"] = "cancelled"
             self.cancelled.add(job)
@@ -199,7 +205,7 @@ class Handler(socketserver.StreamRequestHandler):
             mode = None
         if mode and q.bodyType == self.server.stall_operation:
             try:
-                if q.bodyType == R.RequestBody.SubmitRequest:
+                if q.bodyType == R.RequestBody.SubmitRequest and not self.server.defer_submit:
                     self.server.operation(q)
                 if mode == "trickle":
                     self.wfile.write(struct.pack("<I", 8192) + b"\x00")
@@ -215,6 +221,8 @@ class Handler(socketserver.StreamRequestHandler):
                     self.server.resume.wait()
                     if q.bodyType == R.RequestBody.CatalogRequest:
                         self.wfile.write(R.frame(self.server.operation(q)))
+                    if q.bodyType == R.RequestBody.SubmitRequest and self.server.defer_submit:
+                        self.server.operation(q)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -241,6 +249,7 @@ def remote_gateway(monkeypatch):
         capability_file.chmod(0o600)
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", str(capability_file))
         with Gateway(endpoint) as gateway:
+            os.symlink(endpoint, endpoint + ".c")
             server = threading.Thread(target=gateway.serve_forever, kwargs={"poll_interval": 0.02})
             server.start()
             try:
@@ -486,6 +495,27 @@ def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gatewa
         assert remote_gateway.submit_count == 1
     finally:
         remote_gateway.resume.set()
+
+
+def test_stop_reaches_worker_before_submit_is_applied(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    remote_gateway.stall_operation = R.RequestBody.SubmitRequest
+    remote_gateway.stall = "blackhole"
+    remote_gateway.defer_submit = True
+    run_id = start_run(client, "work", propagate=False)
+    try:
+        assert remote_gateway.stalled.wait(10), "Submit did not reach its gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert remote_gateway.cancel_received.wait(5), "Cancel waited for Submit"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        job, = remote_gateway.cancelled
+        assert job not in remote_gateway.specs
+    finally:
+        remote_gateway.resume.set()
+    assert remote_gateway.submit_applied.wait(5)
+    assert remote_gateway.receipts[job]["state"] == "cancelled"
 
 
 def test_stop_interrupts_a_pending_result_download(running_job):
