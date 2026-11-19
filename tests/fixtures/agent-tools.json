@@ -414,6 +414,11 @@
           "pattern": "^-?[0-9]+$",
           "description": "64 bit integer as a decimal string"
         },
+        "before": {
+          "type": "string",
+          "pattern": "^-?[0-9]+$",
+          "description": "Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset."
+        },
         "tail": {
           "type": "boolean"
         },

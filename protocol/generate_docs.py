@@ -12,7 +12,7 @@ FBS = ROOT / "protocol" / "tsugumi.fbs"
 OUT = ROOT / "docs" / "Protocol.md"
 
 GROUPS = [
-    ("Connection", ["SessionHello", "ProjectActivity"]),
+    ("Connection", ["SessionHello", "ProjectActivity", "CoreTrace"]),
     ("Projects and saving", ["ProjectOpen", "ProjectInspect", "ProjectHostRequirements", "CardId", "ProjectSave", "ProjectReload",
                        "ProjectValidate", "ProjectShell", "ProjectCacheClear", "ProjectCacheUsage", "RunScratchDelete", "OperationGet"]),
     ("Files", ["ProjectFileList", "ProjectFileStat", "ProjectFileRead"]),
@@ -80,7 +80,8 @@ def cell(s: str) -> str:
 
 def render() -> str:
     text = FBS.read_text()
-    all_tables = tables(text)
+    trace = tables((FBS.parent / "rpc_trace.fbs").read_text())
+    all_tables = tables(text) | trace
     requests = [m[: -len("Request")] for m in union_members(text, "RequestPayload")]
     grouped = [n for _, names in GROUPS for n in names]
     assert sorted(grouped) == sorted(requests), set(grouped) ^ set(requests)
@@ -135,7 +136,7 @@ def render() -> str:
     common = tables((ROOT / "protocol/service_common.fbs").read_text())
     for service, identifier, principals in [("agent", "TSA1", "user and external"), ("host", "TSH1", "user only")]:
         schema = (ROOT / f"protocol/{service}.fbs").read_text()
-        definitions = common | tables(schema)
+        definitions = common | trace | tables(schema)
         out += [f"### {service.title()} service", "",
                 f"Separate listener: `{identifier}`, WebSocket subprotocol `tsugumi.{service}.v1`; authenticated principals: {principals}.", "",
                 "| Request | Fields |", "| --- | --- |"]
