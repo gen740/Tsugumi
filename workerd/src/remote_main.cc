@@ -77,13 +77,17 @@ auto process_start(pid_t pid) -> uint64_t {
       throw std::runtime_error("invalid process identity");
   return std::stoull(field);
 }
-auto verified_kill(const Record& state) -> void {
+auto notify_cancel(const Record& state) -> void {
   if (state.pid <= 1 || state.boot != boot()) return;
   Fd pidfd(static_cast<int>(::syscall(SYS_pidfd_open, state.pid, 0)));
   if (pidfd.value < 0) return;
   try {
     if (process_start(static_cast<pid_t>(state.pid)) == state.start)
-      ::syscall(SYS_pidfd_send_signal, pidfd.value, SIGKILL, nullptr, 0);
+      if (::syscall(SYS_pidfd_send_signal, pidfd.value, SIGUSR1, nullptr, 0) !=
+              0 &&
+          errno != ESRCH)
+        log("cannot notify execution supervisor: " +
+            std::string(std::strerror(errno)));
   } catch (const std::exception&) { /* The recorded process already exited. */
   }
 }
@@ -297,10 +301,12 @@ class Daemon {
         }
         return reply(std::move(status));
       }
-      case R::RequestBody::CancelRequest:
-        return reply(with_log_status(
-            journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint)
-                .status()));
+      case R::RequestBody::CancelRequest: {
+        const auto state =
+            journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint);
+        if (state.state == R::JobState::Cancelling) notify_cancel(state);
+        return reply(with_log_status(state.status()));
+      }
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
         return reply(R::AckT{});
@@ -347,17 +353,8 @@ class Daemon {
           auto state = p->status(job);
           if (::flock(lock.value, LOCK_EX | LOCK_NB) != 0) {
             ++active;
-            const auto key = p->root().string() + job;
-            if (state.state == R::JobState::Cancelling &&
-                !cancelling_.contains(key))
-              cancelling_[key] = now_ms();
-            // A cancelled sandbox may ignore its stop and retain a worker slot.
-            if (cancelling_.contains(key) &&
-                now_ms() > cancelling_[key] + 15000)
-              verified_kill(state);
             continue;
           }
-          cancelling_.erase(p->root().string() + job);
           if (state.state == R::JobState::Running ||
               state.state == R::JobState::Cancelling) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
@@ -423,14 +420,6 @@ class Daemon {
         ::posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
-    if (rc == 0) {
-      try {
-        p.supervisor_identity(job, static_cast<uint64_t>(pid),
-                              process_start(pid), boot());
-      } catch (const std::exception&) { /* The supervisor may already have
-                                           completed. */
-      }
-    }
     return rc == 0;
   }
   Config config_;
@@ -438,7 +427,6 @@ class Daemon {
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;
-  std::map<std::string, uint64_t> cancelling_;
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
@@ -456,9 +444,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
   if (state.state != R::JobState::Running &&
       state.state != R::JobState::Cancelling)
     return 0;
-  // Record the identity before launching a sandbox, for the daemon's fallback
-  // kill. The supervisor itself enforces cancellation without the daemon.
-  // The state update is serialized with cancellation.
   const auto directory = journal.job_path(job);
   const auto work = directory / "work";
   private_directory(work);
@@ -467,8 +452,18 @@ auto supervise(const std::string& self, const stdfs::path& root,
   R::JobState outcome = R::JobState::Failed;
   std::string result, diagnostic;
   try {
+    // Publish the identity only after Cancel can safely signal us. A Cancel
+    // recorded before this point is picked up by the journal check below.
+    sigset_t wake, inherited;
+    sigemptyset(&wake);
+    sigaddset(&wake, SIGUSR1);
+    sigaddset(&wake, SIGCHLD);
+    if (::sigprocmask(SIG_BLOCK, &wake, &inherited) != 0)
+      throw std::runtime_error("cannot block supervisor signals");
     journal.supervisor_identity(job, static_cast<uint64_t>(::getpid()),
                                 process_start(::getpid()), boot());
+    if (journal.status(job).state == R::JobState::Cancelling)
+      throw std::runtime_error("cancelled");
     const auto bytes = journal.spec(job);
     const auto spec = parse_spec(bytes);
     fs::write_atomic(work / "spec.fb", bytes, 0600);
@@ -484,6 +479,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     child = ::fork();
     if (child < 0) throw std::runtime_error("cannot start isolated worker");
     if (child == 0) {
+      ::sigprocmask(SIG_SETMASK, &inherited, nullptr);
       if (::prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 || ::getppid() != parent)
         ::_exit(126);
       ::dup2(adapter.value, 1);
@@ -511,7 +507,8 @@ auto supervise(const std::string& self, const stdfs::path& root,
       }
       if (done < 0 && errno != EINTR)
         throw std::runtime_error("cannot wait for worker");
-      std::this_thread::sleep_for(100ms);
+      if (::sigwaitinfo(&wake, nullptr) < 0 && errno != EINTR)
+        throw std::runtime_error("cannot wait for supervisor event");
     }
     if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
       const auto size = stdfs::file_size(work / "adapter.log");

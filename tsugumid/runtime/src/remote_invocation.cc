@@ -38,8 +38,7 @@ auto upload(const RemoteJobClient& client, const std::string& service,
 
 auto download(const RemoteJobClient& client, const std::string& service,
               const std::string& instance, const std::string& job_id,
-              const std::string& digest, uint64_t limit,
-              std::stop_token stop,
+              const std::string& digest, uint64_t limit, std::stop_token stop,
               std::optional<uint64_t> expected_size = std::nullopt)
     -> std::string {
   if (!crypto::is_sha256_hex(digest))
@@ -359,6 +358,7 @@ auto import_remote_result(
         save_module_source(module_cache, identity, source);
       }
     } catch (const std::exception&) {
+      if (stop.stop_requested()) throw;
       // The clients show unavailable presentation; computation still completes.
     }
   }
@@ -401,6 +401,8 @@ auto import_remote_result(
             FailureKind::output_invalid,
             "remote output file or directory is missing or has the wrong kind");
     }
+    if (stop.stop_requested())
+      throw BrokerDisconnected("remote result import stopped");
     for (const char* name : {"out", "work", "tmp"}) {
       const auto staged = temp / "files" / name;
       if (!stdfs::is_directory(staged)) continue;

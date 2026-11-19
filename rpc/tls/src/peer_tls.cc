@@ -4,6 +4,7 @@
 #include <openssl/err.h>
 #include <openssl/pem.h>
 #include <openssl/ssl.h>
+#include <poll.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
 #include <unistd.h>
@@ -72,6 +73,12 @@ auto ConfigureSocket(int fd, int timeout_seconds) -> void {
   Check(flags >= 0 && ::fcntl(fd, F_SETFL, flags & ~O_NONBLOCK) == 0 &&
             ::fcntl(fd, F_SETFD, FD_CLOEXEC) == 0,
         "Cannot configure blocking peer socket");
+#ifdef SO_NOSIGPIPE
+  const int enabled = 1;
+  Check(
+      ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof enabled) == 0,
+      "Cannot disable socket SIGPIPE");
+#endif
   if (timeout_seconds == 0) return;
   timeval timeout{timeout_seconds, 0};
   Check(::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout) ==
@@ -79,12 +86,6 @@ auto ConfigureSocket(int fd, int timeout_seconds) -> void {
             ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout,
                          sizeof timeout) == 0,
         "Cannot configure peer socket deadline");
-#ifdef SO_NOSIGPIPE
-  const int enabled = 1;
-  Check(
-      ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof enabled) == 0,
-      "Cannot disable socket SIGPIPE");
-#endif
 }
 
 auto ValidateKey(std::string_view value) -> void {
@@ -202,15 +203,37 @@ Context::Context(const Identity& identity, bool server,
 Context::~Context() = default;
 struct Stream::State {
   Owned<SSL, SSL_free> ssl{nullptr, SSL_free};
+  int fd = -1, downstream = -1;
+
+  auto Ready(int rc, const char* failure) -> bool {
+    if (rc == 1) return true;
+    const int error = SSL_get_error(ssl.get(), rc);
+    Check(downstream >= 0 &&
+              (error == SSL_ERROR_WANT_READ || error == SSL_ERROR_WANT_WRITE),
+          failure);
+    const short interest = error == SSL_ERROR_WANT_READ ? POLLIN : POLLOUT;
+    pollfd sockets[]{{fd, interest, 0}, {downstream, POLLIN, 0}};
+    int ready;
+    do {
+      ready = ::poll(sockets, 2, -1);
+    } while (ready < 0 && errno == EINTR);
+    // Broker clients send one framed request and keep the write side open
+    // until the reply. Any further data or EOF ends the exchange.
+    Check(ready > 0 && !sockets[1].revents, "TLS downstream disconnected");
+    return false;
+  }
 };
-Stream::Stream(const Context& context, int fd, bool server)
+Stream::Stream(const Context& context, int fd, bool server, int downstream)
     : state_(std::make_unique<State>()) {
+  state_->fd = fd;
+  state_->downstream = downstream;
   state_->ssl.reset(SSL_new(context.state_->context.get()));
   auto* ssl = state_->ssl.get();
   Check(ssl && SSL_set_fd(ssl, fd), "Cannot open TLS stream");
-  Check((server ? SSL_accept(ssl) : SSL_connect(ssl)) == 1 &&
-            SSL_get_verify_result(ssl) == X509_V_OK,
-        "TLS public-key authentication failed");
+  constexpr auto failure = "TLS public-key authentication failed";
+  while (!state_->Ready(server ? SSL_accept(ssl) : SSL_connect(ssl), failure)) {
+  }
+  Check(SSL_get_verify_result(ssl) == X509_V_OK, failure);
 }
 Stream::~Stream() = default;
 auto Stream::Read(size_t count) -> std::string {
@@ -220,7 +243,7 @@ auto Stream::Read(size_t count) -> std::string {
     size_t n = 0;
     const int rc = SSL_read_ex(state_->ssl.get(), result.data() + offset,
                                count - offset, &n);
-    Check(rc == 1 && n, "TLS stream disconnected or timed out");
+    if (!state_->Ready(rc, "TLS stream disconnected or timed out")) continue;
     offset += n;
   }
   return result;
@@ -230,7 +253,7 @@ auto Stream::Write(std::string_view bytes) -> void {
     size_t n = 0;
     const int rc =
         SSL_write_ex(state_->ssl.get(), bytes.data(), bytes.size(), &n);
-    Check(rc == 1 && n, "TLS stream disconnected or timed out");
+    if (!state_->Ready(rc, "TLS stream disconnected or timed out")) continue;
     bytes.remove_prefix(n);
   }
 }

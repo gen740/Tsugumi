@@ -1,5 +1,6 @@
 """Read a real Card's Nix output from run history."""
 
+import json
 import os
 import socket
 from contextlib import ExitStack
@@ -107,6 +108,56 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path, 
         # This observes its exit independently of the core's Run status.
         for name, marker in builders.items():
             assert marker.read(1) == b"", f"the {name} builder is still alive"
+
+
+def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, tmp_path):
+    root = tmp_path / "project"
+    external = root / "externals" / "nested"
+    with ExitStack() as stack:
+        proxy = stack.enter_context(socket.socket())
+        proxy.bind(("127.0.0.1", 0))
+        proxy.listen()
+        proxy.settimeout(120)
+        address = "http://127.0.0.1:" + str(proxy.getsockname()[1])
+        builder = stack.enter_context(socket.socket())
+        builder.bind(("127.0.0.1", 0))
+        builder.listen()
+        builder.settimeout(120)
+
+        # Probe holds the only input to the external project's Card. The
+        # external has its own pin, so its unclaimed early build is what fetches.
+        write(root, {"probe": blocked_builder("probe", builder.getsockname()[1])},
+              [card("probe", "probe"), {"id": "nested", "_inner": {
+                  "cards": [card("fetch", "probe", inputs=[{"name": "in"}])],
+                  "connections": [],
+                  "boundary": {"inputs": {"in": {"card": "fetch", "port": "in"}},
+                               "outputs": {}},
+              }}], [conn("probe", "msg", "nested", "in")])
+        doc_file = external / "tsugumi.json"
+        doc = json.loads(doc_file.read_text())
+        revision = uuid4().hex + "cafef00d"
+        doc["pkgsPath"] = ("https://github.com/NixOS/nixpkgs/archive/" + revision
+                           + ".tar.gz#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        doc_file.write_text(json.dumps(doc))
+        monkeypatch.setenv("https_proxy", address)
+        monkeypatch.setenv("no_proxy", "")
+        client = core_factory(project_root=root).connect()
+        run_id = start_run(client, "probe", propagate=True)
+
+        # Nix downloads may precede the builder start, so capture the fetch
+        # first. This proxy keeps the evaluator in libnix's transfer wait.
+        peer, _ = proxy.accept()
+        stack.enter_context(peer)
+        peer.settimeout(15)
+        stream = stack.enter_context(peer.makefile("rb"))
+        assert stream.readline().startswith(b"CONNECT github.com:443 ")
+        while stream.readline().strip():
+            pass
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
+        assert stream.read(1) == b"", "the stopped evaluator still has an open fetch"
+        assert not (client.call("RunInvocationsRequest", runId=run_id,
+                                card=path("nested", "fetch")).records or [])
 
 
 def blocked_builder(name, port):

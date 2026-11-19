@@ -76,6 +76,7 @@ class JournalBroker : public testing::Test {
         ::bind(socket_, reinterpret_cast<sockaddr*>(&address), sizeof address),
         0);
     ASSERT_EQ(::listen(socket_, 16), 0);
+    std::filesystem::create_symlink(path, path + ".c");
     thread_ = std::jthread([this] { Serve(); });
   }
   auto TearDown() -> void override {

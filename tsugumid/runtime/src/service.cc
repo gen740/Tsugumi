@@ -243,6 +243,8 @@ std::vector<std::string> configured_substituters(const stdfs::path& file) {
 Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   mutation_lane_ = std::make_unique<Lane>(1);
   read_pool_ = std::make_unique<Lane>(6);
+  // Plan requests can occupy every reader while the execution broker is down.
+  cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
 }
 
@@ -573,6 +575,7 @@ void Service::shutdown() {
       cancelled->store(true);
   }
   if (shell_lane_) shell_lane_->stop();
+  if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
@@ -828,7 +831,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
-      return on_lane(r, std::move(req), &Service::run_cancel);
+      return on_lane(*cancel_lane_, std::move(req), &Service::run_cancel);
     case P::RunStatusRequest:
       return on_lane(r, std::move(req), &Service::run_status);
     case P::RunHistoryRequest:
@@ -1074,6 +1077,7 @@ std::optional<Service::ViewRecord> Service::load_view(
 
 auto Service::busy() -> bool {
   return !mutation_lane_->idle() || !read_pool_->idle() ||
+         !cancel_lane_->idle() ||
          !shell_lane_->idle() || scheduler_->active_status().has_value();
 }
 

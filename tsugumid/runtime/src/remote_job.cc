@@ -230,7 +230,12 @@ auto RemoteJobClient::request(R::RequestT q,
   };
   std::stop_callback shutdown(io.stopped, wake_io);
   std::stop_callback interrupt(io.cancel, wake_io);
-  Connection socket{connect_broker(endpoint_, !capability_file_.empty(), io)};
+  auto endpoint = endpoint_;
+  if (q.body.AsCancelRequest()) {
+    if (endpoint.starts_with("unix:")) endpoint += ".c";
+    if (endpoint == "vsock:1027") endpoint = "vsock:1028";
+  }
+  Connection socket{connect_broker(endpoint, !capability_file_.empty(), io)};
   auto capability = fs::read_file(capability_file_);
   if (!capability || capability->empty() || capability->size() > 256)
     throw BrokerDisconnected("cannot read execution broker capability");
@@ -246,7 +251,6 @@ auto RemoteJobClient::request(R::RequestT q,
   trace::Link link;
   trace::Observe(link, "project core", "hostd execution broker", true, bytes,
                  &trace::kFlatBufferCodec);
-  ::shutdown(socket.fd, SHUT_WR);
   std::string prefix(4, '\0');
   read_exact(socket.fd, prefix.data(), prefix.size(), io);
   std::string response(workerd::frame_length(prefix), '\0');

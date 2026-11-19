@@ -274,8 +274,9 @@ class BrokerFixture : public AgentFixture {
   }
   template <class T>
   auto SendBroker(T body, const std::string& capability) -> int {
-    Socket socket{
-        ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
+    auto endpoint = JsonString(ready, "/execution_broker").substr(5);
+    if constexpr (std::is_same_v<T, R::CancelRequestT>) endpoint += ".c";
+    Socket socket{ConnectUnix(endpoint)};
     R::RequestT request;
     request.service = "worker";
     request.project_scope = "SPOOFED";
@@ -288,7 +289,6 @@ class BrokerFixture : public AgentFixture {
     broker.request = std::make_unique<R::RequestT>(std::move(request));
     message.payload.Set(std::move(broker));
     SendMessage(socket.fd, std::move(message));
-    ::shutdown(socket.fd, SHUT_WR);
     return std::exchange(socket.fd, -1);
   }
   template <class T>
@@ -478,7 +478,6 @@ TEST_F(BrokerFixture, PinnedRegistrationOwnsTheWorkerIdentity) {
         ConnectUnix(JsonString(ready, "/execution_broker").substr(5))};
     std::string oversized(4, '\xff');
     Transfer(socket.fd, oversized, true);
-    ::shutdown(socket.fd, SHUT_WR);
     EXPECT_THROW(ReadMessage(socket.fd), std::runtime_error);
   }
   EXPECT_TRUE(List().Code().empty());
@@ -613,11 +612,12 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");
   worker->HoldStatus();
-  // Fill every slot of the former forwarding pool with pending worker replies.
+  // Fill every ordinary slot with pending worker replies.
   std::array<Socket, 8> pending;
   for (auto& socket : pending)
     socket.fd = SendBroker(R::StatusRequestT{}, capability);
   ASSERT_TRUE(worker->WaitForHeldStatus(pending.size()));
+  Socket queued{SendBroker(R::StatusRequestT{}, capability)};
 
   R::CancelRequestT cancel;
   cancel.fingerprint = std::string(64, 'd');
@@ -628,6 +628,16 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
   ASSERT_NE(requests.back().body.AsCancelRequest(), nullptr);
   EXPECT_EQ(requests.back().body.AsCancelRequest()->fingerprint,
             std::string(64, 'd'));
+  // Only the original eight Status requests passed through. Closing one
+  // core client releases its worker connection and admits the one in backlog.
+  EXPECT_EQ(std::ranges::count_if(requests,
+                                  [](const auto& req) {
+                                    return req.body.AsStatusRequest() !=
+                                           nullptr;
+                                  }),
+            pending.size());
+  ::close(std::exchange(pending.front().fd, -1));
+  EXPECT_TRUE(worker->WaitForHeldStatus(pending.size() + 1));
 }
 
 TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {
@@ -648,7 +658,6 @@ TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {
   Transfer(socket.fd, first, true);
   auto rest = frame.substr(1);
   Transfer(socket.fd, rest, true);
-  ::shutdown(socket.fd, SHUT_WR);
   auto response = ReadMessage(socket.fd);
   ASSERT_NE(response->payload.AsReply(), nullptr);
   ASSERT_NE(response->payload.AsReply()->body.AsCatalog(), nullptr);
