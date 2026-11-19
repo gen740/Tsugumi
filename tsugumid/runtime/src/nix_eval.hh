@@ -1,9 +1,5 @@
-// The Nix evaluator inside tsugumid (libnixexpr / libnixstore): one evaluator
-// and store connection per process, used from a single thread of its own, so
-// that nixpkgs is read once and evaluation state is reused between Cards and
-// runs. Builds and transfers run on the caller's thread, each build on a daemon
-// connection of its own: how many build at once is the Nix daemon's choice. No
-// Nix CLI is involved.
+// Cached libnix evaluation runs in a child that Stop can terminate. Builds
+// and transfers use their own store connections in the core.
 #pragma once
 
 #include <chrono>
@@ -74,6 +70,7 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
+  static auto run_subprocess_if_requested(int argc, char** argv) -> void;
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.
   NixEvaluator(std::string entry, std::vector<std::string> allowed);
@@ -99,8 +96,6 @@ class NixEvaluator {
   // applied here before derivations cross into the restricted Card evaluator.
   // It also supplies the target system, cancellation, deadline and log.
   FlakeInfo flake(const NixCall& call, const std::string& ref);
-
-  // Resident memory of the evaluator's heap (Boehm GC), in bytes.
 
  private:
   struct Impl;

@@ -38,8 +38,8 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
     reply = client.cancel(s.execution_service, job.instance, s.execution_job_id,
                           fingerprint);
   } else {
-    reply =
-        client.status(s.execution_service, job.instance, s.execution_job_id, stop);
+    reply = client.status(s.execution_service, job.instance, s.execution_job_id,
+                          stop);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted)
         return {"interrupted",
@@ -187,12 +187,17 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
+      if (job.cancel_requested) {
+        output.failure =
+            FailureData::make(FailureKind::cancelled, "Run cancelled");
+        return output;
+      }
       try {
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules", node.outputs,
-            request.display, request.detach,
+            request.display, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -212,6 +217,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         if (output.failure) s.execution_state = RemoteExecutionState::failed;
         return output;
       } catch (const BrokerDisconnected&) {
+        if (request.stop.stop_requested()) continue;
         s.execution_state = RemoteExecutionState::disconnected;
         request.publish();
       }

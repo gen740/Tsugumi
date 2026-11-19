@@ -16,7 +16,7 @@ import pytest
 from harness import remote_worker as R
 from harness.fixtures import worker_project
 from harness.scenario import Project
-from projects import FILE_FBS, start_run, wait_invocation, wait_run
+from projects import FILE_FBS, start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
@@ -68,6 +68,9 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.hold_cancel = False
         self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
+        self.stalls = 0
+        self.stalls_expected = 1
+        self.stall_lock = threading.Lock()
         self.resume = threading.Event()
 
     def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
@@ -200,13 +203,18 @@ class Handler(socketserver.StreamRequestHandler):
                     self.server.operation(q)
                 if mode == "trickle":
                     self.wfile.write(struct.pack("<I", 8192) + b"\x00")
-                self.server.stalled.set()
+                with self.server.stall_lock:
+                    self.server.stalls += 1
+                    if self.server.stalls == self.server.stalls_expected:
+                        self.server.stalled.set()
                 if mode == "trickle":
                     # Keep sending a partial frame until the test releases it.
                     while not self.server.resume.wait(0.05):
                         self.wfile.write(b"\x00")
                 else:
                     self.server.resume.wait()
+                    if q.bodyType == R.RequestBody.CatalogRequest:
+                        self.wfile.write(R.frame(self.server.operation(q)))
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -254,6 +262,7 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
     # inside the accepted run's early-build selection.
     remote_gateway.skip_stall = 1
     remote_gateway.stall = "blackhole"
+    early_catalog = remote_gateway.stalled
     try:
         start = client.send("RunRequest", make("RunRequest", baseRev=rev, opId=new_id(),
                                                origin="test", card=path("work"), propagate=False))
@@ -263,8 +272,14 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
             timeout=10,
         )
         run_id = text(accepted.value.runId)
-        assert remote_gateway.stalled.wait(10), "early build never requested the catalog"
+        assert early_catalog.wait(10), "early build never requested the catalog"
         assert text(client.wait_reply(start).run.runId) == run_id
+        remote_gateway.stalled = threading.Event()
+        # The early build holds the first Catalog. Block all six RPC readers as well.
+        remote_gateway.stalls_expected = 7
+        plans = [client.send("RunPlanRequest", make("RunPlanRequest", card=path("work"),
+                                                   propagate=False)) for _ in range(6)]
+        assert remote_gateway.stalled.wait(10), "RunPlan requests did not fill the read pool"
         stop = client.send("RunCancelRequest", make("RunCancelRequest", runId=run_id))
         client.wait_notification(
             lambda n: n.valueType == NotificationPayload.RunEvent
@@ -274,9 +289,11 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
             timeout=5,
         )
         assert client.wait_reply(stop).state == RunState.cancelling
-        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        assert wait_run_notification(client, run_id, timeout=5).state == RunState.cancelled
     finally:
         remote_gateway.resume.set()
+    for plan in plans:
+        client.wait_reply(plan)
     assert remote_gateway.submit_count == 0
 
 
@@ -469,6 +486,22 @@ def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gatewa
         assert remote_gateway.submit_count == 1
     finally:
         remote_gateway.resume.set()
+
+
+def test_stop_interrupts_a_pending_result_download(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    gateway.stall_operation = R.RequestBody.GetBlobRequest
+    gateway.stall = "blackhole"
+    gateway.finish(job_id)
+    try:
+        assert gateway.stalled.wait(10), "the result download did not reach the gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert gateway.cancel_received.wait(5), "Cancel waited behind the result download"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        assert gateway.receipts[job_id]["state"] == "succeeded"
+        assert gateway.download_count == 0
+    finally:
+        gateway.resume.set()
 
 
 @pytest.mark.parametrize("mode,operation,request_cancel", [

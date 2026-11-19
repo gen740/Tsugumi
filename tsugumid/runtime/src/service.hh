@@ -247,6 +247,7 @@ class Service : public RequestSink {
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;
+  std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
