@@ -107,7 +107,7 @@ class JournalBroker : public testing::Test {
     b.Finish(R::JobSpec::Pack(b, &spec));
     const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
                             b.GetSize());
-    EXPECT_EQ(client.submit("worker", journal->instance(), job, bytes).state,
+    EXPECT_EQ(client.submit("worker", journal->instance(), job, bytes, {}).state,
               "queued");
     return crypto::sha256_hex(bytes);
   }
