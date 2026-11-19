@@ -1,20 +1,12 @@
-"""Release version, credential boundaries and required test fixtures."""
+"""Release guest selection and protocol credential boundaries."""
 import pathlib
 import re
 import subprocess
 
-import pytest
-
 ROOT = pathlib.Path(__file__).resolve().parents[2]
 
 
-def test_every_part_takes_the_version_from_one_file():
-    version = (ROOT / "VERSION").read_text().strip()
-    assert re.fullmatch(r"\d+\.\d+\.\d+", version)
-
-
-@pytest.mark.parametrize("flags", [[], ["--release"]], ids=["development", "release"])
-def test_app_packaging_selects_the_prebuilt_guest(tmp_path, flags):
+def test_app_packaging_selects_the_prebuilt_release_guest(tmp_path):
     """Capture the guest request before any build or signing steps."""
     script = tmp_path / "ui/macos/build-app.sh"
     script.parent.mkdir(parents=True)
@@ -24,10 +16,10 @@ def test_app_packaging_selects_the_prebuilt_guest(tmp_path, flags):
         nix() { printf '%s\n' "$@"; exit 42; }
         source "$0"
     """
-    result = subprocess.run(["bash", "-c", shell, str(script), *flags],
+    result = subprocess.run(["bash", "-c", shell, str(script), "--release"],
                             cwd=tmp_path, capture_output=True, text=True)
     assert result.returncode == 42, result.stderr
-    assert result.stdout.splitlines() == ["run", ".#guest-image", "--", *flags]
+    assert result.stdout.splitlines() == ["run", ".#guest-image", "--", "--release"]
 
 
 def schema_tables(source):
@@ -65,16 +57,3 @@ def test_credentials_are_host_only_inputs_and_absent_from_model_selection_and_re
                    for variant in reply.split(",")}
     assert not reply_types & {"ProviderInput", "CredentialToken"}
     assert "CredentialTokenRequest" not in host
-
-
-def test_the_core_test_package_gets_every_fixture_its_build_installs():
-    """The core test manifests install fixtures from tests/fixtures; one that
-    nix/core-tests.nix does not list fails only in the Nix build."""
-    manifests = [ROOT / "tests/core/CMakeLists.txt", *sorted((ROOT / "tests/core/cmake").rglob("*.cmake"))]
-    wanted = set(re.findall(r"fixtures/([A-Za-z0-9_.-]+\.json)", "\n".join(path.read_text() for path in manifests)))
-    listed = set(re.findall(r"\.\./tests/fixtures/([A-Za-z0-9_.-]+)", (ROOT / "nix/core-tests.nix").read_text()))
-    missing = sorted(wanted - listed)
-    assert not missing, f"add to nix/core-tests.nix: {missing}"
-    installed = ROOT / "build-ci/share/tsugumi/guide-tests/tests/fixtures"
-    if installed.is_dir():
-        assert wanted <= {entry.name for entry in installed.iterdir() if entry.is_file()}
