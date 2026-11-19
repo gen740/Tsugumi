@@ -181,13 +181,15 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.ok(html.includes('#3') && html.includes('#1'), 'the two sides identify the compared invocations')
 }
 
-// Use the real Cas A retained table and images as the rendering fixture.
-const demo = JSON.parse(fs.readFileSync(path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data/casa.json'), 'utf8'))
-const table = demo.outputs.bands
+// Use the retained table and images from the Cas A recording.
+const playerData = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
+const { outputs } = JSON.parse(fs.readFileSync(path.join(playerData, 'assets/casa.run.json'), 'utf8'))
+const table = outputs.bands
 const display = (runId: string, valueType: D.DisplayValue, value: D.DisplayTableT | D.DisplayImageT) => Object.assign(new D.DisplayT(), { runId, invocation: 1n, revision: 1n, card: cardPath(['bands']), valueType, value })
 const tableValue = (rows: string[][]) => Object.assign(new D.DisplayTableT(), { columns: table.columns, rows: rows.map(cells => Object.assign(new D.TableRowT(), { cells })) })
 a.record!.display = display('left', D.DisplayValue.DisplayTable, tableValue(table.rows))
-const changedRows = structuredClone(table.rows); changedRows[0][2] = '104821'
+const changedRows = structuredClone(table.rows)
+changedRows[0][2] += '1'
 b.record!.display = display('right', D.DisplayValue.DisplayTable, tableValue(changedRows))
 const shown = (d?: D.DisplayT | null) => d ? recordedDisplay(d) : undefined
 assert.equal(sameDisplay(shown(a.record!.display), shown(b.record!.display)), false)
@@ -205,10 +207,10 @@ assert.equal(sameDisplay(undefined, undefined), true)
 }
 assert.equal(recordedDisplay(a.record!.display)?.value.kind, 'table')
 const markup = renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />)
-for (const text of ['bands', '1650', '1800', '101187', '104821', 'Photons']) assert.ok(markup.includes(text), text)
+for (const text of ['bands', '1650', '1800', table.rows[0][2], changedRows[0][2], 'Photons']) assert.ok(markup.includes(text), text)
 for (const name of ['rgb', 'spectrum']) {
-  const image = demo.outputs[name]
-  const bytes = [...fs.readFileSync(path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data', image.src))]
+  const image = outputs[name]
+  const bytes = [...fs.readFileSync(path.join(playerData, image.src))]
   const value = Object.assign(new D.DisplayImageT(), { data: bytes, mediaType: name === 'rgb' ? 'image/jpeg' : 'image/png', alt: name })
   const retained = display('left', D.DisplayValue.DisplayImage, value)
   const other = display('right', D.DisplayValue.DisplayImage, value)
