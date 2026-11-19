@@ -1,7 +1,7 @@
 """Black-box admission, scoping and core lifetimes against tsugumi-workerd.
 
 The socket-free C++ suite covers journal races and protocol verification. This
-suite runs on the Linux CI runner, outside the build sandbox.
+suite runs via tests/ci-remote-worker.sh on Linux, outside the build sandbox.
 """
 import concurrent.futures
 import hashlib
@@ -23,6 +23,7 @@ from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.CardPath import CardPathT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.FlatBufferData import FlatBufferDataT
+from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
@@ -126,7 +127,7 @@ class Worker:
         return digest
 
     def put_chunk(self, job, digest, total, offset, data):
-        chunk = R.PutBlobRequestT(digest=digest, total=total, offset=offset, bytes=data)
+        chunk = R.put_blob_chunk(digest, total, offset, data)
         response = self.call(R.RequestBody.PutBlobRequest, chunk, job=job)
         assert response.bodyType == R.ReplyBody.Ack, vars(response.body)
 
@@ -232,12 +233,11 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
 
 
 def deadline_spec(peer, job, budget_ms):
-    # Use the runner's pinned tools to build the smallest Bash Card manifest.
-    bash, mkfifo = shutil.which("bash"), shutil.which("mkfifo")
-    assert bash and mkfifo, "the deadline Card requires Bash and mkfifo from tsugumi-test-env"
-    worker = Path(os.environ["TSUGUMI_WORKER"])
+    # Reference only the pinned Bash and standalone SDK worker outputs. The
+    # Card blocks on a Bash coprocess pipe with both ends open.
+    seed = json.loads(Path(os.environ["TSUGUMI_REMOTE_TEST_SEED_MANIFEST"]).read_text())
     expression = r'''
-      { system, bashRoot, coreutilsRoot, workerRoot }:
+      { system, bashRoot, workerRoot }:
       let
         shell = builtins.storePath bashRoot + "/bin/bash";
       in
@@ -248,10 +248,14 @@ def deadline_spec(peer, job, budget_ms):
         args = [ "-c" ''printf '%s' "$manifest" > "$out"'' ];
         manifest = builtins.toJSON {
           inherit shell;
-          path = builtins.storePath coreutilsRoot + "/bin";
+          path = "";
           run = {
             worker = builtins.storePath workerRoot + "/bin/tsugumi-worker";
-            bash = ''mkfifo "$HOME/gate" && read -r line < "$HOME/gate"'';
+            bash = ''
+              printf '%s\n' deadline-card-started
+              coproc { read -r line; }
+              read -r line <&"${"$"}{COPROC[0]}"
+            '';
           };
         };
       }
@@ -259,9 +263,8 @@ def deadline_spec(peer, job, budget_ms):
     derivation = subprocess.check_output(
         ["nix-instantiate", "--expr", expression,
          "--argstr", "system", R.string(peer.caps.nativeSystem),
-         "--argstr", "bashRoot", str(Path(bash).parents[1]),
-         "--argstr", "coreutilsRoot", str(Path(mkfifo).parents[1]),
-         "--argstr", "workerRoot", str(worker.parents[1])],
+         "--argstr", "bashRoot", str(Path(seed["shell"]).parents[1]),
+         "--argstr", "workerRoot", str(Path(seed["run"]["worker"]).parents[1])],
         text=True,
     ).strip()
     output = subprocess.check_output(["nix-store", "--query", "--outputs", derivation], text=True).strip()
@@ -283,7 +286,7 @@ def deadline_spec(peer, job, budget_ms):
     flatc = os.environ.get("TSUGUMI_FLATC", "flatc")
     subprocess.run([flatc, "--binary", "--schema", "-o", str(peer.root), str(schema)], check=True)
     subprocess.run([flatc, "--binary", "-o", str(peer.root), str(schema), str(params)], check=True)
-    # The Card blocks on a FIFO, so only its call budget can produce a timeout.
+    # Only the Card's call budget can release the blocked body.
     call = WorkerCallT(
         runId="1", card=CardPathT(segments=["deadline"]), invocation=1,
         inputs=[], params=FlatBufferDataT(
@@ -368,14 +371,20 @@ read -r line < "$TEST_GATE"
         # Succeeded means the supervisor imported a result. The Card outcome
         # is carried inside that result as a WorkerFailure.
         record = peer.wait_state(deadline_job, R.JobState.Succeeded)
-        manifest_blob = peer.call(R.RequestBody.GetBlobRequest,
-                                  R.GetBlobRequestT(digest=record["result"]), job=deadline_job)
-        assert manifest_blob.bodyType == R.ReplyBody.BlobChunk
-        manifest = R.ResultManifestT.InitFromPackedBuf(bytes(manifest_blob.body.bytes))
-        result_blob = peer.call(R.RequestBody.GetBlobRequest,
-                                R.GetBlobRequestT(digest=manifest.invocationResultSha256), job=deadline_job)
-        assert result_blob.bodyType == R.ReplyBody.BlobChunk
-        result = WorkerMessageT.InitFromPackedBuf(bytes(result_blob.body.bytes))
+
+        def result_bytes(digest):
+            response = peer.call(R.RequestBody.GetBlobRequest,
+                                 R.GetBlobRequestT(digest=digest), job=deadline_job)
+            assert response.bodyType == R.ReplyBody.BlobChunk
+            return bytes(response.body.bytes)
+
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(record["result"]))
+        files = {R.string(file.path): R.string(file.sha256) for file in manifest.outputs}
+        assert json.loads(result_bytes(files["environment.json"]))["built"]
+        logs = map(json.loads, result_bytes(files["logs.jsonl"]).splitlines())
+        assert any(entry["stream"] == LogStream.standard_output and
+                   entry["text"].strip() == "deadline-card-started" for entry in logs)
+        result = WorkerMessageT.InitFromPackedBuf(result_bytes(R.string(manifest.invocationResultSha256)))
         assert result.valueType == WorkerPayload.WorkerFailure
         assert result.value.failure.kind == FailureKind.timeout, R.string(result.value.failure.diagnostic)
     finally:
