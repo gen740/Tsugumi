@@ -1,10 +1,12 @@
 """Read a real Card's Nix output from run history."""
 
+import os
 from uuid import uuid4
 
 import pytest
 
 from harness.real_cards import log
+from harness.scenario import run, wait_run
 from projects import card, run_and_wait, write
 from tsugumi_client import path
 from Tsugumi.Data.CardState import CardState
@@ -27,6 +29,7 @@ let
     printf 'before invalid bytes\n' >&2
     printf 'builder byte: \377\n' >&2
     printf 'after invalid bytes\n' >&2
+    for ((i = 0; i < 400; i++)); do printf 'builder line %03d\n' "$i"; done >&2
     @finish@
   '';
 in {
@@ -44,11 +47,11 @@ in {
 
     expected = RunState.failed if build_fails else RunState.succeeded
     assert status.state == expected, (record.summary.failure, build)
-    markers = ["before invalid bytes", "builder byte: \ufffd", "after invalid bytes"]
-    remaining = build
-    for marker in markers:
-        _, found, remaining = remaining.partition(marker)
-        assert found, build
+    expected_log = "before invalid bytes\nbuilder byte: \ufffd\nafter invalid bytes\n"
+    expected_log += "".join(f"builder line {index:03}\n" for index in range(400))
+    builder_prefixes = ("before invalid bytes", "builder byte: ", "after invalid bytes", "builder line ")
+    builder_output = "".join(line for line in build.splitlines(keepends=True) if line.startswith(builder_prefixes))
+    assert builder_output == expected_log
     if build_fails:
         assert record.summary.state == CardState.failed
         assert record.summary.failure.kind == FailureKind.nix_failed
@@ -69,11 +72,6 @@ in {
     ids=["defaults", "local-builds-disabled", "explicit-jobs-and-cores"],
 )
 def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, options, expected):
-    import os
-
-    from projects import wait_run
-    from tsugumi_client import new_id, text
-
     config = os.environ.get("NIX_CONFIG", "")
     monkeypatch.setenv("NIX_CONFIG", f"{config}\nmax-jobs = {max_jobs}\ncores = 2\nbuilders =")
     root = tmp_path / "project"
@@ -93,10 +91,7 @@ in {
     }
     write(root, {"probe": definition}, [card("probe", "probe")], [])
     client = core_factory(project_root=root).connect()
-    rev = client.call("ProjectInspectRequest").rev
-    accepted = client.call("RunRequest", baseRev=rev, opId=new_id(), origin="test",
-                           card=path("probe"), propagate=False, **options)
-    run_id = text(accepted.run.runId)
+    run_id = run(client, "probe", propagate=False, **options)
     outcome = wait_run(client, run_id)
     if expected is None:
         record = client.call("RunRecordRequest", runId=run_id, card=path("probe"), invocation=1).record

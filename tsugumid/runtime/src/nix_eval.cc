@@ -233,9 +233,12 @@ bool interrupted(const NixCall& c, bool* timed_out) {
 
 class CallScope {
  public:
-  explicit CallScope(const NixCall& c) : call_(c) {
+  explicit CallScope(const NixCall& c)
+      : call_(c), log_line_([&c](const std::string& line) {
+          c.log(std::span(&line, 1));
+        }) {
     t_call = &c;
-    g_logger->set_thread(c.log ? &c.log : nullptr);
+    g_logger->set_thread(c.log ? &log_line_ : nullptr);
     std::lock_guard l(g_calls_mu);
     g_calls.emplace_back(pthread_self(), &c);
   }
@@ -255,6 +258,7 @@ class CallScope {
 
  private:
   const NixCall& call_;
+  const std::function<void(const std::string&)> log_line_;
 };
 
 // Nix's errors as NixEvaluator promises them.
@@ -732,35 +736,47 @@ struct NixEvaluator::Impl {
       spec.env.push_back(key + "=" + value);
 
     std::string error;
-    const auto result =
-        proc::run(spec, c.cancel, c.deadline, [&](const std::string& line) {
-          std::string text;
-          if (line.starts_with("@nix ")) {
-            const auto entry = nlohmann::json::parse(line.substr(5));
-            const auto action = entry.at("action").get<std::string>();
-            if (action == "msg" && entry.at("level") <= nix::lvlInfo) {
-              text = entry.at("msg").get<std::string>();
-              if (entry.at("level") == nix::lvlError)
-                error = nix::filterANSIEscapes(text, true);
-            } else if (action == "start" && entry.at("level") <= nix::lvlInfo) {
-              text = entry.at("text").get<std::string>();
-              if (text.empty()) return;
-            } else if (action == "result" &&
-                       (entry.at("type") == nix::resBuildLogLine ||
-                        entry.at("type") == nix::resPostBuildLogLine)) {
-              text = entry.at("fields").at(0).get<std::string>();
+    std::vector<std::string> output;
+    const auto result = proc::run(
+        spec, c.cancel, c.deadline, [&](std::span<const std::string> lines) {
+          for (const auto& line : lines) {
+            std::string text;
+            const auto entry =
+                line.starts_with("@nix ")
+                    ? nlohmann::json::parse(line.begin() + 5, line.end(),
+                                            nullptr, false)
+                    : nlohmann::json{};
+            if (entry.is_object()) {
+              const auto action = entry.at("action").get<std::string>();
+              if (action == "msg" && entry.at("level") <= nix::lvlInfo) {
+                text = entry.at("msg").get<std::string>();
+                if (entry.at("level") == nix::lvlError)
+                  error = nix::filterANSIEscapes(text, true);
+              } else if (action == "start" &&
+                         entry.at("level") <= nix::lvlInfo) {
+                text = entry.at("text").get<std::string>();
+                if (text.empty()) continue;
+              } else if (action == "result" &&
+                         (entry.at("type") == nix::resBuildLogLine ||
+                          entry.at("type") == nix::resPostBuildLogLine)) {
+                text = entry.at("fields").at(0).get<std::string>();
+              } else {
+                continue;
+              }
+              text += '\n';
             } else {
-              return;
+              // Startup errors can precede the logger. A killed client can also
+              // leave a partial JSON record. In both cases retain the bytes
+              // read.
+              text = line;
+              error = nix::filterANSIEscapes(text, true);
             }
-            text += '\n';
-          } else {
-            // Early client errors can precede setup of its JSON logger.
-            text = line;
-            error = nix::filterANSIEscapes(text, true);
+            if (c.log)
+              output.push_back(tsugumi::text::replace_invalid_utf8(
+                  nix::filterANSIEscapes(text, true)));
           }
-          if (c.log)
-            c.log(tsugumi::text::replace_invalid_utf8(
-                nix::filterANSIEscapes(text, true)));
+          if (!output.empty()) c.log(output);
+          output.clear();
         });
     if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
     if (result.timed_out)

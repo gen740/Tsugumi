@@ -72,7 +72,7 @@ struct BuildRequest {
   ExecutionTarget target;
   const DerivationClosureTransport* transport = nullptr;
   const std::atomic<bool>* cancel = nullptr;
-  std::function<void(const std::string&)> log;  // build output lines
+  NixOutput log;  // build output
   std::function<void(Phase)>
       on_phase;  // evaluate, then build (only when the store lacks the result)
 };

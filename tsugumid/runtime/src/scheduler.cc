@@ -337,20 +337,22 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool done = false;
     std::optional<CardBuildPlan> plan;
     std::exception_ptr error;
-    std::vector<std::string> lines;
+    std::vector<std::vector<std::string>> chunks;
     uint64_t line_bytes = 0;
     std::vector<std::pair<Phase, int64_t>> phases;
-    std::function<void(const std::string&)> log;
+    NixOutput log;
     std::function<void(Phase, int64_t)> on_phase;
 
-    auto print(const std::string& line) -> void {
+    auto print(std::span<const std::string> received) -> void {
       std::lock_guard l(mu);
-      if (log) return log(line);
-      // The taking invocation's log budget keeps no more than this, and
-      // notes the omission once it has seen more.
-      if (line_bytes > kInvocationLogLimitBytes) return;
-      line_bytes += line.size();
-      lines.push_back(line);
+      if (log) return log(received);
+      // Retain enough for the invocation's budget to record the omission.
+      auto end = received.begin();
+      while (end != received.end() && line_bytes <= kInvocationLogLimitBytes) {
+        line_bytes += end->size();
+        ++end;
+      }
+      if (end != received.begin()) chunks.emplace_back(received.begin(), end);
     }
     auto enter(Phase phase) -> void {
       std::lock_guard l(mu);
@@ -446,11 +448,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void record_card_log(const CardPath& card, uint64_t inv, LogStream stream,
-                       const std::string& text) {
+                       std::string text) {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), card, inv, stream, text, run, ends](sql::Db& db) {
+        [&h = svc_.history(), card, inv, stream, text = std::move(text), run,
+         ends](sql::Db& db) {
           *ends = h.append_log(db, run, card, inv, stream, text);
         },
         [self = shared_from_this(), ends](bool ok) {
@@ -487,13 +490,23 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 const std::string& text) {
+    card_log(card, inv, stream, std::span(&text, 1));
+  }
+
+  void card_log(const CardPath& card, uint64_t inv, LogStream stream,
+                std::span<const std::string> lines) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
     auto& budget = log_budget(card, inv);
     if (budget.truncated()) return;
-    if (budget.append(stream, text))
-      record_card_log(card, inv, stream, text);
-    else
-      mark_card_log_truncated(card, inv);
+    // The budget still measures each log entry. Store the accepted prefix
+    // with one insert and publish its end before any truncation notice.
+    std::string chunk;
+    for (const auto& line : lines) {
+      if (!budget.append(stream, line)) break;
+      chunk += line;
+    }
+    if (!chunk.empty()) record_card_log(card, inv, stream, std::move(chunk));
+    if (budget.truncated()) mark_card_log_truncated(card, inv);
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -882,9 +895,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       auto early = std::make_shared<EarlyBuild>();
       early->target = request.target;
       request.cancel = &early->cancel;
-      request.log = [e = early.get()](const std::string& line) {
-        e->print(line);
-      };
+      request.log = [e = early.get()](auto lines) { e->print(lines); };
       request.on_phase = [e = early.get()](Phase phase) { e->enter(phase); };
       early_[rt.idx] = early;
       early_started_.push_back(early);
@@ -951,8 +962,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       check_reused_plan(*rt.build);
       return *rt.build;
     }
-    request.log = [&](const std::string& line) {
-      card_log(node.path, s.invocation, LogStream::build, line);
+    request.log = [&](auto lines) {
+      card_log(node.path, s.invocation, LogStream::build, lines);
     };
     auto started = now_ms();
     const auto trace_phase = [&](int64_t at) {
@@ -973,9 +984,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (auto early = take_early_build(rt, request.target)) {
       std::unique_lock l(early->mu);
       for (const auto& [phase, at] : early->phases) enter(phase, at);
-      for (const auto& line : early->lines) request.log(line);
+      for (const auto& chunk : early->chunks) request.log(chunk);
       early->phases.clear();
-      early->lines.clear();
+      early->chunks.clear();
       early->log = request.log;
       early->on_phase = enter;
       // A stopped batch cancels the build as it would its own; the build

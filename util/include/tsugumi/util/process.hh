@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -41,12 +42,13 @@ struct Result {
   std::string out;  // stdout (captured)
 };
 
-// Runs a command to completion. stderr lines are forwarded to `on_stderr`.
+// Runs a command to completion. Each stderr read delivers its complete lines
+// together. At EOF, any final unterminated line is delivered too.
 // Cancellation and deadline terminate the whole process group (TERM, then
 // KILL after `grace`).
 Result run(const Spec& spec, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
-           const std::function<void(const std::string&)>& on_stderr,
+           const std::function<void(std::span<const std::string>)>& on_stderr,
            std::chrono::milliseconds grace = std::chrono::milliseconds(1000));
 
 bool exited_ok(int status);

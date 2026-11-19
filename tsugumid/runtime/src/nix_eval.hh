@@ -12,6 +12,7 @@
 #include <map>
 #include <memory>
 #include <optional>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <tuple>
@@ -27,6 +28,8 @@ inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 // checked by reuse(). Operational limits/deadlines are applied on every call.
 using EvaluationKey =
     std::tuple<std::string, std::string, std::string, std::string>;
+
+using NixOutput = std::function<void(std::span<const std::string>)>;
 
 struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
@@ -47,8 +50,7 @@ struct NixCall {
   uint32_t max_implementations = kMaxExecutionBatchSize;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;
-  std::function<void(const std::string&)>
-      log;  // evaluation messages and build output
+  NixOutput log;  // evaluation messages and build output
   std::function<void(bool building)>
       on_phase;  // false: evaluating, true: building
   auto evaluation_key() const -> EvaluationKey {

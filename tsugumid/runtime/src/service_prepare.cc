@@ -25,8 +25,8 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
     request.node = &node;
     request.doc = doc;
     request.timeout_seconds = node.settings.build_timeout_seconds;
-    request.log = [&](const std::string& line) {
-      log::info("build " + card + ": " + line);
+    request.log = [&](auto lines) {
+      for (const auto& line : lines) log::info("build " + card + ": " + line);
     };
     // One schema::PreparedCard per line.
     std::vector<std::pair<std::string, hosq::json::GenericDom<>>> fields;
