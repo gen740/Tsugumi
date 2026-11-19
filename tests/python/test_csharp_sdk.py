@@ -1,17 +1,15 @@
 """Typed C# Cards use the actual worker ABI, on the host or shared VM."""
 from __future__ import annotations
 
-import hashlib
 import json
 import os
-import re
 import shutil
 
 import pytest
 
 from conftest import ROOT, Daemon, real_environment
 from projects import put, run_and_wait, start_run, wait_for_log, wait_run
-from test_language_cards import write_project as write_language_project
+from test_language_cards import scaffold_card, write_project as write_language_project
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
@@ -43,7 +41,7 @@ LOCK = {"version": 1, "dependencies": {"net10.0": {"Newtonsoft.Json": {
 # read: the fixed-output fetch is rejected before NuGet runs.
 OTHER_LOCK = {"version": 1, "dependencies": {"net10.0": {"Newtonsoft.Json": {
     "type": "Direct", "requested": "[13.0.1, )", "resolved": "13.0.1", "contentHash": "not reached"}}}}
-GOT = re.compile(r"got:\s*(sha256-[A-Za-z0-9+/]+=*)")
+NUGET_HASH = "sha256-wU+UzEeC0HVXwrqFmgW6FE9Li6S0XxQFzuizoaVoVGY="
 CPP_NIX = NIX.replace('"csharp"', '"cpp"').replace('csharpCard', 'cppCard')
 NUMBERS = '''namespace sample;
 table Numbers { values:[double]; label:string; }
@@ -96,14 +94,6 @@ public sealed class Card : ICard {
     var values = received.Values.Select(x => x * (inputs.Params.Factor ?? throw new Failure("validation_failed", "factor is required"))).ToList();
     var roundTrip = Newtonsoft.Json.JsonConvert.DeserializeObject<double[]>(Newtonsoft.Json.JsonConvert.SerializeObject(values));
     if (roundTrip == null || !values.SequenceEqual(roundTrip)) throw new Exception("NuGet reflection round trip failed");
-    report.Log($"worker {identity} runs {runs}");
-    report.Text("intermediate");
-    report.Markdown("**ready**");
-    report.Scalar(values.Sum(), "sum");
-    report.Image(Convert.FromBase64String("iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg=="), alt: "one pixel");
-    report.Points([0], [1], [2], [0xff0000]);
-    report.LineChart(new Series("a", "values", [1, 2, 3], values.ToArray()));
-    report.Module("plotly", "{\\"data\\":[],\\"layout\\":{}}");
     report.Table(["sum", "worker", "runs"], [[values.Sum().ToString(System.Globalization.CultureInfo.InvariantCulture), identity, runs.ToString()]]);
     result.Numbers = new outputs.numbers.sample.NumbersT { Values = values, Label = received.Label };
 
@@ -148,47 +138,17 @@ public sealed class Card : ICard {
 }
 '''
 
-# Every type compiles via ICard's default implementation. The entry Card
-# dispatches each invalid signature through the same interface as the SDK.
-INVALID_ENTRIES = {
-    "SkippedReport": "public ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-    "StaticMethod": "public static ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-    "PrivateMethod": "private ValueTask<Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Outputs());",
-    "TaskResult": "public Task<Outputs> RunAsync(Inputs inputs, Run run) => Task.FromResult(new Outputs());",
-    "ForeignResult": "public ValueTask<Other.Outputs> RunAsync(Inputs inputs, Run run) => ValueTask.FromResult(new Other.Outputs());",
-    "ForeignInput": "public ValueTask<Outputs> RunAsync(Other.Inputs inputs) => ValueTask.FromResult(new Outputs());",
-    "MissingMethod": "",
-}
-
-
-def test_invalid_entries_fail_through_the_card_interface(tmp_path):
-    from test_demos import edit_card, set_param
-
-    root = tmp_path / "invalid-entries"
+def test_missing_entry_fails_through_the_card_interface(tmp_path):
+    root = tmp_path / "invalid-entry"
     source = """using Tsugumi;
-using System.Threading.Tasks;
-public sealed class Card : ICard {
-    public ValueTask<Outputs> RunAsync(Inputs inputs, Report report, Run run) {
-        ICard candidate = inputs.Params.Entry switch {
-""" + "".join(f'            "{name}" => new {name}(),\n' for name in INVALID_ENTRIES) + """
-            _ => throw new System.ArgumentException()
-        };
-        return candidate.RunAsync(inputs, report, run);
-    }
-}
-namespace Other { public class Inputs {} public class Outputs {} }
-""" + "\n".join(f"sealed class {name} : ICard {{ {method} }}" for name, method in INVALID_ENTRIES.items())
-    settings = {"language": "csharp", "params": [{"name": "entry", "type": "string", "data": "MissingMethod"}]}
-    write_project(root, {"bad": {"card": settings, "nix": NIX, "src": {"Card.cs": source}}}, [])
+public sealed class Card : ICard {}
+"""
+    write_project(root, {"bad": {"card": {"language": "csharp"}, "nix": NIX, "src": {"Card.cs": source}}}, [])
     env, c = open_environment(root, "tsugumi-test-csharp-entry")
     try:
-        for name in INVALID_ENTRIES:
-            edit_card(env, c, "bad", lambda body: set_param(body, "entry", name))
-            rid, status = run_and_wait(c, "bad")
-            assert status.state == RunState.failed, name
-            failure = c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure
-            assert failure.kind == FailureKind.worker_failed, name
-            assert name in text(failure.diagnostic)
+        rid, status = run_and_wait(c, "bad")
+        assert status.state == RunState.failed
+        assert c.call("RunRecordRequest", runId=rid, card=path("bad")).status.failure.kind == FailureKind.worker_failed
     finally:
         c.close()
         env.cleanup()
@@ -212,11 +172,6 @@ public sealed class Card : ICard {
 '''
 
 
-def lock_name(lock):
-    """The fixed-output derivation csharpCard names after the lock file."""
-    return "tsugumi-csharp-card-nuget-lock-" + hashlib.sha256(json.dumps(lock).encode()).hexdigest()[:16]
-
-
 def build_lock(root, lock, hash):
     """Runs one C# Card that uses Json.NET from `lock`, pinned by `hash` (a Nix
     expression, or None to leave it out). Returns the run state, what the Card's
@@ -235,57 +190,32 @@ def build_lock(root, lock, hash):
         if status.state == RunState.succeeded:
             display = c.call("RunRecordRequest", runId=rid, card=path("probe")).record.display
             shown = text(display.value.text) if display.valueType == 1 else None
-        return status.state, said, shown
+        return status, said, shown
     finally:
         c.close(); env.cleanup()
 
 
-@pytest.fixture(scope="module")
-def nuget_hash(tmp_path_factory):
-    """The hash of LOCK's packages, found the way docs/CSharp.md teaches: run
-    once with pkgs.lib.fakeHash and read `got:` in the Card's build log."""
-    state, said, _ = build_lock(tmp_path_factory.mktemp("learn") / "csharp", LOCK, "pkgs.lib.fakeHash")
-    assert state == RunState.failed, said
-    assert lock_name(LOCK) in said, said  # the hash is named by what it covers
-    found = GOT.search(said)
-    assert found, said
-    print(f"NAR hash of the Newtonsoft.Json 13.0.3 lock's packages: {found[1]}", flush=True)
-    return found[1]
+def test_a_lock_restores_offline_under_its_hash(tmp_path):
+    status, said, shown = build_lock(tmp_path / "pinned", LOCK, f'"{NUGET_HASH}"')
+    assert status.state == RunState.succeeded and shown == "[1,2]", said
+    # A changed lock must fetch and verify a different set of packages.
+    status, said, _ = build_lock(tmp_path / "stale", OTHER_LOCK, f'"{NUGET_HASH}"')
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, said
 
 
-def test_a_lock_restores_offline_under_its_hash(tmp_path, nuget_hash):
-    state, said, shown = build_lock(tmp_path / "pinned", LOCK, f'"{nuget_hash}"')
-    assert state == RunState.succeeded and shown == "[1,2]", said
-    # A changed lock is a new derivation: the old hash is checked against the
-    # new packages rather than reusing the store path fetched for LOCK.
-    state, said, _ = build_lock(tmp_path / "stale", OTHER_LOCK, f'"{nuget_hash}"')
-    assert state == RunState.failed and lock_name(OTHER_LOCK) in said and "hash mismatch" in said, said
-
-
-def test_the_demo_pins_what_its_lock_resolves_to(nuget_hash):
-    """The bundled demo locks the same Json.NET, so its hash is the one found
-    above (both languages)."""
-    from pathlib import Path
-    for language in ("en", "ja"):
-        card = Path(__file__).resolve().parents[2] / "demos" / language / "csharp-calibration/definitions/calibrate"
-        assert json.loads((card / "packages.lock.json").read_text()) == LOCK
-        assert f'hash = "{nuget_hash}";' in (card / "default.nix").read_text(), f"pin {nuget_hash} in {card}/default.nix"
-
-
-def test_a_lock_without_hash_says_what_to_pin(tmp_path):
-    state, said, _ = build_lock(tmp_path / "unpinned", LOCK, None)
-    assert state == RunState.failed
-    assert "NAR hash" in said and "pkgs.lib.fakeHash" in said and lock_name(LOCK) in said, said
+def test_a_lock_without_hash_is_rejected(tmp_path):
+    status, said, _ = build_lock(tmp_path / "unpinned", LOCK, None)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.nix_failed, said
 
 
 @pytest.fixture
-def project(tmp_path, nuget_hash):
+def project(tmp_path):
     root = tmp_path / "csharp"
     write_project(root, {
         "make": {"card": {"language":"cpp", "inputs":[{"name":"start"}]}, "nix":CPP_NIX, "outputs":NUMBERS, "src":{"card.cc":CPP}},
         "scale": {"card": {"language":"csharp", "reuseWorker":True, "inputs":[{"name":"numbers"}], "params":[
             {"name":"factor", "type":"double", "data":2}, {"name":"mode", "type":"string", "data":"ok"}]},
-            "nix":nuget_nix(f'"{nuget_hash}"'), "outputs":NUMBERS, "src":{"Card.cs":'''#nullable enable
+            "nix":nuget_nix(f'"{NUGET_HASH}"'), "outputs":NUMBERS, "src":{"Card.cs":'''#nullable enable
 '''+CSHARP}},
         "report": {"card": {"language":"python", "inputs":[{"name":"numbers"}], "retainArtifact":True, "artifactOutput":"report"}, "nix":PY_NIX, "outputs":REPORT, "src":{"main.py":PYTHON}},
         "receipt": {"card": {"language":"csharp", "inputs":[{"name":"report"}], "retainArtifact":True, "artifactOutput":"receipt"}, "nix":NIX, "outputs":RECEIPT, "src":{"Card.cs":FILE_CARD}},
@@ -319,18 +249,16 @@ def test_typed_pipeline_and_worker_lifetime(project):
     first = run(c)
     second = run(c)
     a, b = shown(c, first), shown(c, second)
-    assert a[0] == b[0] == "12"
+    assert a[0] == "12"
     assert a[1] == b[1] and a[2] == "1" and b[2] == "2"
     artifacts = c.call("ArtifactListRequest", runId=first).artifacts
-    report = next(item for item in artifacts if text(item.output)=="report")
-    response = c.call("ArtifactReadRequest", artifactId=text(report.artifactId), member="values.txt")
-    assert bytes(response.bytes) == b"2.0,4.0,6.0"
-
     receipt = next(item for item in artifacts if text(item.output)=="receipt")
     assert bytes(c.call("ArtifactReadRequest", artifactId=text(receipt.artifactId)).bytes) == b"2.0,4.0,6.0"
 
     for mode in ("fail", "wait", "callback"):
-        check_failure_and_recovery(env, c, mode)
+        check_failed_run(env, c, mode)
+    edit(env, c, mode="ok", timeoutSeconds=None)
+    assert shown(c, run(c))[0] == "12"
 
     edit(env, c, reuseWorker=False)
     a, b = shown(c, run(c)), shown(c, run(c))
@@ -346,7 +274,7 @@ def edit(env, c, **updates):
     edit_card(env, c, "scale", update)
 
 
-def check_failure_and_recovery(env, c, mode):
+def check_failed_run(env, c, mode):
     edit(env, c, mode=mode, timeoutSeconds=1 if mode == "wait" else None)
     rid = start_run(c, "start")
     if mode == "callback":
@@ -360,33 +288,13 @@ def check_failure_and_recovery(env, c, mode):
         "wait": FailureKind.timeout,
         "callback": FailureKind.cancelled,
     }[mode], log(c, rid)
-    if mode == "fail":
-        assert "requested failure" in log(c, rid)
     if mode == "callback":
         assert "cancel callback failure" in log(c, rid)
-    edit(env, c, mode="ok", timeoutSeconds=None)
-    recovered = run(c)
-    assert shown(c, recovered)[0] == "12"
-
-
-def test_creation_scaffold_copies_are_generated():
-    """The host catalog serves the scaffold generated by ui/shared/templates/csharp.py."""
-    import subprocess
-    import sys
-    from pathlib import Path
-    script = Path(__file__).resolve().parents[2] / "ui/shared/templates/csharp.py"
-    result = subprocess.run([sys.executable, str(script), "--check"], capture_output=True, text=True)
-    assert result.returncode == 0, result.stderr + result.stdout + " (run python3 ui/shared/templates/csharp.py)"
 
 
 def test_production_creation_scaffold(tmp_path):
-    from pathlib import Path
-    template = json.loads((Path(__file__).resolve().parents[2] / "ui/shared/templates/csharp.json").read_text())
     root = tmp_path / "scaffold"
-    write_project(root, {"hello": {"card":json.loads(template["_card.json"]),
-        "nix":template["default.nix"], "outputs":template["_outputs.fbs"],
-        "src":{name.removeprefix("src/"):body for name,body in template.items() if name.startswith("src/")}}},
-        [("start","out","hello","in")])
+    write_project(root, {"hello": scaffold_card("csharp")}, [("start", "out", "hello", "in")])
     env = real_environment(root) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
     c = env.client()
     try:

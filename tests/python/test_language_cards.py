@@ -14,7 +14,7 @@ import sys
 
 import pytest
 
-from conftest import Daemon, real_environment
+from conftest import ROOT, Daemon, real_environment
 from projects import put, run_and_wait
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
@@ -37,6 +37,13 @@ NO_OUTPUTS = '''namespace t;
 table Outputs { }
 root_type Outputs;
 '''
+
+
+def scaffold_card(language):
+    files = json.loads((ROOT / 'ui/shared/templates' / f'{language}.json').read_text())
+    return {'card': json.loads(files['_card.json']), 'nix': files['default.nix'],
+            'outputs': files['_outputs.fbs'].replace('@NAMESPACE@', 'example'),
+            'src': {name.removeprefix('src/'): body for name, body in files.items() if name.startswith('src/')}}
 
 
 def write_project(root, cards: dict, connections: list):
