@@ -113,12 +113,6 @@ function broadcast(v: unknown) {
   const line = `data: ${JSON.stringify(v)}\n\n`
   for (const s of streams.keys()) s.write(line)
 }
-function endEventStreams() {
-  for (const stream of streams.keys()) {
-    streams.delete(stream)
-    stream.end()
-  }
-}
 
 /** Shows a project without taking another tab's away: a page that shows it
  *  already, or one on Home is told to. False: no page is free for it. */
@@ -325,10 +319,19 @@ const routes: Record<string, Handler> = {
   },
   ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, listeners: () => streams.size, showOnPage, openPage, desktop }),
 }
-// EventSource reconnects when a stream ends. Each new stream first authenticates
-// with Host, so a failed restart also leaves the browser on that recovery path.
+// Browser pages stay registered while the independent Host connection recovers.
+let hostDisconnected = false
 observeHost(event => {
-  if (event.type === 'Disconnected') endEventStreams()
+  if (event.type === 'Disconnected') {
+    hostDisconnected = true
+    if (streams.size) void connectHost().catch(error => {
+      broadcast({ type: 'hostUnavailable', message: (error as Error).message })
+    })
+  } else if (event.type === 'Connected' && hostDisconnected) {
+    hostDisconnected = false
+    resumeChats()
+    broadcast({ type: 'reconnected' })
+  }
 })
 
 // The page is opened through the URL printed at start, which carries this
@@ -435,24 +438,23 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
-    try {
-      await connectHost()
-    } catch (error) {
-      const event = { type: 'hostUnavailable', message: (error as Error).message }
-      res.end(`data: ${JSON.stringify(event)}\n\n`)
-      return
-    }
-    if (res.destroyed) return
-    res.write('data: {"type":"eventsConnected"}\n\n')
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
-    resumeChats()
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
     res.on('close', () => {
       clearInterval(ping)
       streams.delete(res)
-      pageProjects.delete(page.id)
+      if (![...streams.values()].some(p => p.id === page.id)) pageProjects.delete(page.id)
     })
+    try {
+      await connectHost()
+      if (res.destroyed) return
+      res.write('data: {"type":"eventsConnected"}\n\n')
+      resumeChats()
+    } catch (error) {
+      hostDisconnected = true
+      res.write(`data: ${JSON.stringify({ type: 'hostUnavailable', message: (error as Error).message })}\n\n`)
+    }
     return
   }
   if (url.pathname.startsWith('/api/')) {

@@ -61,7 +61,7 @@ export function onServerEvent(fn: Listener): () => void {
       } catch {
         return
       }
-      if (v?.type === 'eventsConnected' && lost) {
+      if ((v?.type === 'eventsConnected' || v?.type === 'reconnected') && lost) {
         lost = false
         // A new authenticated stream is a new page to the server.
         reportPageProject(reported)

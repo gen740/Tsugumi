@@ -107,6 +107,7 @@ class Connection {
     }
     if (this.socket !== socket) throw new Error('Service connection closed')
     authenticated = true
+    if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
   }
 
   private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {
