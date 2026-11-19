@@ -28,7 +28,7 @@ import uuid
 from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
-# Cards whose parameters are values; a branch's shape the graph.
+# Card kinds that expose editable values in the exported app.
 SETTABLE = {"code", "input"}
 
 
