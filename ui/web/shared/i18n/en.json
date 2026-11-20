@@ -1071,7 +1071,6 @@
  "版管理を始める": "Start Versioning",
  "状態": "State",
  "環境を停止": "Stop Environment",
- "環境変数 {0}": "Environment variable {0}",
  "生成": "Generated",
  "生成 きらきら": "generate sparkle",
  "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ": "Could not generate (unsaved changes or unresolved types prevent it): ",
@@ -1316,9 +1315,6 @@
  "登録": "Register",
  "hostd（このホストの所有者だけが読み書きできます）": "hostd (readable and writable only by this host’s owner)",
  "hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。": "Saved in hostd. The key is not stored in Cards, projects, settings or logs.",
- "このホスト（API キーは macOS Keychain または hostd が保管）": "This host (API keys in the macOS Keychain or hostd)",
- "macOS Keychain（このデバイスのみ・ロック解除中に使用）": "macOS Keychain (this device only, used while unlocked)",
- "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。": "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.",
  "API キーに使えない文字が含まれています。": "The API key contains characters that cannot be used.",
  "実行の scratch（合計）": "Run scratch (total)",
  "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。": "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.",
@@ -1386,7 +1382,6 @@
  "版を切替": "Switched versions",
  "版を記録しています": "Recording a version",
  "版を記録": "Recorded a version",
- "Keychain に API キーを保存できませんでした。": "Could not save the API key in the Keychain.",
  "Skill を実行": "Run Skill",
  "指摘をコメントに残す": "Keep finding as comment",
  "実行環境のデータ": "Execution environment data",
@@ -1399,7 +1394,6 @@
  "信頼しない": "Don't trust",
  "信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。": "Trusting allows this project’s Skills to apply automatically and override built-in Skills. You can still open and read an untrusted project and use its Skills explicitly by name.",
  "接続しなくても、Tsugumi はすべて UI から使えます（その間ツグミは決まったデモの案内だけをします）。あとから設定の「API」でキーを登録するか ChatGPT にサインインすると、質問にも答えます。": "You can use all of Tsugumi through the UI without a connection (the guide gives fixed demo tours meanwhile). Add a key or sign in with ChatGPT under “API” in Settings later to ask questions too.",
- "ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストのキーチェーン（macOS 以外では 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。": "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only in this host’s Keychain (a 0600 file outside macOS), never in projects, conversation records or logs.",
  "ChatGPT のサインインは、Web UI のサーバーと同じマシンで localhost または 127.0.0.1 のページを開いて行ってください。ここでは API キーを使えます。": "To sign in with ChatGPT, open the Web UI at localhost or 127.0.0.1 in a browser on the server’s machine. You can use an API key here.",
  "信頼するフォルダ": "Trusted folders",
  "このフォルダ内のプロジェクトを、下の階層も含めて信頼します。シンボリックリンクの参照先が外にあるプロジェクトは含みません。": "Trust projects in these folders at every depth. Projects reached through symbolic links that point outside them are excluded.",
@@ -1470,5 +1464,7 @@
  "default.nix に Card 間の参照はありません": "No Card references in default.nix",
  "この階層には参照がありません（一覧に {0} 件）": "No references at this level ({0} in the list)",
  "inputs.<入力ポート名> と書いた参照を表示します。": "Shows references written as inputs.<input port name>.",
- "説明": "About this"
+ "説明": "About this",
+ "ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストの hostd（所有者だけが読める 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。": "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only by hostd on this host (a 0600 file only its owner can read), never in projects, conversation records or logs.",
+ "このホスト（設定と API キーは hostd）": "This host (settings and API keys in hostd)"
 }

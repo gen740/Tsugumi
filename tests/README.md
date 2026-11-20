@@ -6,48 +6,14 @@ Run `tests/check-fast.sh` before every push: the static tests (`tests/static`: t
 
 Every test command must run through `build-ci/bin/tsugumi-test-env` (already used by CI and `ci-local.sh`). With a CMake build, use `python3 tests/run-isolated.py COMMAND ...`, for example `python3 tests/run-isolated.py ctest --test-dir build --output-on-failure` or `python3 tests/run-isolated.py /usr/bin/swift test --package-path ui/macos`. The runner creates short private temporary, support, cache, socket and disk scratch roots, stops services before removing them even on command failure or termination, and names the new entries left in `/tmp`, `/var/tmp` and the shared scratch root (not the per-user temporary folder of macOS, where system services create entries of their own): on a dedicated machine (`CI` set, or inside a Nix build) that fails the run; elsewhere it is a report, because entries made by other work on the same machine cannot be told apart. It only lists shared entry names; it neither traverses real project scratch nor deletes escaped data. Killing the runner itself with SIGKILL cannot execute cleanup.
 
-### Secret-store isolation
+### Secret isolation
 
-Assumption: a developer runs tests on a signed-in Mac. This occurred in the Web
-behavior suite: mocking RPC alone left the default provider adapter able to run
-`security` against that person's login Keychain. Changing HOME cannot isolate
-that store. `run-isolated.py` therefore forces `TSUGUMI_TEST_NO_SECRET_STORE=1`,
-sets a private HOME (including Foundation's `CFFIXED_USER_HOME`), and removes
-inherited Anthropic/OpenAI API keys. The Web OS runner and Mac Security runner
-also unconditionally refuse when `TSUGUMI_TEST_RUN_ROOT` is present, even if the
-switch is set to `0`. There is no real-store opt-in. Tests exercise credentials
-by injecting a fake command runner, `KeychainStore` runner, or `MemorySecrets`.
-This prevents accidental use of these production adapters; it is not an OS
-sandbox for arbitrary malicious test code.
-
-`ui/web/scripts/test.mjs` forces the switch before importing tests and creates a
-private HOME/support root when run standalone. It also records and rejects any
-`security` subprocess across the suite and requires the record to stay empty. Pytest's
-`tests/conftest.py` forces it and requires the isolated wrapper. Both Swift test
-executables link `Tests/SecretStoreIsolation`, whose startup constructor sets the
-switch before Swift globals and requires the wrapper. Running `swift test`
-without the wrapper consequently fails before tests start.
-
-Audited paths (2026-11-16):
-
-| Suite / entry | Route to a secret store before isolation |
-| --- | --- |
-| `ui/web/tests/thoughts.ts` | `chatRoutes` → `CoreHost.summarize/provider` → default `ProviderKeys.provision` → `keychainReader` → `security find-generic-password` (attributes and `-w`). RPC doubles did not replace this command runner. |
-| `ui/web/tests/providerKeys.ts` | `source/provision/save/delete` exercise find, interactive add and delete commands, already with an explicit fake runner. `keychainReader` itself requires an injected runner. |
-| Other Web adapter tests (`settings`, `modelMenu`, `folderAttachments`, `agentRealCheck`, `hostReadiness`) | Construct `CoreHost`/`chatRoutes`; current cases replace settings/models, use ChatGPT rather than API-key selection, or exercise startup only. The default adapter remains attached, so a new API-key path would reach the same commands. `ui/web/scripts/test.mjs` previously set no refusal switch. |
-| `tests/python/test_web_server.py`, `test_claude_code_plugin.py`, `test_cli.py` | Start the actual bundled server (MCP can start it detached). Settings key-status/catalog, models, API-key conversations, summaries and version notes can call the same default adapter. Their shared `isolated_environment` now forces the switch and a private HOME as well. |
-| `ui/macos/Tests` | App/session startup, chat/model availability (`ChatResumeTests`, `GuideTests`, `SyncTests`) and version-note requests can reach `CoreHostClient.provider/usable/models/versionNote` → `Keychain.load/loadWithoutAsking` → `SecItemCopyMatching`. Save/delete APIs also reach `SecItemUpdate/Add/Delete`; `exists` reads attributes. All now pass through `runSystemKeychain`. Without a support override, `CoreHostClient.stateDirectory` also selects `~/Library/Application Support/Tsugumi[-dev]/host-core/host.sqlite`; the mandatory wrapper supplies private support storage. |
-| `ui/macos/CoreTests` | `AuthenticationTests` uses a local provider and explicit ephemeral fixture keys through Host RPC; it does not directly read Keychain. The package links the same adapter, so it needs the same startup protection. `SecretStoreTests` covers all Mac adapter operations with recording/refusing doubles. |
-| Core host tests | `tests/core/host/components_test.cc` and Agent settings/auth tests use explicit temporary state roots: `host.sqlite` holds OAuth credentials and host secrets (`SqlSecrets`). `settings_store_test.cc` injects `MemorySecrets`. `harness/host.py` and C++ host fixtures always pass `--state-dir`; hostd requires it. No `SecItem*`, `security`, or import from `~/.codex/auth.json` / Claude credentials exists in these adapters. |
-
-`ui/web/tests/secretStore.mjs` bundles the actual default `CoreHost` adapter with a
-recording/refusing `child_process` replacement, exercises read/status/save/delete,
-and asserts an empty OS-command record for both the standalone switch and the
-wrapper marker with the switch disabled. `SecretStoreTests.swift` records the Mac
-system boundary and fake adapter operations. Neither guard test needs real
-credentials. The previously reported OS-command refusal setting was not present
-in this checkout; the switch above is introduced here.
-
+API keys live only in hostd's state folder (`host-settings.sqlite`); no client
+uses an OS secret store. `run-isolated.py` still gives every run a private HOME
+(including Foundation's `CFFIXED_USER_HOME`), private support and state roots,
+and removes inherited Anthropic/OpenAI API keys from the environment, so a test
+host never sees the developer's own keys or settings. Tests store fixture keys
+through Host RPC (`ProviderSetRequest`) or inject `MemorySecrets` in C++.
 
 Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `tsugumi-hostd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
 

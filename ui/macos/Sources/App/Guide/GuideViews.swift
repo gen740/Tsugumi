@@ -1126,7 +1126,7 @@ struct GuideSetupView: View {
           Text("右下のツグミが、使い方の質問に答えたりデモを案内したりします。").foregroundStyle(.secondary)
         }
       }
-      Text("ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。")
+      Text("ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストの hostd（所有者だけが読める 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。")
         .font(.callout).fixedSize(horizontal: false, vertical: true)
       ChatGPTConnection(model: chatGPT, onboarding: true) {
         try await GuideController.shared.finishChatGPTSetup()

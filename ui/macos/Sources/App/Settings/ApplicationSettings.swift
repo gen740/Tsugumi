@@ -38,7 +38,7 @@ struct ApplicationSettings: View {
     var storage: String {
       switch self {
       case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
-      case .api: return String(localized: "このホスト（設定は hostd、API キーは macOS Keychain）")
+      case .api: return String(localized: "このホスト（設定と API キーは hostd）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -632,8 +632,8 @@ private struct APISettings: View {
   }
 }
 
-/// One API key connection: its key (in the login Keychain: never in project
-/// files, settings or logs), its model and the models it offers.
+/// One API key connection: its key (kept by hostd: never in project files,
+/// settings or logs), its model and the models it offers.
 private struct APIKeySection: View {
   let id: String
   let config: ProviderConfig
@@ -647,7 +647,7 @@ private struct APIKeySection: View {
   var body: some View {
     Section {
       if let error = CorePreferences.shared.error { Text(error).foregroundStyle(.red) }
-      LabeledContent("保存先", value: stored ? String(localized: "macOS Keychain（このデバイスのみ・ロック解除中に使用）") : String(localized: "未設定"))
+      LabeledContent("保存先", value: stored ? String(localized: "hostd（このホストの所有者だけが読み書きできます）") : String(localized: "未設定"))
       SecureField("新しい API キー", text: $key)
       HStack {
         Button("キーを保存") {
@@ -656,7 +656,7 @@ private struct APIKeySection: View {
             try await ProviderCredentials.save(key.trimmingCharacters(in: .whitespacesAndNewlines), account: config.name)
             key = ""
             refresh(saved: true)
-            message = String(localized: "Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。")
+            message = String(localized: "hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。")
           } catch { message = "\(error)" }
           }
         }
@@ -666,7 +666,7 @@ private struct APIKeySection: View {
           do {
             try await ProviderCredentials.delete(account: config.name)
             refresh()
-            message = String(localized: "\(config.name) のキーを Keychain から削除しました。")
+            message = String(localized: "\(config.name) のキーを削除しました。")
           } catch { message = String(describing: error) }
           }
         }

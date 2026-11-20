@@ -84,8 +84,7 @@ class CredentialRefreshTest : public testing::Test {
                             return credentials.AccessToken(id, stale);
                           },
                           [](const auto&) { return true; },
-                          nullptr,
-                          host::Settings::KeyStorage::Host};
+                          nullptr};
 
   std::function<std::string(std::string_view)> access_token;
   sql::Db settings_db{(directory.path / "host-settings.sqlite").string()};
@@ -260,7 +259,7 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   host::Settings settings(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      nullptr, host::Settings::KeyStorage::Host);
+      nullptr);
   agent::Providers providers(gate, store.db, settings);
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());

@@ -41,7 +41,6 @@ auto SelectionJson(const Tsugumi::Service::ProviderSelection& p)
       json::Members{{"profile", json::Quote(Text(p.profile()))},
                     {"provider_id", json::Quote(Text(p.provider_id()))},
                     {"account_profile", json::Quote(Text(p.account_profile()))},
-                    {"key_profile", json::Quote(Text(p.key_profile()))},
                     {"model", json::Quote(Text(p.model()))},
                     {"purpose", json::Quote(Text(p.purpose()))},
                     {"use_choices", p.use_choices() ? "true" : "false"}});

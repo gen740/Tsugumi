@@ -34,15 +34,9 @@ class Settings {
       std::function<std::string(const std::string&, std::string_view)>;
   using Forget = std::function<bool(const std::string&)>;
   using Models = std::function<std::vector<std::string>()>;
-  enum class KeyStorage { Host, Keychain };
-#ifdef __APPLE__
-  static constexpr auto kKeyStorage = KeyStorage::Keychain;
-#else
-  static constexpr auto kKeyStorage = KeyStorage::Host;
-#endif
   Settings(const std::filesystem::path& directory, Import import, Token token,
            Forget forget, std::unique_ptr<SecretStore> secrets = {},
-           KeyStorage storage = kKeyStorage, Models models = {},
+           Models models = {},
            std::function<void(const std::string&)> provider_changed = {});
   ~Settings();
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
@@ -56,10 +50,7 @@ class Settings {
   auto VMResources() -> Tsugumi::Host::VMResourcesT;
   auto Language(const std::string& profile) -> std::string;
   auto VersionNoteMode(const std::string& profile) -> std::string;
-  auto VersionNoteProvider(const std::string& profile,
-                           const std::string& anthropic_keys,
-                           const std::string& openai_keys)
-      -> agent::ProviderConfig;
+  auto VersionNoteProvider(const std::string& profile) -> agent::ProviderConfig;
   auto ModelSelection(const std::string& profile, const std::string& purpose)
       -> Tsugumi::Service::ProviderSelectionT;
   auto Resolve(const ::tsugumi::json::Members& selection)

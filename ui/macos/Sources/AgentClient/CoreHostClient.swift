@@ -75,7 +75,6 @@ private final class HostProcessLifetime: @unchecked Sendable {
 public actor CoreHostClient {
   public static let shared = CoreHostClient()
   private let supportOverride: URL?
-  private let keyProfile = "macos:keychain:" + UUID().uuidString
 
   public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
@@ -374,7 +373,7 @@ public actor CoreHostClient {
     _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }
 
-  public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
+  public func provider(_ config: ProviderConfig) async throws -> Tsugumi_Service_ProviderSelectionT {
     let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
     value.purpose = config.purpose
@@ -382,11 +381,6 @@ public actor CoreHostClient {
     value.profile = "desktop"
     value.providerId = config.connection
     value.accountProfile = "desktop"
-    if config.auth == .apiKey {
-      let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name)
-      try await provisionKey(key, id: config.connection)
-      value.keyProfile = keyProfile
-    }
     return value
   }
 
@@ -422,8 +416,7 @@ public actor CoreHostClient {
   }
 
   public func availability(_ config: ProviderConfig) async throws -> (usable: Bool, code: String?) {
-    let selected = try await provider(config, asking: false)
-    let request = Tsugumi_Host_ProviderStatusRequestT(); request.profile = "desktop"; request.id = config.connection; request.keyProfile = selected.keyProfile
+    let request = Tsugumi_Host_ProviderStatusRequestT(); request.profile = "desktop"; request.id = config.connection
     let reply: Tsugumi_Host_ProviderStatusT = try await hostCall(.providerstatusrequest, request)
     ModelCatalogSnapshot.shared.showAvailability(config.connection, reply.configured)
     return (reply.configured, reply.code)
@@ -435,21 +428,18 @@ public actor CoreHostClient {
     return result.comments.compactMap { $0 }
   }
 
-  /// Platform credential transport only; hostd chooses the note mode and model.
-
+  /// hostd chooses the note mode, the model and its key.
   public func versionNote(project: String, commit: String, language: String) async throws -> String {
-    for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {
-      try await provisionKey(Keychain.loadWithoutAsking(account: account), id: id)
-    }
     let request = Tsugumi_Host_VersionNoteRequestT(); request.projectId = project; request.commit = commit
-    request.profile = "desktop"; request.language = language; request.anthropicKeyProfile = keyProfile; request.openaiKeyProfile = keyProfile
+    request.profile = "desktop"; request.language = language
     let result: Tsugumi_Service_TextResultT = try await hostCall(.versionnoterequest, request)
     return result.text ?? ""
   }
 
-  public func provisionKey(_ key: String?, id: String) async throws {
-    let request = Tsugumi_Host_ProviderSetRequestT(); request.profile = keyProfile; request.id = id
-    request.ephemeral = true; request.source = "keychain"; request.remove = key == nil
+  /// Stores (or with nil removes) a provider's API key in hostd.
+  public func saveKey(_ key: String?, id: String) async throws {
+    let request = Tsugumi_Host_ProviderSetRequestT(); request.profile = "desktop"; request.id = id
+    request.remove = key == nil
     if let key { let input = Tsugumi_Host_ProviderInputT(); input.apiKey = key; request.provider = input }
     let result: Tsugumi_Host_ProviderStatusT = try await hostCall(.providersetrequest, request)
     ModelCatalogSnapshot.shared.showAvailability(id, result.configured)
@@ -459,8 +449,8 @@ public actor CoreHostClient {
     try await modelList(id: id)
   }
 
-  private func modelList(id: String, refresh: Bool = false, keyProfile: String? = nil) async throws -> [(id: String, name: String)] {
-    let request = Tsugumi_Host_ModelsListRequestT(); request.providerId = id; request.refresh = refresh; request.profile = "desktop"; request.keyProfile = keyProfile
+  private func modelList(id: String, refresh: Bool = false) async throws -> [(id: String, name: String)] {
+    let request = Tsugumi_Host_ModelsListRequestT(); request.providerId = id; request.refresh = refresh; request.profile = "desktop"
     let result: Tsugumi_Host_ModelListT = try await hostCall(.modelslistrequest, request)
     let list: [(id: String, name: String)] = result.models.compactMap { item in
       guard let item, let id = item.id else { return nil }
@@ -470,9 +460,8 @@ public actor CoreHostClient {
     return list
   }
 
-  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
-    let selection = try await provider(config, asking: asking)
-    return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
+  public func models(_ config: ProviderConfig) async throws -> [(id: String, name: String)] {
+    try await modelList(id: config.connection, refresh: true)
   }
 }
 

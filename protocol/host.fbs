@@ -31,18 +31,17 @@ table Setting { key:string (required); value_json:string (required, trace_secret
 table SettingsGetRequest { profile:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
 table Settings { revision:ulong; values:[Setting]; }
-// ephemeral source: env, keychain, or memory (omitted). The host selects env
-// before keychain before memory, then a stored key on Linux only. On macOS
-// persistent API-key writes are refused; clients save through the login Keychain.
-table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; ephemeral:bool; source:string; }
+// hostd stores API keys itself on every platform; clients save and read them
+// only through it.
+table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; }
 // Availability uses exactly the same key policy as model requests.
-table ProviderStatusRequest { profile:string (required); id:string (required); key_profile:string; }
+table ProviderStatusRequest { profile:string (required); id:string (required); }
 // Model choices for guide/summary are read from host settings and catalogs.
 // purpose is guide or summary. The reply contains no credentials.
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
-// storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; storage:string; message:string; code:string; }
+// source: hostd (a stored key) or oauth (a signed-in ChatGPT plan).
+table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
 table SignInBegin { attempt_id:string (required); url:string (required, trace_secret); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -174,7 +173,7 @@ table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs
 // a provider configuration; ordinary reads never need credentials.
-table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; key_profile:string; }
+table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; }
 table HostProjectDefaultsRequest {}
 // Binary file payload used by guarded operation inverses.
 table ProjectFile { path:string (required); bytes:[ubyte]; }
@@ -520,7 +519,7 @@ table HostVersionGraphRequest { project:string (required); language:string; limi
 // Reference demos and version notes do not depend on a conversation.
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
-table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
+table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); }
 table DemoPaths { paths:[string]; }
 
 // Reserve an annotation reference across all clients of the project. kind is

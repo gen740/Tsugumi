@@ -21,7 +21,7 @@
 "%@ でサインインしました。" = "Signed in as %@.";
 "%@ と同じ文書です" = "Same document as %@";
 "%@ に書き込めないため、このアプリを更新できません。" = "This app cannot be updated because %@ is not writable.";
-"%@ のキーを Keychain から削除しました。" = "Removed the %@ key from the Keychain.";
+"%@ のキーを削除しました。" = "Deleted the %@ key.";
 "%@ の準備ができました。「再起動して更新」で更新できます。" = "%@ is ready. Choose Restart to Update to install it.";
 "%@ は別の場所でも変更されたため保存していません。変更は保持しています。" = "%@ was also changed elsewhere, so it was not saved. The changes are kept.";
 "%@ は削除されたか、まだ保存されていません。" = "%@ was deleted or has not been saved yet.";
@@ -159,7 +159,6 @@
 "Home へ戻る" = "Back to Home";
 "Home へ戻るには、保存できない変更を破棄します。破棄した変更は取り消せません。\n\n保存できない理由: %@" = "To go back to Home, the changes that cannot be saved are discarded. Discarded changes cannot be recovered.\n\nWhy they cannot be saved: %@";
 "JSON として読めません: %@" = "Not readable as JSON: %@";
-"Keychain に保存しました。キーは Agent の接続に使われ、Card やプロジェクト・設定・ログには残りません。" = "Saved in Keychain. The key is used by the Agent service and is not stored in Cards, projects, settings or logs.";
 "Manage usage" = "Manage usage";
 "Manifest の出力パス" = "Manifest output store path";
 "Markdown（見出し・太字・リスト・表・コード）と数式（$…$、$$…$$）を使えます。付箋は実行には参加しません。" = "Markdown (headings, bold, lists, tables, code) and math ($…$, $$…$$) can be used. Notes take no part in runs.";
@@ -246,8 +245,9 @@
 "externals にプロジェクトがありません。取り込みボタンから他のプロジェクトを取り込めます。組み込みの Card は Canvas の右クリックか + から追加します。" = "No project in externals. Import other projects with the import button. Built-in Cards are added from the canvas's context menu or +.";
 "fixture のポート" = "Fixture port";
 "git の履歴でも同じ情報を見られます（git log --notes=tsugumi、git tag）。" = "git shows the same (git log --notes=tsugumi, git tag).";
+"hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。" = "Saved in hostd. The key is not stored in Cards, projects, settings or logs.";
+"hostd（このホストの所有者だけが読み書きできます）" = "hostd (readable and writable only by this host’s owner)";
 "inputs.<入力ポート名> と書いた参照を表示します。" = "Shows references written as inputs.<input port name>.";
-"macOS Keychain（このデバイスのみ・ロック解除中に使用）" = "macOS Keychain (this device only, used while unlocked)";
 "macOS が隔離した場所から起動しているため更新できません。Tsugumi.app を「アプリケーション」フォルダへ移してから開き直してください。" = "Tsugumi was opened from a location macOS isolates (App Translocation) and cannot update itself. Move Tsugumi.app to the Applications folder and open it again.";
 "marimo ノートブック" = "marimo notebook";
 "nix run .#guest-image で用意し直すか、アプリを入れ直してください。" = "Get it again with nix run .#guest-image, or reinstall the app.";
@@ -351,7 +351,7 @@
 "このプロジェクト（%@/layout.json）" = "This project (%@/layout.json)";
 "このプロジェクト（%@/tsugumi.json）" = "This project (%@/tsugumi.json)";
 "このホストの公開鍵" = "This host's public key";
-"このホスト（設定は hostd、API キーは macOS Keychain）" = "This host (settings in hostd; API keys in the macOS Keychain)";
+"このホスト（設定と API キーは hostd）" = "This host (settings and API keys in hostd)";
 "このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。" = "This port's purpose (described in _meta.json), for the Agent and for others.";
 "このモデルでは選べません（公式の文書で対応を確かめたモデルだけ選べます）" = "Not available for this model (only models checked against the official documents)";
 "この会話はモデルの文脈に収まらなくなりました。新しい会話を始めてください（この会話は一覧に残ります）。" = "This conversation no longer fits the model's context. Start a new conversation (this one stays in the list).";
@@ -554,7 +554,7 @@
 "ツグミ" = "Tsugumi";
 "ツグミが画面を飛び回って、デモや画面の使い方を案内します" = "Tsugumi flies about the screen and shows you demos and how things work";
 "ツグミです。Workflow の相談・生成・編集も、使い方の質問もどうぞ。" = "I'm Tsugumi. Ask me to plan, build or edit a workflow, or how to use the app.";
-"ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこの Mac のキーチェーンにだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only in this Mac’s Keychain, never in projects, conversation records or logs.";
+"ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストの hostd（所有者だけが読める 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。" = "The guide and chat Agent can use an Anthropic or OpenAI API key, or your ChatGPT plan. Plan usage is not a payment to Tsugumi. The key is saved only by hostd on this host (a 0600 file only its owner can read), never in projects, conversation records or logs.";
 "ツグミに質問" = "Ask Tsugumi";
 "ツグミに返事" = "Reply to Tsugumi";
 "ツグミの吹き出し" = "Tsugumi's speech bubble";

@@ -29,7 +29,7 @@ The installed Mac command uses the release app's support directory by default:
 
 | Data | Location and sharing |
 | --- | --- |
-| API keys | The same login Keychain items as the app; hostd keeps provisioned keys in memory. Web Keychain-save failures use hostd's private store. [Credential handling](security.md#7-the-models-api-keys-agent) |
+| API keys | Stored by the shared hostd, the same keys as the app. [Credential handling](security.md#7-the-models-api-keys-agent) |
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under hostd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
@@ -88,7 +88,6 @@ The command and the [Claude Code plugin](claude-code.md) discover the host throu
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
 | `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the guest archive directory and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
 | `TSUGUMI_WEB_DATA` | Web host data folder and profile identity (default on macOS: `~/Library/Application Support/Tsugumi/web`) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Web-process API keys provisioned to hostd in memory; take precedence over saved keys |
 | `TSUGUMI_CHATGPT_ISSUER` / `TSUGUMI_CHATGPT_API` | Where ChatGPT sign-in and plan requests go (for tests; by default `https://auth.openai.com` and `https://api.openai.com`) |
 
 The TypeScript bindings and `tsugumi.bfbs` are generated into `ui/web/shared/gen` by `npm run gen` (using `flatc` from the development shell) and are not in Git.

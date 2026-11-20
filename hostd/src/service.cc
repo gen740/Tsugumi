@@ -113,7 +113,7 @@ struct Service::State {
           return credentials.AccessToken(id, stale);
         },
         [this](const std::string& id) { return credentials.Forget(id); },
-        nullptr, host::Settings::kKeyStorage,
+        nullptr,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](const std::string& profile) {
           requests.submit([this, profile]() {

@@ -81,7 +81,7 @@ TEST_F(ConversationStoreTest,
   host::Settings settings(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      nullptr, host::Settings::KeyStorage::Host);
+      nullptr);
   H::ProviderSetRequestT provider;
   provider.profile = "desktop";
   provider.id = "fixture";

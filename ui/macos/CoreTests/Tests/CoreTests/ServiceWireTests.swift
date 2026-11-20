@@ -154,14 +154,14 @@ final class ServiceWireTests: XCTestCase {
     XCTAssertEqual(reply.resetDiscardedFiles, ["store.img", ".lock"])
   }
   func testHostOwnsPurposeAndKeyPolicyWire() throws {
-    let input = Tsugumi_Host_ProviderInputT(); input.apiKey = "memory-key"
-    let bytes = try ServiceWire.encode("ProviderSetRequest", fields: ["profile": "client", "id": "anthropic",
-      "provider": input, "ephemeral": true, "source": "keychain"], id: 1, host: true)
+    let input = Tsugumi_Host_ProviderInputT(); input.apiKey = "stored-key"
+    let bytes = try ServiceWire.encode("ProviderSetRequest", fields: ["profile": "desktop", "id": "anthropic",
+      "provider": input], id: 1, host: true)
     var buffer = ByteBuffer(data: bytes)
     let message: Tsugumi_Host_Message = try getCheckedRoot(byteBuffer: &buffer, fileId: "TSH1")
     let value = try XCTUnwrap((Tsugumi_Host_MessageT(message).payload?.value as? Tsugumi_Host_RequestT)?.value?.value as? Tsugumi_Host_ProviderSetRequestT)
-    XCTAssertTrue(value.ephemeral)
-    XCTAssertEqual(value.source, "keychain")
+    XCTAssertEqual(value.provider?.apiKey, "stored-key")
+    XCTAssertFalse(value.remove)
 
   }
 

@@ -4,46 +4,30 @@ namespace tsugumi::test {
 namespace {
 class ModelsFixture : public AgentFixture {
  protected:
+  // Each profile is its own connection: endpoint, key and catalog.
   auto Models(std::string id, const ModelServer* server = nullptr,
-              bool websocket = false, std::string key_profile = {}) -> Reply {
+              bool websocket = false, std::string profile = "desktop")
+      -> Reply {
     if (server) {
       const auto configured =
           Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
             Tsugumi::Host::ProviderInputT config;
             config.endpoint = server->URL();
+            config.api_key = "MODEL_KEY_SENTINEL";
             return H::CreateProviderSetRequest(
-                       b, b.CreateString("desktop"), b.CreateString(id),
+                       b, b.CreateString(profile), b.CreateString(id),
                        Tsugumi::Host::ProviderInput::Pack(b, &config))
                 .Union();
           });
       if (!configured.Code().empty())
         throw std::runtime_error("cannot configure model catalog");
     }
-    if (server) {
-      const auto provisioned =
-          Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
-            Tsugumi::Host::ProviderInputT key;
-            key.api_key = "MODEL_KEY_SENTINEL";
-            return H::CreateProviderSetRequest(
-                       b,
-                       b.CreateString(key_profile.empty() ? "desktop"
-                                                          : key_profile),
-                       b.CreateString(id),
-                       Tsugumi::Host::ProviderInput::Pack(b, &key), false, true)
-                .Union();
-          });
-      if (!provisioned.Code().empty())
-        throw std::runtime_error("cannot provision model catalog key");
-    }
     auto connection = websocket ? ConnectHost(true) : nullptr;
     return Call(connection ? *connection : *host,
                 H::RequestPayload::ModelsListRequest, [&](Builder& b) {
-                  Tsugumi::Host::ProviderInputT config;
-                  if (server) config.endpoint = server->URL();
-                  return H::CreateModelsListRequest(
-                             b, b.CreateString(id), server != nullptr,
-                             b.CreateString("desktop"), {},
-                             b.CreateString(key_profile))
+                  return H::CreateModelsListRequest(b, b.CreateString(id),
+                                                    server != nullptr,
+                                                    b.CreateString(profile))
                       .Union();
                 });
   }

@@ -58,8 +58,6 @@ auto Versions::Note(const RequestIn& request, bool human,
   const auto root = registry.Root(project);
   const auto commit = host::ResolveVersion(root, spelling);
   const auto profile = p->profile()->str();
-  const auto anthropic_keys = Text(p->anthropic_key_profile()),
-             openai_keys = Text(p->openai_key_profile());
   const bool english = p->language()->str() == "en";
   // The authenticated human requests this registered project's note.
   // This is independent of any Agent conversation or its grants.
@@ -97,8 +95,7 @@ auto Versions::Note(const RequestIn& request, bool human,
     if (json::Text(body, "text").empty()) {
       result.text = factual;
     } else {
-      auto config = host_settings->VersionNoteProvider(profile, anthropic_keys,
-                                                       openai_keys);
+      auto config = host_settings->VersionNoteProvider(profile);
       if (config.auth == ProviderAuth::ChatGPT)
         throw Failure(
             "unavailable",

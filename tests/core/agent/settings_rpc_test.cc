@@ -96,20 +96,15 @@ TEST_F(AgentFixture, WebPermissionUpdatesKeepTheNativeNixPermission) {
   EXPECT_TRUE(found);
 }
 TEST_F(AgentFixture,
-       ProviderSetAndStatusNeverReturnTheSecretAndFollowPlatformStorage) {
+       ProviderSetAndStatusNeverReturnTheSecretAndKeepItInHostd) {
   const std::string key = "PRIVATE_KEY_SENTINEL";
-#ifdef __APPLE__
-  constexpr bool ephemeral = true;
-#else
-  constexpr bool ephemeral = false;
-#endif
   const auto set =
       Call(*host, H::RequestPayload::ProviderSetRequest, [&](Builder& b) {
         Tsugumi::Host::ProviderInputT p;
         p.api_key = key;
         return H::CreateProviderSetRequest(
                    b, b.CreateString("desktop"), b.CreateString("anthropic"),
-                   Tsugumi::Host::ProviderInput::Pack(b, &p), false, ephemeral)
+                   Tsugumi::Host::ProviderInput::Pack(b, &p))
             .Union();
       });
   ASSERT_TRUE(set.Code().empty());
@@ -127,8 +122,7 @@ TEST_F(AgentFixture,
                                               b.CreateString("anthropic"))
             .Union();
       });
-  EXPECT_EQ(status.HostValue()->value_as_ProviderStatus()->configured(),
-            !ephemeral);
+  EXPECT_TRUE(status.HostValue()->value_as_ProviderStatus()->configured());
   EXPECT_EQ(Bytes(status).find(key), std::string::npos);
   EXPECT_EQ(Read(directory.path / "host.log").find(key), std::string::npos);
   EXPECT_FALSE(SettingsPatch(*host, "desktop", {{"agent.secret", Quote(key)}})

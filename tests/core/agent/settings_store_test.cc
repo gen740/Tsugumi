@@ -34,13 +34,12 @@ TEST(HostSettingsStore,
   host::Settings service(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::make_unique<MemorySecrets>(), host::Settings::KeyStorage::Host, {},
+      std::make_unique<MemorySecrets>(), {},
       [&](const auto& profile) { changed.push_back(profile); });
   const auto put = [&](bool remove) {
     H::ProviderSetRequestT value;
     value.profile = "desktop";
     value.id = "anthropic";
-    value.ephemeral = true;
     value.remove = remove;
     value.provider = std::make_unique<H::ProviderInputT>();
     value.provider->api_key = "FIXTURE_KEY";
@@ -127,7 +126,7 @@ TEST(HostSettingsStore,
   host::Settings service(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(memory), host::Settings::KeyStorage::Host);
+      std::move(memory));
   const auto put = [&](const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
     Tsugumi::Host::ProviderInputT value;
@@ -152,39 +151,9 @@ TEST(HostSettingsStore,
   const auto config = service.Resolve({});
   EXPECT_EQ(config.credential, "STORE_SECRET_SENTINEL");
   EXPECT_EQ(service.Redact("echo STORE_SECRET_SENTINEL"), "echo [redacted]");
-  const auto ephemeral = [&](const std::string& profile,
-                             const std::string& secret) {
-    flatbuffers::FlatBufferBuilder b;
-    Tsugumi::Host::ProviderInputT value;
-    value.api_key = secret;
-    const auto p = H::CreateProviderSetRequest(
-        b, b.CreateString(profile), b.CreateString("anthropic"),
-        Tsugumi::Host::ProviderInput::Pack(b, &value), false, true);
-    const auto req =
-        H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, p.Union());
-    H::FinishMessageBuffer(
-        b, H::CreateMessage(b, 2, H::Payload::Request, req.Union()));
-    return service.Handle(
-        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 2);
-  };
-  const auto env = ephemeral("web:env:first", "FIRST_ENV_SENTINEL");
-  ephemeral("web:env:second", "SECOND_ENV_SENTINEL");
-  EXPECT_EQ(env.find("FIRST_ENV_SENTINEL"), env.npos);
-  EXPECT_FALSE(observed->values.contains("web:env:first:anthropic"));
   EXPECT_EQ(service
                 .Resolve({{"profile", Quote("desktop")},
-                          {"key_profile", Quote("web:env:first")}})
-                .credential,
-            "FIRST_ENV_SENTINEL");
-  EXPECT_EQ(service
-                .Resolve({{"profile", Quote("desktop")},
-                          {"key_profile", Quote("web:env:second")}})
-                .credential,
-            "SECOND_ENV_SENTINEL");
-  EXPECT_EQ(service.Resolve({}).credential, "STORE_SECRET_SENTINEL");
-  EXPECT_EQ(service
-                .Resolve({{"profile", Quote("desktop")},
-                          {"key_profile", Quote("missing")}})
+                          {"provider_id", Quote("anthropic")}})
                 .credential,
             "STORE_SECRET_SENTINEL");
   observed->fail = true;
@@ -193,48 +162,6 @@ TEST(HostSettingsStore,
       H::GetMessage(failed.data())->payload_as_Reply()->value_as_Failure(),
       nullptr);
   EXPECT_EQ(failed.find("SECOND_SECRET_SENTINEL"), failed.npos);
-}
-TEST(HostSettingsStore,
-     KeychainProvisioningNeverWritesTheKeyToDiskOrFallsBack) {
-  TemporaryDirectory directory;
-  const std::string key = "KEYCHAIN_ONLY_SENTINEL";
-  const auto make = [&] {
-    return std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-        nullptr, host::Settings::KeyStorage::Keychain);
-  };
-  auto service = make();
-  flatbuffers::FlatBufferBuilder b;
-  Tsugumi::Host::ProviderInputT input;
-  input.api_key = key;
-  const auto value = H::CreateProviderSetRequest(
-      b, b.CreateString("macos:keychain:fixture"), b.CreateString("anthropic"),
-      Tsugumi::Host::ProviderInput::Pack(b, &input), false, true);
-  const auto request =
-      H::CreateRequest(b, H::RequestPayload::ProviderSetRequest, value.Union());
-  H::FinishMessageBuffer(
-      b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
-  const auto reply = service->Handle(
-      *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
-  EXPECT_EQ(reply.find(key), reply.npos);
-  ASSERT_TRUE(H::GetMessage(reply.data())
-                  ->payload_as_Reply()
-                  ->value_as_ProviderStatus()
-                  ->configured());
-  const ::tsugumi::json::Members selection{
-      {"profile", Quote("desktop")},
-      {"key_profile", Quote("macos:keychain:fixture")}};
-  EXPECT_EQ(service->Resolve(selection).credential, key);
-  for (const auto& file : std::filesystem::directory_iterator(directory.path))
-    if (file.is_regular_file())
-      EXPECT_EQ(Read(file.path()).find(key), std::string::npos);
-  service.reset();
-  service = make();
-  EXPECT_THROW(service->Resolve(selection), std::runtime_error);
-  for (const auto& file : std::filesystem::directory_iterator(directory.path))
-    if (file.is_regular_file())
-      EXPECT_EQ(Read(file.path()).find(key), std::string::npos);
 }
 }  // namespace
 }  // namespace tsugumi::test
@@ -307,7 +234,7 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   host::Settings service(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(memory), host::Settings::KeyStorage::Host);
+      std::move(memory));
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
   const auto update = [&](const std::string& mode, uint64_t revision,
                           const std::string& key = "versions.noteMode") {
@@ -338,23 +265,23 @@ TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
   EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential,
+  EXPECT_EQ(service.VersionNoteProvider("desktop").credential,
             "ANTHROPIC_NOTE_KEY");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
+  EXPECT_EQ(service.VersionNoteProvider("desktop").model,
             "claude-haiku-5-5");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
+  EXPECT_EQ(service.VersionNoteProvider("desktop")
                 .credential,
             "ANTHROPIC_NOTE_KEY");
   reply = update("\"openai\"", 2, "agent.provider");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "")
+  EXPECT_EQ(service.VersionNoteProvider("desktop")
                 .credential,
             "OPENAI_NOTE_KEY");
   reply = update("\"custom-small-model\"", 3, "agent.thoughtModel.openai");
   ASSERT_TRUE(
       H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
+  EXPECT_EQ(service.VersionNoteProvider("desktop").model,
             "custom-small-model");
 }
 }  // namespace tsugumi::test
@@ -368,13 +295,13 @@ class HostPolicyTest : public ::testing::Test {
   MemorySecrets* secrets = nullptr;
   std::vector<std::string> models;
   uint64_t revision = 0;
-  auto Open(host::Settings::KeyStorage storage) -> void {
+  auto Open() -> void {
     auto store = std::make_unique<MemorySecrets>();
     secrets = store.get();
     service = std::make_unique<host::Settings>(
         directory.path, [](const auto&, const auto&) {},
         [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-        std::move(store), storage, [this] { return models; });
+        std::move(store), [this] { return models; });
   }
   template <typename T>
   auto Call(T value) -> std::unique_ptr<H::ReplyT> {
@@ -400,56 +327,18 @@ class HostPolicyTest : public ::testing::Test {
     ASSERT_NE(reply->value.AsSettings(), nullptr);
     revision = reply->value.AsSettings()->revision;
   }
-  auto Provision(const std::string& source, const std::string& secret = "")
-      -> void {
-    H::ProviderSetRequestT request;
-    request.profile = "client";
-    request.id = "anthropic";
-    request.source = source;
-    request.ephemeral = true;
-    request.remove = secret.empty();
-    if (!secret.empty()) {
-      request.provider = std::make_unique<Tsugumi::Host::ProviderInputT>();
-      request.provider->api_key = secret;
-    }
-    ASSERT_NE(Call(std::move(request))->value.AsProviderStatus(), nullptr);
-  }
   auto Status() -> H::ProviderStatusT {
     H::ProviderStatusRequestT request;
     request.profile = "desktop";
     request.id = "anthropic";
-    request.key_profile = "client";
     return *Call(std::move(request))->value.AsProviderStatus();
   }
   auto Resolve() -> agent::ProviderConfig {
-    return service->Resolve(
-        {{"profile", Quote("desktop")}, {"key_profile", Quote("client")}});
+    return service->Resolve({{"profile", Quote("desktop")}});
   }
 };
-TEST_F(HostPolicyTest, MacRejectsDiskKeysAndStatusAgreesWithResolution) {
-  Open(host::Settings::KeyStorage::Keychain);
-  secrets->values["desktop:anthropic"] = "DISK_MUST_NOT_BE_USED";
-  EXPECT_FALSE(Status().configured);
-  EXPECT_EQ(Status().storage, "keychain");
-  EXPECT_THROW(Resolve(), std::runtime_error);
-  H::ProviderSetRequestT request;
-  request.profile = "desktop";
-  request.id = "anthropic";
-  request.provider = std::make_unique<Tsugumi::Host::ProviderInputT>();
-  request.provider->api_key = "REJECTED_DISK_KEY";
-  const auto reply = Call(std::move(request));
-  ASSERT_NE(reply->value.AsFailure(), nullptr);
-  EXPECT_EQ(secrets->values["desktop:anthropic"], "DISK_MUST_NOT_BE_USED");
-  Provision("keychain", "KEYCHAIN_KEY");
-  EXPECT_TRUE(Status().configured);
-  EXPECT_EQ(Status().source, "keychain");
-  EXPECT_EQ(Resolve().credential, "KEYCHAIN_KEY");
-  Provision("env", "ENV_KEY");
-  EXPECT_EQ(Status().source, "env");
-  EXPECT_EQ(Resolve().credential, "ENV_KEY");
-  Provision("env");
-  EXPECT_EQ(Resolve().credential, "KEYCHAIN_KEY");
-  Provision("keychain");
+TEST_F(HostPolicyTest, KeysAreStoredInHostdAndStatusAgreesWithResolution) {
+  Open();
   EXPECT_FALSE(Status().configured);
   try {
     Resolve();
@@ -457,23 +346,25 @@ TEST_F(HostPolicyTest, MacRejectsDiskKeysAndStatusAgreesWithResolution) {
   } catch (const std::runtime_error& error) {
     EXPECT_EQ(error.what(), Status().message);
   }
-}
-TEST_F(HostPolicyTest, LinuxEnvironmentOverridesStoredKeyWithoutReplacingIt) {
-  Open(host::Settings::KeyStorage::Host);
-  secrets->values["desktop:anthropic"] = "STORED_KEY";
-  EXPECT_TRUE(Status().configured);
-  EXPECT_EQ(Status().storage, "hostd");
-  EXPECT_EQ(Resolve().credential, "STORED_KEY");
-  Provision("env", "ENV_KEY");
-  EXPECT_EQ(Status().source, "env");
-  EXPECT_EQ(Resolve().credential, "ENV_KEY");
+  H::ProviderSetRequestT request;
+  request.profile = "desktop";
+  request.id = "anthropic";
+  request.provider = std::make_unique<Tsugumi::Host::ProviderInputT>();
+  request.provider->api_key = "STORED_KEY";
+  ASSERT_NE(Call(std::move(request))->value.AsProviderStatus(), nullptr);
   EXPECT_EQ(secrets->values["desktop:anthropic"], "STORED_KEY");
-  Provision("env");
+  EXPECT_TRUE(Status().configured);
   EXPECT_EQ(Status().source, "hostd");
   EXPECT_EQ(Resolve().credential, "STORED_KEY");
+  H::ProviderSetRequestT remove;
+  remove.profile = "desktop";
+  remove.id = "anthropic";
+  remove.remove = true;
+  ASSERT_NE(Call(std::move(remove))->value.AsProviderStatus(), nullptr);
+  EXPECT_FALSE(Status().configured);
 }
 TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {
-  Open(host::Settings::KeyStorage::Host);
+  Open();
   EXPECT_EQ(service->ModelSelection("desktop", "guide").model,
             "claude-haiku-5-5");
   Set("agent.thoughtModel", "custom-thought");
@@ -481,11 +372,10 @@ TEST_F(HostPolicyTest, GuideAndSummaryUseSettingsAndHostCatalog) {
             "custom-thought");
   EXPECT_EQ(service->ModelSelection("desktop", "guide").model,
             "claude-haiku-5-5");
-  Provision("env", "ENV_KEY");
+  secrets->values["desktop:anthropic"] = "STORED_KEY";
   auto config = service->Resolve({{"profile", Quote("desktop")},
                                   {"purpose", Quote("summary")},
-                                  {"model", Quote("ignored-client-model")},
-                                  {"key_profile", Quote("client")}});
+                                  {"model", Quote("ignored-client-model")}});
   EXPECT_EQ(config.model, "custom-thought");
   Set("agent.provider", "openai");
   Set("agent.thoughtModel.openai", "small-openai");
@@ -1024,7 +914,7 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   host::Settings settings(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(secrets), host::Settings::KeyStorage::Host);
+      std::move(secrets));
   const auto fallback = settings.Resolve({}).context_limit_tokens;
   auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
   catalog.bind(1, "anthropic")
@@ -1046,40 +936,45 @@ TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
   host::HostStore home(directory.path);
   auto secrets = std::make_unique<MemorySecrets>();
   secrets->values["desktop:anthropic"] = "TEST_KEY";
+  secrets->values["web:anthropic"] = "TEST_KEY";
   host::Settings settings(
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(secrets), host::Settings::KeyStorage::Host);
+      std::move(secrets));
+  // An API-key connection is its profile; a ChatGPT plan's is its account.
+  const auto window = [](std::string_view provider, std::string_view profile,
+                         std::string_view account) {
+    return (provider == "chatgpt" ? account == "first" : profile == "desktop")
+               ? 1000000u
+               : 128000u;
+  };
   for (const auto* provider : {"anthropic", "chatgpt"})
     for (const auto* profile : {"desktop", "web"})
       for (const auto* account : {"first", "second"}) {
-        const auto window =
-            std::string_view(account) == "first" ? 1000000u : 128000u;
-        auto insert = home.db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
+        auto insert = home.db.prepare(
+            "INSERT OR REPLACE INTO model_lists VALUES(?,?,?)");
         insert.bind(1, provider)
-            .bind(2, host::Models::CatalogConnection(provider, profile, account,
-                                                     account))
+            .bind(2, host::Models::CatalogConnection(provider, profile, account))
             .bind(3, "[{\"id\":\"shared-model\",\"contextWindowTokens\":" +
-                         std::to_string(window) + "}]")
+                         std::to_string(window(provider, profile, account)) +
+                         "}]")
             .run();
         EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, provider,
                                                     "shared-model", profile,
-                                                    account, account),
-                  window);
+                                                    account),
+                  window(provider, profile, account));
       }
-  for (const auto* account : {"second", "first", "second"}) {
-    const auto window =
-        std::string_view(account) == "first" ? 1000000u : 128000u;
+  for (const auto* profile : {"web", "desktop", "web"}) {
+    const auto expected = window("anthropic", profile, "");
     EXPECT_EQ(settings
-                  .Resolve({{"provider_id", Quote("anthropic")},
-                            {"model", Quote("shared-model")},
-                            {"key_profile", Quote(account)}})
+                  .Resolve({{"profile", Quote(profile)},
+                            {"provider_id", Quote("anthropic")},
+                            {"model", Quote("shared-model")}})
                   .context_limit_tokens,
-              window - 32768u - window / 20);
+              expected - 32768u - expected / 20);
   }
   EXPECT_EQ(host::Models::ContextWindowTokens(directory.path, "anthropic",
-                                              "shared-model", "other", "first",
-                                              "first"),
+                                              "shared-model", "other", "first"),
             128000u);
   EXPECT_EQ(host::Models::CatalogConnection("chatgpt", "desktop"),
             host::Models::CatalogConnection("chatgpt", "desktop", "desktop"));

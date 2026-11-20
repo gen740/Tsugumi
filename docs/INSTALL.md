@@ -29,7 +29,6 @@ From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you wan
 Use **Check for Updates…** in the application menu or **General → Updates** in Settings to check GitHub and download a newer release. Its checksum, signature, bundle ID and version are verified. Choose **Restart to Update** to install it after orderly runtime shutdown. Checks and installation do not run automatically.
 
 - The folder the app is in (usually `/Applications`) must be writable. An app opened with the quarantine attribute still on (running from elsewhere through App Translocation) cannot update; move it to `/Applications` and remove the quarantine attribute.
-- The ad hoc signature changes with each version, so the first time an updated version uses an API key, macOS asks once for access to the keychain (choose "Always Allow" and that version will not ask again).
 - During 0.x, project documents and settings may change without migration ([compatibility policy](../AGENTS.md#compatibility)).
 
 ### Using it in the browser (the `tsugumi` command)
