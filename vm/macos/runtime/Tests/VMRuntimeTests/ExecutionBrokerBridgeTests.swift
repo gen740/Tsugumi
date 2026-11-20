@@ -42,7 +42,10 @@ final class ExecutionBrokerBridgeTests: XCTestCase {
     let closed = expectation(description: "relay closes while host holds its response")
     VMHostIPC.relay(guest[1], host[1], closeOnEOF: true) { closed.fulfill() }
     Darwin.close(guest[0])
-    wait(for: [closed], timeout: 5)
+    guard XCTWaiter.wait(for: [closed], timeout: 5) == .completed else {
+      XCTFail("The broker relay stayed open after the core disconnected.")
+      return
+    }
     XCTAssertEqual(try readToEnd(host[0]), Data())
   }
 
