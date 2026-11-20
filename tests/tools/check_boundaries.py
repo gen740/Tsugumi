@@ -60,7 +60,7 @@ def check_swift():
     modules = {
         "client/swift/Sources/RPC": {"Foundation", "CryptoKit", "FlatBuffers", "TsugumiClientC"},
         "vm/macos/runtime/Sources/VMTypes": {"Foundation"},
-        "vm/macos/runtime/Sources/VMRuntime": {"Foundation", "Darwin", "CryptoKit", "Virtualization", "TsugumiVMTypes"},
+        "vm/macos/runtime/Sources/VMRuntime": {"Foundation", "Darwin", "CryptoKit", "Virtualization", "TsugumiVMTypes", "FlatBuffers", "TsugumiRPC"},
         "vm/macos/runtime/Sources/VMHost": {"Foundation", "Darwin", "Virtualization", "FlatBuffers", "TsugumiRPC", "TsugumiVMTypes", "TsugumiVMRuntime"},
     }
     for prefix, allowed in modules.items():

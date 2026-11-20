@@ -1,7 +1,5 @@
 #include "host/vm_process.hh"
 
-#include "tsugumi/protocol/trace_codec.hh"
-
 #include <fcntl.h>
 #include <poll.h>
 #include <sys/socket.h>
@@ -11,6 +9,8 @@
 
 #include <atomic>
 #include <cctype>
+#include <condition_variable>
+#include <cstdio>
 #include <cstring>
 #include <map>
 #include <mutex>
@@ -18,11 +18,13 @@
 #include <thread>
 
 #include "host/binary_caches.hh"
+#include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
 namespace V = Tsugumi::VMHost;
 namespace H = Tsugumi::Host;
+namespace G = Tsugumi::VMGuest;
 auto VMResetPolicy() -> V::ResetT {
   V::ResetT request;
   request.discard_other_files = true;
@@ -53,7 +55,6 @@ auto DescribeVMReset(H::HostRuntimeT& runtime) -> void {
       "environments when next opened.";
 }
 namespace {
-using namespace std::chrono_literals;
 struct Socket {
   int fd;
   ~Socket() {
@@ -183,7 +184,7 @@ class VMProcess final : public EnvironmentProcess {
     V::ProcessRequestT request;
     request.key = ready.key;
     const auto process = CallProcess(std::move(request));
-    if (!process.running) return std::nullopt;
+    if (process.endpoint.empty()) return std::nullopt;
     ready.endpoint = process.endpoint;
     ready.unix_socket.clear();
     Remember(process.pid, ready.key);
@@ -198,15 +199,64 @@ class VMProcess final : public EnvironmentProcess {
     }
   }
   auto Poll(int64_t pid, bool) -> std::optional<int> override {
-    V::ProcessRequestT request;
-    request.key = Key(pid);
-    try {
+    const auto key = Key(pid);
+    std::lock_guard lock(status_mutex_);
+    const auto found = statuses_.find(key);
+    // A disconnected watcher alone cannot prove that a process exited.
+    if (found == statuses_.end()) return std::nullopt;
+    const auto& status = found->second;
+    if (status.pid != pid) return -1;
+    if (status.phase == G::ProjectPhase::Exited) return status.exit_status;
+    return std::nullopt;
+  }
+  auto WaitForReady(const std::filesystem::path&, const std::string& key,
+                    int64_t pid, std::stop_token stop,
+                    const std::function<bool()>& done) -> void override {
+    if (!pid) {
+      // Rediscover a launch whose reply was lost. An inspect also waits for
+      // the helper's subscription to exist before we use its status cache.
+      V::ProcessRequestT request;
+      request.key = key;
       const auto process = CallProcess(std::move(request));
-      return process.running && process.pid == pid ? std::nullopt
-                                                   : std::optional<int>(-1);
-    } catch (...) {
-      // A transport failure does not prove a guest process has stopped.
-      return std::nullopt;
+      if (!process.running || !process.endpoint.empty()) {
+        if (!stop.stop_requested()) done();
+        return;
+      }
+      pid = process.pid;
+    }
+    {
+      std::unique_lock lock(status_mutex_);
+      if (!status_changed_.wait(lock, stop,
+                                [&] {
+                                  if (!watch_connected_) return true;
+                                  const auto found = statuses_.find(key);
+                                  return found != statuses_.end() &&
+                                         found->second.pid == pid &&
+                                         found->second.phase !=
+                                             G::ProjectPhase::Starting;
+                                }) ||
+          stop.stop_requested())
+        return;
+      if (!watch_connected_)
+        throw std::runtime_error(
+            "VM helper stopped reporting project readiness");
+    }
+    if (!done())
+      throw std::runtime_error(
+          "The guest project endpoint is unavailable after startup");
+  }
+  auto Observe(std::stop_token stop, const std::function<void()>& check)
+      -> void override {
+    std::unique_lock lock(status_mutex_);
+    auto seen = status_version_;
+    while (!stop.stop_requested()) {
+      lock.unlock();
+      check();
+      lock.lock();
+      if (!status_changed_.wait(lock, stop,
+                                [&] { return status_version_ != seen; }))
+        return;
+      seen = status_version_;
     }
   }
   // Signal waits for the guest’s stop acknowledgement and process exit.
@@ -255,6 +305,27 @@ class VMProcess final : public EnvironmentProcess {
   int64_t helper_pid_ = 0;
   std::jthread watcher_;
   std::map<int64_t, std::string> keys_;
+  std::mutex status_mutex_;
+  std::condition_variable_any status_changed_;
+  std::map<std::string, G::ProjectStatusT> statuses_;
+  uint64_t status_version_ = 0;
+  bool watch_connected_ = false;
+
+  auto OnStatus(const G::ProjectStatusT& status) -> void {
+    {
+      std::lock_guard lock(status_mutex_);
+      statuses_[status.key] = status;
+      ++status_version_;
+    }
+    status_changed_.notify_all();
+  }
+  auto SetWatchConnected(bool connected) -> void {
+    {
+      std::lock_guard lock(status_mutex_);
+      watch_connected_ = connected;
+    }
+    status_changed_.notify_all();
+  }
   auto Boot(const std::string& key) -> V::BootT {
     V::BootT boot;
     boot.key = key;
@@ -346,12 +417,17 @@ class VMProcess final : public EnvironmentProcess {
       watch_fd_ = -1;
       throw;
     }
+    SetWatchConnected(true);
     watcher_ =
         std::jthread([this, link, fd = watch_fd_.load()](std::stop_token stop) mutable {
           try {
             while (!stop.stop_requested()) {
               auto message = Read(link, fd);
               const auto* event = message->payload.AsEvent();
+              if (!event)
+                throw std::runtime_error("Expected a VM helper event");
+              if (const auto* status = event->value.AsProjectStatus())
+                OnStatus(*status);
               if (const auto* progress = event->value.AsProgress())
                 options_.progress(*progress);
               if (const auto* runtime = event->value.AsHostRuntime())
@@ -359,8 +435,11 @@ class VMProcess final : public EnvironmentProcess {
               if (const auto* terminal = event->value.AsHostTerminalData())
                 options_.terminal(*terminal);
             }
-          } catch (...) {
+          } catch (const std::exception& error) {
+            if (!stop.stop_requested())
+              std::fprintf(stderr, "VM helper watch: %s\n", error.what());
           }
+          SetWatchConnected(false);
           {
             std::lock_guard lock(watch_mutex_);
             // Watch is re-established by the next explicit operation.

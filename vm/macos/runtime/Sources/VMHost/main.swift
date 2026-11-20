@@ -111,6 +111,7 @@ let watchers = Watchers()
   return value
 }
 _ = vm.observe { _ in watchers.emit(encode(runtime(), event: .hostruntime)) }
+vm.observeProjects { watchers.emit(encode($0, event: .projectstatus)) }
 _ = vm.console.observe { line in let value = runtime(); value.console = [line]; watchers.emit(encode(value, event: .hostruntime)) }
 
 final class Terminals: @unchecked Sendable {
@@ -159,8 +160,7 @@ func writeAllToTerminal(_ fd: Int32, _ data: Data) throws {
   }
 }
 let terminals = Terminals()
-actor Driver {
-  private var bridges: [String: LoopbackBridge] = [:]
+struct Driver {
   func boot(_ request: Tsugumi_VMHost_BootT) async throws {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     vm.configureBroker(request.brokerSocket)
@@ -187,54 +187,55 @@ actor Driver {
     return try await vm.attach(key, entries, readOnly: readOnly)
   }
   func process(_ key: String) async throws -> Tsugumi_VMHost_ProcessT {
+    let (pid, endpoint) = try await vm.process(key)
     let value = Tsugumi_VMHost_ProcessT()
-    guard case .running = vm.state else { return value }
-    let status = try await vm.request("status")
-    for item in status.split(separator: " ") {
-      let parts = item.split(separator: ":")
-      if parts.count == 2, parts[0] == key, let pid = Int64(parts[1]) {
-        value.pid = pid; value.running = true
-        if bridges[key] == nil { bridges[key] = try LoopbackBridge(vm: vm, projectId: key) }
-        value.endpoint = "ws://127.0.0.1:\(bridges[key]!.port)/rpc"
-      }
-    }
-    if !value.running { await detach(key) }
+    value.pid = pid
+    value.running = pid != 0
+    value.endpoint = endpoint
     return value
   }
   func run(_ request: Tsugumi_VMHost_RunT) async throws -> Tsugumi_VMHost_ProcessT {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
-    let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    let trace = request.rpcTrace ? 1 : 0
-    _ = try await vm.request("start \(request.key) \(request.hostName) \(slot) \(trace)" + (origins.isEmpty ? "" : " " + origins))
-    return try await process(request.key)
-  }
-  func stop(_ key: String) async throws {
-    if case .running = vm.state { _ = try await vm.request("stop \(key)") }
-    await detach(key)
-  }
-  private func detach(_ key: String) async {
-    bridges.removeValue(forKey: key)?.close()
-    await vm.detach(key)
+    let start = Tsugumi_VMGuest_StartT()
+    start.key = request.key
+    start.hostName = request.hostName
+    start.slot = UInt8(slot)
+    start.rpcTrace = request.rpcTrace
+    start.origins = request.origins
+    do {
+      let reply = try await vm.request(start, type: .start)
+      let value = Tsugumi_VMHost_ProcessT()
+      value.pid = reply.pid
+      value.running = true
+      return value
+    } catch let error as LauncherError {
+      // Only an explicit rejection establishes that there was no launch.
+      if case .startFailed = error { vm.releaseUnstartedProject(request.key) }
+      throw error
+    }
   }
   func operation(_ request: Tsugumi_Host_HostRuntimeRequestT) async throws -> Tsugumi_Host_HostRuntimeT {
     let result = runtime()
     switch request.action {
     case .state: result.console = vm.console.snapshot.suffix(200).map { Optional($0) }
-    case .shutdown: exitState.begin(); await vm.shutdown(exiting: true); for bridge in bridges.values { bridge.close() }; bridges.removeAll()
+    case .shutdown: exitState.begin(); await vm.shutdown(exiting: true)
     case .verifystore:
-      await vm.hold(); defer { vm.release() }
-      result.message = try await vm.request("verify-store")
+      result.message = try await vm.maintenance(.verifystore)
     case .cleanupstore:
-      await vm.hold(); defer { vm.release() }
-      try await vm.request("gc")
+      try await vm.maintenance(.collectstore)
     case .forgetproject:
-      let key = request.projectId ?? ""
-      try await vm.request("forget-stopped \(key)")
-      await detach(key)
+      let forget = Tsugumi_VMGuest_ForgetT()
+      forget.key = request.projectId ?? ""
+      try await vm.request(forget, type: .forget)
     case .command:
       guard case .running = vm.state else { throw LauncherError.notReady("the VM is not running") }
-      result.message = try await vm.request(request.command ?? "")
+      switch request.command {
+      case "cache-usage": try await vm.maintenance(.snapshotcacheusage)
+      case "gc": try await vm.maintenance(.collectstore)
+      case "verify-store": result.message = try await vm.maintenance(.verifystore)
+      default: throw LauncherError.notReady("unknown VM runtime command")
+      }
     default: throw LauncherError.notReady("unsupported VM runtime operation")
     }
     let current = runtime(); result.vmState = current.vmState; result.storeExists = current.storeExists; result.storeDiskGib = current.storeDiskGib
@@ -243,8 +244,6 @@ actor Driver {
   func reset(_ request: Tsugumi_VMHost_ResetT) async throws -> Tsugumi_Host_HostRuntimeT {
     exitState.begin()
     await vm.shutdown(exiting: true)
-    for bridge in bridges.values { bridge.close() }
-    bridges.removeAll()
     let report = try VMReset.apply(directory: vm.directory,
                                   keepFiles: request.keepFiles.compactMap { $0 },
                                   discardOtherFiles: request.discardOtherFiles)
@@ -259,24 +258,22 @@ actor Driver {
     switch request.action {
     case .open_:
       guard let key = request.project else { throw LauncherError.notReady("the project is not running") }
-      let fd = try await vm.connect(port: SharedVM.controlPort)
-      do {
-        try writeAllToTerminal(fd, Data("shell \(key) \(max(request.rows, 2)) \(max(request.cols, 10))\n".utf8))
-        var line = Data(), byte: UInt8 = 0
-        while Darwin.read(fd, &byte, 1) == 1, byte != 10 { line.append(byte) }
-        let reply = String(decoding: line, as: UTF8.self)
-        let fields = reply.split(separator: " ")
-        guard fields.count == 2, fields[0] == "ok", let session = UInt64(fields[1]) else {
-          let reason = reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "cannot open terminal"
-          throw LauncherError.notReady(reason)
-        }
-        result.session = session
-        peer.emit(encode(result, reply: .hostterminal, id: id))
-        terminals.add(fd, session)
-        return
-      } catch { Darwin.close(fd); throw error }
+      let open = Tsugumi_VMGuest_OpenTerminalT()
+      open.key = key
+      open.rows = UInt16(clamping: max(request.rows, 2))
+      open.cols = UInt16(clamping: max(request.cols, 10))
+      let (fd, session) = try await vm.openTerminal(open)
+      result.session = session
+      peer.emit(encode(result, reply: .hostterminal, id: id))
+      terminals.add(fd, session)
+      return
     case .input: try await terminals.input(request.session, request.data)
-    case .resize: _ = try await vm.request("resize \(request.session) \(max(request.rows, 2)) \(max(request.cols, 10))")
+    case .resize:
+      let resize = Tsugumi_VMGuest_ResizeT()
+      resize.session = request.session
+      resize.rows = UInt16(clamping: max(request.rows, 2))
+      resize.cols = UInt16(clamping: max(request.cols, 10))
+      try await vm.request(resize, type: .resize)
     case .close: terminals.close(request.session)
     }
     peer.emit(encode(result, reply: .hostterminal, id: id))
@@ -289,13 +286,16 @@ let driver = Driver()
   switch value {
   case is Tsugumi_VMHost_WatchT:
     peer.emit(encode(Tsugumi_Service_AcknowledgementT(), reply: .acknowledgement, id: id))
-    watchers.add(peer)
-    peer.emit(encode(runtime(), event: .hostruntime))
+    vm.projectSnapshot { projects in
+      watchers.add(peer)
+      for project in projects { peer.emit(encode(project, event: .projectstatus)) }
+      peer.emit(encode(runtime(), event: .hostruntime))
+    }
   case let request as Tsugumi_VMHost_BootT:
     try await driver.boot(request); peer.emit(encode(Tsugumi_Service_AcknowledgementT(), reply: .acknowledgement, id: id))
   case let request as Tsugumi_VMHost_RunT: peer.emit(encode(try await driver.run(request), reply: .process, id: id))
   case let request as Tsugumi_VMHost_ProcessRequestT:
-    if request.action == .stop { try await driver.stop(request.key) }
+    if request.action == .stop { try await vm.stopProject(request.key) }
     peer.emit(encode(try await driver.process(request.key), reply: .process, id: id))
   case let request as Tsugumi_Host_HostRuntimeRequestT:
     peer.emit(encode(try await driver.operation(request), reply: .hostruntime, id: id))

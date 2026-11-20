@@ -1,5 +1,7 @@
 import Darwin
+import FlatBuffers
 import Foundation
+import TsugumiRPC
 // (its configuration types are not Sendable; they are handed to the VM queue only)
 @preconcurrency import Virtualization
 @_exported import TsugumiVMTypes
@@ -28,9 +30,10 @@ enum X86Emulation: String {
 /// virtiofs devices for its folders: replacing one device's share while the
 /// VM runs leaves the others alone (replacing a share that other projects
 /// had mounted made their files disappear).
-public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Sendable {
-  public static let controlPort: UInt32 = 1024
+public final class SharedVM: NSObject, VZVirtualMachineDelegate, VZVirtioSocketListenerDelegate, @unchecked Sendable {
+  private static let controlPort: UInt32 = 1024
   public static let rpcPort: UInt32 = 1025
+  private static let terminalPort: UInt32 = 1026
 
   public let directory: URL
   public let console = ConsoleLog()
@@ -53,17 +56,21 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var stateObservers: [UUID: @Sendable (VMState) -> Void] = [:]
   private var stopWaiters: [CheckedContinuation<Void, Never>] = []
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
-  /// The running VM's size (under `lock`; nil while none runs).
-  private var _resources: VMResources?
-  /// What uses the VM now (under `lock`): attached projects, open terminals
-  /// and store operations. While it is zero the guest's memory is given back.
-  private var users = 0
-  private var idleGeneration: UInt64 = 0
-  private var shrunk = false
+  private var consoleFile: ConsoleFile?
+  // Only used on the Virtualization queue.
+  private let controlListener = VZVirtioSocketListener()
+  private var control: GuestControl?
+  private var idleMemory: IdleMemory?
+  private var clockTask: Task<Void, Never>?
+  private var projects: [String: Tsugumi_VMGuest_ProjectStatusT] = [:]
+  private var bridges: [String: LoopbackBridge] = [:]
+  private var projectObserver: (@Sendable (Tsugumi_VMGuest_ProjectStatusT) -> Void)?
 
   public init(directory: URL) {
     self.directory = directory
     executionBroker = ExecutionBrokerBridge()
+    super.init()
+    controlListener.delegate = self
   }
 
   public func configureBroker(_ socket: String) { executionBroker.configure(socket) }
@@ -148,9 +155,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       let files = try installImage(image)
       setVMState(.starting(.disk))
       try ensureDisk(storeImage, gib: resources.storeGiB, what: "store")
-      lock.withLock { _resources = resources; shrunk = false }
       setVMState(.starting(.boot))
-      lock.withLock { _bootCount += 1 }
       console.note("starting the VM: \(resources.cpus) CPUs, \(resources.memoryGiB) GiB memory, store \(resources.storeGiB) GiB (image \(image.version)), x86_64-linux: \(X86Emulation.chosen.rawValue)")
       let config = try configuration(files: files, resources: resources, cacheConfiguration: cacheConfiguration, cacheNetrc: cacheNetrc, cacheProblem: cacheProblem)
       try await boot(config, generation: generation)
@@ -265,8 +270,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     net.attachment = VZNATNetworkDeviceAttachment()
     net.macAddress = macAddress()
     c.networkDevices = [net]
-    // A new boot: nothing uses it yet (holds of the last one end harmlessly).
-    lock.withLock { users = 0; slots.removeAll() }
     let cacheDirectory = directory.appendingPathComponent("binary-cache-config", isDirectory: true)
     try FileManager.default.createDirectory(at: cacheDirectory, withIntermediateDirectories: true, attributes: [.posixPermissions: 0o700])
     for (name, contents) in [("nix.conf", cacheConfiguration), ("netrc", cacheNetrc)] {
@@ -292,11 +295,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
     // The guest console goes straight to console.log (a pipe attachment
-    // delivered nothing); a reader follows the file for stages and the view.
+    // delivered nothing). ConsoleLog already created the file for this boot.
     let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
-    serial.attachment = try VZFileSerialPortAttachment(url: consoleURL, append: false)
+    serial.attachment = try VZFileSerialPortAttachment(url: consoleURL, append: true)
     c.serialPorts = [serial]
-    followConsole(consoleURL, boot: bootCount)
     try c.validate()
     return c
   }
@@ -308,9 +310,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     fs.share = try VZLinuxRosettaDirectoryShare()
     return fs
   }
-
-  private var _bootCount = 0
-  private var bootCount: Int { lock.withLock { _bootCount } }
 
   /// One MAC address per support folder, kept across boots: the Mac's DHCP
   /// gives the VM the same lease again instead of a new one at every start
@@ -324,61 +323,103 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     return mac
   }
 
-  /// The VM's clock follows the Mac's (it drifts, e.g. across sleep), so
-  /// times recorded by tsugumid agree with the app's clock.
-  private func keepClock() {
-    let boot = bootCount
-    Task.detached { [weak self] in
-      while let self, self.bootCount == boot, case .running = self.state {
-        let ms = Int64(Date().timeIntervalSince1970 * 1000)
-        _ = try? await self.request("clock \(ms)")
-        try? await Task.sleep(for: .seconds(30))
-      }
-    }
-  }
-
-  /// Reads what the guest appends to the console file until the next boot.
-  private func followConsole(_ url: URL, boot: Int) {
-    Thread.detachNewThread { [weak self] in
-      // By path and offset: the attachment may replace the file when it opens it.
-      var offset: UInt64 = 0
-      var idle = 0.05
-      while let self, self.bootCount == boot {
-        var data = Data()
-        if let h = try? FileHandle(forReadingFrom: url) {
-          let size = (try? h.seekToEnd()) ?? 0
-          if size < offset { offset = 0 }
-          if size > offset {
-            try? h.seek(toOffset: offset)
-            data = (try? h.read(upToCount: Int(size - offset))) ?? Data()
-            offset += UInt64(data.count)
-          }
-          try? h.close()
-        }
-        if data.isEmpty {
-          if case .stopped = self.state { return }
-          if case .failed = self.state { return }
-          Thread.sleep(forTimeInterval: idle)
-          idle = min(idle * 2, 0.5)
-          continue
-        }
-        idle = 0.05
-        for line in self.console.feed(data) { self.consoleLine(line) }
-      }
-    }
-  }
-
   private func consoleLine(_ line: String) {
-    if line.hasPrefix("TSUGUMI-STAGE ") {
-      let name = String(line.dropFirst("TSUGUMI-STAGE ".count)).trimmingCharacters(in: .whitespaces)
-      if name == "ready" {
-        setVMState(.running)
-        keepClock()
-        scheduleIdle()
-      } else if let s = VMStage(rawValue: name) { setVMState(.starting(s)) }
+    if line.hasPrefix("TSUGUMI-STAGE "),
+       let stage = VMStage(rawValue: String(line.dropFirst("TSUGUMI-STAGE ".count))) {
+      if case .starting = state { setVMState(.starting(stage)) }
     } else if line.hasPrefix("TSUGUMI-FAILED ") {
       setVMState(.failed(String(line.dropFirst("TSUGUMI-FAILED ".count))))
     }
+  }
+
+  public func listener(_ listener: VZVirtioSocketListener, shouldAcceptNewConnection connection: VZVirtioSocketConnection,
+                       from socketDevice: VZVirtioSocketDevice) -> Bool {
+    // The guest supervisor initiates the connection before starting projects.
+    guard socketDevice === socket, control == nil, case .starting = state else { return false }
+    let fd = fcntl(connection.fileDescriptor, F_DUPFD_CLOEXEC, 0)
+    guard fd >= 0 else {
+      setVMState(.failed("cannot open the guest control stream: \(String(cString: strerror(errno)))"))
+      return false
+    }
+    let channel = GuestControl(fd: fd, retaining: connection)
+    control = channel
+    channel.start(event: { [weak self, weak channel] message in
+      guard let self, let channel else { return }
+      try self.queue.sync {
+        guard self.control === channel else { return }
+        try self.guestEvent(message, channel: channel)
+      }
+    }, closed: { [weak self, weak channel] error in
+      guard let self, let channel else { return }
+      self.queue.async {
+        guard self.control === channel else { return }
+        self.clockTask?.cancel()
+        self.stopIdleMemory()
+        self.console.note("guest control: \(error)")
+        if !self.lock.withLock({ self.stopping }) {
+          self.setVMState(.failed("guest control: \(error)"))
+        }
+      }
+    })
+    return true
+  }
+
+  private func guestEvent(_ message: Tsugumi_VMGuest_MessageT, channel: GuestControl) throws {
+    switch message.payload?.value {
+    case is Tsugumi_VMGuest_ReadyT:
+      guard case .starting = state else { throw LauncherError.notReady("unexpected guest readiness") }
+      guard let balloon = vm?.memoryBalloonDevices.first as? VZVirtioTraditionalMemoryBalloonDevice else {
+        throw LauncherError.notReady("missing VM memory balloon")
+      }
+      idleMemory = IdleMemory(queue: queue, fullBytes: balloon.targetVirtualMachineMemorySize, setTarget: { [console] bytes in
+        balloon.targetVirtualMachineMemorySize = bytes
+        console.note("VM memory target: \(bytes >> 20) MiB")
+      }, snapshot: { [console] in
+        Self.logMemory(try await channel.memorySnapshot(), to: console)
+      })
+      setVMState(.running)
+      // Sync clocks periodically because the VM drifts across host sleep.
+      clockTask = Task {
+        while !Task.isCancelled {
+          let request = Tsugumi_VMGuest_ClockT()
+          request.unixMs = Int64(Date().timeIntervalSince1970 * 1000)
+          do {
+            _ = try await channel.request(request, type: .clock)
+            try await Task.sleep(for: .seconds(30))
+          } catch {
+            if !Task.isCancelled { self.console.note("cannot sync the guest clock: \(error)") }
+            return
+          }
+        }
+      }
+    case let project as Tsugumi_VMGuest_ProjectStatusT:
+      projects[project.key] = project
+      if project.phase == .exited { detachProject(project.key) }
+      projectObserver?(project)
+    case let memory as Tsugumi_VMGuest_MemoryT:
+      Self.logMemory(memory, to: console)
+    case let line as Tsugumi_VMGuest_ConsoleLineT:
+      console.note(line.text)
+    default: throw LauncherError.notReady("unknown guest event")
+    }
+  }
+
+  private static func logMemory(_ memory: Tsugumi_VMGuest_MemoryT, to console: ConsoleLog) {
+    console.note("guest memory: \(memory.totalKib >> 10) MiB total, \(memory.availableKib >> 10) MiB available, \(memory.cachedKib >> 10) MiB cached")
+  }
+
+  private func stopIdleMemory() {
+    idleMemory?.stop()
+    idleMemory = nil
+  }
+
+  public func observeProjects(_ handler: @escaping @Sendable (Tsugumi_VMGuest_ProjectStatusT) -> Void) {
+    queue.sync { projectObserver = handler }
+  }
+
+  /// Subscribe and send the state already known on the same queue as updates.
+  public func projectSnapshot(_ publish: ([Tsugumi_VMGuest_ProjectStatusT]) -> Void) {
+    queue.sync { publish(Array(projects.values)) }
   }
 
   private func boot(_ config: VZVirtualMachineConfiguration, generation: UInt64) async throws {
@@ -391,6 +432,21 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
           c.resume(throwing: LauncherError.notReady("the VM is shutting down"))
           return
         }
+        do {
+          self.consoleFile = try ConsoleFile(self.consoleURL, queue: self.queue) { [weak self = self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let data):
+              for line in self.console.feed(data) { self.consoleLine(line) }
+            case .failure(let error):
+              self.setVMState(.failed("cannot follow the VM console: \(error)"))
+            }
+          }
+        } catch {
+          self.lock.unlock()
+          c.resume(throwing: error)
+          return
+        }
         let vm = VZVirtualMachine(configuration: handed.value, queue: self.queue)
         vm.delegate = self
         self.vm = vm
@@ -398,7 +454,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         self.lock.unlock()
         self.fileSystems = vm.directorySharingDevices.compactMap { $0 as? VZVirtioFileSystemDevice }
         self.socket = vm.socketDevices.first as? VZVirtioSocketDevice
-        if let socket = self.socket { self.executionBroker.install(on: socket) }
+        if let socket = self.socket {
+          self.executionBroker.install(on: socket)
+          socket.setSocketListener(self.controlListener, forPort: Self.controlPort)
+        }
         vm.start { result in
           switch result {
           case .success:
@@ -421,7 +480,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
       console.note("shutting down; waiting for guest sync and poweroff")
       // A boot still preparing the store announces when its control socket is ready.
       if (try? await waitReady()) != nil, !Task.isCancelled {
-        do { try await request("shutdown") }
+        do { try await maintenance(.shutdown) }
         catch { console.note("shutdown request: \(error)") }
       }
       await withCheckedContinuation { continuation in
@@ -461,18 +520,38 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     let handed = OnVMQueue(which)
     queue.async {
       if self.vm === handed.value {
+        self.stopIdleMemory()
+        self.clockTask?.cancel()
+        self.clockTask = nil
+        self.control?.finish(LauncherError.notReady("the VM stopped"))
+        self.control = nil
+        for project in self.projects.values where project.phase != .exited {
+          let exited = Tsugumi_VMGuest_ProjectStatusT()
+          exited.key = project.key
+          exited.pid = project.pid
+          exited.phase = .exited
+          self.projectObserver?(exited)
+        }
+        self.projects.removeAll()
+        self.slots.removeAll()
+        for bridge in self.bridges.values { bridge.close() }
+        self.bridges.removeAll()
+        self.consoleFile?.cancel()
+        self.consoleFile = nil
         self.vm = nil
         self.fileSystems = []
         self.socket = nil
       }
     }
-    lock.withLock { _resources = nil; shrunk = false; idleGeneration += 1 }
     if let error {
       console.note("the VM stopped with an error: \(error.localizedDescription)")
       setVMState(.failed("the VM stopped: \(error.localizedDescription)"))
     } else {
       console.note("the VM stopped")
-      setVMState(.stopped)
+      switch state {
+      case .failed(let reason): setVMState(.failed(reason))
+      default: setVMState(.stopped)
+      }
     }
   }
 
@@ -483,124 +562,82 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   // MARK: - Shared folders
 
   /// Gives the project a slot (its own virtiofs device, `tsugumi-<slot>`)
-  /// sharing `entries` (name -> folder); the same slot again for a project
-  /// that has one. Only before the guest mounts the slot: the guest cannot
+  /// sharing `entries` (name -> folder) before the guest mounts it. The guest cannot
   /// reach the folders it had open once the device's share is replaced.
   public func attach(_ projectId: String, _ entries: [String: URL], readOnly: Set<String> = []) async throws -> Int {
-    let (slot, added): (Int?, Bool) = lock.withLock {
-      if let s = slots[projectId] { return (s, false) }
-      let used = Set(slots.values)
-      guard let free = (0..<Self.slotCount).first(where: { !used.contains($0) }) else { return (nil, false) }
-      slots[projectId] = free
-      return (free, true)
+    // Allocation and share replacement run on the same queue as guest exits.
+    let (slot, memory, restore): (Int, IdleMemory, Task<Void, Error>?) = try await withCheckedThrowingContinuation { answer in
+      queue.async {
+        guard let memory = self.idleMemory, case .running = self.state else {
+          answer.resume(throwing: LauncherError.notReady("the VM is not running"))
+          return
+        }
+        guard self.slots[projectId] == nil else {
+          answer.resume(throwing: LauncherError.notReady("the project already has a VM slot"))
+          return
+        }
+        let used = Set(self.slots.values)
+        guard let slot = (0..<Self.slotCount).first(where: { !used.contains($0) }) else {
+          answer.resume(throwing: LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: ""))
+          return
+        }
+        self.slots[projectId] = slot
+        var shared: [String: VZSharedDirectory] = [:]
+        for (name, url) in entries {
+          shared[name] = VZSharedDirectory(url: url, readOnly: readOnly.contains(name))
+        }
+        self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: shared)
+        answer.resume(returning: (slot, memory, memory.hold()))
+      }
     }
-    guard let slot else {
-      throw LauncherError.startFailed(reason: "at most \(Self.slotCount) projects can be open at once", log: "")
+    do {
+      try await restore?.value
+    } catch {
+      queue.sync {
+        if idleMemory === memory { detachProject(projectId) }
+      }
+      throw error
     }
-    if added { await hold() }
-    var dirs: [String: VZSharedDirectory] = [:]
-    for (name, url) in entries { dirs[name] = VZSharedDirectory(url: url, readOnly: readOnly.contains(name)) }
-    await setShare(slot, dirs)
     return slot
   }
 
-  /// Empties the project's slot (after its tsugumid stopped and unmounted it).
-  public func detach(_ projectId: String) async {
-    guard let slot = lock.withLock({ slots.removeValue(forKey: projectId) }) else { return }
-    await setShare(slot, [:])
-    release()
+  /// Empties the slot only after the guest unmounted it.
+  private func detachProject(_ projectId: String) {
+    bridges.removeValue(forKey: projectId)?.close()
+    guard let slot = slots.removeValue(forKey: projectId) else { return }
+    fileSystems[slot].share = VZMultipleDirectoryShare(directories: [:])
+    idleMemory?.release()
   }
 
-  private func setShare(_ slot: Int, _ dirs: [String: VZSharedDirectory]) async {
-    let handed = OnVMQueue(dirs)
-    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+  public func process(_ key: String) async throws -> (pid: Int64, endpoint: String?) {
+    try await withCheckedThrowingContinuation { answer in
       queue.async {
-        if slot < self.fileSystems.count { self.fileSystems[slot].share = VZMultipleDirectoryShare(directories: handed.value) }
-        c.resume()
+        guard let project = self.projects[key], project.phase != .exited else {
+          answer.resume(returning: (0, nil))
+          return
+        }
+        do {
+          if project.phase == .ready, self.bridges[key] == nil {
+            self.bridges[key] = try LoopbackBridge(vm: self, projectId: key)
+          }
+          let endpoint = self.bridges[key].map { "ws://127.0.0.1:\($0.port)/rpc" }
+          answer.resume(returning: (project.pid, endpoint))
+        } catch { answer.resume(throwing: error) }
       }
     }
   }
 
-  // MARK: - Memory while idle
-
-  /// How long the VM waits with nothing using it before giving memory back,
-  /// and how much the guest keeps then. Measured with a 16 GiB VM: right
-  /// after boot the VM process uses about 0.5 GB; after a Nix build and a run
-  /// about 4 GB, mostly page cache. Ballooned to 1536 MiB the guest still has
-  /// about 920 MiB available, and the process drops to about 1.9 GB within
-  /// seconds. Restoring takes under half a second, so a short delay costs a
-  /// project start little; two minutes keep the page cache across a quick
-  /// close and reopen.
-  public static let idleDelay: Duration = .seconds(120)
-  public static let idleMemoryMiB: UInt64 = 1536
-
-  /// Something starts using the VM (a project, a terminal, a store
-  /// operation): the guest gets its full memory back first.
-  public func hold() async {
-    let restore: VMResources? = lock.withLock {
-      users += 1
-      idleGeneration += 1
-      guard shrunk, let r = _resources else { return nil }
-      shrunk = false
-      return r
-    }
-    guard let restore else { return }
-    let start = ContinuousClock.now
-    await setMemoryTarget(UInt64(restore.memoryGiB) << 30)
-    // The balloon deflates in the guest. Its pages count as used there
-    // (MemTotal stays), so wait until most of them are available again.
-    let wanted = ((UInt64(restore.memoryGiB) << 20) - (Self.idleMemoryMiB << 10)) / 2  // KiB
-    var available: UInt64 = 0
-    while ContinuousClock.now - start < .seconds(10) {
-      if let reply = try? await request("memory") {
-        let fields = reply.split(separator: " ")
-        available = fields.count == 3 ? UInt64(fields[1]) ?? 0 : 0
-        if available >= wanted { break }
-      }
-      try? await Task.sleep(for: .milliseconds(20))
-    }
-    console.note("memory restored to \(restore.memoryGiB) GiB in \(ContinuousClock.now - start) (guest has \(available >> 10) MiB available)")
+  public func stopProject(_ key: String) async throws {
+    let running = queue.sync { projects[key].map { $0.phase != .exited } ?? false }
+    guard running else { return }
+    let stop = Tsugumi_VMGuest_StopT()
+    stop.key = key
+    try await request(stop, type: .stop)
   }
 
-  /// The use that `hold` began has ended.
-  public func release() {
-    lock.withLock { users = max(0, users - 1) }
-    scheduleIdle()
-  }
-
-  private func scheduleIdle() {
-    let generation: UInt64? = lock.withLock {
-      guard users == 0, !shrunk, _resources != nil else { return nil }
-      idleGeneration += 1
-      return idleGeneration
-    }
-    guard let generation else { return }
-    Task.detached { [weak self] in
-      try? await Task.sleep(for: Self.idleDelay)
-      guard let self else { return }
-      let shrink: Bool = self.lock.withLock {
-        guard self.idleGeneration == generation, self.users == 0, !self.shrunk, case .running = self._state else { return false }
-        self.shrunk = true
-        return true
-      }
-      guard shrink else { return }
-      self.console.note("idle for \(Self.idleDelay); giving memory back (guest keeps \(Self.idleMemoryMiB) MiB)")
-      await self.setMemoryTarget(Self.idleMemoryMiB << 20)
-      // What the guest has left, for the log (KiB: total, available, page cache).
-      try? await Task.sleep(for: .seconds(5))
-      if let reply = try? await self.request("memory") {
-        let kib = reply.split(separator: " ").map { (UInt64($0) ?? 0) >> 10 }
-        if kib.count == 3 { self.console.note("guest memory now \(kib[0]) MiB, available \(kib[1]) MiB, page cache \(kib[2]) MiB") }
-      }
-    }
-  }
-
-  private func setMemoryTarget(_ bytes: UInt64) async {
-    await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-      queue.async {
-        (self.vm?.memoryBalloonDevices.first as? VZVirtioTraditionalMemoryBalloonDevice)?.targetVirtualMachineMemorySize = bytes
-        c.resume()
-      }
+  public func releaseUnstartedProject(_ key: String) {
+    queue.sync {
+      if projects[key] == nil || projects[key]?.phase == .exited { detachProject(key) }
     }
   }
 
@@ -629,25 +666,56 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     }
   }
 
-  /// One request line to tsugumi-vmd; returns the reply after "ok" or throws
-  /// with the reason after "error".
   @discardableResult
-  public func request(_ line: String) async throws -> String {
-    let fd = try await connect(port: Self.controlPort)
-    let reply = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<String, Error>) in
+  public func request(_ value: NativeObject, type: Tsugumi_VMGuest_Command) async throws -> Tsugumi_VMGuest_ReplyT {
+    guard let channel = queue.sync(execute: { control }) else {
+      throw LauncherError.notReady("the guest control stream is unavailable")
+    }
+    return try await channel.request(value, type: type)
+  }
+
+  @discardableResult
+  public func maintenance(_ action: Tsugumi_VMGuest_MaintenanceAction) async throws -> String {
+    let value = Tsugumi_VMGuest_MaintenanceT()
+    value.action = action
+    let (channel, memory, restore): (GuestControl, IdleMemory?, Task<Void, Error>?) = try queue.sync {
+      guard let control else { throw LauncherError.notReady("the guest control stream is unavailable") }
+      switch action {
+      case .shutdown:
+        stopIdleMemory()
+        return (control, nil, nil)
+      case .snapshotcacheusage:
+        return (control, nil, nil)
+      case .collectstore, .verifystore:
+        guard let idleMemory else { throw LauncherError.notReady("the VM is not running") }
+        return (control, idleMemory, idleMemory.hold())
+      }
+    }
+    defer {
+      if let memory { queue.sync { memory.release() } }
+    }
+    try await restore?.value
+    return try await channel.request(value, type: .maintenance).message ?? ""
+  }
+
+  public func openTerminal(_ request: Tsugumi_VMGuest_OpenTerminalT) async throws -> (Int32, UInt64) {
+    let data = try GuestControl.requestData(request, type: .openterminal, id: 1)
+    let fd = try await connect(port: Self.terminalPort)
+    return try await withCheckedThrowingContinuation { answer in
       Thread.detachNewThread {
-        defer { close(fd) }
         do {
-          try writeAll(fd, Data((line + "\n").utf8))
-          continuation.resume(returning: readLine(fd))
+          try VMHostIPC.write(data, to: fd)
+          guard let message = try GuestControl.read(fd), message.requestId == 1,
+                let result = message.payload?.value as? Tsugumi_VMGuest_ReplyT else {
+            throw LauncherError.notReady("no terminal reply")
+          }
+          answer.resume(returning: (fd, try GuestControl.checked(result).session))
         } catch {
-          continuation.resume(throwing: error)
+          Darwin.close(fd)
+          answer.resume(throwing: error)
         }
       }
     }
-    if reply == "ok" { return "" }
-    if reply.hasPrefix("ok ") { return String(reply.dropFirst(3)) }
-    throw LauncherError.startFailed(reason: reply.hasPrefix("error ") ? String(reply.dropFirst(6)) : "no reply from the VM", log: "")
   }
 }
 
@@ -663,23 +731,8 @@ func writeAll(_ fd: Int32, _ data: Data) throws {
   }
 }
 
-/// One reply line. Lists (histories, status) grow with the projects, so the
-/// line may be long; a cut one would leave its rest for the next reply.
-func readLine(_ fd: Int32) -> String {
-  var bytes: [UInt8] = []
-  var c: UInt8 = 0
-  while bytes.count < 1 << 20 {
-    let n = read(fd, &c, 1)
-    if n < 0 && errno == EINTR { continue }
-    if n <= 0 || c == 10 { break }
-    bytes.append(c)
-  }
-  return String(decoding: bytes, as: UTF8.self)
-}
-
-/// Forwards connections to 127.0.0.1:<port> on the Mac to one project's
-/// tsugumid in the VM (vsock RPC port, first line = project id), so the
-/// RPC client keeps using a plain local WebSocket URL.
+/// Forwards connections from the Mac to a project's vsock RPC stream.
+/// The first frame routes the connection to the project's tsugumid.
 public final class LoopbackBridge: @unchecked Sendable {
   public let port: Int
   private let listener: Int32
@@ -751,36 +804,12 @@ public final class LoopbackBridge: @unchecked Sendable {
       Darwin.close(client)
       return
     }
-    guard (try? writeAll(up, Data((projectId + "\n").utf8))) != nil else {
+    guard (try? VMHostIPC.write(Data(projectId.utf8), to: up)) != nil else {
       Darwin.close(client)
       Darwin.close(up)
       return
     }
-    let done = DispatchGroup()
-    for (from, to) in [(client, up), (up, client)] {
-      done.enter()
-      Thread.detachNewThread {
-        var buf = [UInt8](repeating: 0, count: 65536)
-        while true {
-          let n = read(from, &buf, buf.count)
-          if n <= 0 { break }
-          var off = 0
-          while off < n {
-            let m = buf.withUnsafeBytes { write(to, $0.baseAddress! + off, n - off) }
-            if m <= 0 { break }
-            off += m
-          }
-          if off < n { break }
-        }
-        shutdown(to, SHUT_WR)
-        shutdown(from, SHUT_RD)
-        done.leave()
-      }
-    }
-    done.notify(queue: .global()) {
-      Darwin.close(client)
-      Darwin.close(up)
-    }
+    VMHostIPC.relay(client, up)
   }
 }
 
