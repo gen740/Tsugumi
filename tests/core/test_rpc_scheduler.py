@@ -39,6 +39,7 @@ BASE_DEFS = {
     "msg": {"template": "input", "params": [{"name": "text", "type": "string", "data": "hello"}], "_outputs": MSG_FBS},
     "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG_FBS},
     "branch": {"template": "branch"},
+    "fork": {"template": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
     "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
     "sink": dict(SINK, maxRuns=4, recordIO=True),
     "relay": {"template": "merge", "inputs": [{"name": "in"}]},
@@ -125,6 +126,23 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     assert {(stage.phase, stage.outcome) for stage in rec.stages} >= {
         (Phase.execute, StageOutcome.done), (Phase.validate, StageOutcome.done), (Phase.save, StageOutcome.done)
     }
+
+
+def test_fork_sends_the_value_on_every_output(env, tmp_path):
+    """A Fork emits its one value on each declared output and logs where it went."""
+    c = env([card("start", "trigger"), card("src", "msg"), card("split", "fork"),
+             card("x", "sink"), card("y", "sink"), card("z", "sink")],
+            [conn("src", "msg", "split", "value"), conn("split", "a", "x", "in"),
+             conn("split", "b", "y", "in"), conn("split", "c", "z", "in")])
+    run_id, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
+    rec = c.call("RunInvocationsRequest", runId=run_id, card=path("split")).records[0]
+    assert [text(p) for p in rec.outputsSent] == ["a", "b", "c"]
+    for sink in ("x", "y", "z"):
+        assert states(c, run_id, sink) == [CardState.succeeded]
+        assert inputs(c, tmp_path / sink, run_id, sink) == [{"text": "hello"}]
+    log = text(c.call("LogRangeRequest", runId=run_id, card=path("split"), stream=1, limitBytes=4096).text)
+    assert log == "fork -> a, b, c\n"
 
 
 def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):

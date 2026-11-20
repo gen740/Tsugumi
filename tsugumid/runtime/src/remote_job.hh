@@ -38,6 +38,10 @@ struct RemoteJobState {
   std::string transfer_name = {};
   uint64_t transfer_done = 0, transfer_total = 0;
   bool log_truncated = false;
+  // A status reply's slice of the job log: its offset, the log's size then,
+  // and the bytes from that offset.
+  uint64_t log_offset = 0, log_size = 0;
+  std::string log = {};
 };
 
 struct RemoteProbe {
@@ -91,9 +95,13 @@ class RemoteJobClient {
               std::stop_token stop) const
       -> RemoteJobState;
   auto status(std::string_view service, std::string_view instance,
-              std::string_view job_id, std::stop_token stop) const -> RemoteJobState;
+              std::string_view job_id, uint64_t log_offset,
+              std::stop_token stop) const -> RemoteJobState;
+  // With a log cursor, the reply also carries the job log from there; only
+  // the submitting core life may read it.
   auto cancel(std::string_view service, std::string_view instance,
-              std::string_view job_id, std::string_view fingerprint) const
+              std::string_view job_id, std::string_view fingerprint,
+              std::optional<uint64_t> log_offset = std::nullopt) const
       -> RemoteJobState;
 
   auto release(std::string_view service, std::string_view instance,

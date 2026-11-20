@@ -43,6 +43,8 @@ Choose **New Project** on Home and select a destination. A new folder is created
 
 Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its `value` output to a Branch’s `condition` input. Connect the value to route to the Branch’s other input and run with the toggle both ways. The timeline shows which branch ran. The same preset is available when implementing a Draft. [Card types and execution](features.md#2-cards-and-workflows)
 
+Choose **Fork** to send one value to several Cards as a named step. It starts with outputs `a` and `b`; add or rename outputs under **Ports** in its settings. Unlike a Branch, every output receives the value on every run.
+
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
