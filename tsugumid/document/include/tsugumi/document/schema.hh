@@ -79,6 +79,11 @@ struct InputDef {
   Opt<"optional", v::Bool> optional;
 };
 
+// A Fork's output port; other Cards' outputs come from their schema.
+struct OutputDef {
+  Opt<"name", v::String> name;
+};
+
 // A folder the worker may read (Experimental): a folder of the Mac, seen in
 // the worker as /host/<name>.
 struct HostFolder {
@@ -105,6 +110,7 @@ struct CardDefinition {
   Opt<"template", v::String> template_name;
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
+  Opt<"outputs", v::Array<Obj<OutputDef>>> outputs;  // a Fork's
   // When the Card runs: "allInputs" (every required input has a value, the
   // default) or "eachInput" (once per arriving value).
   Opt<"trigger", v::String> trigger;

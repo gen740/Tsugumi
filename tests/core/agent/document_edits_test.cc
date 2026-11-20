@@ -83,13 +83,16 @@ TEST(DocumentTemplate,
       json::Object(WriteTemplate("draft", "new-card").definition_json);
   EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
   EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
-  for (const auto* name : {"trigger", "branch", "collect", "merge", "input"}) {
+  for (const auto* name :
+       {"trigger", "branch", "fork", "collect", "merge", "input"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));
     EXPECT_EQ(json::Text(card, "template"), name);
     if (std::string_view(name) == "merge")
       EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
+    if (std::string_view(name) == "fork")
+      EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
     if (std::string_view(name) == "input") {
       ASSERT_EQ(reply.files.size(), 1);
       EXPECT_NE(reply.files[0].text.find("namespace new_card_2;"),

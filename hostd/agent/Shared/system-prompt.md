@@ -20,7 +20,8 @@ the person's decision.
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
   permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs. Input types come from the connected outputs.
+  links use. An output port can feed several inputs; a fork Card ({"template": "fork", "outputs": [{"name": "a"},
+  {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
 - How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
   large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
   (en/report/definitions/generate/src/main.py); demo_list lists each demo's path, name and one line.
@@ -42,7 +43,8 @@ the person's decision.
   its Skills, while access and permission grants still apply.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
   SDK preparation, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
-  and version changes wait for the person's approval of each call.
+  and version changes wait for the person's approval of each call. For a trial the person describes without its run,
+  versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns the types a Card receives, rendered for its language.
 <!-- End of shared MCP rules -->

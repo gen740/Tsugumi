@@ -22,6 +22,7 @@ enum class Template {
   Trigger,
   Input,
   Branch,
+  Fork,
   Merge,
   Collect,
   Subgraph,
@@ -30,6 +31,8 @@ enum class Template {
 const char* template_name(Template t);
 // What a definition is; no definition at all is a Draft.
 Template template_of(const DefinitionDoc* def);
+// A Fork's output names: its declared outputs, or a and b without any.
+std::vector<std::string> fork_outputs(const DefinitionDoc& def);
 
 enum class ParamType {
   Bool,

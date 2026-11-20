@@ -9,7 +9,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
 | **Code Card** | A Card whose environment is defined in `default.nix` and whose processing is in `src/` or its Nix `run` script ([Your first Card](CardGuide.md)) |
-| **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Merge or Collect |
+| **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Fork, Merge or Collect |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |

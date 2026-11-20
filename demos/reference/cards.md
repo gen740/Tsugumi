@@ -174,7 +174,8 @@ and its sources in src/. You can use input_types to read the resolved input defi
   "sweep": [8, 12, 16] instead of "data" hands on each value in its own invocation (an execution list; a list-typed
   param's "data" stays one vector). A code Card's run may be a list of implementations, one invocation each; an entry
   { label = "threshold=10"; run = ...; } names it in the history (demos/en/signal-sweep). Other built-ins: branch,
-  merge, collect (one batch to one vector).
+  merge, collect (one batch to one vector), and fork ({"template": "fork", "outputs": [{"name": "a"}, {"name": "b"}]}:
+  its value input goes out unchanged on every output, so each one always runs downstream).
 * Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
   "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
   "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a

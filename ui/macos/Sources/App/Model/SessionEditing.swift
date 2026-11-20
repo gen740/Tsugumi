@@ -6,7 +6,7 @@ import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
-  case trigger, input, branch, merge, collect, draft, subgraph, code
+  case trigger, input, branch, fork, merge, collect, draft, subgraph, code
 
   var editsValueOnCanvas: Bool { self == .input }
 
@@ -15,6 +15,7 @@ enum CardKind: String {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
     case .branch: return String(localized: "分岐")
+    case .fork: return String(localized: "分配")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -28,6 +29,7 @@ enum CardKind: String {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
     case .branch: return "arrow.triangle.swap"
+    case .fork: return "arrow.triangle.branch"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -41,7 +43,7 @@ enum CardKind: String {
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case booleanInput = "input_bool"
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, merge, collect
+  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, fork, merge, collect
   case report_rmarkdown, report_quarto
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
   case matplotlib = "visualization_matplotlib"
@@ -71,6 +73,7 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .booleanInput: return String(localized: "真偽値の入力")
     case .trigger: return String(localized: "開始")
     case .branch: return String(localized: "分岐")
+    case .fork: return String(localized: "分配")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     }

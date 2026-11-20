@@ -141,10 +141,10 @@ export interface CardNodeData {
   openComments?: number
 }
 
-export const isRouting = (d: CardNodeData) => d.kind === 'branch' || d.kind === 'merge' || d.kind === 'collect'
+export const isRouting = (d: CardNodeData) => d.kind === 'branch' || d.kind === 'fork' || d.kind === 'merge' || d.kind === 'collect'
 
-export type CardShape = 'card' | 'branch' | 'merge' | 'collect' | 'start'
-export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'merge' || k === 'collect' ? k : 'card')
+export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'collect' | 'start'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' || k === 'collect' ? k : 'card')
 
 /** Whether a wire is drawn dotted: either end is a Draft, with no code behind
  *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
@@ -224,6 +224,12 @@ export class CardGeometry {
     switch (this.shape) {
       // Its ports are at a quarter and three quarters of this.
       case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
+      // A Branch's diamond, widened by its outputs: two of them sit where a Branch's a and b do.
+      case 'fork': {
+        const n = Math.max(this.outputs.length, 1)
+        const width = this.grid ? 2 * n * CardGeometry.rowPitch(this.grid) : Math.max(60, 30 * n)
+        return { width, height: Math.max(48, width * 0.4) }
+      }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       case 'collect': return { width: this.grid ? gridLengthAtLeast(64, this.grid) : 64, height: 44 }
       // The start Card: its name and a run button, nothing more.
@@ -385,6 +391,17 @@ export class CardGeometry {
         return roundedRect(r, r.height / 2)
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
+      case 'fork': {
+        // A diamond whose corners along the flow stay sharp (listed twice): value
+        // is on the upstream one, and an odd number of outputs puts one on the other.
+        // The side corners shrink with the zoom, as `r` does.
+        const radius = (6 * (this.flow === 'topToBottom' ? r.height : r.width)) / this.routingSize.height
+        const top = P(r.x + r.width / 2, r.y), right = P(r.x + r.width, r.y + r.height / 2)
+        const bottom = P(r.x + r.width / 2, r.y + r.height), left = P(r.x, r.y + r.height / 2)
+        return this.flow === 'topToBottom'
+          ? roundedPolygon([top, top, right, bottom, bottom, left], radius)
+          : roundedPolygon([top, right, right, bottom, left, left], radius)
+      }
       case 'collect': {
         const point = (across: number, along: number) => this.flow === 'topToBottom'
           ? P(r.x + r.width * across, r.y + r.height * along)
@@ -418,7 +435,7 @@ export class CardGeometry {
 
   /** The segment ports of one side are spread along (top-to-bottom: an x range). */
   private edgeSpan(input: boolean) {
-    if (this.shape === 'card' || this.shape === 'branch' || this.shape === 'start') {
+    if (this.shape === 'card' || this.shape === 'branch' || this.shape === 'fork' || this.shape === 'start') {
       const w = this.shape === 'card' ? this.cardWidth : this.routingSize.width
       return { start: 0, width: w }
     }
@@ -447,7 +464,7 @@ export class CardGeometry {
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
     if (this.shape === 'start') return false
-    if (this.shape === 'merge' || this.shape === 'collect') return false
+    if (this.shape === 'merge' || this.shape === 'collect' || this.shape === 'fork') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
   }
@@ -484,6 +501,13 @@ export class CardGeometry {
       const first = index === 0
       if (this.flow === 'topToBottom') return { x: r.x + r.width * (first ? 0.25 : 0.75), y: r.y + r.height * (output ? 0.75 : 0.25) }
       return { x: r.x + r.width * (output ? 0.75 : 0.25), y: r.y + r.height * (first ? 0.25 : 0.75) }
+    }
+    if (this.shape === 'fork') {
+      // value on the upstream corner; the outputs spread over the two downstream
+      // edges, at the middles of their shares of the width (on the grid: odd rows).
+      const across = output ? (2 * index + 1) / (2 * n) : 0.5
+      const along = output ? 1 - Math.abs(across - 0.5) : 0
+      return this.flow === 'topToBottom' ? { x: r.x + r.width * across, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height * across }
     }
     const along = this.alongGrid(index, list.length, output)
     if (this.flow === 'topToBottom') {
