@@ -1,8 +1,7 @@
 """The `tsugumi` command: what cli/install.sh does on each platform (uname and
-Nix are stand-ins here, so all of it runs anywhere), and the web server with the
-Mac's VM backend against a stand-in for tsugumi-vmhost. Shared settings and
-recent projects are checked against the host core, with no second copy. A real
-VM is checked by hand (tests/README.md)."""
+Nix are stand-ins here, so all of it runs anywhere), `tsugumi web` with the
+Mac's VM backend against a stand-in for tsugumi-vmhost, and runs of the command
+that share one host. A real VM is checked by hand (tests/README.md)."""
 
 from __future__ import annotations
 
@@ -25,14 +24,15 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from conftest import WEB_DIST, BUILD, WORKER, SDK, write_project
+from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, SDK, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 from harness.file_events import process_file, wait_for_file
 
 ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = ROOT / "cli" / "install.sh"
-SERVER = WEB_DIST / "server.js"
-needs_server = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(), reason="needs node and ui/web/dist (cd ui/web && npm run build)")
+needs_cli = pytest.mark.skipif(not CLI.exists(), reason="needs build/cli/tsugumi")
+needs_server = pytest.mark.skipif(not CLI.exists() or not HOSTD.exists() or not (WEB_ROOT / "index.html").exists(),
+                                  reason="needs build/cli/tsugumi, tsugumi-hostd and ui/web/dist (cd ui/web && npm run build)")
 
 
 def executable(path: Path, text: str):
@@ -217,7 +217,7 @@ exec "{shutil.which("mv")}" "$@"
     assert [p.name for p in (machine.home / ".local/bin").iterdir()] == ["tsugumi"]
 
 
-@needs_server
+@needs_cli
 def test_update_puts_the_latest_release_in_place(machine):
     # `tsugumi update` (after the wrapper's own flags) runs the release's install.sh.
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
@@ -225,17 +225,17 @@ def test_update_puts_the_latest_release_in_place(machine):
     previous = (machine.home / ".local/share/tsugumi/current").resolve()
     shutil.copy(SCRIPT, machine.release / "install.sh")
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.1")
-    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
+    r = machine("Darwin", "arm64", command=[str(CLI), "update"])
     assert r.returncode == 0, r.stderr
     assert subprocess.check_output([previous / "tsugumi"], text=True).strip() == "1.0.0"
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.1"
 
 
-@needs_server
+@needs_cli
 def test_update_without_the_release_script_says_so_and_keeps_what_is_there(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.0.0")
     assert machine("Darwin", "arm64").returncode == 0
-    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "--open", "--reuse", "update"])
+    r = machine("Darwin", "arm64", command=[str(CLI), "update"])
     assert r.returncode == 69
     assert subprocess.run([machine.home / ".local" / "bin" / "tsugumi"], capture_output=True, text=True).stdout.strip() == "1.0.0"
 
@@ -312,7 +312,7 @@ def test_windows_launcher_forwards_arguments_and_preserves_failed_uninstall(tmp_
 
 # ---- Uninstalling --------------------------------------------------------------
 
-@needs_server
+@needs_cli
 @pytest.mark.parametrize("system,arch,nix", [("Darwin", "arm64", False), ("Linux", "x86_64", True)])
 def test_uninstall_previews_then_removes_only_the_installed_command(machine, system, arch, nix):
     artifact(machine.release, "tsugumi-linux.tar.gz" if nix else "tsugumi-macos-arm64.tar.gz", "1.2.3")
@@ -330,7 +330,7 @@ def test_uninstall_previews_then_removes_only_the_installed_command(machine, sys
     store.mkdir()
     (store / "package").write_text("keep store output")
     (release / "store-output").symlink_to(store, target_is_directory=True)
-    args = [shutil.which("node"), str(SERVER), "--open", "--reuse", "uninstall"]
+    args = [str(CLI), "uninstall"]
     preview = machine(system, arch, nix=nix, command=args)
     assert preview.returncode == 0, preview.stderr
     assert "uninstall --yes" in preview.stdout
@@ -346,7 +346,7 @@ def test_uninstall_previews_then_removes_only_the_installed_command(machine, sys
     assert all(f.read_text() == "keep me" for f in kept)
 
 
-@needs_server
+@needs_cli
 def test_uninstall_removes_marked_generations_and_preserves_foreign_directories(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     assert machine("Darwin", "arm64").returncode == 0
@@ -358,22 +358,22 @@ def test_uninstall_removes_marked_generations_and_preserves_foreign_directories(
     (foreign / "notes").write_text("keep")
     # A copied marker for another directory is not proof of ownership.
     (foreign / ".installed-by-tsugumi").write_text("another-directory")
-    result = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    result = machine("Darwin", "arm64", command=[str(CLI), "uninstall", "--yes"])
     assert result.returncode == 0, result.stderr
     assert list(data.iterdir()) == [foreign]
     assert (foreign / "notes").read_text() == "keep"
 
 
-@needs_server
+@needs_cli
 def test_uninstall_removes_empty_installation_folder(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     assert machine("Darwin", "arm64").returncode == 0
-    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    r = machine("Darwin", "arm64", command=[str(CLI), "uninstall", "--yes"])
     assert r.returncode == 0, r.stderr
     assert not (machine.home / ".local/share/tsugumi").exists()
 
 
-@needs_server
+@needs_cli
 @pytest.mark.parametrize("change", ["launcher", "data", "bin", "current", "version", "marker"])
 def test_uninstall_refuses_replaced_or_redirected_installations(machine, change):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
@@ -396,91 +396,94 @@ def test_uninstall_refuses_replaced_or_redirected_installations(machine, change)
         (data / "current").symlink_to(external, target_is_directory=True)
     else:
         (release / ".installed-by-tsugumi").unlink()
-    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--yes"])
+    r = machine("Darwin", "arm64", command=[str(CLI), "uninstall", "--yes"])
     assert r.returncode != 0
     assert (external / "keep").read_text() == "keep"
     assert command.exists() or command.is_symlink()
 
 
-@needs_server
+@needs_cli
 def test_uninstall_rejects_unknown_options_without_deleting(machine):
     artifact(machine.release, "tsugumi-macos-arm64.tar.gz", "1.2.3")
     assert machine("Darwin", "arm64").returncode == 0
-    r = machine("Darwin", "arm64", command=[shutil.which("node"), str(SERVER), "uninstall", "--purge"])
+    r = machine("Darwin", "arm64", command=[str(CLI), "uninstall", "--purge"])
     assert r.returncode == 64
     assert (machine.home / ".local/bin/tsugumi").exists()
 
 
-# ---- The web server on the VM -------------------------------------------------
+# ---- `tsugumi web` with the VM ---------------------------------------------------
 
+
+def web(env, *arguments, check=True):
+    r = subprocess.run([str(CLI), "web", "--no-browser", *map(str, arguments)], capture_output=True, text=True, env=env, timeout=300)
+    if check:
+        assert r.returncode == 0, r.stderr
+    return r
+
+
+def page_url(output: str):
+    url = urlparse(re.search(r"Tsugumi web UI: (\S+)", output).group(1))
+    return url, url.port, parse_qs(url.query)
+
+
+def hosts(state: Path) -> int:
+    listing = subprocess.check_output(["ps", "-axww", "-o", "command="], text=True)
+    return listing.count(f"--state-dir {state} ")
 
 
 @pytest.fixture
 def vm_server(tmp_path):
+    from test_web_server import page_cookie
     support = tmp_path / "support"
     support.mkdir()
-    state = tmp_path / "host-core"
-    prefs = state / "host.sqlite"
     project = tmp_path / "project"
     write_project(project)
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_WEB_DATA=str(support / "web"), TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
-    p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+               TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
     try:
-        m = re.search(r"http://127\.0\.0\.1:(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
-        assert m
-        yield tmp_path, project, prefs, int(m.group(1)), f"tsugumi_{m.group(1)}={m.group(2)}"
+        _, port, query = page_url(web(env).stdout)
+        yield tmp_path, project, port, page_cookie(port, query["key"][0])
     finally:
-        p.terminate()
-        p.wait(10)
         stop_resident_services(tmp_path, vm_helper=tmp_path / "host")
-
-
-def api(port: int, cookie: str, method: str, route: str, body=None, *, timeout=10):
-    c = http.client.HTTPConnection("127.0.0.1", port, timeout=timeout)
-    c.request(method, route, body=json.dumps(body or {}) if method == "POST" else None,
-              headers={"Host": f"127.0.0.1:{port}", "Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"})
-    r = c.getresponse()
-    data = json.loads(r.read())
-    c.close()
-    assert r.status == 200, data
-    return data
 
 
 @needs_server
 def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
-    _, _, _, port, cookie = vm_server
-    s = api(port, cookie, "GET", "/api/status")
-    assert all(s["setup"][k]["ok"] for k in ("tsugumid", "worker", "sdk"))
-    assert s["hostFolders"] is True
+    from contextlib import closing
+    from test_web_server import page_host
+    _, _, port, cookie = vm_server
+    with closing(page_host(port, cookie)) as host:
+        home = host.call("HostHomeRequest")
+    assert home.vm and home.hostFolders
+    assert home.tsugumid.ok and home.worker.ok and home.sdk.ok
 
 
 @needs_server
 def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server):
     # Production hostd, VM process adapter and tsugumid; only the hypervisor is
-    # replaced by the helper. No Card/worker is needed to expose the lost socket.
+    # replaced by the helper.
     from contextlib import closing
     from harness.remote_worker import string
-    from test_web_server import web_host
+    from test_web_server import page_host
     from Tsugumi.Host.EnvironmentAction import EnvironmentAction
     from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
     from tsugumi_client import Client, new_id
 
-    root, project, _, port, cookie = vm_server
-    # The HTTP watchdog covers hostd's startup and rollback budgets; it must
-    # not turn a still-running VM transition into an apparent attach failure.
-    def request(method, route, body=None):
-        return api(port, cookie, method, route, body, timeout=240)
+    root, project, port, cookie = vm_server
+
+    def host():
+        connection = page_host(port, cookie)
+        # The VM adapter owns startup and rollback; a test watchdog only
+        # prevents a hung fixture from waiting indefinitely.
+        connection.socket.settimeout(240)
+        return closing(connection)
 
     def start():
-        with closing(web_host(port, cookie)) as host:
-            # The VM adapter owns startup and rollback; a test watchdog only
-            # prevents a hung fixture from waiting indefinitely.
-            host.socket.settimeout(240)
-            state = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start,
-                              origins=[f"http://127.0.0.1:{port}"])
+        with host() as h:
+            state = h.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start,
+                           origins=[f"http://127.0.0.1:{port}"])
         assert state.phase == EnvironmentPhase.Ready, state.message
         return string(state.endpoint), string(state.token), string(state.projectId)
 
@@ -488,7 +491,7 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
     assert endpoint.startswith("ws://127.0.0.1:") and token and project_id
     launches = (json.loads(line) for line in (root / "log").read_text().splitlines())
     launch = next(event for event in launches if event["op"] == "run")
-    assert set(launch["origins"]) == {f"http://127.0.0.1:{port}"}
+    assert f"http://127.0.0.1:{port}" in set(launch["origins"])
     with Client(ws=endpoint) as client:
         previous = client.hello(token=token, project=project_id).serverInstanceId
         assert client.open(new_id()) is not None
@@ -496,11 +499,9 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
         folder = root / f"attached-{index}"
         folder.mkdir()
         (folder / "note.txt").write_text(f"folder {index}")
-        result = request("POST", "/api/chat/folders",
-                     {"path": str(project), "selected": [str(folder), str(folder)]})
-        assert len(result["folders"]) == 1
-        assert result["folders"][0]["folder"] == str(folder)
-        resource = result["folders"][0]["resource"]
+        with host() as h:
+            result = h.call("AttachFoldersRequest", project=str(project.resolve()), folders=[str(folder), str(folder)])
+        assert len(result.folders) == 1 and string(result.folders[0].folder) == str(folder)
         endpoint, token, project_id = start()
         # A fresh project session must authenticate and read its snapshot.
         with Client(ws=endpoint) as client:
@@ -509,152 +510,45 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
             previous = hello.serverInstanceId
             assert client.open(new_id()) is not None
         # Retrying an existing share returns the same registered identity.
-        retry = request("POST", "/api/chat/folders",
-                    {"path": str(project), "selected": [str(folder)]})
-        assert retry["folders"] == result["folders"]
+        with host() as h:
+            retry = h.call("AttachFoldersRequest", project=str(project.resolve()), folders=[str(folder)])
+        assert string(retry.folders[0].resource) == string(result.folders[0].resource)
         endpoint, token, project_id = start()
         with Client(ws=endpoint) as client:
             assert client.hello(token=token, project=project_id).serverInstanceId == previous
-        for attempt in range(4):
-            read = request("POST", "/api/agent/call", {"path": str(project),
-                       "name": "attached_folder_read", "arguments": {"folder": str(folder), "path": "note.txt"}})
-            if not read.get("isError"):
-                break
-            failure = json.loads(read["text"])
-            assert failure["code"] == "grant_required", read
-            request("POST", "/api/agent/access/resolve", {"id": failure["request_id"], "allow": True})
-        assert not read.get("isError"), read
-        assert json.loads(read["text"])["value"]["bytes"] == f"folder {index}"
-        access = request("POST", "/api/agent/access")
-        assert any(g["project_id"] == resource and g["active"] for g in access["grants"])
 
 
 @needs_server
 def test_recent_projects_are_owned_by_the_host_core(vm_server):
-    tmp, project, _, port, cookie = vm_server
-    assert api(port, cookie, "GET", "/api/status")["recents"] == []
-    api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
-    saved = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
-    assert saved[0]["path"] == str(project.resolve())
+    from contextlib import closing
+    from harness.remote_worker import string
+    from test_web_server import page_host
+    tmp, project, port, cookie = vm_server
     other = tmp / "another"
     write_project(other)
-    api(port, cookie, "POST", "/api/project/open", {"path": str(other)})
-    api(port, cookie, "POST", "/api/project/open", {"path": str(project)})
-    updated = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
-    updated_entry, = [entry for entry in updated if entry["path"] == str(project.resolve())]
-    recents = api(port, cookie, "GET", "/api/status")["recents"]
-    assert any(entry["path"] == updated_entry["path"] and entry["openedAt"] == updated_entry["openedAt"]
-               for entry in recents)
-    api(port, cookie, "POST", "/api/recents/forget", {"paths": [str(project.resolve()), str(other.resolve())]})
-    assert api(port, cookie, "GET", "/api/status")["recents"] == []
-    assert (project / "tsugumi.json").exists()
-    assert not (tmp / "support" / "recent-projects.json").exists()
-    assert not (tmp / "support" / "web" / "recent-projects.json").exists()
-
-
-def core_settings(root: Path, changes: dict | None = None):
-    """The app's public Host contract."""
-    bindings = str(Path(os.environ.get("TSUGUMI_PY_BINDINGS", BUILD / "generated/python")))
-    if bindings not in sys.path:
-        sys.path.insert(0, bindings)
-    import flatbuffers
-    from Tsugumi.Service.HelloRequest import HelloRequestT
-    from Tsugumi.Host.Message import Message, MessageT
-    from Tsugumi.Host.Request import RequestT
-    from Tsugumi.Host.RequestPayload import RequestPayload
-    from Tsugumi.Host.ReplyPayload import ReplyPayload
-    from Tsugumi.Host.Payload import Payload
-    from Tsugumi.Host.Setting import SettingT
-    from Tsugumi.Host.SettingsGetRequest import SettingsGetRequestT
-    from Tsugumi.Host.SettingsUpdateRequest import SettingsUpdateRequestT
-
-    ready = json.loads((root / "host-core/host.ready").read_text())
-    with socket.socket(socket.AF_UNIX) as peer:
-        peer.settimeout(10)
-        peer.connect(ready["host_socket"])
-
-        def read_exact(count):
-            data = b""
-            while len(data) < count:
-                part = peer.recv(count - len(data))
-                assert part, "Host connection closed"
-                data += part
-            return data
-
-        def call(i, kind, value, expected):
-            builder = flatbuffers.Builder()
-            envelope = MessageT(requestId=i, payloadType=Payload.Request,
-                                payload=RequestT(valueType=kind, value=value))
-            builder.Finish(envelope.Pack(builder), file_identifier=b"TSH1")
-            data = builder.Output()
-            peer.sendall(struct.pack("<I", len(data)) + data)
-            while True:
-                size, = struct.unpack("<I", read_exact(4))
-                assert 0 < size <= 16 << 20
-                data = read_exact(size)
-                assert Message.MessageBufferHasIdentifier(data, 0)
-                reply = MessageT.InitFromPackedBuf(data)
-                # Host events (including SettingsChanged from this update)
-                # share the stream with correlated replies.
-                if reply.payloadType == Payload.Event:
-                    assert reply.requestId == 0
-                    continue
-                assert reply.requestId == i and reply.payloadType == Payload.Reply
-                assert reply.payload.valueType == expected, vars(reply.payload.value)
-                return reply.payload.value
-
-        call(1, RequestPayload.HelloRequest,
-             HelloRequestT(token=ready["user_token"]), ReplyPayload.HelloResult)
-        settings = call(2, RequestPayload.SettingsGetRequest,
-                        SettingsGetRequestT(profile="desktop"), ReplyPayload.Settings)
-        if changes is not None:
-            settings = call(3, RequestPayload.SettingsUpdateRequest,
-                            SettingsUpdateRequestT(profile="desktop", revision=settings.revision,
-                                changes=[SettingT(key=k, valueJson=json.dumps(v)) for k, v in changes.items()]),
-                            ReplyPayload.Settings)
-        return settings.revision.decode(), {s.key.decode(): json.loads(s.valueJson) for s in settings.values or []}
-
-
-@needs_server
-def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
-    root, _, _, port, cookie = vm_server
-    # Start hostd, then act as the app through Host RPC.
-    api(port, cookie, "GET", "/api/settings")
-    stream = http.client.HTTPConnection("127.0.0.1", port)
-    try:
-        stream.request("GET", "/api/events", headers={"Cookie": cookie})
-        with stream.getresponse() as events:
-            assert events.status == 200
-            revision, before = core_settings(root, {
-                "agent.provider": "openai", "agent.model.openai": "from-the-app",
-            })
-            for line in events:
-                if line.startswith(b"data:") and json.loads(line[5:]).get("type") == "settingsChanged":
-                    break
-            else:
-                pytest.fail("settings event stream closed before the change")
-        s = api(port, cookie, "GET", "/api/settings")
-    finally:
-        stream.close()
-    assert s["revision"] == revision
-    assert (s["provider"], s["openAIModel"]) == ("openai", "from-the-app")
-    api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "model": "chosen-here", "webSearch": True})
-    after_revision, after = core_settings(root)
-    assert after_revision != revision
-    assert after == {**before, "agent.model": "chosen-here", "agent.webSearch": True}
+    with closing(page_host(port, cookie)) as host:
+        assert host.call("HostRecentListRequest").projects == []
+        host.call("HostRecentRememberRequest", path=str(project))
+        saved = json.loads((tmp / "host-core" / "recent-projects.json").read_text())
+        assert saved[0]["path"] == str(project.resolve())
+        host.call("HostRecentRememberRequest", path=str(other))
+        host.call("HostRecentRememberRequest", path=str(project))
+        recents = [string(p.path) for p in host.call("HostRecentListRequest").projects]
+        assert recents == [str(project.resolve()), str(other.resolve())]
+        host.call("HostRecentForgetRequest", paths=[str(project.resolve()), str(other.resolve())])
+        assert host.call("HostRecentListRequest").projects == []
 
 
 @needs_server
 def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
-    tmp, project, _, port, cookie = vm_server
-    (tmp / "busy").touch()
     from contextlib import closing
     from harness.remote_worker import string
-    from test_web_server import web_host
+    from test_web_server import page_host
     from Tsugumi.Host.EnvironmentAction import EnvironmentAction
     from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
-
-    with closing(web_host(port, cookie)) as host:
+    tmp, project, port, cookie = vm_server
+    (tmp / "busy").touch()
+    with closing(page_host(port, cookie)) as host:
         state = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
     assert state.phase == EnvironmentPhase.Failed
     assert string(state.message) == "fixture VM failed"
@@ -663,13 +557,25 @@ def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
 
 # ---- Running the command again ---------------------------------------------------
 
+@needs_cli
+def test_bare_tsugumi_prints_its_usage(tmp_path):
+    r = subprocess.run([str(CLI)], capture_output=True, text=True, env=isolated_environment(tmp_path))
+    assert r.returncode == 0 and "tsugumi web" in r.stdout and "tsugumi mcp" in r.stdout
+    r = subprocess.run([str(CLI), "no-such-command"], capture_output=True, text=True, env=isolated_environment(tmp_path))
+    assert r.returncode == 64
+    stop_resident_services(tmp_path)
+
+
 @needs_server
 def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
+    from contextlib import closing
+    from harness.remote_worker import string
+    from test_web_server import page_cookie, page_host
     # On Linux the bundled demos are in the Nix store.
     root = tmp_path / "share"
-    shutil.copytree(SERVER.parent, root / "web" / "dist", ignore=shutil.ignore_patterns("public", "*.map"))
     demo = root / "demos" / "ja" / "d" / "definitions" / "c"
     demo.mkdir(parents=True)
+    (root / "VERSION").write_text("0.0.0\n")
     (demo / "_card.json").write_text("{}")
     (root / "demos" / "ja" / "d" / ".tsugumi").mkdir()
     (root / "demos" / "ja" / "d" / ".tsugumi" / "history").write_text("private")
@@ -677,18 +583,17 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     (root / "demos" / "ja" / "index.json").write_text('{"demos": [{"id": "d", "title": "D", "path": "d"}]}')
     for f in sorted(root.joinpath("demos").rglob("*"), reverse=True):
         f.chmod(0o555 if f.is_dir() else 0o444)
-    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_WEB_DATA=str(tmp_path / "data"), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
-    p = subprocess.Popen(["node", str(root / "web" / "dist" / "server.js"), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    env = isolated_environment(tmp_path, TSUGUMI_REPO=str(root), TSUGUMI_PROJECTS_DIR=str(tmp_path / "projects"))
     try:
-        m = re.search(r":(\d+)/\?key=([0-9a-f]+)", p.stdout.readline())
-        copy = Path(api(int(m.group(1)), f"tsugumi_{m.group(1)}={m.group(2)}", "POST", "/api/demo/copy", {"id": "d"})["path"])
+        _, port, query = page_url(web(env).stdout)
+        (tmp_path / "projects").mkdir()
+        with closing(page_host(port, page_cookie(port, query["key"][0]))) as host:
+            copy = Path(string(host.call("HostDemoCopyRequest", id="d", parent=str(tmp_path / "projects"), language="ja").path))
         assert not (copy / ".tsugumi").exists()
         (copy / "new").mkdir()
         (copy / "definitions" / "c" / "new").mkdir()
         (copy / "tsugumi.json").write_text("{}")
     finally:
-        p.terminate()
-        p.wait(10)
         stop_resident_services(tmp_path)
         for f in root.joinpath("demos").rglob("*"):
             if f.is_dir():
@@ -696,8 +601,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
 
 
 @needs_server
-def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
-    data = tmp_path / "data"
+def test_a_second_run_shows_the_project_on_the_running_host(tmp_path):
     stubs = tmp_path / "stubs"
     stubs.mkdir()
     opened = tmp_path / "opened"
@@ -705,63 +609,35 @@ def test_a_second_run_opens_a_page_on_the_running_server(tmp_path):
         executable(stubs / name, f'#!/bin/sh\nprintf "%s\\n" "$1" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
     project = tmp_path / "project with spaces"
     write_project(project)
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data), PATH=f"{stubs}:{os.environ['PATH']}")
-    first = subprocess.Popen(["node", str(SERVER), "--port", "0", "--reuse"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    env = isolated_environment(tmp_path, PATH=f"{stubs}:{os.environ['PATH']}")
     try:
-        ready = process_file(first, data / "server.json")
-        assert ready is not None
-        info = json.loads(ready.read_text())
-        r = subprocess.run(["node", str(SERVER), "--open", "--reuse", str(project)], capture_output=True, text=True, env=env)
+        _, port, _ = page_url(web(env).stdout)
+        state = tmp_path / "host-core"
+        pid = json.loads((state / "host.ready").read_text())["pid"]
+        r = subprocess.run([str(CLI), "web", str(project)], capture_output=True, text=True, env=env, timeout=300)
         assert r.returncode == 0, r.stderr
-        assert json.loads(ready.read_text())["pid"] == first.pid == info["pid"]
+        assert json.loads((state / "host.ready").read_text())["pid"] == pid
+        # No page is attached: hostd opens the Web UI with the system's opener.
         wait_for_file(opened)
         shown = urlparse(opened.read_text().strip())
-        assert shown.port == info["port"]
+        assert shown.port == port
         assert parse_qs(shown.query)["project"] == [str(project.resolve())]
+        assert hosts(state) == 1
     finally:
-        first.terminate()
-        first.wait(10)
-        stop_resident_services(tmp_path)
-
-
-@needs_server
-def test_another_build_is_refused_even_with_the_same_release_version(tmp_path):
-    data = tmp_path / "data"
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data))
-    first = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
-    try:
-        assert process_file(first, data / "server.json") is not None
-        info = json.loads((data / "server.json").read_text())
-        other = tmp_path / "other/web/dist/server.js"
-        other.parent.mkdir(parents=True)
-        shutil.copy(SERVER, other)
-        result = subprocess.run(["node", str(other), "--reuse"], capture_output=True, text=True, env=env)
-        assert result.returncode != 0
-        assert json.loads((data / "server.json").read_text())["pid"] == info["pid"] == first.pid
-        assert first.poll() is None
-    finally:
-        first.terminate()
-        first.wait(10)
         stop_resident_services(tmp_path)
 
 
 @needs_server
 def test_simultaneous_commands_end_with_one_host(tmp_path):
-    data = tmp_path / "data"
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(data))
-    processes = [subprocess.Popen(["node", str(SERVER), "--reuse", "--port", "0"],
-                                 stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env) for _ in range(2)]
+    env = isolated_environment(tmp_path)
     try:
-        winner = json.loads(wait_for_file(data / "server.json").read_text())["pid"]
-        host, = [process for process in processes if process.pid == winner]
-        reused, = [process for process in processes if process.pid != winner]
-        assert reused.wait() == 0
-        assert host.poll() is None
+        processes = [subprocess.Popen([str(CLI), "web", "--no-browser"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                                      text=True, env=env) for _ in range(2)]
+        outputs = [p.communicate(timeout=300)[0] for p in processes]
+        assert all(p.returncode == 0 for p in processes), outputs
+        assert len({page_url(o)[1] for o in outputs}) == 1
+        assert hosts(tmp_path / "host-core") == 1
     finally:
-        for process in processes:
-            if process.poll() is None:
-                process.terminate()
-            process.wait(10)
         stop_resident_services(tmp_path)
 
 
@@ -772,37 +648,29 @@ def test_in_wsl_the_page_opens_in_the_browser_of_windows(tmp_path):
     stubs.mkdir()
     opened = tmp_path / "opened"
     executable(stubs / "rundll32.exe", f'#!/bin/sh\nprintf "%s\\n" "$@" > {opened}.tmp\nmv {opened}.tmp {opened}\n')
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
-    p = subprocess.Popen(["node", str(SERVER), "--port", "0", "--open"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    env = isolated_environment(tmp_path, WSL_DISTRO_NAME="Ubuntu", PATH=f"{stubs}:{os.environ['PATH']}")
     try:
-        ready = process_file(p, tmp_path / "data/server.json")
-        assert ready is not None
-        assert process_file(p, opened) is not None
+        r = subprocess.run([str(CLI), "web"], capture_output=True, text=True, env=env, timeout=300)
+        assert r.returncode == 0, r.stderr
+        wait_for_file(opened)
         handler, url = opened.read_text().splitlines()
         assert handler == "url.dll,FileProtocolHandler"
         shown = urlparse(url)
         assert shown.scheme == "http" and shown.hostname == "127.0.0.1"
-        assert shown.port == json.loads(ready.read_text())["port"]
+        assert shown.port == page_url(r.stdout)[1]
         assert shown.path == "/" and parse_qs(shown.query)["key"][0]
     finally:
-        p.terminate()
-        p.wait(10)
         stop_resident_services(tmp_path)
 
 
 @needs_server
-def test_a_folder_after_the_commands_flags_is_the_project_to_open(tmp_path):
+def test_a_folder_after_the_commands_flags_is_the_project_to_show(tmp_path):
     project = tmp_path / "project"
-    project.mkdir()
-    (project / "tsugumi.json").write_text("{}")
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
-    # As cli/tsugumi-macos and nix/cli.nix give it, without --open (no browser here).
-    p = subprocess.Popen(["node", str(SERVER), "--reuse", str(project), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+    write_project(project)
+    env = isolated_environment(tmp_path)
     try:
-        assert "&project=" in p.stdout.readline()
+        assert parse_qs(page_url(web(env, project).stdout)[0].query)["project"] == [str(project.resolve())]
     finally:
-        p.terminate()
-        p.wait(10)
         stop_resident_services(tmp_path)
 
 
@@ -815,13 +683,9 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
             s.listen()
         except OSError:
             pass  # taken already, as wanted
-        env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"))
+        env = isolated_environment(tmp_path)
         env.pop("TSUGUMI_WEB_PORT", None)
-        p = subprocess.Popen(["node", str(SERVER)], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
         try:
-            port = int(re.search(r":(\d+)/\?key=", p.stdout.readline()).group(1))
-            assert port != 8780
+            assert page_url(web(env).stdout)[1] != 8780
         finally:
-            p.terminate()
-            p.wait(10)
-        stop_resident_services(tmp_path)
+            stop_resident_services(tmp_path)

@@ -1,70 +1,61 @@
-"""The web UI's host server: only the page opened through the URL it printed
-(its key, then a cookie) reaches /api/, a malformed request fails alone, files
-outside the page are not served, and every answer forbids framing and
-sniffing. Needs node and a built ui/web/dist (npm run build)."""
+"""The Web UI's origin, which hostd serves: only the page opened through the
+URL `tsugumi web` printed (its key, then a cookie) reaches the Host token and
+the RPC sockets, nothing outside the page is served, every answer forbids
+framing and sniffing, and pages are routed by hostd. Needs the built command,
+hostd and ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
-from contextlib import ExitStack, closing, contextmanager
+from contextlib import closing, contextmanager
 from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
 import json
 import os
-import select
-import shutil
+import re
 import subprocess
-import sys
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from harness.file_events import process_exit, process_file, terminate_process
-from conftest import WEB_DIST
+from conftest import CLI, HOSTD, TSUGUMID, WEB_ROOT, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 
 ROOT = Path(__file__).resolve().parents[2]
-SERVER = WEB_DIST / "server.js"
 
-pytestmark = pytest.mark.skipif(not shutil.which("node") or not SERVER.exists(),
-                                reason="needs node and ui/web/dist (cd ui/web && npm run build)")
+pytestmark = pytest.mark.skipif(not CLI.exists() or not HOSTD.exists() or not (WEB_ROOT / "index.html").exists(),
+                                reason="needs build/cli/tsugumi, tsugumi-hostd and ui/web/dist (cd ui/web && npm run build)")
 
 
 @contextmanager
-def web_server(tmp_path, **environment):
-    env = isolated_environment(tmp_path, TSUGUMI_WEB_DATA=str(tmp_path / "data"), **environment)
-    p = subprocess.Popen(["node", str(SERVER), "--port", "0"], stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env)
+def web_host(tmp_path, **environment):
+    env = isolated_environment(tmp_path, TSUGUMI_WEB_ROOT=str(WEB_ROOT), **environment)
     try:
-        ready = process_file(p, tmp_path / "data/server.json")
-        assert ready is not None
-        info = json.loads(ready.read_text())
-        # The launch URL is the only public source of the page key.
-        line = p.stdout.readline()
-        launch = urlparse(next(part for part in line.split() if part.startswith("http://")))
-        assert launch.hostname == "127.0.0.1" and launch.port == info["port"]
-        yield p, info["port"], parse_qs(launch.query)["key"][0]
+        r = subprocess.run([str(CLI), "web", "--no-browser"], capture_output=True, text=True, env=env, timeout=120)
+        assert r.returncode == 0, r.stderr
+        url = urlparse(re.search(r"Tsugumi web UI: (\S+)", r.stdout).group(1))
+        assert url.hostname == "127.0.0.1"
+        yield env, url.port, parse_qs(url.query)["key"][0]
     finally:
-        p.terminate()
-        p.wait(10)
         stop_resident_services(tmp_path)
 
 
 @pytest.fixture
 def web(tmp_path):
-    with web_server(tmp_path) as server:
+    with web_host(tmp_path) as server:
         yield server
 
 
 @pytest.fixture(scope="module")
 def http_server(tmp_path_factory):
-    with web_server(tmp_path_factory.mktemp("web-http")) as server:
+    with web_host(tmp_path_factory.mktemp("web-http")) as server:
         yield server
 
 
-def request(port: int, method: str, path: str, headers=None, body=None):
+def request(port: int, method: str, path: str, headers=None, body=None, host=None):
     c = http.client.HTTPConnection("127.0.0.1", port, timeout=10)
-    c.request(method, path, body=body, headers={"Host": f"127.0.0.1:{port}", **(headers or {})})
+    c.request(method, path, body=body, headers={"Host": host or f"127.0.0.1:{port}", **(headers or {})})
     r = c.getresponse()
     data = r.read()
     c.close()
@@ -86,103 +77,97 @@ class Scripts(HTMLParser):
             self.sources.append(dict(attrs).get("src"))
 
 
-def test_only_the_page_with_the_key_reaches_the_api(http_server):
-    p, port, key = http_server
-    r, _ = request(port, "GET", "/api/fs")
-    assert r.status == 401
-    r, _ = request(port, "GET", "/api/events")
-    assert r.status == 401
-    r, _ = request(port, "GET", "/api/settings")
-    assert r.status == 401
-    r, _ = request(port, "GET", "/api/fs", {"Cookie": f"tsugumi_{port}=wrong"})
-    assert r.status == 401
+def page_cookie(port: int, key: str) -> str:
+    r, _ = request(port, "GET", f"/?key={key}")
+    return r.getheader("set-cookie").split(";")[0]
+
+
+def host_token(port: int, cookie: str) -> str:
+    r, data = request(port, "POST", "/api/host/connect", {"Cookie": cookie, "x-tsugumi": "1"})
+    assert r.status == 200, data
+    return json.loads(data)["token"]
+
+
+def page_host(port, cookie):
+    from harness.host import HostConnection
+    from harness.transport import ws_connect
+
+    token = host_token(port, cookie)
+    connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.host.v1",
+                                    path="/rpc/host", headers=[("Cookie", cookie)])
+    if status.split()[1] != "101":
+        connection.close()
+        raise AssertionError(status)
+    return HostConnection({"user_token": token}, websocket=connection)
+
+
+def next_event(host, kind: str):
+    """The next Host event of one kind; environment states and others pass by."""
+    from Tsugumi.Host.EventPayload import EventPayload
+    while True:
+        event = host.next_event()
+        if event.valueType == getattr(EventPayload, kind):
+            return event.value
+
+
+def test_only_the_page_with_the_key_gets_the_host_token(http_server):
+    _, port, key = http_server
+    assert request(port, "POST", "/api/host/connect", {"x-tsugumi": "1"})[0].status == 401
+    assert request(port, "POST", "/api/host/connect", {"Cookie": f"tsugumi_{port}=wrong", "x-tsugumi": "1"})[0].status == 401
     r, _ = request(port, "GET", f"/?key={key}&project=x")
     assert r.status == 302
     location = urlparse(r.getheader("location"))
     assert location.path == "/" and not location.netloc
     query = parse_qs(location.query)
     assert query["project"] == ["x"] and "key" not in query
-    cookies = SimpleCookie(r.getheader("set-cookie"))
-    session, = cookies.values()
+    session, = SimpleCookie(r.getheader("set-cookie")).values()
     assert session["httponly"] and session["samesite"].lower() == "strict"
     cookie = f"{session.key}={session.value}"
-    r, data = request(port, "GET", "/api/fs", {"Cookie": cookie})
-    assert r.status == 200, data
-    json.loads(data)
+    # Without the header a cross-origin form cannot send, the token stays.
+    assert request(port, "POST", "/api/host/connect", {"Cookie": cookie})[0].status == 404
+    assert host_token(port, cookie)
+    # The redirect never leaves this origin.
+    for path in ("//evil.example/x", "/\\evil.example/x"):
+        r, _ = request(port, "GET", f"{path}?key={key}")
+        assert r.status == 302 and urlparse(r.getheader("location")).netloc == ""
 
 
-def test_teardown_stops_host_before_readiness(tmp_path):
-    # Keep host.ready absent even after an authenticated request succeeds.
-    started = tmp_path / "host.pid"
-    binary = tmp_path / "starting-host"
-    binary.write_text(f"""#!{sys.executable}
-import os
-from pathlib import Path
-import signal
-
-signals = {{signal.SIGTERM}}
-signal.pthread_sigmask(signal.SIG_BLOCK, signals)
-started = Path({str(started)!r})
-pending = started.with_suffix(".tmp")
-pending.write_text(str(os.getpid()))
-pending.rename(started)
-signal.sigwait(signals)
-""")
-    binary.chmod(0o700)
-    with ExitStack() as cleanup:
-        with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (web_process, port, key):
-            assert process_file(web_process, started) is not None
-            pid = int(started.read_text())
-            cleanup.callback(terminate_process, pid)
-            exited = cleanup.enter_context(process_exit(pid))
-            assert request(port, "GET", "/api/fs", {"Cookie": page_cookie(port, key)})[0].status == 200
-            assert not (tmp_path / "host-core/host.ready").exists()
-        assert select.select([exited], [], [], 0)[0], "hostd survived Web fixture teardown"
-
-
-def test_a_malformed_request_fails_alone_and_nothing_outside_the_page_is_served(http_server):
-    p, port, key = http_server
-    for bad in ("/%E0", "/api/%E0"):
-        r, _ = request(port, "GET", bad)
-        assert r.status in (400, 401), bad
-    assert p.poll() is None
-    r, data = request(port, "GET", "/..%2Fserver.js")
+def test_other_host_names_and_files_outside_the_page_are_refused(http_server):
+    _, port, _ = http_server
+    assert request(port, "GET", "/", host=f"evil.example:{port}")[0].status == 403
+    assert request(port, "GET", "/../VERSION")[0].status == 403
+    r, data = request(port, "GET", "/%2e%2e/%2e%2e/VERSION")
+    assert r.status == 403
     home, page = request(port, "GET", "/")
     assert home.status == 200
-    if r.status != 403:
-        assert r.status == 200 and r.getheader("content-type").startswith("text/html")
-        fallback, entry = Scripts(), Scripts()
-        fallback.feed(data.decode())
-        entry.feed(page.decode())
-        assert set(filter(None, entry.sources)) <= set(filter(None, fallback.sources))
+    # An unknown path is the page itself (the app routes in the browser).
+    r, fallback = request(port, "GET", "/no/such/file")
+    assert r.status == 200 and fallback == page
     csp = policy(home)
     assert csp["frame-ancestors"] == {"'none'"}
     # The page reaches its project's tsugumid over a loopback WebSocket.
     assert "ws://127.0.0.1:*" in csp["connect-src"]
     assert home.getheader("x-content-type-options") == "nosniff"
+    assert home.getheader("x-frame-options") == "DENY"
 
 
 def test_the_shared_wasm_client_is_served_and_allowed_by_the_page_policy(http_server):
-    process, port, _ = http_server
+    _, port, _ = http_server
     response, _ = request(port, "GET", "/")
     scripts = policy(response)["script-src"]
     assert "'wasm-unsafe-eval'" in scripts and "'unsafe-eval'" not in scripts
     response, module = request(port, "GET", "/client/tsugumi-client.wasm")
     assert response.status == 200 and response.getheader("content-type") == "application/wasm"
-    subprocess.run(["node", "-e", "new WebAssembly.Module(require('node:fs').readFileSync(0))"],
-                   input=module, check=True)
-    assert process.poll() is None, process.stdout.read()
+    assert module[:4] == b"\0asm"
     response, script = request(port, "GET", "/client/tsugumi-client.js")
     assert response.status == 200 and script
-    assert response.getheader("content-type").split(";")[0] in {"text/javascript", "application/javascript"}
+    assert response.getheader("content-type").split(";")[0] == "text/javascript"
 
 
 def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(http_server):
-    """/modules/ (a Card's Plotly figure or Vega-Lite chart) may be framed by the
-    page alone, always runs sandboxed (an opaque origin: no cookie, no /api/),
-    loads nothing (its script is inline; the page sends it the libraries) and
-    connects nowhere; every other answer still forbids framing."""
-    p, port, key = http_server
+    """/modules/ may be framed by the page alone, always runs sandboxed (an
+    opaque origin: no cookie, no RPC), loads nothing and connects nowhere."""
+    _, port, _ = http_server
     r, data = request(port, "GET", "/modules/viewer.html")
     assert r.status == 200
     scripts = Scripts()
@@ -192,35 +177,8 @@ def test_the_plot_viewer_is_framed_sandboxed_and_reaches_nothing(http_server):
     assert "allow-scripts" in csp["sandbox"] and "allow-same-origin" not in csp["sandbox"]
     assert csp["default-src"] == csp["connect-src"] == {"'none'"}
     assert "'self'" not in csp["script-src"] and csp["frame-ancestors"] == {"'self'"}
-    # No nested frame may load a URL: the Card's srcdoc frame cannot navigate itself anywhere.
     assert csp["frame-src"] == {"'none'"}
     assert r.getheader("x-frame-options") == "SAMEORIGIN"
-    r, _ = request(port, "GET", "/")
-    assert r.getheader("x-frame-options") == "DENY" and policy(r)["frame-ancestors"] == {"'none'"}
-
-
-def page_cookie(port: int, key: str) -> str:
-    r, _ = request(port, "GET", f"/?key={key}")
-    return r.getheader("set-cookie").split(";")[0]
-
-
-def post(port: int, cookie: str, route: str, body: dict):
-    r, data = request(port, "POST", route, {"Cookie": cookie, "content-type": "application/json", "x-tsugumi": "1"}, json.dumps(body))
-    assert r.status == 200, data
-    return json.loads(data)
-
-
-def web_host(port, cookie):
-    from harness.host import HostConnection
-    from harness.transport import ws_connect
-
-    token = post(port, cookie, "/api/host/connect", {})["token"]
-    connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.host.v1",
-                                    path="/rpc/host", headers=[("Cookie", cookie)])
-    if status.split()[1] != "101":
-        connection.close()
-        raise AssertionError(status)
-    return HostConnection({"user_token": token}, websocket=connection)
 
 
 def test_host_rpc_requires_the_page_cookie_and_origin(web):
@@ -228,8 +186,6 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
 
     _, port, key = web
     cookie = page_cookie(port, key)
-    response, _ = request(port, "POST", "/api/host/connect", {"Cookie": cookie}, "{}")
-    assert response.status == 403
     for origin, headers in [
         (f"http://127.0.0.1:{port}", []),
         (None, [("Cookie", cookie)]),
@@ -238,8 +194,10 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
         connection, status = ws_connect(port, origin, "tsugumi.host.v1", path="/rpc/host", headers=headers)
         with connection:
             assert status.split()[1] == "403"
-    with closing(web_host(port, cookie)) as host:
+    with closing(page_host(port, cookie)) as host:
         assert host.call("HostRecentListRequest").projects == []
+        home = host.call("HostHomeRequest")
+        assert home.home and home.documents
 
 
 def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
@@ -247,7 +205,7 @@ def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
 
     _, port, key = web
     cookie = page_cookie(port, key)
-    token = post(port, cookie, "/api/host/connect", {})["token"]
+    token = host_token(port, cookie)
     connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.agent.v1",
                                     path="/rpc/agent", headers=[("Cookie", cookie)])
     with connection:
@@ -256,13 +214,13 @@ def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
         schema = str(ROOT / "protocol/agent.fbs")
 
         def call(request_id, kind, value):
-            request = tmp_path / "request.json"
-            request.write_text(json.dumps({
+            request_file = tmp_path / "request.json"
+            request_file.write_text(json.dumps({
                 "request_id": request_id, "payload_type": "Request",
                 "payload": {"value_type": kind, "value": value},
             }))
-            subprocess.run([flatc, "-b", "-o", str(tmp_path), schema, str(request)], check=True)
-            connection.sendall(ws_frame(request.with_suffix(".bin").read_bytes()))
+            subprocess.run([flatc, "-b", "-o", str(tmp_path), schema, str(request_file)], check=True)
+            connection.sendall(ws_frame(request_file.with_suffix(".bin").read_bytes()))
             reply = tmp_path / "reply.bin"
             reply.write_bytes(ws_read(connection))
             subprocess.run([flatc, "-t", "--strict-json", "-o", str(tmp_path), schema, "--", str(reply)], check=True)
@@ -274,221 +232,53 @@ def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
         assert call(2, "ConversationListRequest", {}) == "ConversationList"
 
 
-def test_host_reconnect_preserves_the_pages_showing_a_project(tmp_path):
-    from conftest import write_project
-
-    fail = tmp_path / "fail-next-start"
-    binary = tmp_path / "host-launcher"
-    host = isolated_environment(tmp_path)["TSUGUMI_HOSTD"]
-    binary.write_text(f"""#!{sys.executable}
-import os
-import sys
-from pathlib import Path
-
-try:
-    Path({str(fail)!r}).unlink()
-except FileNotFoundError:
-    os.execv({host!r}, [{host!r}, *sys.argv[1:]])
-sys.exit(1)
-""")
-    binary.chmod(0o700)
-
-    with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (_, port, key):
-        cookie = page_cookie(port, key)
-        project = tmp_path / "proj"
-        write_project(project)
-
-        def open_events(connection, page):
-            connection.request("GET", f"/api/events?page={page}", headers={"Cookie": cookie})
-            response = connection.getresponse()
-            assert response.status == 200
-            return response
-
-        def wait_event(response, kind):
-            for line in response:
-                if line.startswith(b"data: "):
-                    event = json.loads(line.removeprefix(b"data: "))
-                    if event["type"] == kind:
-                        return event
-                    assert event["type"] != "projectClosed", event
-            pytest.fail(f"The browser event stream closed before {kind}")
-
-        with ExitStack() as stack:
-            def page_events(page):
-                connection = stack.enter_context(closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)))
-                response = open_events(connection, page)
-                wait_event(response, "eventsConnected")
-                post(port, cookie, "/api/page", {"page": page, "project": str(project)})
-                return response
-
-            first = page_events("first")
-            second = page_events("second")
-            pid = json.loads((tmp_path / "host-core/host.ready").read_text())["pid"]
-            fail.touch()
-            terminate_process(pid)
-            wait_event(first, "hostUnavailable")
-            wait_event(second, "hostUnavailable")
-            post(port, cookie, "/api/project/close", {"page": "first", "path": str(project)})
-            # The status retry reauthenticates and both browser streams survive.
-            status, body = request(port, "GET", "/api/chatgpt?attemptId=old-host-attempt", {"Cookie": cookie})
-            assert status.status == 200, body
-            wait_event(first, "reconnected")
-            wait_event(second, "reconnected")
-            interrupted = json.loads(body)
-            assert interrupted["signingIn"] is False
-            assert interrupted["outcome"]["ok"] is False
-            post(port, cookie, "/api/project/close", {"page": "second", "path": str(project)})
-            assert wait_event(first, "projectClosed")["project"] == str(project.resolve())
-
-
-def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
-    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
-    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
-    from test_claude_code_plugin import Events
-    from conftest import write_project
-
-    _, port, key = web
+@pytest.mark.skipif(not TSUGUMID.exists(), reason="needs tsugumid")
+def test_hostd_routes_projects_to_pages(web, tmp_path):
+    """A page on Home is given the project `tsugumi web` shows; a page that
+    leaves the last one showing it tells the detached pages."""
+    env, port, key = web
     cookie = page_cookie(port, key)
     project = tmp_path / "proj"
     write_project(project)
     real = str(project.resolve())
-    pages = [Events(port, cookie, "a"), Events(port, cookie, "b"), Events(port, cookie, "child&detached")]
-    for p in pages:
-        p.start()
-    for page in ("a", "b", "child"):
-        post(port, cookie, "/api/page", {"page": page, "project": str(project)})
-    with closing(web_host(port, cookie)) as host:
-        before = host.call("EnvironmentRequest", project=real, action=EnvironmentAction.Start)
-        assert before.phase == EnvironmentPhase.Ready
-        # Another page shows it: it goes on.
-        assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)})["ok"] is True
-        assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
-        # The last page detaches its views while core remains available.
-        assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)})["ok"] is True
-        pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
-        assert any(event.get("type") == "projectClosed" and event.get("project") == real
-                   for event in pages[2].events)
-        after = host.call("EnvironmentRequest", project=real)
-        assert (after.endpoint, after.projectId, after.token) == (before.endpoint, before.projectId, before.token)
+    with closing(page_host(port, cookie)) as home, closing(page_host(port, cookie)) as child:
+        home.call("HostPageRequest")
+        r = subprocess.run([str(CLI), "web", "--no-browser", str(project)], capture_output=True, text=True, env=env, timeout=300)
+        assert r.returncode == 0, r.stderr
+        assert "A Tsugumi page shows it." in r.stdout
+        assert next_event(home, "PageShow").project.decode() == real
+        home.call("HostPageRequest", project=real)
+        # A child workflow's page counts as showing it, never takes another.
+        child.call("HostPageRequest", project=real, detached=True)
+        home.call("HostPageRequest")
+        assert next_event(child, "PageClosed").project.decode() == real
 
 
-def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(web, tmp_path):
-    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
-    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
-    from conftest import write_project
-
-    _, port, key = web
-    cookie = page_cookie(port, key)
-    project = tmp_path / "restart"
-    write_project(project)
-    with closing(web_host(port, cookie)) as host:
-        first = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
-        assert first.phase == EnvironmentPhase.Ready
-        agent = json.loads((tmp_path / "host-core/host.ready").read_text())
-        stopped = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Stop)
-        assert stopped.phase == EnvironmentPhase.Stopped
-        assert host.call("EnvironmentListRequest").environments == []
-        restarted = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
-        assert restarted.phase == EnvironmentPhase.Ready
-        assert restarted.projectId == first.projectId
-        assert restarted.token != first.token
-        assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
-
-
-def test_the_page_is_told_whether_host_folders_can_be_used(http_server):
-    _, port, key = http_server
-    r, data = request(port, "GET", "/api/status", {"Cookie": page_cookie(port, key)})
-    assert r.status == 200
-    assert json.loads(data)["hostFolders"] is (sys.platform != "darwin")
-
-
-def test_a_terminal_is_a_real_terminal(web, tmp_path):
-    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
-    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
-    from Tsugumi.Host.EventPayload import EventPayload
-    from Tsugumi.Host.TerminalAction import TerminalAction
-    from conftest import write_project
-
-    _, port, key = web
-    cookie = page_cookie(port, key)
+@pytest.mark.skipif(not TSUGUMID.exists(), reason="needs tsugumid")
+def test_one_connection_holds_several_named_pages(web, tmp_path):
+    """The Mac app's windows share one Host connection: each names its page,
+    PageShow names the page chosen, and a closed page is no longer chosen."""
+    env, port, key = web
     project = tmp_path / "proj"
     write_project(project)
-    with closing(web_host(port, cookie)) as host:
-        ready = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
-        assert ready.phase == EnvironmentPhase.Ready
-        terminal = host.call("HostTerminalRequest", project=str(project), cols=91, rows=17)
-        printed = bytearray()
+    real = str(project.resolve())
 
-        def next_terminal_event():
-            while True:
-                event = host.next_event()
-                if event.valueType == EventPayload.HostTerminalData and event.value.session == terminal.session:
-                    if event.value.data is not None:
-                        printed.extend(bytes(event.value.data))
-                    return event.value
+    def show():
+        r = subprocess.run([str(CLI), "web", "--no-browser", str(project)], capture_output=True, text=True, env=env, timeout=300)
+        assert r.returncode == 0, r.stderr
+        assert "A Tsugumi page shows it." in r.stdout
 
-        def until(text: str):
-            while text.encode() not in printed:
-                assert not next_terminal_event().closed, printed.decode(errors="replace")
-
-        def send(data: str):
-            host.call("HostTerminalRequest", action=TerminalAction.Input, session=terminal.session, data=data.encode())
-
-        # It has a terminal, of the size the page draws, and programs may use it.
-        send('''tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語
-''')
-        until("/dev/")
-        until("size=17 91 term=xterm-256color")
-        until("日本語")
-        host.call("HostTerminalRequest", action=TerminalAction.Resize, session=terminal.session, cols=100, rows=30)
-        send('''echo "now=$(stty size)"
-''')
-        until("now=30 100")
-        # A key: ⌃C stops what runs, not the shell.
-        send(r'''sh -c 'trap "printf \"\000INTERRUPTED\000\"; exit 0" INT; printf "\000WAITING\000"; read line'
-''')
-        until('\0WAITING\0')
-        send("\x03")
-        # Wait for signal handling before sending input that the TTY could flush.
-        until('\0INTERRUPTED\0')
-        send('''echo after-interrupt-$((1 + 1))
-''')
-        until("after-interrupt-2")
-        host.call("HostTerminalRequest", action=TerminalAction.Close, session=terminal.session)
-        while not next_terminal_event().closed:
-            pass
-
-
-def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tmp_path):
-    _, port, key = web
-    headers = {"Cookie": f"tsugumi_{port}={key}", "X-Tsugumi": "1", "Content-Type": "application/json"}
-    destination = tmp_path / "created"
-    destination.mkdir()
-
-    def create(name, flow="leftToRight"):
-        response, data = request(port, "POST", "/api/project/create", headers,
-                                 json.dumps({"parent": str(tmp_path), "name": name, "flow": flow}))
-        return response.status, json.loads(data)
-
-    status, result = create(destination.name)
-    assert status == 200 and result["path"] == str(destination.resolve())
-    assert json.loads((destination / "layout.json").read_text())["flow"] == "leftToRight"
-    status, result = create(destination.name)
-    assert status == 400 and result["code"] == "folder_not_empty"
-    status, result = create("bad/name")
-    assert status == 400 and result["code"] == "invalid_project_name"
-    status, result = create("bad-flow", "sideways")
-    assert status == 400 and result["code"] == "invalid_flow"
-    assert not (tmp_path / "bad-flow").exists()
-
-
-def test_api_csrf_and_input_validation(http_server):
-    _, port, key = http_server
-    cookie = page_cookie(port, key)
-    # POST without x-tsugumi header is rejected (blocks same-site cross-port CSRF).
-    r, _ = request(port, "POST", "/api/page", {"Cookie": cookie, "Content-Type": "application/json"}, "{}")
-    assert r.status == 403
-    # Malformed JSON returns 400 rather than 500.
-    r, _ = request(port, "POST", "/api/page",
-                   {"Cookie": cookie, "X-Tsugumi": "1", "Content-Type": "application/json"}, "{not-json")
-    assert r.status == 400
+    with closing(page_host(port, page_cookie(port, key))) as app:
+        app.call("HostPageRequest", page="a")
+        app.call("HostPageRequest", page="b")
+        show()
+        told = next_event(app, "PageShow")
+        assert (told.project.decode(), told.page.decode()) == (real, "a")
+        app.call("HostPageRequest", page="a", project=real)
+        # The window showing it again comes forward.
+        show()
+        assert next_event(app, "PageShow").page.decode() == "a"
+        app.call("HostPageRequest", page="a", closed=True)
+        assert next_event(app, "PageClosed").project.decode() == real
+        show()
+        assert next_event(app, "PageShow").page.decode() == "b"

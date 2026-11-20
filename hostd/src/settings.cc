@@ -289,7 +289,6 @@ struct Settings::State {
   sql::Db& db;
   std::recursive_mutex& mutex;
   std::unique_ptr<SecretStore> secrets;
-  std::map<std::string, std::string> ephemeral;
   struct Attempt {
     std::string id, profile, state = "pending", message, welcome, issuer,
                              resource, client, subject, nonce, verifier,
@@ -300,18 +299,16 @@ struct Settings::State {
   };
   std::map<std::string, std::shared_ptr<Attempt>> attempts;
   std::map<std::string, std::string> latest;
-  KeyStorage storage;
   Models models;
   std::function<void(std::string)> publish;
   State(const std::filesystem::path& dir, Credentials& credential_store,
-        std::unique_ptr<SecretStore> store, KeyStorage key_storage,
-        Models model_list, std::function<void(std::string)> event_sink)
+        std::unique_ptr<SecretStore> store, Models model_list,
+        std::function<void(std::string)> event_sink)
       : directory(dir),
         credentials(credential_store),
         db(credentials.db),
         mutex(credentials.gate.mutex),
         secrets(std::move(store)),
-        storage(key_storage),
         models(std::move(model_list)),
         publish(std::move(event_sink)) {
     if (!secrets) secrets = std::make_unique<SqlSecrets>(db);
@@ -379,20 +376,10 @@ struct Settings::State {
     q.bind(1, profile).bind(2, id).bind(3, encoded).run();
     Publish<H::ProviderChangedT>(profile);
   }
-  auto MemoryKey(const std::string& profile, const std::string& id)
-      -> std::pair<std::string, std::string> {
-    for (const auto* source : {"env", "keychain", "memory"}) {
-      const auto key = profile + ":" + id + ":" + source;
-      if (ephemeral.contains(key)) return {key, source};
-    }
-    return {};
-  }
-  auto ProviderStatus(const std::string& profile, const std::string& id,
-                      const std::string& key_profile = "")
+  auto ProviderStatus(const std::string& profile, const std::string& id)
       -> H::ProviderStatusT {
     H::ProviderStatusT out;
     out.id = id;
-    out.storage = storage == KeyStorage::Keychain ? "keychain" : "hostd";
     if (id == "chatgpt") {
       auto q = db.prepare("SELECT json FROM accounts WHERE profile=?");
       q.bind(1, profile);
@@ -421,20 +408,10 @@ struct Settings::State {
       }
       return out;
     }
-    const auto [key, source] =
-        MemoryKey(key_profile.empty() ? profile : key_profile, id);
-    if (!key.empty()) {
-      out.configured = true;
-      out.source = source;
-    } else if (storage == KeyStorage::Host) {
-      out.configured = !secrets->Get(profile + ":" + id).empty();
-      if (out.configured) out.source = "hostd";
-    }
+    out.configured = !secrets->Get(profile + ":" + id).empty();
+    if (out.configured) out.source = "hostd";
     if (id == "fixture") out.configured = true;
-    if (!out.configured)
-      out.message = storage == KeyStorage::Keychain
-                        ? "No API key available from the login Keychain"
-                        : "No API key configured";
+    if (!out.configured) out.message = "No API key configured";
     return out;
   }
   auto Status(const std::string& profile, const std::string& attempt)
@@ -748,11 +725,10 @@ struct Settings::State {
   }
 };
 Settings::Settings(const std::filesystem::path& d, Credentials& credentials,
-                   std::unique_ptr<SecretStore> store, KeyStorage storage,
-                   Models models,
+                   std::unique_ptr<SecretStore> store, Models models,
                    std::function<void(std::string)> publish)
     : state_(std::make_unique<State>(
-          d, credentials, std::move(store), storage, std::move(models),
+          d, credentials, std::move(store), std::move(models),
           std::move(publish))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
@@ -917,32 +893,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
         if (provider != "anthropic" && provider != "openai" &&
             provider != "fixture")
           throw std::runtime_error("Unknown keyed provider");
-        if (p.ephemeral()) {
-          auto source = Text(p.source());
-          if (source.empty()) source = "memory";
-          if (source != "env" && source != "keychain" && source != "memory")
-            throw std::runtime_error("Unknown platform key source");
-          const auto memory_key = key + ":" + source;
-          const auto old = s.ephemeral.find(memory_key);
-          const bool changed =
-              p.remove() ? old != s.ephemeral.end()
-                         : old == s.ephemeral.end() ||
-                               old->second != Text(p.provider()
-                                                       ? p.provider()->api_key()
-                                                       : nullptr);
-          if (p.remove()) {
-            s.ephemeral.erase(memory_key);
-          } else {
-            if (!p.provider() || Text(p.provider()->api_key()).empty() ||
-                p.provider()->endpoint() || p.provider()->model())
-              throw std::runtime_error(
-                  "Ephemeral provisioning accepts only a key");
-            s.ephemeral[memory_key] = p.provider()->api_key()->str();
-          }
-          if (changed) s.Publish<H::ProviderChangedT>(profile);
-          return agent::wire::HostReply(id,
-                                        s.ProviderStatus(profile, provider));
-        }
         const auto before = s.ProviderStatus(profile, provider);
         if (p.remove()) {
           s.secrets->Erase(key);
@@ -950,11 +900,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               s.db.prepare("DELETE FROM provider_connections WHERE profile=? AND id=?");
           q.bind(1, profile).bind(2, provider).run();
         } else if (p.provider()) {
-          if (s.storage == KeyStorage::Keychain &&
-              !Text(p.provider()->api_key()).empty())
-            throw std::runtime_error(
-                "Save API keys in the login Keychain; host provisioning is "
-                "memory-only");
           auto value = j::Object(agent::wire::ProviderJson(*p.provider()));
           const auto endpoint = j::Text(value, "baseURL");
           if (endpoint.empty() && j::Text(value, "model").empty()) {
@@ -984,8 +929,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       case H::RequestPayload::ProviderStatusRequest: {
         const auto& p = *request.value_as_ProviderStatusRequest();
         return agent::wire::HostReply(
-            id, s.ProviderStatus(p.profile()->str(), p.id()->str(),
-                                 Text(p.key_profile())));
+            id, s.ProviderStatus(p.profile()->str(), p.id()->str()));
       }
       case H::RequestPayload::SignInBeginRequest:
         return agent::wire::HostReply(
@@ -1063,7 +1007,6 @@ auto Settings::Redact(std::string text) -> std::string {
   };
   auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
-  for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
 auto Settings::AllowUnscopedHelpers() -> bool {
@@ -1266,15 +1209,9 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     }
   }
   if (c.auth == agent::ProviderAuth::ApiKey) {
-    auto key_profile = j::Text(selection, "key_profile");
-    const auto status = s.ProviderStatus(profile, id, key_profile);
+    const auto status = s.ProviderStatus(profile, id);
     if (!status.configured) throw std::runtime_error(status.message);
-    const auto key =
-        s.MemoryKey(key_profile.empty() ? profile : key_profile, id).first;
-    if (!key.empty())
-      c.credential = s.ephemeral.at(key);
-    else
-      c.credential = s.secrets->Get(profile + ":" + id);
+    c.credential = s.secrets->Get(profile + ":" + id);
   }
   if (c.auth == agent::ProviderAuth::ChatGPT) {
     auto account_profile = j::Text(selection, "account_profile");
@@ -1297,8 +1234,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     };
   }
   const auto window = host::Models::ContextWindowTokens(
-      s.directory, id, c.model, profile, j::Text(selection, "account_profile"),
-      j::Text(selection, "key_profile"));
+      s.directory, id, c.model, profile, j::Text(selection, "account_profile"));
   const auto margin =
       window / 20;  // Reserve 5% for estimation/protocol overhead.
   if (c.max_tokens >= window - margin)

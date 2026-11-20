@@ -1,7 +1,7 @@
 import { mockHostSettings } from './hostSettingsFixture'
 import assert from 'node:assert/strict'
-import { chatRoutes } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
+import { chatRoutes } from '../src/host/chat'
+import { CoreHost } from '../src/host/coreHost'
 import { ModelListRefresher } from '../src/model/modelLists'
 
 // Each opening lists again; a failure is only that connection's; a slow
@@ -37,9 +37,8 @@ import { ModelListRefresher } from '../src/model/modelLists'
   assert.equal(calls.filter(id => id === 'slow').length, 2)
 }
 
-// The HTTP adapter shows the service's catalog and does not persist a second copy.
+// The page's adapter shows the service's catalog and does not persist a second copy.
 {
-  process.env.ANTHROPIC_API_KEY = 'test-a'
   const original = CoreHost.prototype.models
   const stored = CoreHost.prototype.storedModels
   CoreHost.prototype.models = async () => [{ id: 'a', name: 'Model A' }]
@@ -47,7 +46,7 @@ import { ModelListRefresher } from '../src/model/modelLists'
   try {
     const restoreSettings = mockHostSettings()
     const routes = chatRoutes({
-      support: '/nonexistent', envs: {} as never, projectDir: (p) => String(p), broadcast: () => {}, here: '/nonexistent',
+      envs: {} as never, projectDir: (p) => String(p), broadcast: () => {},
       httpError: (status, message) => Object.assign(new Error(message), { status }),
     })
     const result = await routes['POST /api/settings/models']({ provider: 'anthropic' }, new URL('http://x'))
@@ -56,7 +55,6 @@ import { ModelListRefresher } from '../src/model/modelLists'
   } finally {
     CoreHost.prototype.models = original
     CoreHost.prototype.storedModels = stored
-    delete process.env.ANTHROPIC_API_KEY
   }
 }
 console.log('model menu: passed')

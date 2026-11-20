@@ -24,6 +24,6 @@ Run history records the configured remote cache endpoints with user information,
 
 ## Web and Linux hosts
 
-A Web client using the Mac shared VM uses the VM's cache settings above. A Linux or other native Web host uses that host's Nix configuration. Configure `substituters` and `trusted-public-keys` through the host's administrator, or use the service's `attic use` / `cachix use` setup as appropriate. Tsugumi does not change a host's system Nix configuration from an untrusted project. See [Nix's custom binary cache configuration](https://nix.dev/guides/recipes/add-binary-cache.html).
+A Web client using the Mac shared VM uses the VM's cache settings above. A Linux or other native host uses that host's Nix configuration. Configure `substituters` and `trusted-public-keys` through the host's administrator, or use the service's `attic use` / `cachix use` setup as appropriate. Tsugumi does not change a host's system Nix configuration from an untrusted project. See [Nix's custom binary cache configuration](https://nix.dev/guides/recipes/add-binary-cache.html).
 
 Developers changing cache configuration should run the [binary-cache checks](../tests/README.md#manual-tools).

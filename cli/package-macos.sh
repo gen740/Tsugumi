@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/tsugumi-macos-arm64.tar.gz and its checksum, what cli/install.sh
-# installs on a Mac: the server of ui/web/ with Node.js, hostd and OpenSSL,
-# tsugumi-vmhost, the shared
+# installs on a Mac: the tsugumi command, hostd and OpenSSL, the built Web UI
+# (hostd serves it), tsugumi-vmhost, the shared
 # release-built guest archive (the same payload as the app).
 #
 #   cli/package-macos.sh [--release]
@@ -25,7 +25,6 @@ fi
 repo="$(cd "$(dirname "$0")/.." && pwd)"
 dist="$repo/dist"
 tree="$dist/cli/tsugumi"
-source "$repo/cli/node-version.env"
 
 vm="$dist/tsugumi-vm"
 if [ "$release" -eq 1 ]; then
@@ -50,18 +49,10 @@ rm -rf "$dist/cli"
 mkdir -p "$tree/bin" "$tree/ui/web" "$tree/Frameworks"
 cp "$repo/VERSION" "$tree/"
 mkdir -p "$tree/licenses"
-cp -R "$repo/third-party/". "$repo/cli/third-party/node" "$tree/licenses/"
+cp -R "$repo/third-party/". "$tree/licenses/"
 install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 
-# Node.js: the official build, checked against the pinned checksum.
-node_tar="node-v$NODE_VERSION-darwin-arm64.tar.gz"
-cache="$dist/cli-cache"
-mkdir -p "$cache"
-[ -f "$cache/$node_tar" ] || curl -fsSL -o "$cache/$node_tar" "https://nodejs.org/dist/v$NODE_VERSION/$node_tar"
-echo "$NODE_SHA256_DARWIN_ARM64  $cache/$node_tar" | shasum -a 256 -c - >/dev/null
-tar -xzf "$cache/$node_tar" -C "$tree/bin" --strip-components=2 "node-v$NODE_VERSION-darwin-arm64/bin/node"
-
-cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$tree/bin/"
+cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
 
 for library in "$tree/Frameworks/"*.dylib; do
@@ -71,11 +62,11 @@ done
 for binary in "$tree/bin/"*; do
   /usr/bin/strip -S "$binary"
 done
-codesign --force --sign "$sign_identity" "$tree/bin/node"
+codesign --force --sign "$sign_identity" "$tree/bin/tsugumi"
 codesign --force --sign "$sign_identity" "$tree/bin/tsugumi-hostd"
 codesign --force --sign "$sign_identity" --entitlements "$repo/vm/macos/Resources/Tsugumi.entitlements" "$tree/bin/tsugumi-vmhost"
 
-# The server finds these from ui/web/dist/server.js, as in the repository.
+# hostd serves ui/web/dist/public; the command finds it under its root, as in the repository.
 cp -R "$web_out/share/tsugumi/ui/web/dist" "$tree/ui/web/dist"
 chmod -R u+w "$tree/ui/web/dist"
 cp -R "$repo/demos" "$tree/demos"

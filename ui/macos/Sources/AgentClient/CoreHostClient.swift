@@ -75,7 +75,6 @@ private final class HostProcessLifetime: @unchecked Sendable {
 public actor CoreHostClient {
   public static let shared = CoreHostClient()
   private let supportOverride: URL?
-  private let keyProfile = "macos:keychain:" + UUID().uuidString
 
   public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
@@ -207,6 +206,12 @@ public actor CoreHostClient {
     daemon.arguments = ["--ensure", "--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
+    // The built Web UI the app carries: the host serves it whichever client started it.
+    let web = ProcessInfo.processInfo.environment["TSUGUMI_WEB_ROOT"].map { URL(fileURLWithPath: $0) }
+      ?? Bundle.main.url(forResource: "web", withExtension: nil) ?? Self.repository.appendingPathComponent("ui/web/dist/public")
+    if FileManager.default.fileExists(atPath: web.appendingPathComponent("index.html").path) {
+      daemon.arguments! += ["--web-root", web.path]
+    }
     // The service creates and numbers its state folder. Until then, its usual
     // stderr log lives beside state (on the same filesystem) until startup succeeds.
     let stateLog = state.appendingPathComponent("host.log")
@@ -368,6 +373,14 @@ public actor CoreHostClient {
     return result
   }
 
+  /// Tells hostd what one of this app's windows shows (nil: Home), or that it
+  /// closed. The windows share this connection; each names its page.
+  public func reportPage(_ page: String, project: String?, closed: Bool = false) async throws {
+    let request = Tsugumi_Host_HostPageRequestT()
+    request.page = page; request.project = project; request.closed = closed
+    let _: Tsugumi_Service_AcknowledgementT = try await hostCall(.hostpagerequest, request)
+  }
+
   public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {
     let request = Tsugumi_Host_LayoutCompleteRequestT()
     request.projectJson = project; request.layoutJson = layout
@@ -389,7 +402,7 @@ public actor CoreHostClient {
     _ = try await call("ConfigureRequest", ["provider": try await provider(config), "conversation_id": conversationID])
   }
 
-  public func provider(_ config: ProviderConfig, asking: Bool = true) async throws -> Tsugumi_Service_ProviderSelectionT {
+  public func provider(_ config: ProviderConfig) async throws -> Tsugumi_Service_ProviderSelectionT {
     let value = Tsugumi_Service_ProviderSelectionT()
     value.model = config.model
     value.purpose = config.purpose
@@ -397,11 +410,6 @@ public actor CoreHostClient {
     value.profile = "desktop"
     value.providerId = config.connection
     value.accountProfile = "desktop"
-    if config.auth == .apiKey {
-      let key = asking ? Keychain.load(account: config.name) : Keychain.loadWithoutAsking(account: config.name)
-      try await provisionKey(key, id: config.connection)
-      value.keyProfile = keyProfile
-    }
     return value
   }
 
@@ -437,8 +445,7 @@ public actor CoreHostClient {
   }
 
   public func availability(_ config: ProviderConfig) async throws -> (usable: Bool, code: String?) {
-    let selected = try await provider(config, asking: false)
-    let request = Tsugumi_Host_ProviderStatusRequestT(); request.profile = "desktop"; request.id = config.connection; request.keyProfile = selected.keyProfile
+    let request = Tsugumi_Host_ProviderStatusRequestT(); request.profile = "desktop"; request.id = config.connection
     let reply: Tsugumi_Host_ProviderStatusT = try await hostCall(.providerstatusrequest, request)
     ModelCatalogSnapshot.shared.showAvailability(config.connection, reply.configured)
     return (reply.configured, reply.code)
@@ -458,9 +465,10 @@ public actor CoreHostClient {
     return result.text ?? ""
   }
 
-  public func provisionKey(_ key: String?, id: String) async throws {
-    let request = Tsugumi_Host_ProviderSetRequestT(); request.profile = keyProfile; request.id = id
-    request.ephemeral = true; request.source = "keychain"; request.remove = key == nil
+  /// Stores (or with nil removes) a provider's API key in hostd.
+  public func saveKey(_ key: String?, id: String) async throws {
+    let request = Tsugumi_Host_ProviderSetRequestT(); request.profile = "desktop"; request.id = id
+    request.remove = key == nil
     if let key { let input = Tsugumi_Host_ProviderInputT(); input.apiKey = key; request.provider = input }
     let result: Tsugumi_Host_ProviderStatusT = try await hostCall(.providersetrequest, request)
     ModelCatalogSnapshot.shared.showAvailability(id, result.configured)
@@ -470,8 +478,8 @@ public actor CoreHostClient {
     try await modelList(id: id)
   }
 
-  private func modelList(id: String, refresh: Bool = false, keyProfile: String? = nil) async throws -> [(id: String, name: String)] {
-    let request = Tsugumi_Host_ModelsListRequestT(); request.providerId = id; request.refresh = refresh; request.profile = "desktop"; request.keyProfile = keyProfile
+  private func modelList(id: String, refresh: Bool = false) async throws -> [(id: String, name: String)] {
+    let request = Tsugumi_Host_ModelsListRequestT(); request.providerId = id; request.refresh = refresh; request.profile = "desktop"
     let result: Tsugumi_Host_ModelListT = try await hostCall(.modelslistrequest, request)
     let list: [(id: String, name: String)] = result.models.compactMap { item in
       guard let item, let id = item.id else { return nil }
@@ -481,9 +489,8 @@ public actor CoreHostClient {
     return list
   }
 
-  public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
-    let selection = try await provider(config, asking: asking)
-    return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
+  public func models(_ config: ProviderConfig) async throws -> [(id: String, name: String)] {
+    try await modelList(id: config.connection, refresh: true)
   }
 }
 

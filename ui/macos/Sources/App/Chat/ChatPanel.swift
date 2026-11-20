@@ -36,9 +36,8 @@ struct ChatPanel: View {
   /// The model menu: it says when it opens, and shows new lists while open.
   @State private var modelMenu = ModelMenu()
   @State private var modelLists = ModelListRefresher(fetch: { id in
-    // Never the keychain's dialog: nobody asked for this read. A connection
-    // that would have to ask keeps its saved list until a turn or Settings > API reads it.
-    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices(asking: false)
+    // A connection that fails keeps its saved list.
+    try await MessagesProvider(config: AgentSettings.config(for: id)).modelChoices()
   })
   /// "Draw thoughts": the Agent's thinking summarized for the canvas (extra tokens).
   @HostStorage(ThoughtSummarizer.defaultsKey) private var drawThoughts = false
@@ -550,7 +549,7 @@ struct ChatPanel: View {
   }
 
   /// The connections set up, each with the models saved for it. Opening the
-  /// panel reads account status from hostd and Keychain attributes only.
+  /// panel reads account and key status from hostd only.
   private func loadModels() async {
     await CorePreferences.shared.reload()
     let accounts = await ChatGPTAuth.shared().accounts()
@@ -595,8 +594,7 @@ struct ChatPanel: View {
 
   /// The menu opened: the models of every connection are listed again. It
   /// shows the saved lists at once, and each new list when it comes; a
-  /// connection that fails or is slow keeps what it has. Never the keychain's
-  /// dialog, however often it opens.
+  /// connection that fails or is slow keeps what it has.
   private func refreshModels() {
     UIScript.shared.note("model menu opened")
     let wasOn = connections.contains { $0.id == "chatgpt" }
