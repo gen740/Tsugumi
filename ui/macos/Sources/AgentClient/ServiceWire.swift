@@ -74,6 +74,8 @@ enum ServiceWire {
         v.profile = fields["profile"] as? String ?? "desktop"
         v.revision = fields["revision"] as? String ?? ""
         v.changes = (fields["changes"] as? [[String: String]] ?? []).map { item in let s = Tsugumi_Host_SettingT(); s.key = item["key"] ?? ""; s.valueJson = item["value_json"] ?? "null"; return s }
+        // The object API starts with an empty account guard; only onboarding sends one.
+        v.chatgptAccount = nil
         return (Tsugumi_Host_RequestPayload.settingsupdaterequest.rawValue, v)
       case "ProviderSetRequest":
         let v = Tsugumi_Host_ProviderSetRequestT()
