@@ -3,6 +3,7 @@
 // Nix client so each connection has its own build options.
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -10,11 +11,10 @@
 #include <memory>
 #include <optional>
 #include <set>
-#include <string_view>
-#include <algorithm>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -142,9 +142,8 @@ inline auto check_implementation_labels(const std::vector<std::string>& labels,
     if (label.size() > kMaxImplementationLabelBytes)
       throw std::runtime_error("run list label \"" + label.substr(0, 40) +
                                "...\" is longer than 200 bytes");
-    if (std::ranges::any_of(label, [](unsigned char c) {
-          return c < 0x20 || c == 0x7f;
-        }))
+    if (std::ranges::any_of(
+            label, [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
       throw std::runtime_error("run list label \"" + label +
                                "\" contains a control character");
     if (!seen.insert(label).second)

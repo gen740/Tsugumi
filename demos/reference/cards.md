@@ -170,8 +170,11 @@ and its sources in src/. You can use input_types to read the resolved input defi
       root_type Outputs;
   Use project:<path> for a file relative to the Card's own project root (also inside an external project).
   When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
-  the same names as the fields of its output table (demos/en/report/definitions/settings). Other built-ins:
-  branch, merge.
+  the same names as the fields of its output table (demos/en/report/definitions/settings). A param written as
+  "sweep": [8, 12, 16] instead of "data" hands on each value in its own invocation (an execution list; a list-typed
+  param's "data" stays one vector). A code Card's run may be a list of implementations, one invocation each; an entry
+  { label = "threshold=10"; run = ...; } names it in the history (demos/en/signal-sweep). Other built-ins: branch,
+  merge, collect (one batch to one vector).
 * Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
   "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
   "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a

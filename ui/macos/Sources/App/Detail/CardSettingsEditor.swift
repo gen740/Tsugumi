@@ -944,17 +944,29 @@ private struct HostFoldersEditor: View {
 private struct ParamRow: View {
   @Bindable var model: CardEditorModel
   let index: Int
+  /// The sweep as typed, kept while it is not yet a JSON array.
+  @State private var draft: String?
 
   var body: some View {
     let param = model.definition?["params"]?.array?[index] ?? .object([])
     let name = param["name"]?.string ?? "?"
     let type = param["type"]?.string ?? "string"
     let value = param["data"]
+    // An Input Card can hand on several values, one invocation each (an
+    // execution list). A list-typed value without it stays one vector.
+    let sweep = param["sweep"]?.array
+    let sweepText = draft ?? JSONValue.array(sweep ?? []).serialized(pretty: false)
+    let parsed = (try? JSONValue.parse(sweepText))?.array
     let fileInput = model.kind == .input && name == "value" && type == "string" &&
       (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .file } ?? false)
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        if type == "bool" {
+        if sweep != nil {
+          TextField(name, text: Binding(get: { sweepText }, set: { text in
+            draft = text
+            if let values = (try? JSONValue.parse(text))?.array { update { $0["sweep"] = .array(values) } }
+          }))
+        } else if type == "bool" {
           Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
         } else {
           TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
@@ -962,14 +974,28 @@ private struct ParamRow: View {
         Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
           .guideTarget("param:\(name)")
       }
+      if model.kind == .input {
+        Toggle("値ごとに呼び出す", isOn: Binding(get: { sweep != nil }, set: { setSweeping($0) }))
+          .toggleStyle(.checkbox).controlSize(.small)
+          .help("並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。")
+      }
+      if sweep != nil {
+        Group {
+          if let parsed { Text("\(parsed.count) 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。") }
+          else { Text("値を JSON の配列で書いてください。例: [8, 12, 16]") }
+          if type.hasSuffix("[]") { Text("リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。") }
+        }.font(.caption).foregroundStyle(.secondary)
+      }
       if fileInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
         Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
           .font(.caption).foregroundStyle(.secondary)
-        let entered = value?.string ?? ""
-        let target = entered.hasPrefix("project:")
-          ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
-          : folder + entered
-        Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        if sweep == nil {
+          let entered = value?.string ?? ""
+          let target = entered.hasPrefix("project:")
+            ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
+            : folder + entered
+          Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
+        }
       }
     }
   }
@@ -984,10 +1010,21 @@ private struct ParamRow: View {
     }
   }
 
-  private func set(_ v: JSONValue?) {
+  private func update(_ change: (inout JSONValue) -> Void) {
     guard var params = model.definition?["params"]?.array, index < params.count else { return }
-    params[index]["data"] = v
+    change(&params[index])
     model.definition?["params"] = .array(params)
+  }
+
+  private func set(_ v: JSONValue?) { update { $0["data"] = v } }
+
+  private func setSweeping(_ on: Bool) {
+    draft = nil
+    update { p in
+      let current = p["data"], first = p["sweep"]?.array?.first
+      p["sweep"] = on ? .array(current.map { [$0] } ?? []) : nil
+      p["data"] = on ? nil : first
+    }
   }
 }
 

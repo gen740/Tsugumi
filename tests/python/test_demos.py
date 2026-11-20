@@ -94,8 +94,14 @@ def test_signal_sweep_collects_all_comparisons(tmp_path):
         run_id = start_run(client, ["start"])
         status = wait_run(client, run_id)
         assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+        samples = client.call("RunInvocationsRequest", runId=run_id, card=path("samples"))
+        assert [text(row.implementationLabel) for row in samples.records] == ["value=8", "value=12", "value=16"]
+        sample_batch, = samples.batches
+        assert sample_batch.executionList and sample_batch.invocationCount == 3
         comparisons = client.call("RunInvocationsRequest", runId=run_id, card=path("score"))
         assert sorted(row.implementationIndex for row in comparisons.records) == [1] * 3 + [2] * 3
+        # Labels come from the Nix run list through the evaluated plan.
+        assert [text(row.implementationLabel) for row in comparisons.records] == ["threshold=10", "threshold=14"] * 3
         batch, = comparisons.batches
         assert batch.complete and not batch.failed and batch.invocationCount == 6
         summary = client.call("RunInvocationsRequest", runId=run_id, card=path("summary"))

@@ -2338,6 +2338,8 @@ export class ProjectSession extends Observable {
     return (arr(get(def, 'params')) ?? []).flatMap((p) => {
       const name = str(get(p, 'name')), type = str(get(p, 'type'))
       if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
+      // Swept values are edited in the Card's settings, where the list is visible.
+      if (get(p, 'sweep') !== undefined) return []
       return [{ name, type, value: paramText(get(p, 'data')) }]
     })
   }

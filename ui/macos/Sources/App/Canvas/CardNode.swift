@@ -65,6 +65,8 @@ extension ProjectSession {
     return (def["params"]?.array ?? []).compactMap { p -> ParamData? in
       guard let name = p["name"]?.string, let type = p["type"]?.string,
             ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }
+      // Swept values are edited in the Card's settings, where the list is visible.
+      if p["sweep"] != nil { return nil }
       let v = p["data"]
       let text: String
       switch v {

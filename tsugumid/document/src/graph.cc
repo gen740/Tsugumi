@@ -172,8 +172,8 @@ std::optional<std::string> check_param_value(
 }
 
 bool has_value_sweep(const Settings& settings) {
-  return std::ranges::any_of(settings.params,
-                             [](const ParamDef& p) { return p.sweep.has_value(); });
+  return std::ranges::any_of(
+      settings.params, [](const ParamDef& p) { return p.sweep.has_value(); });
 }
 
 uint64_t value_sweep_size(const Settings& settings) {
@@ -181,9 +181,9 @@ uint64_t value_sweep_size(const Settings& settings) {
   uint64_t size = 1;
   for (const auto& p : settings.params) {
     if (!p.sweep) continue;
-    size = std::min<uint64_t>(size * std::min<uint64_t>(p.sweep->size(),
-                                                        kMaxValueSweepSize + 1),
-                              kMaxValueSweepSize + 1);
+    size = std::min<uint64_t>(
+        size * std::min<uint64_t>(p.sweep->size(), kMaxValueSweepSize + 1),
+        kMaxValueSweepSize + 1);
   }
   return size;
 }
@@ -484,11 +484,11 @@ class Builder {
         if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
         if (const auto* sweep = schema::get(p.sweep)) {
           if (n.kind != Template::Input) {
-            n.diags.push_back(diag(
-                n.path, "invalid_param",
-                "param " + d.name +
-                    ": sweep is for Input Cards; a Code Card lists its "
-                    "implementations in the run list of default.nix"));
+            n.diags.push_back(
+                diag(n.path, "invalid_param",
+                     "param " + d.name +
+                         ": sweep is for Input Cards; a Code Card lists its "
+                         "implementations in the run list of default.nix"));
           } else if (schema::get(p.data)) {
             n.diags.push_back(
                 diag(n.path, "invalid_param",

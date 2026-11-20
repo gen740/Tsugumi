@@ -6,9 +6,9 @@ import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { act, create } from 'react-test-renderer'
 import { D, R, cardPath } from '../src/wire/rpc'
-import { comparedConditions, comparedParams, comparedValues, loadRunComparison, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
+import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
 import { ProjectSession, recordedDisplay } from '../src/model/session'
-import { ComparedCardView, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
+import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
 
 const summary = (runId: string, card: string, state = D.CardState.succeeded) => Object.assign(new R.InvocationSummaryT(), {
   runId, card: cardPath(card.split('/')), invocation: 1n, state, durationMs: 10n,
@@ -291,4 +291,63 @@ for (const name of ['rgb', 'spectrum']) {
   error.unmount()
 }
 
-console.log('run comparison: retained Cas A table/images, params, conditions, scope, omitted values, versions, I/O, missing/failed/stopped Cards and read-only loading passed')
+{
+  // Execution list members pair by name: an inserted threshold does not shift
+  // the pairs, a name repeated once per arriving input pairs by occurrence,
+  // and an unlabeled member is named by its implementation number.
+  const member = (runId: string, invocation: bigint, batchIndex: number, label: string | null, implementationIndex = 1) => Object.assign(summary(runId, 'score'), {
+    invocation, batchActivation: 1n, batchIndex, batchSize: 4, implementationIndex, implementationLabel: label,
+  })
+  const left = [member('left', 1n, 1, 'threshold 10'), member('left', 2n, 2, 'threshold 14'), member('left', 3n, 3, 'threshold 10'), member('left', 4n, 4, 'threshold 14')]
+  const right = [member('right', 1n, 1, 'threshold 10'), member('right', 2n, 2, 'threshold 12'), member('right', 3n, 3, 'threshold 14'),
+    member('right', 4n, 4, 'threshold 10'), member('right', 5n, 5, 'threshold 12'), member('right', 6n, 6, 'threshold 14')]
+  const pairs = pairMembers(left, right)
+  assert.deepEqual(pairs.map(p => [p.name, p.left?.invocation, p.right?.invocation]), [
+    ['threshold 10 (1)', 1n, 1n], ['threshold 14 (1)', 2n, 3n], ['threshold 10 (2)', 3n, 4n], ['threshold 14 (2)', 4n, 6n],
+    ['threshold 12 (1)', undefined, 2n], ['threshold 12 (2)', undefined, 5n],
+  ])
+  assert.equal(memberName(member('left', 1n, 1, null, 2)), L('実装 {0}', 2))
+  assert.ok(inBatch(member('left', 1n, 1, null)) && !inBatch(summary('left', 'single')))
+  const one = Object.assign(member('left', 1n, 1, 'value=5'), { batchSize: 1 })
+  assert.ok(inBatch(one), 'a one-member sweep is still a named batch member')
+
+  const pages: string[] = []
+  const all = await batchMembers({
+    async invocations(run, card, cursor) {
+      pages.push(`${run}/${card.join('/')}/${cursor ?? ''}`)
+      const other = Object.assign(member(run, 9n, 1, 'earlier'), { batchActivation: 2n })
+      return Object.assign(new R.InvocationPageT(), cursor ? { records: [left[3], left[2]] } : { records: [left[1], other, left[0]], nextCursor: 'next' })
+    },
+  }, 'left', left[3])
+  assert.deepEqual(all.map(m => m.invocation), [1n, 2n, 3n, 4n], 'only the same activation, in batch order')
+  assert.deepEqual(pages, ['left/score/', 'left/score/next'])
+
+  // The view shows the last member, then the member chosen by name on both sides.
+  const recorded = (run: string, m: R.InvocationSummaryT) => Object.assign(new R.RecordResultT(), {
+    record: Object.assign(new R.InvocationRecordT(), { summary: m, paramsJson: `{"run":"${run}","at":${m.invocation}}`, recordIo: true }), exists: true,
+  })
+  const reads: string[] = []
+  const rpc = {
+    async invocations(run: string) { return Object.assign(new R.InvocationPageT(), { records: run === 'left' ? left : right }) },
+    async record(run: string, _card: string[], invocation: bigint | null) {
+      reads.push(`${run}#${invocation}`)
+      return recorded(run, (run === 'left' ? left : right).find(m => m.invocation === invocation)!)
+    },
+  }
+  const row = { card: 'score', left: { summary: left[3], record: recorded('left', left[3]) }, right: { summary: right[5], record: recorded('right', right[5]) } }
+  let view!: ReturnType<typeof create>
+  act(() => { view = create(<ComparedMembers rpc={rpc} left="left" right="right" row={row}>{(shown, choice) => <ComparedCardView row={shown} choice={choice} />}</ComparedMembers>) })
+  await act(async () => { await setImmediate() })
+  const select = view.root.findByType('select')
+  assert.equal(select.props.value, 'threshold 14\u00002')
+  assert.ok(view.root.findAllByType('option').some(o => o.props.children === L('{0}（片方の実行のみ）', 'threshold 12 (1)')))
+  assert.deepEqual(reads, [], 'the latest pair reuses the records already read')
+  await act(async () => { select.props.onChange({ target: { value: 'threshold 10\u00001' } }); await setImmediate() })
+  assert.deepEqual(reads.sort(), ['left#1', 'right#1'])
+  const shown = view.root.findByType(ComparedCardView).props.row
+  assert.equal(shown.left.summary.invocation, 1n)
+  assert.equal(shown.right.summary.implementationLabel, 'threshold 10')
+  view.unmount()
+}
+
+console.log('run comparison: retained Cas A table/images, params, conditions, scope, omitted values, versions, I/O, missing/failed/stopped Cards, named batch members and read-only loading passed')
