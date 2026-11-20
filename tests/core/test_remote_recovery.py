@@ -39,6 +39,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
     exercise core deadlines, shutdown and core lifetime interruption. Real hostd/TLS
     authentication is covered by the broker RPC and remote integration suites.
     """
+    # hostd's broker listens with a backlog of 64. socketserver's default of 5
+    # refuses a burst of concurrent connections on macOS, where a full Unix
+    # socket backlog fails connect() instead of waiting.
+    request_queue_size = 64
     instance = "1" * 64
     server_id = "2" * 64
     system = "x86_64-linux"
