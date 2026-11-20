@@ -97,7 +97,7 @@ export TSUGUMI_MOCK_DAEMON="$PWD/build-ci-mock/libexec/tsugumi-tests/tsugumid-mo
 bash ui/macos/tools/check-plugin-warnings.sh
 build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path ui/macos/CoreTests
 build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path vm/macos/runtime
-build-ci/bin/tsugumi-test-env /usr/bin/swift test --package-path ui/macos
+build-ci/bin/tsugumi-test-env bash ui/macos/tools/test-app.sh
 ```
 
 Prose and `README.md` run the documentation build and tests. `docs/features.md` also runs prompt contracts, and `docs/CardGuide.md` runs its SDK examples and player consumers. Demo changes run documentation and the x86_64 Linux jobs that read bundled demos, including Guide RPC, version history, SDK, MCP and the Web player. Native core and worker changes run runtime consumers on x86_64 Linux and macOS, including the dedicated guest jobs on ARM Linux. Host-only changes select Host RPC and its consumers. Swift changes run Mac tests. CLI and plugin changes run adapter tests, with Mac tests also selected for CLI changes.

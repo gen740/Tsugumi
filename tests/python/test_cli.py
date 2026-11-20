@@ -627,7 +627,6 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
             assert events.status == 200
             revision, before = core_settings(root, {
                 "agent.provider": "openai", "agent.model.openai": "from-the-app",
-                "agent.permissions.allowed": ["network", "nix_source"],
             })
             for line in events:
                 if line.startswith(b"data:") and json.loads(line[5:]).get("type") == "settingsChanged":
@@ -643,14 +642,6 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
     after_revision, after = core_settings(root)
     assert after_revision == revision + 1
     assert after == {**before, "agent.model": "chosen-here", "agent.webSearch": True}
-    # A kind of permission only the app knows stays when the page edits its list.
-    s = api(port, cookie, "GET", "/api/settings")
-    api(port, cookie, "POST", "/api/settings", {"revision": s["revision"], "allowedPermissions": ["network", "sandbox_off"]})
-    final_revision, final = core_settings(root)
-    assert final_revision == after_revision + 1
-    assert sorted(final["agent.permissions.allowed"]) == ["network", "nix_source", "sandbox_off"]
-    assert {k: v for k, v in final.items() if k != "agent.permissions.allowed"} == {
-        k: v for k, v in after.items() if k != "agent.permissions.allowed"}
 
 
 @needs_server

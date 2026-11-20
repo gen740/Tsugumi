@@ -27,7 +27,6 @@ struct TsugumiApp: App {
   var body: some Scene {
     WindowGroup("Tsugumi", id: "main") {
       MainWindow()
-        .task { await PermissionCatalog.shared.load() }
         .environment(model)
         .environment(prefs)
         .frame(minWidth: 1100, minHeight: 680)

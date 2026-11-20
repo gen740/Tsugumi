@@ -3,28 +3,26 @@ import Observation
 import TsugumiAgentClient
 import TsugumiRPC
 
-/// Presentation catalog supplied by the host. Missing entries use their id.
+/// Presentation catalog supplied by the host, read when the host connects.
+/// Missing entries use their id.
 @MainActor @Observable final class PermissionCatalog {
   static let shared = PermissionCatalog()
-  var entries: [Tsugumi_Service_PermissionKindT] = []
-  private var loaded = false
-  func load() async {
-    guard !loaded else { return }
-    do {
-      entries = try await CoreHostClient.shared.permissionKinds(language: AppPreferences.Language.running.rawValue)
-      loaded = true
-    } catch { /* Requests still show their ids and require explicit selection. */ }
+  private(set) var entries: [Tsugumi_Service_PermissionKindT] = []
+  private init() {
+    Task {
+      for await session in await CoreHostClient.shared.hostConnectionChanges() where session != nil && entries.isEmpty {
+        entries = (try? await CoreHostClient.shared.permissionKinds(language: AppPreferences.Language.running.rawValue)) ?? []
+      }
+    }
   }
 }
 
-struct CardPermission: RawRepresentable, Identifiable, Hashable {
+struct CardPermission: RawRepresentable, Hashable {
   let rawValue: String
   init?(rawValue: String) {
     guard !rawValue.isEmpty else { return nil }
     self.rawValue = rawValue
   }
-  var id: String { rawValue }
-  @MainActor static var allCases: [CardPermission] { PermissionCatalog.shared.entries.compactMap { CardPermission(rawValue: $0.id) } }
   @MainActor var known: Bool { PermissionCatalog.shared.entries.contains { $0.id == rawValue } }
   @MainActor var label: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.label ?? rawValue }
   @MainActor var symbol: String { PermissionCatalog.shared.entries.first { $0.id == rawValue }?.icon ?? "hand.raised" }

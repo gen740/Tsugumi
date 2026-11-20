@@ -264,7 +264,6 @@ auto Defaults() -> j::Members {
           {"agent.webSearch", "false"},
           {"agent.animateWork", "true"},
           {"agent.allowUnscopedHelpers", "false"},
-          {"agent.permissions.allowed", "[]"},
           {"agent.skillFolders", "[]"},
           {"agent.trustedFolders", "[]"},
           {"versions.noteMode", j::Quote("mechanical")},
@@ -272,6 +271,11 @@ auto Defaults() -> j::Members {
           {"vm.memoryGiB", "0"},
           {"vm.storeGiB", "0"},
           {"app.language", j::Quote("ja")}};
+}
+auto IsSetting(const j::Members& defaults, const std::string& key) -> bool {
+  return defaults.contains(key) || key == "agent.drawThoughts" ||
+         key == "agent.drawThoughtsAsked" || key == "agent.thoughtModel" ||
+         key == "agent.thoughtModel.openai" || key == "agent.speechModel.chatgpt";
 }
 }  // namespace
 struct Settings::State {
@@ -290,6 +294,7 @@ struct Settings::State {
     std::string id, profile, state = "pending", message, welcome, issuer,
                              resource, client, subject, nonce, verifier,
                              oauth_state, redirect;
+    bool plan_enabled = false;
     int socket = -1;
     std::jthread worker;
   };
@@ -297,10 +302,10 @@ struct Settings::State {
   std::map<std::string, std::string> latest;
   KeyStorage storage;
   Models models;
-  std::function<void(const std::string&)> provider_changed;
+  std::function<void(std::string)> publish;
   State(const std::filesystem::path& dir, Import i, Token t, Forget f,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
-        Models model_list, std::function<void(const std::string&)> changed)
+        Models model_list, std::function<void(std::string)> event_sink)
       : directory(dir),
         db((dir / "host-settings.sqlite").string()),
         secrets(std::move(store)),
@@ -309,7 +314,7 @@ struct Settings::State {
         forget(std::move(f)),
         storage(key_storage),
         models(std::move(model_list)),
-        provider_changed(std::move(changed)) {
+        publish(std::move(event_sink)) {
     ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
     db.exec(
         "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
@@ -335,7 +340,9 @@ struct Settings::State {
     q.bind(1, profile);
     if (q.step()) {
       revision = q.u64(0);
-      for (const auto& [k, v] : j::Object(q.text(1))) values[k] = v;
+      const auto defaults = Defaults();
+      for (const auto& [k, v] : j::Object(q.text(1)))
+        if (IsSetting(defaults, k)) values[k] = v;
     }
     return {revision, values};
   }
@@ -358,6 +365,13 @@ struct Settings::State {
     if (!q.step()) throw std::runtime_error("Unknown ChatGPT account");
     return j::Object(q.text(0));
   }
+  template <typename Event>
+  auto Publish(const std::string& profile) -> void {
+    if (!publish) return;
+    Event event;
+    event.profile = profile;
+    publish(agent::wire::HostEvent(std::move(event)));
+  }
   auto SaveAccount(const std::string& profile, const std::string& id,
                    const j::Members& value) -> void {
     const auto encoded = j::Encode(value);
@@ -366,7 +380,7 @@ struct Settings::State {
     if (old.step() && old.text(0) == encoded) return;
     auto q = db.prepare("INSERT OR REPLACE INTO accounts VALUES(?,?,?)");
     q.bind(1, profile).bind(2, id).bind(3, encoded).run();
-    if (provider_changed) provider_changed(profile);
+    Publish<H::ProviderChangedT>(profile);
   }
   auto MemoryKey(const std::string& profile, const std::string& id)
       -> std::pair<std::string, std::string> {
@@ -435,13 +449,20 @@ struct Settings::State {
                               : attempt;
     if (!selected.empty()) {
       const auto it = attempts.find(selected);
-      if (it == attempts.end() || it->second->profile != profile)
-        throw std::runtime_error("Unknown sign-in attempt");
-      const auto& a = *it->second;
-      out.attempt_id = a.id;
-      out.state = a.state;
-      out.message = a.message;
-      out.welcome = a.welcome;
+      if (it == attempts.end() || it->second->profile != profile) {
+        out.state = "failed";
+        out.message = "Sign-in was interrupted; try again";
+      } else {
+        const auto& a = *it->second;
+        out.attempt_id = a.id;
+        out.state = a.state;
+        out.message = a.message;
+        out.welcome = a.welcome;
+        if (a.state == "complete") {
+          out.client_id = a.client;
+          out.plan_enabled = a.plan_enabled;
+        }
+      }
     }
     auto q = db.prepare(
         "SELECT id,json FROM accounts WHERE profile=? ORDER BY rowid");
@@ -454,11 +475,6 @@ struct Settings::State {
       a->signed_in = j::Bool(j::Get(v, "signed_in"));
       a->plan_enabled = j::Bool(j::Get(v, "plan_enabled"));
       a->active = j::Bool(j::Get(v, "active"));
-      if (a->active && !a->signed_in) {
-        if (out.state == "idle" || out.state == "complete")
-          out.state = "needs_sign_in";
-        out.message = "Sign in to ChatGPT again";
-      }
       out.accounts.push_back(std::move(a));
     }
     return out;
@@ -474,9 +490,21 @@ struct Settings::State {
     }
     for (const auto& [key, v] : rows) SaveAccount(profile, key, v);
   }
+  auto Cancel(Attempt& attempt) -> void {
+    if (attempt.state != "pending") return;
+    attempt.worker.request_stop();
+    attempt.state = "cancelled";
+  }
   auto Begin(const H::SignInBeginRequest& p) -> H::SignInBeginT {
     auto a = std::make_shared<Attempt>();
     a->profile = p.profile()->str();
+    std::shared_ptr<Attempt> previous_attempt;
+    if (const auto current = latest.find(a->profile); current != latest.end()) {
+      previous_attempt = attempts.at(current->second);
+      const auto& state = previous_attempt->state;
+      if (state == "committing" || (state == "pending" && !p.replace_pending()))
+        throw std::runtime_error("Sign-in is already in progress");
+    }
     a->id = crypto::uuid4();
     a->client = Text(p.client_id());
     a->issuer = Text(p.issuer());
@@ -682,6 +710,7 @@ struct Settings::State {
                      {"welcomed", welcomed ? "true" : "false"}});
         Choose(a->profile, a->client);
         a->state = "complete";
+        a->plan_enabled = plan;
         if (plan && !welcomed) a->welcome = a->client;
       } catch (...) {
         if (a->socket >= 0) {
@@ -689,11 +718,14 @@ struct Settings::State {
           a->socket = -1;
         }
         std::lock_guard guard(mutex);
-        a->state = stop.stop_requested() ? "cancelled" : "failed";
-        a->message = stop.stop_requested() ? "Sign-in cancelled"
-                                           : "Sign-in failed; try again";
+        if (a->state == "cancelled") return;
+        a->state = "failed";
+        a->message = "Sign-in failed; try again";
       }
+      Publish<H::SignInChangedT>(a->profile);
     });
+    if (previous_attempt) Cancel(*previous_attempt);
+    Publish<H::SignInChangedT>(a->profile);
     H::SignInBeginT out;
     out.attempt_id = a->id;
     out.url = a->issuer + "/api/accounts/authorize?" + Form(query);
@@ -703,10 +735,10 @@ struct Settings::State {
 Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
                    std::unique_ptr<SecretStore> store, KeyStorage storage,
                    Models models,
-                   std::function<void(const std::string&)> provider_changed)
+                   std::function<void(std::string)> publish)
     : state_(std::make_unique<State>(
           d, std::move(i), std::move(t), std::move(f), std::move(store),
-          storage, std::move(models), std::move(provider_changed))) {}
+          storage, std::move(models), std::move(publish))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
   switch (type) {
@@ -749,39 +781,31 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           f.message = "Settings changed; read the latest revision";
           return agent::wire::HostReply(id, std::move(f));
         }
+        if (const auto* expected = p.chatgpt_account()) {
+          const auto account = s.Account(expected->profile()->str(),
+                                         expected->client_id()->str());
+          if (!j::Bool(j::Get(account, "active")) ||
+              !j::Bool(j::Get(account, "signed_in")) ||
+              !j::Bool(j::Get(account, "plan_enabled"))) {
+            S::FailureT f;
+            f.code = "chatgpt_account_changed";
+            f.message =
+                "The ChatGPT account has changed. Sign in again to finish "
+                "setup.";
+            return agent::wire::HostReply(id, std::move(f));
+          }
+        }
+        const auto defaults = Defaults();
         if (p.changes())
           for (const auto* item : *p.changes()) {
             const auto key = item->key()->str();
             auto value = item->value_json()->str();
-            if (key == "agent.permissions.allowed" &&
-                Text(p.client()) == "web") {
-              // The Web screen edits four kinds; preserve the app-only Nix
-              // kind, as the former desktop preference adapter did.
-              const std::vector<std::string> kinds = {"network", "sandbox_off",
-                                                      "host_folder_read",
-                                                      "host_folder_write"};
-              std::vector<std::string> merged;
-              for (const auto& raw : j::Array(j::Get(values, key, "[]")))
-                if (std::find(kinds.begin(), kinds.end(), j::String(raw)) ==
-                    kinds.end())
-                  merged.push_back(raw);
-              for (const auto& raw : j::Array(value))
-                if (std::find(kinds.begin(), kinds.end(), j::String(raw)) !=
-                    kinds.end())
-                  merged.push_back(raw);
-              value = j::Encode(merged);
-            }
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
                 !(key.starts_with("agent.") || key.starts_with("vm.") ||
                   key == "versions.noteMode" || key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
-            const auto defaults = Defaults();
-            if (!defaults.contains(key) && key != "agent.drawThoughts" &&
-                key != "agent.drawThoughtsAsked" &&
-                key != "agent.thoughtModel" &&
-                key != "agent.thoughtModel.openai" &&
-                key != "agent.speechModel.chatgpt")
+            if (!IsSetting(defaults, key))
               throw std::runtime_error("Unknown setting");
             if (key == "app.language" && j::String(value) != "ja" &&
                 j::String(value) != "en")
@@ -836,10 +860,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                      j::Get(entry, "enabled") != "false"))
                   throw std::runtime_error("Invalid skill folder");
               }
-            if (key == "agent.permissions.allowed")
-              for (const auto& kind : j::Array(value))
-                if (j::String(kind).empty())
-                  throw std::runtime_error("Invalid permission kind");
             if (key == "versions.noteMode" &&
                 j::String(value) != "mechanical" && j::String(value) != "agent")
               throw std::runtime_error("Unknown version note mode");
@@ -911,7 +931,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                   "Ephemeral provisioning accepts only a key");
             s.ephemeral[memory_key] = p.provider()->api_key()->str();
           }
-          if (changed && s.provider_changed) s.provider_changed(profile);
+          if (changed) s.Publish<H::ProviderChangedT>(profile);
           return agent::wire::HostReply(id,
                                         s.ProviderStatus(profile, provider));
         }
@@ -947,11 +967,10 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           q.bind(1, profile).bind(2, provider).bind(3, j::Encode(value)).run();
         }
         const auto after = s.ProviderStatus(profile, provider);
-        if (s.provider_changed && (before.configured != after.configured ||
-                                   before.message != after.message ||
-                                   before.endpoint != after.endpoint ||
-                                   before.source != after.source))
-          s.provider_changed(profile);
+        if (before.configured != after.configured ||
+            before.message != after.message ||
+            before.endpoint != after.endpoint || before.source != after.source)
+          s.Publish<H::ProviderChangedT>(profile);
         return agent::wire::HostReply(id, after);
       }
       case H::RequestPayload::ProviderStatusRequest: {
@@ -977,10 +996,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           auto it = s.attempts.find(attempt);
           if (it == s.attempts.end() || it->second->profile != profile)
             throw std::runtime_error("Unknown sign-in attempt");
-          if (it->second->state == "pending") {
-            it->second->worker.request_stop();
-            it->second->state = "cancelled";
-          }
+          s.Cancel(*it->second);
         } else {
           auto value = s.Account(profile, client);
           if (action == "select")
@@ -993,10 +1009,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 pending->welcome.clear();
           } else if (action == "signout") {
             for (auto& [_, pending] : s.attempts)
-              if (pending->profile == profile && pending->state == "pending") {
-                pending->worker.request_stop();
-                pending->state = "cancelled";
-              }
+              if (pending->profile == profile) s.Cancel(*pending);
             lock.unlock();
             std::lock_guard operation(s.account_operations);
             revoked = s.forget(client);
@@ -1008,6 +1021,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           } else
             throw std::runtime_error("Unknown sign-in action");
         }
+        s.Publish<H::SignInChangedT>(profile);
         auto out = s.Status(profile, attempt);
         out.revoked = revoked;
         return agent::wire::HostReply(id, std::move(out));

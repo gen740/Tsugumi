@@ -2,6 +2,7 @@ import AppKit
 import Observation
 import SwiftUI
 import Testing
+import TsugumiTestSupport
 @testable import TsugumiApp
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
@@ -85,7 +86,27 @@ extension CanvasWindowTests {
   }
 
   @Test func languageRestartNoticeUsesTheSelectedLanguage() throws {
-    let resources = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../Resources").standardizedFileURL
+    let source = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+      .appendingPathComponent("../../Resources").standardizedFileURL
+    let resources = testTemporaryDirectory.appendingPathComponent("language-restart-\(UUID())")
+    let fm = FileManager.default
+    defer { try? fm.removeItem(at: resources) }
+    let englishFolder = resources.appendingPathComponent("en.lproj")
+    try fm.createDirectory(at: englishFolder, withIntermediateDirectories: true)
+    try fm.copyItem(at: source.appendingPathComponent("ja.lproj"), to: resources.appendingPathComponent("ja.lproj"))
+
+    let strings = englishFolder.appendingPathComponent("Localizable.strings")
+    try Data().write(to: strings)
+    let output = try FileHandle(forWritingTo: strings)
+    let generate = Process()
+    generate.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+    generate.arguments = ["python3", source.deletingLastPathComponent().appendingPathComponent("../shared/i18n/strings.py").path]
+    generate.standardOutput = output
+    try generate.run()
+    generate.waitUntilExit()
+    try output.close()
+    try #require(generate.terminationStatus == 0)
+
     let bundle = try #require(Bundle(path: resources.path))
     let english = LanguageRestartText(language: .en, resources: bundle)
     let japanese = LanguageRestartText(language: .ja, resources: bundle)

@@ -45,19 +45,18 @@ export function onServerEvent(fn: Listener): () => void {
     source.onerror = () => {
       lost = true
     }
-    source.onopen = () => {
-      if (!lost) return
-      lost = false
-      // A new stream is a new page to the server.
-      reportPageProject(reported)
-      for (const l of [...listeners]) l({ type: 'reconnected' })
-    }
     source.onmessage = (m) => {
-      let v: unknown
+      let v: { type?: string }
       try {
         v = JSON.parse(m.data)
       } catch {
         return
+      }
+      if ((v?.type === 'eventsConnected' || v?.type === 'reconnected') && lost) {
+        lost = false
+        // A new authenticated stream is a new page to the server.
+        reportPageProject(reported)
+        v = { type: 'reconnected' }
       }
       for (const l of [...listeners]) l(v)
     }

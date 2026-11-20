@@ -41,7 +41,7 @@ Instructions for Claude Code, Codex and others (`CLAUDE.md` is a link to this fi
 
 ### Language
 
-Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the English strings are in `ui/macos/Resources/tools/en_strings.py` and `ui/web/shared/i18n/en.json`.
+Write documents, code comments, commit messages and pull requests in English. The UI's text is in Japanese and English: the English strings are in `ui/shared/i18n/en.json`.
 
 ### Running the Mac app
 

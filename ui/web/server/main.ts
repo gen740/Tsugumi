@@ -10,7 +10,7 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { chatRoutes, chatStatus, hostReady, hostRequest } from './chat'
+import { chatRoutes, chatStatus, hostReady, hostRequest, observeHost } from './chat'
 import { hostEnvironments } from './environment'
 import type { VMHostOptions } from './environment'
 import { pageRpcUpgrade, proxyRpc } from './rpcProxy'
@@ -234,6 +234,19 @@ const routes: Record<string, Handler> = {
 
   ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, showOnPage, openPage, desktop }),
 }
+// Browser pages stay registered while the independent Host connection recovers.
+let hostDisconnected = false
+observeHost(event => {
+  if (event.type === 'Disconnected') {
+    hostDisconnected = true
+    if (streams.size) void hostReady().catch(error => {
+      broadcast({ type: 'hostUnavailable', message: (error as Error).message })
+    })
+  } else if (event.type === 'Connected' && hostDisconnected) {
+    hostDisconnected = false
+    broadcast({ type: 'reconnected' })
+  }
+})
 
 // The page is opened through the URL printed at start, which carries this
 // run's key: the server answers it with a cookie only the page's own origin
@@ -360,15 +373,22 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
-    res.write(': hello\n\n')
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-    req.on('close', () => {
+    res.on('close', () => {
       clearInterval(ping)
       streams.delete(res)
-      pageProjects.delete(page.id)
+      if (![...streams.values()].some(p => p.id === page.id)) pageProjects.delete(page.id)
     })
+    try {
+      await hostReady()
+      if (res.destroyed) return
+      res.write('data: {"type":"eventsConnected"}\n\n')
+    } catch (error) {
+      hostDisconnected = true
+      res.write(`data: ${JSON.stringify({ type: 'hostUnavailable', message: (error as Error).message })}\n\n`)
+    }
     return
   }
   if (url.pathname.startsWith('/api/')) {
@@ -456,7 +476,7 @@ async function shutdown() {
   try {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
-  for (const s of streams.keys()) s.end()
+  for (const stream of streams.keys()) stream.end()
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.
   process.exit(0)

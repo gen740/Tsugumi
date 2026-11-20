@@ -13,7 +13,7 @@ import { isMac, prefs } from '../model/prefs'
 import { CardKey, commentChange, errorText, key, path, ProjectSession } from '../model/session'
 import { AGENT, modelOptions, savedComments, helperScopeLabel, projectAccessNeededNow } from '../../shared/agentShared'
 import { WorkflowTab } from '../model/workspace'
-import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField, Toggle } from './controls'
+import { Button, copyText, Empty, MenuButton, Sheet, showMenu, Spinner, TextField } from './controls'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { findings } from '../model/evidence'
@@ -62,46 +62,36 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} onAnswer={(allow, always, selected) => chat.answerPermission(allow, always, p.id, selected)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} onAnswer={(allow, selected) => chat.answerPermission(allow, p.id, selected)} /> : null
 }
 
-/** Presents core-owned access and operation requests. Operations have no
- *  standing approval option. Return allows and Esc declines. */
-export function PermissionPrompt({ asked, groups = [], from, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, always: string[], selected?: string[]) => void }) {
-  useObserve(permissionCatalog)
-  useEffect(() => { void permissionCatalog.load() }, [])
+/** Presents core-owned access and operation requests.
+ *  Return allows and Esc declines. */
+export function PermissionPrompt({ asked, groups = [], from, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, selected?: string[]) => void }) {
   const who = from ?? 'Agent'
-  const [always, setAlways] = useState<string[]>([])
   const [selected, setSelected] = useState(() => defaultPermissionSelection(asked).filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
   useEffect(() => {
     const key = (e: KeyboardEvent) => {
       // A button with the focus answers for itself.
       if (e.key !== 'Enter' || e.isComposing || (e.target as HTMLElement | null)?.tagName === 'BUTTON') return
       e.preventDefault()
-      onAnswer(true, always, selected)
+      onAnswer(true, selected)
     }
     window.addEventListener('keydown', key, true)
     return () => window.removeEventListener('keydown', key, true)
-  }, [onAnswer, always, selected])
-  const requests = asked.map(parsePermission).filter((r) => r !== undefined)
+  }, [onAnswer, selected])
   const operation = asked.find((r) => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter((r) => r.startsWith('project_access '))
-  const kinds = operation || reload ? [] : permissionCatalog.kinds.filter((p) => requests.some((r) => r.kind === p.kind))
   return (
-    <Sheet width={460} onClose={() => onAnswer(false, [])} backdropCloses={false}>
+    <Sheet width={460} onClose={() => onAnswer(false)} backdropCloses={false}>
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
         {!groups.length && <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>}
         <PermissionRequests asked={asked} groups={groups} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
         {!!groups.length && <p className="secondary caption">{L('読み取った内容は接続先のモデルに送信される場合があります。')}</p>}
-        {!!kinds.length && <div className="secondary small">{L('今後は確認しない（設定の「API」でいつでも変えられます）')}</div>}
-        {kinds.map((k) => (
-          <Toggle key={k.kind} kind="checkbox" label={k.label} checked={always.includes(k.kind)}
-            onChange={(on) => setAlways(on ? [...always, k.kind] : always.filter((x) => x !== k.kind))} />
-        ))}
         <div className="row end gap8">
-          <Button onClick={() => onAnswer(false, [])}>{L('許可しない')}</Button>
-          <Button kind="prominent" onClick={() => onAnswer(true, always, selected)}>{L('許可する')}</Button>
+          <Button onClick={() => onAnswer(false)}>{L('許可しない')}</Button>
+          <Button kind="prominent" onClick={() => onAnswer(true, selected)}>{L('許可する')}</Button>
         </div>
       </div>
     </Sheet>
@@ -111,6 +101,7 @@ export function PermissionPrompt({ asked, groups = [], from, reload = false, onA
 /** The exact widenings listed before approval, shared by reload and Agent saves. */
 export function PermissionRequests({ asked, groups = [], selected, onSelect }: { asked: string[]; groups?: AccessGroup[]; selected?: string[]; onSelect?: (request: string, on: boolean) => void }) {
   useObserve(permissionCatalog)
+  useEffect(() => { void permissionCatalog.load() }, [])
   const requests = asked.map(parsePermission).filter(r => r !== undefined)
   const operation = asked.find(r => r.startsWith('project_access operation_approval\n'))?.split('operation_approval\n').slice(1).join('operation_approval\n')
   const access = asked.filter(r => r.startsWith('project_access '))

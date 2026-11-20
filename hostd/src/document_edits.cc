@@ -32,27 +32,6 @@ auto BoundaryPort(json::Members& ports, const std::string& endpoint)
   ports[name] = endpoint;
   return name;
 }
-// Normalize JSON before comparing: object order and whitespace are not edits.
-auto Canonical(const std::string& raw) -> std::string {
-  schema::Json value;
-  if (auto error = schema::decode(raw, value))
-    throw std::runtime_error(error->message);
-  const auto text = schema::text(value.value());
-  if (text.starts_with('{')) {
-    auto fields = json::Object(text);
-    for (auto& [key, v] : fields) {
-      (void)key;
-      v = Canonical(v);
-    }
-    return json::Encode(fields);
-  }
-  if (text.starts_with('[')) {
-    auto values = json::Array(text);
-    for (auto& v : values) v = Canonical(v);
-    return json::Encode(values);
-  }
-  return text.starts_with('"') ? json::Quote(json::String(text)) : text;
-}
 }  // namespace
 
 auto MakeSubgraph(const std::string& project,
@@ -267,7 +246,8 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
 }
 
 auto DocumentsEqual(const std::string& a, const std::string& b) -> bool {
-  return Canonical(a) == Canonical(b);
+  return schema::canonical_text(schema::capture(a)) ==
+         schema::canonical_text(schema::capture(b));
 }
 
 }  // namespace tsugumi::host

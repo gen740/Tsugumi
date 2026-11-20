@@ -62,14 +62,15 @@ class Connection {
       return result
     }
     let length: number | undefined
+    let authenticated = false
     const fail = (error: Error) => {
       if (this.socket !== socket) return
       this.socket = undefined
-      this.opening = undefined
+      if (authenticated) this.opening = undefined
       for (const p of this.waiting.values()) p.reject(error)
       this.waiting.clear()
       socket.destroy()
-      if (this.hostContract) this.host.event({ type: 'Disconnected', value: error })
+      if (authenticated && this.hostContract) this.host.event({ type: 'Disconnected', value: error })
     }
     socket.on('error', fail)
     socket.on('close', () => fail(new Error('Service connection closed')))
@@ -99,7 +100,14 @@ class Connection {
       socket.once('error', reject)
       socket.once('close', () => reject(new Error('Service connection closed')))
     })
-    await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
+    try {
+      await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
+    } catch (error) {
+      fail(error as Error)
+      throw error
+    }
+    if (this.socket !== socket) throw new Error('Service connection closed')
+    authenticated = true
     if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
     return ready
   }
@@ -159,6 +167,7 @@ export class CoreHost {
     this.hostListeners.add(fn)
     return () => this.hostListeners.delete(fn)
   }
+  connectHost() { return this.host.connect() }
   event(event: HostEvent) { for (const listener of this.hostListeners) listener(event) }
   private api?: ToolCatalog
 
@@ -173,8 +182,6 @@ export class CoreHost {
       : path.join(support, 'host-core')))
     this.demoRoot = path.join(repo, 'demos')
   }
-
-  connectHost() { return this.host.connect() }
 
   async ready(): Promise<Ready> {
     return this.starting ??= (async () => {

@@ -274,6 +274,73 @@ def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
         assert call(2, "ConversationListRequest", {}) == "ConversationList"
 
 
+def test_host_reconnect_preserves_the_pages_showing_a_project(tmp_path):
+    from conftest import write_project
+
+    fail = tmp_path / "fail-next-start"
+    binary = tmp_path / "host-launcher"
+    host = isolated_environment(tmp_path)["TSUGUMI_HOSTD"]
+    binary.write_text(f"""#!{sys.executable}
+import os
+import sys
+from pathlib import Path
+
+try:
+    Path({str(fail)!r}).unlink()
+except FileNotFoundError:
+    os.execv({host!r}, [{host!r}, *sys.argv[1:]])
+sys.exit(1)
+""")
+    binary.chmod(0o700)
+
+    with web_server(tmp_path, TSUGUMI_HOSTD=str(binary)) as (_, port, key):
+        cookie = page_cookie(port, key)
+        project = tmp_path / "proj"
+        write_project(project)
+
+        def open_events(connection, page):
+            connection.request("GET", f"/api/events?page={page}", headers={"Cookie": cookie})
+            response = connection.getresponse()
+            assert response.status == 200
+            return response
+
+        def wait_event(response, kind):
+            for line in response:
+                if line.startswith(b"data: "):
+                    event = json.loads(line.removeprefix(b"data: "))
+                    if event["type"] == kind:
+                        return event
+                    assert event["type"] != "projectClosed", event
+            pytest.fail(f"The browser event stream closed before {kind}")
+
+        with ExitStack() as stack:
+            def page_events(page):
+                connection = stack.enter_context(closing(http.client.HTTPConnection("127.0.0.1", port, timeout=10)))
+                response = open_events(connection, page)
+                wait_event(response, "eventsConnected")
+                post(port, cookie, "/api/page", {"page": page, "project": str(project)})
+                return response
+
+            first = page_events("first")
+            second = page_events("second")
+            pid = json.loads((tmp_path / "host-core/host.ready").read_text())["pid"]
+            fail.touch()
+            terminate_process(pid)
+            wait_event(first, "hostUnavailable")
+            wait_event(second, "hostUnavailable")
+            post(port, cookie, "/api/project/close", {"page": "first", "path": str(project)})
+            # The status retry reauthenticates and both browser streams survive.
+            status, body = request(port, "GET", "/api/chatgpt?attemptId=old-host-attempt", {"Cookie": cookie})
+            assert status.status == 200, body
+            wait_event(first, "reconnected")
+            wait_event(second, "reconnected")
+            interrupted = json.loads(body)
+            assert interrupted["signingIn"] is False
+            assert interrupted["outcome"]["ok"] is False
+            post(port, cookie, "/api/project/close", {"page": "second", "path": str(project)})
+            assert wait_event(first, "projectClosed")["project"] == str(project.resolve())
+
+
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
     from Tsugumi.Host.EnvironmentAction import EnvironmentAction
     from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
