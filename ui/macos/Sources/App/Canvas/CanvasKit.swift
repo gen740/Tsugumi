@@ -267,7 +267,7 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .branch || kind == .merge || kind == .collect }
+  var isRouting: Bool { kind == .branch || kind == .fork || kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
@@ -293,12 +293,13 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, merge, collect, start
+  case card, branch, fork, merge, collect, start
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
     case .branch: self = .branch
+    case .fork: self = .fork
     case .merge: self = .merge
     case .collect: self = .collect
     default: self = .card
@@ -386,6 +387,11 @@ struct CardGeometry {
       // Its ports are at a quarter and three quarters of this.
       if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
       return CGSize(width: 60, height: 48)
+    case .fork:
+      // A Branch's diamond, widened by its outputs: two of them sit where a Branch's a and b do.
+      let n = CGFloat(max(outputs.count, 1))
+      let width = grid.map { 2 * n * Self.rowPitch($0) } ?? max(60, 30 * n)
+      return CGSize(width: width, height: max(48, width * 0.4))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
@@ -542,6 +548,15 @@ struct CardGeometry {
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
                              CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)], radius: 6 * cornerScale)
+    case .fork:
+      // A diamond whose corners along the flow stay sharp (listed twice): value
+      // is on the upstream one, and an odd number of outputs puts one on the other.
+      // The side corners shrink with the zoom, as `r` does.
+      let radius = 6 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
+      let top = CGPoint(x: r.midX, y: r.minY), right = CGPoint(x: r.maxX, y: r.midY)
+      let bottom = CGPoint(x: r.midX, y: r.maxY), left = CGPoint(x: r.minX, y: r.midY)
+      return flow == .topToBottom ? roundedPolygon([top, top, right, bottom, bottom, left], radius: radius)
+                                  : roundedPolygon([top, right, right, bottom, left, left], radius: radius)
     case .collect:
       func point(_ across: CGFloat, _ along: CGFloat) -> CGPoint {
         flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
@@ -577,7 +592,7 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch, .start:
+    case .card, .branch, .fork, .start:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
     case .merge, .collect:
@@ -610,7 +625,7 @@ struct CardGeometry {
     if shape == .card && collapsed { return false }
     if shape == .start { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .merge || shape == .collect { return false }
+    if shape == .merge || shape == .collect || shape == .fork { return false }
     if shape == .branch { return true }
     return spacing(input: input) >= Self.minLabel
   }
@@ -647,6 +662,14 @@ struct CardGeometry {
         return CGPoint(x: r.minX + r.width * (first ? 0.25 : 0.75), y: r.minY + r.height * (output ? 0.75 : 0.25))
       }
       return CGPoint(x: r.minX + r.width * (output ? 0.75 : 0.25), y: r.minY + r.height * (first ? 0.25 : 0.75))
+    }
+    if shape == .fork {
+      // value on the upstream corner; the outputs spread over the two downstream
+      // edges, at the middles of their shares of the width (on the grid: odd rows).
+      let across = output ? (2 * i + 1) / (2 * n) : 0.5
+      let along = output ? 1 - abs(across - 0.5) : 0
+      return flow == .topToBottom ? CGPoint(x: r.minX + r.width * across, y: r.minY + r.height * along)
+                                  : CGPoint(x: r.minX + r.width * along, y: r.minY + r.height * across)
     }
     switch flow {
     case .topToBottom:
@@ -1357,6 +1380,7 @@ struct CardNodeView: View {
       if p.name == "a" { s += String(localized: "（condition が true のとき）") }
       if p.name == "b" { s += String(localized: "（condition が false のとき）") }
     }
+    if data.kind == .fork && output { s += String(localized: "（value をそのまま送る）") }
     if let t = p.typeName { s += " : \(t)" }
     s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }

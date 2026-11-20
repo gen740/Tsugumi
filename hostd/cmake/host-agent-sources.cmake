@@ -16,5 +16,6 @@ set(_tsugumi_host_agent_sources
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/tools_edit.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/turns.cc
+  ${PROJECT_SOURCE_DIR}/hostd/agent/src/version_find.cc
   ${PROJECT_SOURCE_DIR}/hostd/agent/src/helper_scope.cc
 )

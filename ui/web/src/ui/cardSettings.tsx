@@ -15,7 +15,7 @@ import { prefs } from '../model/prefs'
 import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
 import { D, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -135,6 +135,7 @@ export class CardEditorModel extends Observable {
     else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
     else this.definition = obj([['template', value]])
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
+    if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
   }
 
@@ -744,7 +745,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'merge', 'collect']
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
             .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
         } /></Row>
       </Section>}
@@ -928,6 +929,10 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   const name = str(get(param, 'name')) ?? '?'
   const type = str(get(param, 'type')) ?? 'string'
   const value = get(param, 'data')
+  // An Input Card can hand on several values, one invocation each (an
+  // execution list). A list-typed value without it stays one vector.
+  const sweep = arr(get(param, 'sweep'))
+  const [draft, setDraft] = useState<string>()
   const fileInput = model.kind === 'input' && name === 'value' && type === 'string' &&
     model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.File)
   const folder = model.session.definitionDir(model.cardKey) ?? ''
@@ -935,24 +940,49 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   const target = entered.startsWith('project:')
     ? folder.slice(0, folder.lastIndexOf('definitions/')) + entered.slice(8)
     : folder + entered
-  const set = (v: J | undefined) => {
+  const update = (change: (p: JObj) => void) => {
     const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
     if (index >= params.length || !isObj(params[index])) return
-    ;(params[index] as JObj).set('data', v)
+    change(params[index] as JObj)
     model.setSetting('params', params)
   }
+  const set = (v: J | undefined) => update((p) => p.set('data', v))
+  const setSweeping = (on: boolean) => {
+    setDraft(undefined)
+    update((p) => {
+      const current = get(p, 'data'), first = arr(get(p, 'sweep'))?.[0]
+      p.set('sweep', on ? (current === undefined ? [] : [current]) : undefined)
+      p.set('data', on ? undefined : first)
+    })
+  }
+  const sweepText = draft ?? serialize(sweep ?? [], false)
+  const parsedSweep = arr(tryParse(sweepText))
   return (
     <Row label={name}>
       <div>
         <div className="row gap6 center" data-guide={`param:${name}`}>
-          {type === 'bool'
+          {sweep ? <TextField value={sweepText} onChange={(t) => {
+            setDraft(t)
+            const values = arr(tryParse(t))
+            if (values) update((p) => p.set('sweep', values))
+          }} style={{ width: 220 }} />
+            : type === 'bool'
             ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
             : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
           <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
         </div>
+        {model.kind === 'input' && <div className="row gap6 center" style={{ marginTop: 4 }}>
+          <Toggle kind="checkbox" small checked={!!sweep} onChange={setSweeping} label={L('値ごとに呼び出す')}
+            help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
+        </div>}
+        {sweep && <div className="caption secondary" style={{ marginTop: 4 }}>
+          {parsedSweep ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', parsedSweep.length)
+            : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
+          {type.endsWith('[]') && <div>{L('リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。')}</div>}
+        </div>}
         {fileInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
           <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
-          <div>{L('参照先: {0}', target)}</div>
+          {!sweep && <div>{L('参照先: {0}', target)}</div>}
         </div>}
       </div>
     </Row>
@@ -1021,7 +1051,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           </>
         )}
       </Section>
-      <OutputPortsSection model={model} />
+      {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
       {model.kind !== 'subgraph' && model.kind !== 'draft' && (
         <Section title={L('記録と成果物')}>
           <Row label={L('入出力を記録')}>
@@ -1045,6 +1075,37 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
 }
 
 const shortType = (full: string) => full.split('.').pop() ?? full
+
+/** A Fork's outputs, declared in _card.json (a and b until they are). Each one
+ *  receives the value, with its type. */
+function ForkOutputsSection({ model }: { model: CardEditorModel }) {
+  const r = model.session.resolution.get(model.cardKey)
+  const outputs = arr(get(model.definition, 'outputs')) ?? [obj([['name', 'a']]), obj([['name', 'b']])]
+  const names = outputs.map((x) => str(get(x, 'name')) ?? '')
+  const edit = (fn: (a: J[]) => void) => {
+    const a = outputs.map((x) => clone(x))
+    fn(a)
+    model.setSetting('outputs', a)
+  }
+  const next = () => [...'abcdefghijklmnopqrstuvwxyz'].find((c) => !names.includes(c)) ?? `out${names.length + 1}`
+  return (
+    <Section title={L('出力ポート')} footer={L('分配は受け取った値をすべての出力へ送ります。出力の型は value と同じです。')}>
+      {names.map((name, i) => (
+        <Row key={i}>
+          <div className="row gap8 center fill">
+            <TextField value={name} placeholder={L('名前')} mono help={L('出力ポートの名前')} style={{ width: 140 }}
+              onChange={(v) => edit((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
+            <TextField {...portNote(model, 'outputs', name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
+            <span className="caption secondary nowrap">{r?.outputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+            <Button kind="borderless" iconOnly icon="minus.circle" help={L('出力を削除')} disabled={names.length <= 1}
+              onClick={() => edit((a) => a.splice(i, 1))} />
+          </div>
+        </Row>
+      ))}
+      <Row><Button onClick={() => edit((a) => a.push(obj([['name', next()]])))}>{L('出力を追加')}</Button></Row>
+    </Section>
+  )
+}
 
 /** Output ports as `_outputs.fbs` defines them (its source is the truth).
  *  Each port's type is chosen from the tables of that schema, as the core

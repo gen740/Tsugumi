@@ -584,6 +584,7 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
     : n === 'card_s_d_k_prepare' ? [L('Card SDK を準備しています'), L('Card SDK を準備')]
     : n === 'layout_arrange' || n === 'layout_untangle' ? [L('配置を整えています'), L('配置を整理')]
     : n === 'project_cache_clear' ? [L('ビルドキャッシュを削除しています'), L('ビルドキャッシュを削除')]
+    : n === 'version_find' ? [L('過去の試行を探しています'), L('過去の試行を探しました')]
     : n === 'version_checkout' ? [L('版を切り替えています'), L('版を切替')]
     : n === 'version_init' || n === 'version_mark' ? [L('版を記録しています'), L('版を記録')]
     : n === 'card_id' ? [L('Card の識別子を予約しています'), L('Card の識別子を予約')]

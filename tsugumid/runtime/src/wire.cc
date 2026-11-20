@@ -204,6 +204,9 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
           ? R::CreateExecutionResources(b, s.execution_resources->cpu_millis,
                                         s.execution_resources->memory_bytes)
           : Off<R::ExecutionResources>();
+  auto label = s.implementation_label.empty()
+                   ? Off<flatbuffers::String>()
+                   : b.CreateString(s.implementation_label);
   auto transfer_name = b.CreateString(s.transfer_name);
   auto transfer_direction = b.CreateString(s.transfer_direction);
   R::InvocationSummaryBuilder ib(b);
@@ -240,6 +243,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.batch_size) ib.add_batch_size(*s.batch_size);
   if (s.implementation_index)
     ib.add_implementation_index(*s.implementation_index);
+  if (!label.IsNull()) ib.add_implementation_label(label);
   return ib.Finish();
 }
 

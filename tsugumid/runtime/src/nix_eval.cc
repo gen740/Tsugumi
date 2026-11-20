@@ -709,6 +709,12 @@ struct EvaluationState {
     enforce_implementation_limit(static_cast<uint64_t>(count),
                                  c.max_implementations);
     r.implementation_count = static_cast<uint32_t>(count);
+    const auto labels = nlohmann::json::parse(
+        state->forceStringNoCtx(attr("implementationLabels"), nix::noPos,
+                                "while reading the run list labels"));
+    for (const auto& label : labels)
+      r.implementation_labels.push_back(label.get<std::string>());
+    check_implementation_labels(r.implementation_labels, count);
     auto& manifest = attr("manifest");
     state->forceValue(manifest, nix::noPos);
     auto drv = nix::getDerivation(*state, manifest, false);
@@ -917,6 +923,7 @@ auto evaluator_main() -> void {
               {"out", result.derivation.output},
               {"execution_list", result.execution_list},
               {"implementation_count", result.implementation_count},
+              {"implementation_labels", result.implementation_labels},
               {"epoch", result.evaluation_epoch}};
     }
     if (op == "flake") {
@@ -1138,6 +1145,9 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
         result.derivation = {data.at("drv"), data.at("out"), call.system};
         result.execution_list = data.at("execution_list");
         result.implementation_count = data.at("implementation_count");
+        result.implementation_labels =
+            data.at("implementation_labels")
+                .template get<std::vector<std::string>>();
         result.evaluation_epoch = data.at("epoch");
         impl_->last_epoch =
             std::max(impl_->last_epoch, result.evaluation_epoch);

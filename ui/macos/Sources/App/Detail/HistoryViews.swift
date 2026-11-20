@@ -434,6 +434,8 @@ struct ExecutionHistoryInvocationPicker: View {
     String(localized: "\(i.invocation ?? 0) 回目") + " · " + i.state.label
       // A call of an execution list says which element it took.
       + (i.batchIndex.flatMap { index in i.batchSize.flatMap { $0 > 1 ? " · " + String(localized: "実行リスト \(index)/\($0)") : nil } } ?? "")
+      // A named implementation (run list label or swept values) says which one it ran.
+      + (i.implementationLabel.flatMap { $0.isEmpty ? nil : " · " + $0 } ?? "")
       + (i.durationMs.map { " · \(formatDuration(Double($0) / 1000))" } ?? "")
   }
 }

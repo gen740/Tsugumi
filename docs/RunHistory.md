@@ -16,7 +16,7 @@ The RPC exposes `RunStatus.partial_run` and `RunStatus.uses_partial_result` in s
 
 For example, open **Visualization → report**, run it, and inspect a figure Card's input and output. A stopped or failed invocation can have a log and status even when there is no output.
 
-When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](features.md#run-lists-and-collect)
+When a Card runs a batch, its history keeps each invocation separately, including which implementation and batch position it used and the implementation's label (`InvocationSummary.implementation_label`: a run list entry's `label`, or an Input Card's swept `name=value`). **Compare runs** compares such a Card one member at a time, paired by that label. A failed batch retains the individual results and diagnostics in the history. The next Card receives a batch only after all its invocations succeed. [Run lists and Collect](features.md#run-lists-and-collect)
 
 The **Info** tab shows the execution service recorded for a Code Card. For a remote job, it also shows the job ID, architecture, any requested CPU and memory limits, and the last reported state. The **Packages** tab shows the recorded Nix environments shared by the run’s Cards. [Run a Card on a remote worker](RemoteExecution.md)
 

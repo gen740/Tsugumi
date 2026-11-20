@@ -1,5 +1,6 @@
 #include "tsugumi/document/graph.hh"
 
+#include <algorithm>
 #include <deque>
 #include <limits>
 #include <map>
@@ -37,6 +38,8 @@ const char* template_name(Template t) {
       return "input";
     case Template::Branch:
       return "branch";
+    case Template::Fork:
+      return "fork";
     case Template::Merge:
       return "merge";
     case Template::Collect:
@@ -170,6 +173,46 @@ std::optional<std::string> check_param_value(
          " (integers must be in range, no implicit conversion)";
 }
 
+bool has_value_sweep(const Settings& settings) {
+  return std::ranges::any_of(
+      settings.params, [](const ParamDef& p) { return p.sweep.has_value(); });
+}
+
+uint64_t value_sweep_size(const Settings& settings) {
+  // Saturates above the limit, so an oversized sweep cannot overflow.
+  uint64_t size = 1;
+  for (const auto& p : settings.params) {
+    if (!p.sweep) continue;
+    size = std::min<uint64_t>(
+        size * std::min<uint64_t>(p.sweep->size(), kMaxValueSweepSize + 1),
+        kMaxValueSweepSize + 1);
+  }
+  return size;
+}
+
+ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
+  ValueSweepMember member;
+  member.params = settings.params;
+  std::vector<std::string> parts;
+  for (auto it = member.params.rbegin(); it != member.params.rend(); ++it) {
+    if (!it->sweep) continue;
+    const auto& values = *it->sweep;
+    if (values.empty()) throw std::out_of_range("empty value sweep");
+    it->data = values.at(index % values.size());
+    index /= values.size();
+    // Strings read as they are; other values as their JSON text.
+    schema::v::String string;
+    const std::string value = schema::decode(*it->data, string)
+                                  ? schema::text(*it->data)
+                                  : std::string(string.value());
+    parts.push_back(it->name + "=" + value);
+    it->sweep.reset();
+  }
+  for (auto it = parts.rbegin(); it != parts.rend(); ++it)
+    member.label += (member.label.empty() ? "" : ", ") + *it;
+  return member;
+}
+
 Template template_of(const DefinitionDoc* def) {
   if (!def) return Template::Draft;
   if (schema::get(def->card.external)) return Template::Subgraph;
@@ -177,11 +220,23 @@ Template template_of(const DefinitionDoc* def) {
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
       {"trigger", Template::Trigger}, {"input", Template::Input},
-      {"branch", Template::Branch},   {"merge", Template::Merge},
-      {"collect", Template::Collect}, {"draft", Template::Draft},
+      {"branch", Template::Branch},   {"fork", Template::Fork},
+      {"merge", Template::Merge},     {"collect", Template::Collect},
+      {"draft", Template::Draft},
   };
   auto it = m.find(*t);
   return it == m.end() ? Template::Code : it->second;
+}
+
+std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
+  const auto* outputs = schema::get(def.card.outputs);
+  if (!outputs) return {"a", "b"};
+  std::vector<std::string> names;
+  for (const auto& o : *outputs) {
+    const auto* name = schema::get(o.name);
+    names.push_back(name ? *name : "");
+  }
+  return names;
 }
 
 const PortType* Node::input(const std::string& n) const {
@@ -441,6 +496,36 @@ class Builder {
         d.name = *name;
         d.type = *pt;
         if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
+        if (const auto* sweep = schema::get(p.sweep)) {
+          if (n.kind != Template::Input) {
+            n.diags.push_back(
+                diag(n.path, "invalid_param",
+                     "param " + d.name +
+                         ": sweep is for Input Cards; a Code Card lists its "
+                         "implementations in the run list of default.nix"));
+          } else if (schema::get(p.data)) {
+            n.diags.push_back(
+                diag(n.path, "invalid_param",
+                     "param " + d.name +
+                         ": write data for one value or sweep for one "
+                         "invocation per value, not both"));
+          } else {
+            std::vector<hosq::json::GenericDom<>> values;
+            std::optional<std::string> error;
+            for (size_t i = 0; i < sweep->size() && !error; ++i) {
+              error = check_param_value(d.type, (*sweep)[i]);
+              if (error)
+                error = "sweep[" + std::to_string(i) + "]: " + *error;
+              else
+                values.push_back((*sweep)[i]);
+            }
+            if (error)
+              n.diags.push_back(diag(n.path, "invalid_param",
+                                     "param " + d.name + ": " + *error));
+            else
+              d.sweep = std::move(values);
+          }
+        }
         if (const auto* data = schema::get(p.data)) {
           if (auto err = check_param_value(d.type, *data))
             n.diags.push_back(
@@ -452,9 +537,15 @@ class Builder {
       }
     }
     for (const auto& p : n.settings.params)
-      if (!p.data)
+      if (!p.data && !p.sweep)
         n.exec_diags.push_back(
             diag(n.path, "missing_param", "param " + p.name + " has no value"));
+    if (const auto size = value_sweep_size(n.settings);
+        size > kMaxValueSweepSize)
+      n.diags.push_back(
+          diag(n.path, "invalid_param",
+               "the value sweep makes " + std::to_string(size) +
+                   " combinations; at most 256 are allowed per trigger"));
   }
 
   void load_catalog(Node& n) {
@@ -572,6 +663,25 @@ class Builder {
           n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
                        {"b", PortKind::FlatBuffer, true, nullptr}};
           break;
+        case Template::Fork: {
+          // Every output always receives the value, unlike a Branch's.
+          n.input_defs = {{"value", false}};
+          std::set<std::string> seen;
+          for (const auto& name : fork_outputs(*def)) {
+            if (!valid_id(name))
+              n.diags.push_back(diag(n.path, "invalid_setting",
+                                     "outputs entries need a valid name"));
+            else if (!seen.insert(name).second)
+              n.diags.push_back(
+                  diag(n.path, "invalid_setting", "duplicate output " + name));
+            else
+              n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
+          }
+          if (n.outputs.empty())
+            n.diags.push_back(
+                diag(n.path, "invalid_setting", "fork needs declared outputs"));
+          break;
+        }
         case Template::Merge:
           n.settings.any_mode = true;
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
@@ -894,6 +1004,8 @@ class Builder {
         Shape shape = Shape::unspecified;
         if (node.kind == Template::Collect)
           shape = Shape::single;
+        else if (node.kind == Template::Input && has_value_sweep(node.settings))
+          shape = Shape::list;
         else if (lists > 0 && (!node.settings.any_mode || lists == connected))
           shape = Shape::list;
         else if (node.kind != Template::Code &&
@@ -912,7 +1024,8 @@ class Builder {
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
-      case Template::Branch: {
+      case Template::Branch:
+      case Template::Fork: {
         const auto* v = n.input("value");
         if (v && v->type)
           for (auto& o : n.outputs)
@@ -1098,7 +1211,7 @@ class Builder {
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
     if (kind != Template::Collect && kind != Template::Branch &&
-        kind != Template::Merge) {
+        kind != Template::Fork && kind != Template::Merge) {
       result.insert(source);
       return;
     }

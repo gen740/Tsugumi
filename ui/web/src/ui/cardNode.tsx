@@ -364,6 +364,7 @@ function portHelp(data: CardNodeData, p: PortData, output: boolean): string {
     if (p.name === 'a') s += L('（condition が true のとき）')
     if (p.name === 'b') s += L('（condition が false のとき）')
   }
+  if (data.kind === 'fork' && output) s += L('（value をそのまま送る）')
   if (p.typeName) s += ` : ${p.typeName}`
   s += p.optional ? L('（省略可）') : L('（必須）')
   if (p.note) s += '\n' + p.note

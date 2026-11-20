@@ -578,7 +578,7 @@ import TsugumiTestSupport
     let g = CardGeometry(d, flow: flow)
     #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
     let edge = flow == .topToBottom ? g.size.width : g.size.height
-    if d.kind == .merge {
+    if d.kind == .merge || d.kind == .fork {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
         // What is drawn: every port is on it, and rounding takes only a little off the wide edge.

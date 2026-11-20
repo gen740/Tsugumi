@@ -129,10 +129,14 @@ let
   self = import (card + "/default.nix") { inherit pkgs params; inputs = inputsFor tsugumi gen up.deps; };
   run = self.run or (throw "a Card needs run");
   executionList = builtins.isList run;
+  # A run list entry { label = "..."; run = ...; } names its implementation.
+  labelOf = r: if builtins.isAttrs r && (r.type or null) != "derivation" then r.label or "" else "";
 in
 {
   inherit executionList;
   implementationCount = if executionList then builtins.length run else 1;
+  implementationLabels = builtins.unsafeDiscardStringContext
+    (builtins.toJSON (if executionList then map labelOf run else [ "" ]));
   manifest = tsugumi.manifestFor remote self;
 }
 )NIX";
@@ -269,6 +273,13 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
   if (const auto* list = schema::get(p.execution_list))
     res.execution_list = *list;
   res.implementation_count = static_cast<uint32_t>(implementations);
+  if (const auto* labels = schema::get(p.implementation_labels))
+    res.implementation_labels = *labels;
+  try {
+    check_implementation_labels(res.implementation_labels, implementations);
+  } catch (const std::exception& e) {
+    throw Failed(FailureKind::nix_failed, e.what(), {{"card", card}});
+  }
   res.built = false;
   return res;
 }
@@ -355,8 +366,13 @@ types::TypeRef NixRunner::params_type(const Node& node) {
 }
 
 std::string NixRunner::params_json(const Node& node, bool nix_only) {
+  return params_json(node.settings.params, nix_only);
+}
+
+std::string NixRunner::params_json(const std::vector<ParamDef>& params,
+                                   bool nix_only) {
   std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> members;
-  for (const auto& p : node.settings.params) {
+  for (const auto& p : params) {
     if (nix_only && !p.nix) continue;
     if (p.data) members.emplace_back(p.name, &*p.data);
   }
@@ -481,6 +497,8 @@ auto CardBuildPlan::implementation(size_t index) const -> CardBuild {
   if (const auto* bash = schema::get(run.bash)) build.bash = *bash;
   if (const auto* worker = schema::get(run.worker)) build.worker = *worker;
   build.implementation_index = static_cast<uint32_t>(index + 1);
+  if (index < implementation_labels.size())
+    build.implementation_label = implementation_labels[index];
   return build;
 }
 
@@ -738,6 +756,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   CardBuildPlan plan;
   plan.evaluation_key = key_text;
   plan.execution_list = res.execution_list;
+  plan.implementation_labels = res.implementation_labels;
   auto& build = plan.common;
   build.preparation_ms =
       std::chrono::duration_cast<std::chrono::milliseconds>(

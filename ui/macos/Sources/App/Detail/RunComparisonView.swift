@@ -46,6 +46,69 @@ struct ComparedRunField: Identifiable {
 
   private static func names<V>(_ a: [String: V], _ b: [String: V]) -> [String] { Set(a.keys).union(b.keys).sorted() }
 
+  /// What names a member of an execution list: its implementation label (a run
+  /// list entry's `label`, an Input sweep's `name=value`), else its number.
+  static func memberName(_ i: Tsugumi_RPC_InvocationSummaryT) -> String {
+    if let label = i.implementationLabel, !label.isEmpty { return label }
+    if let index = i.implementationIndex { return String(localized: "実装 \(index)") }
+    return String(localized: "\(i.invocation ?? 0) 回目")
+  }
+
+  /// Whether an invocation belongs to an execution list whose members can be chosen.
+  static func inBatch(_ i: Tsugumi_RPC_InvocationSummaryT?) -> Bool {
+    guard let i, i.batchActivation != nil else { return false }
+    return !(i.implementationLabel ?? "").isEmpty || (i.batchSize ?? 0) > 1
+  }
+
+  /// Every member of the batch an invocation belongs to, in batch order.
+  static func batchMembers(_ rpc: RPCClient, run: String, summary: Tsugumi_RPC_InvocationSummaryT) async throws -> [Tsugumi_RPC_InvocationSummaryT] {
+    var out: [Tsugumi_RPC_InvocationSummaryT] = []
+    var cursor: String?
+    // A batch has at most 256 members; a loop's earlier batches come first.
+    for _ in 0..<64 {
+      try Task.checkCancellation()
+      let page = try await rpc.invocations(runId: run, card: summary.card.path, cursor: cursor)
+      out += page.records.compactMap { $0 }.filter { $0.batchActivation == summary.batchActivation }
+      cursor = page.nextCursor.flatMap { $0.isEmpty ? nil : $0 }
+      if cursor == nil { break }
+    }
+    return out.sorted { ($0.batchIndex ?? 0) < ($1.batchIndex ?? 0) }
+  }
+
+  struct ComparedMember: Identifiable {
+    let id: String
+    let name: String
+    var left: Tsugumi_RPC_InvocationSummaryT?
+    var right: Tsugumi_RPC_InvocationSummaryT?
+  }
+
+  /// Pairs two batches' members by name, so a moved or added implementation
+  /// does not pair different conditions. A name that occurs several times (once
+  /// per arriving input) pairs by its occurrence.
+  static func pairMembers(_ left: [Tsugumi_RPC_InvocationSummaryT], _ right: [Tsugumi_RPC_InvocationSummaryT]) -> [ComparedMember] {
+    func keyed(_ members: [Tsugumi_RPC_InvocationSummaryT]) -> [(id: String, name: String, member: Tsugumi_RPC_InvocationSummaryT)] {
+      var seen: [String: Int] = [:]
+      let total = Dictionary(members.map { (memberName($0), 1) }, uniquingKeysWith: +)
+      return members.map { m in
+        let name = memberName(m)
+        let n = (seen[name] ?? 0) + 1
+        seen[name] = n
+        return ("\(name)\u{0}\(n)", (total[name] ?? 1) > 1 ? "\(name) (\(n))" : name, m)
+      }
+    }
+    var out: [ComparedMember] = []
+    var index: [String: Int] = [:]
+    for item in keyed(left) {
+      index[item.id] = out.count
+      out.append(ComparedMember(id: item.id, name: item.name, left: item.member))
+    }
+    for item in keyed(right) {
+      if let at = index[item.id] { out[at].right = item.member }
+      else { out.append(ComparedMember(id: item.id, name: item.name, right: item.member)) }
+    }
+    return out
+  }
+
   /// Said for a side whose Card ran but whose invocation record did not arrive:
   /// it is neither "no inputs" nor "removed".
   static var unreadable: String { String(localized: "呼び出しの記録を読み込めませんでした") }
@@ -264,7 +327,7 @@ struct RunComparisonView: View {
             ComparedFieldsView(title: "実行の範囲", values: [RunComparison.scope(run(left), run(right), displayPath: session.displayPath)])
             versionDifference
             if rows.isEmpty { ContentUnavailableView("記録がありません", systemImage: "tray") }
-            ForEach(rows) { ComparedRunCardView(source: source, session: session, row: $0, leftRun: left, rightRun: right) }
+            ForEach(rows) { ComparedRunCardView(source: source, session: session, latest: $0, leftRun: left, rightRun: right) }
           } else { ProgressView() }
         }.padding(12).frame(maxWidth: .infinity, alignment: .leading)
       }
@@ -322,10 +385,18 @@ struct RunComparisonView: View {
 private struct ComparedRunCardView: View {
   var source: EnvironmentHistorySource?
   let session: ProjectSession
-  let row: ComparedRunRow
+  /// Each Card's last invocation. A Card that ran an execution list compares
+  /// one named member at a time: members pair by name, not by position.
+  let latest: ComparedRunRow
   let leftRun: String
   let rightRun: String
   @State private var expanded = true
+  @State private var members: [RunComparison.ComparedMember]?
+  @State private var membersError: String?
+  @State private var member = ""
+  @State private var shown: ComparedRunRow?
+  private var row: ComparedRunRow { shown ?? latest }
+  private var batch: Bool { RunComparison.inBatch(latest.left?.summary) || RunComparison.inBatch(latest.right?.summary) }
   private var a: Tsugumi_RPC_RecordResultT? { row.left?.record }
   private var b: Tsugumi_RPC_RecordResultT? { row.right?.record }
   private var leftDisplay: DisplaySnapshot? { a?.record?.display.flatMap(recordedDisplay) }
@@ -336,6 +407,16 @@ private struct ComparedRunCardView: View {
     GroupBox {
       DisclosureGroup(isExpanded: $expanded) {
         VStack(alignment: .leading, spacing: 10) {
+          if batch {
+            if let membersError { Text(membersError).foregroundStyle(.red) }
+            else if let members {
+              Picker("比較する呼び出し", selection: $member) {
+                ForEach(members) { m in
+                  Text(m.left != nil && m.right != nil ? m.name : String(localized: "\(m.name)（片方の実行のみ）")).tag(m.id)
+                }
+              }.frame(maxWidth: 420)
+            } else { ProgressView().controlSize(.small) }
+          }
           HStack(alignment: .top, spacing: 12) {
             status(row.left).frame(maxWidth: .infinity, alignment: .leading)
             status(row.right).frame(maxWidth: .infinity, alignment: .leading)
@@ -344,7 +425,7 @@ private struct ComparedRunCardView: View {
           RecordedEnvironmentComparison(source: source, session: session,
             left: .init(run: leftRun, id: (row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId ?? ""),
             right: .init(run: rightRun, id: (row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId ?? ""))
-            .id(leftRun + ":" + rightRun + ":" + row.card)
+            .id(leftRun + ":" + rightRun + ":" + row.card + ":\(row.left?.summary.invocation ?? 0):\(row.right?.summary.invocation ?? 0)")
           ComparedFieldsView(title: "パラメータ", values: RunComparison.params(row.left, row.right),
                              unavailable: RunComparison.paramsUnavailable(row.left) || RunComparison.paramsUnavailable(row.right))
           ComparedFieldsView(title: "入力", values: RunComparison.values(false, row.left, row.right),
@@ -369,6 +450,44 @@ private struct ComparedRunCardView: View {
         }
       }
     }
+    .task(id: "\(leftRun)|\(rightRun)|\(latest.card)") { await loadMembers() }
+    .task(id: member) { await loadMember() }
+  }
+
+  private func loadMembers() async {
+    members = nil; membersError = nil; shown = nil
+    guard batch, let rpc = session.rpc else { return }
+    func side(_ run: String, _ card: ComparedRunCard?) async throws -> [Tsugumi_RPC_InvocationSummaryT] {
+      guard let card else { return [] }
+      return RunComparison.inBatch(card.summary) ? try await RunComparison.batchMembers(rpc, run: run, summary: card.summary) : [card.summary]
+    }
+    do {
+      let pairs = RunComparison.pairMembers(try await side(leftRun, latest.left), try await side(rightRun, latest.right))
+      guard !Task.isCancelled else { return }
+      members = pairs
+      // The last member is the one the comparison shows by default.
+      let last = latest.right?.summary ?? latest.left?.summary
+      member = pairs.first { ($0.right ?? $0.left)?.invocation == last?.invocation }?.id ?? pairs.last?.id ?? ""
+    } catch {
+      guard !Task.isCancelled else { return }
+      membersError = String(describing: error)
+    }
+  }
+
+  private func loadMember() async {
+    guard let pair = members?.first(where: { $0.id == member }), let rpc = session.rpc else { return }
+    func load(_ run: String, _ summary: Tsugumi_RPC_InvocationSummaryT?, _ known: ComparedRunCard?) async -> ComparedRunCard? {
+      guard let summary else { return nil }
+      if let known, known.summary.invocation == summary.invocation { return known }
+      var card = ComparedRunCard(summary: summary)
+      do { card.record = try await rpc.record(runId: run, card: summary.card.path, invocation: summary.invocation) }
+      catch { card.error = String(describing: error) }
+      return card
+    }
+    let left = await load(leftRun, pair.left, latest.left)
+    let right = await load(rightRun, pair.right, latest.right)
+    guard !Task.isCancelled else { return }
+    shown = ComparedRunRow(card: latest.card, left: left, right: right)
   }
 
   @ViewBuilder private func retainedDisplay(_ display: DisplaySnapshot?) -> some View {
@@ -396,6 +515,9 @@ private struct ComparedRunCardView: View {
       VStack(alignment: .leading, spacing: 4) {
         Text("\(v.state.label) · #\(v.invocation ?? 0) · \(v.durationMs.map { formatDuration(Double($0) / 1000) } ?? "—")").bold()
         if let mark = runMark(side.record?.run.status) { Text(mark).font(.caption) }
+        if RunComparison.inBatch(v), let index = v.batchIndex, let size = v.batchSize {
+          Text(String(localized: "実行リスト \(index)/\(size)") + " · " + RunComparison.memberName(v)).font(.caption)
+        }
         if let aggregate = side.record?.aggregate { Text("呼び出し \(aggregate.calls ?? 0) · 成功 \(aggregate.succeeded ?? 0) · 失敗 \(aggregate.failed ?? 0)").font(.caption) }
         if let error = side.error ?? v.failure?.diagnostic { Text(error).foregroundStyle(.red) }
         if side.record?.record?.recordIo == false { Text("入出力は記録されていません").foregroundStyle(.secondary) }
