@@ -136,13 +136,14 @@ try {
   assert.equal(session.versionNoteErrors.size, 0)
   assert.equal(session.versionNotes.get('version'), 'Host-owned note')
   const immediateFetch = globalThis.fetch
-  let release!: (response: Response) => void
+  const pending: { release?: (response: Response) => void } = {}
   globalThis.fetch = (url, init) => String(url) === '/api/versions/note'
-    ? new Promise<Response>((resolve) => { release = resolve }) : immediateFetch(url, init)
+    ? new Promise<Response>((resolve) => { pending.release = resolve }) : immediateFetch(url, init)
   const oldRequest = session.loadVersionNote('version')
+  while (!pending.release) await new Promise((resolve) => setTimeout(resolve, 0))
   globalThis.fetch = immediateFetch
   await session.loadVersionNote('version')
-  release(new Response(JSON.stringify({ text: 'Late response for an earlier request' })))
+  pending.release(new Response(JSON.stringify({ text: 'Late response for an earlier request' })))
   await oldRequest
   assert.equal(session.versionNotes.get('version'), 'Host-owned note', 'a late response cannot overwrite a newer one')
 } finally {
