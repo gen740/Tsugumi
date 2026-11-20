@@ -10,8 +10,8 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { cancelChats, resumeChats, chatRoutes, chatStatus, hostReady, hostRequest, observeHost } from './chat'
-import { EnvironmentManager, EnvState } from './environment'
+import { cancelChats, resumeChats, chatRoutes, chatStatus, hostReady, hostRequest } from './chat'
+import { hostEnvironments } from './environment'
 import type { VMHostOptions } from './environment'
 import { pageRpcUpgrade, proxyHostRpc } from './rpcProxy'
 import { L, language } from './i18n'
@@ -87,8 +87,7 @@ const vm: VMHostOptions | undefined = process.env.TSUGUMI_VMHOST ? {
   support: process.env.TSUGUMI_SUPPORT_DIR!,
 } : undefined
 const desktop = !!vm
-const envs = new EnvironmentManager(bins, support, () => origins,
-  (method, fields) => hostRequest(method, fields), (handler) => observeHost(handler), vm)
+const envs = hostEnvironments(bins, support, () => origins, hostRequest, vm)
 
 function listDir(dir: string) {
   const real = fs.realpathSync(dir)
@@ -126,15 +125,6 @@ function showOnPage(project: string): boolean {
   home[0].write(`data: ${JSON.stringify({ type: 'agentOpen', project })}\n\n`)
   return true
 }
-envs.observe((key, state) => broadcast({ type: 'env', key, state: publicState(state) }))
-
-/** What the page may see of an environment (the token goes only to the same-origin UI). */
-function publicState(s: EnvState) {
-  if (s.state !== 'ready') return s
-  return { state: 'ready', endpoint: s.endpoint, token: s.token, projectId: s.projectId, readyFile: s.readyFile,
-    executionScopeUnavailable: s.executionScopeUnavailable }
-}
-
 // ---- Setup -----------------------------------------------------------------------
 
 
@@ -185,14 +175,6 @@ function projectDir(p: unknown): string {
   return String(p)
 }
 
-async function updateExecutionServices(method: string, body: unknown) {
-  const result = await hostRequest(method, body)
-  for (const environment of envs.list()) {
-    if (environment.state.state === 'ready') await envs.start(environment.project)
-  }
-  return result
-}
-
 type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
   'POST /api/host/connect': async () => ({ token: (await hostReady()).user_token }),
@@ -203,8 +185,8 @@ const routes: Record<string, Handler> = {
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
   'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
-  'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),
-  'POST /api/execution-services/remove': (body) => updateExecutionServices('ExecutionServiceRemoveRequest', body),
+  'POST /api/execution-services/register': (body) => hostRequest('ExecutionServicePutRequest', body),
+  'POST /api/execution-services/remove': (body) => hostRequest('ExecutionServiceRemoveRequest', body),
   'GET /api/status': async () => ({
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
@@ -246,13 +228,6 @@ const routes: Record<string, Handler> = {
     cancelChats(dir)
     return { ok: true }
   },
-  'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
-  'POST /api/env/stop': async (b) => {
-    await envs.stop(projectDir(b.path))
-    return { ok: true }
-  },
-  'GET /api/env/list': () => Promise.all(envs.list().map(async (e) => ({ key: e.key, project: e.project,
-    name: (await hostRequest('HostProjectInfoRequest', { path: e.project })).name, state: publicState(e.state) }))),
   'POST /api/page/open': (b) => {
     openPage(b.path ? projectDir(b.path) : undefined)
     return { ok: true }

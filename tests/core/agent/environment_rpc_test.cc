@@ -77,6 +77,15 @@ class EnvironmentFixture : public AgentFixture {
     if (!state) throw std::runtime_error("No environment state");
     return *std::unique_ptr<H::EnvironmentStateT>(state->UnPack());
   }
+  auto ListEnvironments() -> H::EnvironmentListT {
+    const auto reply = Call(*host, H::RequestPayload::EnvironmentListRequest,
+                            [](Builder& b) {
+                              return H::CreateEnvironmentListRequest(b).Union();
+                            });
+    const auto* list = reply.HostValue()->value_as_EnvironmentList();
+    if (!list) throw std::runtime_error("No environment list");
+    return *std::unique_ptr<H::EnvironmentListT>(list->UnPack());
+  }
   auto LaunchCount() -> size_t {
     const auto launches = Read(project / "launches");
     return static_cast<size_t>(
@@ -152,6 +161,19 @@ class EnvironmentFixture : public AgentFixture {
     return failure->code;
   }
 };
+
+TEST_F(EnvironmentFixture, ListsTheEnvironmentsOwnedByHost) {
+  EXPECT_TRUE(ListEnvironments().environments.empty());
+  const auto ready = Environment(H::EnvironmentAction::Start);
+  ASSERT_EQ(ready.phase, H::EnvironmentPhase::Ready);
+  auto listed = ListEnvironments();
+  ASSERT_EQ(listed.environments.size(), 1u);
+  EXPECT_EQ(listed.environments.front()->name, "Environment");
+  EXPECT_EQ(listed.environments.front()->state->key, ready.key);
+  EXPECT_EQ(listed.environments.front()->state->project_id, ready.project_id);
+  Environment(H::EnvironmentAction::Stop);
+  EXPECT_TRUE(ListEnvironments().environments.empty());
+}
 
 // This uses the production service and hello validation. Only Nix evaluation
 // is replaced, so the daemon double cannot hide a readiness protocol mismatch.
