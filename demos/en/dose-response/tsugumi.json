@@ -10,9 +10,6 @@
         "id": "generate"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "fit"
       },
       {
@@ -42,24 +39,14 @@
           "port": "plate"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "fit"
-        },
-        "to": {
           "card": "fit",
           "port": "plate"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "bootstrap"
+          "card": "generate",
+          "port": "plate"
         },
         "to": {
           "card": "bootstrap",
@@ -68,8 +55,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "range"
+          "card": "generate",
+          "port": "plate"
         },
         "to": {
           "card": "range",

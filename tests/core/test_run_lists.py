@@ -208,7 +208,7 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
 
 
 def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, project, tmp_path):
-    """Fork preserves the list, and both Branch outputs keep its shape."""
+    """Direct fan-out and both Branch outputs preserve list shape."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("start", {"template": "trigger"})
     producer(graph, "values", [10, 20])
@@ -216,11 +216,11 @@ def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, pr
     yes = {"bash": "printf '%s' '{\"out\":{\"value\":true}}' > \"$TSUGUMI_OUTPUT\""}
     graph.card("flags", {"language": "bash", "sandbox": False}, outputs=flag,
                manifest={"runs": [yes, yes]})
-    graph.card("fork", {"template": "fork"})
     graph.card("branch", {"template": "branch"})
     graph.card("selected", {"template": "collect", "recordIO": True})
     graph.card("empty", {"template": "collect", "recordIO": True})
-    graph.connect("values", "out", "fork", "in").connect("fork", "out1", "branch", "value")
+    graph.card("original", {"template": "collect", "recordIO": True})
+    graph.connect("values", "out", "branch", "value").connect("values", "out", "original", "in")
     graph.connect("flags", "out", "branch", "condition")
     graph.connect("branch", "a", "selected", "in").connect("branch", "b", "empty", "in")
     graph.save(client)
@@ -234,6 +234,7 @@ def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, pr
     selected = collected(client, tmp_path / "decode", run_id, "selected")
     assert sorted(item["value"] for item in selected) == [10, 10, 20, 20]
     assert collected(client, tmp_path / "decode", run_id, "empty") == []
+    assert sorted(item["value"] for item in collected(client, tmp_path / "decode", run_id, "original")) == [10, 20]
 
 
 def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, project):

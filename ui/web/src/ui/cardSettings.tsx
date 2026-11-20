@@ -725,7 +725,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'fork', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
         } /></Row>
       </Section>}
       {kind !== 'switch' && params.length > 0 && (

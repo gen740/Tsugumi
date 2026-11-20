@@ -137,7 +137,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       value.from_port = json::Text(args, "from_port");
       value.to_card = json::Text(args, "to_card");
       value.to_port = json::Text(args, "to_port");
-      value.fork_id = json::Text(args, "fork_id");
       request.body.Set(std::move(value));
     } else if (call.name == "project_make_subgraph") {
       H::ProjectMakeSubgraphT value;
