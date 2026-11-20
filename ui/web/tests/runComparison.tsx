@@ -337,12 +337,14 @@ for (const name of ['rgb', 'spectrum']) {
   const row = { card: 'score', left: { summary: left[3], record: recorded('left', left[3]) }, right: { summary: right[5], record: recorded('right', right[5]) } }
   let view!: ReturnType<typeof create>
   act(() => { view = create(<ComparedMembers rpc={rpc} left="left" right="right" row={row}>{(shown, choice) => <ComparedCardView row={shown} choice={choice} />}</ComparedMembers>) })
-  await act(async () => { await setImmediate() })
+  // Synchronous act: the bundled async act would queue its work on MessageChannels that keep Node running.
+  await setImmediate(); await setImmediate()
   const select = view.root.findByType('select')
   assert.equal(select.props.value, 'threshold 14\u00002')
   assert.ok(view.root.findAllByType('option').some(o => o.props.children === L('{0}（片方の実行のみ）', 'threshold 12 (1)')))
   assert.deepEqual(reads, [], 'the latest pair reuses the records already read')
-  await act(async () => { select.props.onChange({ target: { value: 'threshold 10\u00001' } }); await setImmediate() })
+  act(() => { select.props.onChange({ target: { value: 'threshold 10\u00001' } }) })
+  await setImmediate(); await setImmediate()
   assert.deepEqual(reads.sort(), ['left#1', 'right#1'])
   const shown = view.root.findByType(ComparedCardView).props.row
   assert.equal(shown.left.summary.invocation, 1n)
