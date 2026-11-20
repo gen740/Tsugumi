@@ -116,6 +116,7 @@ auto Event(std::string_view stored) -> A::EventT {
   A::EventT out;
   out.kind = json::Text(o, "kind");
   out.code = json::Text(o, "code");
+  out.call_id = json::Text(o, "call_id");
   out.text = json::Text(o, "text");
   out.message = json::Text(o, "message");
   out.input_json = json::Text(o, "input");

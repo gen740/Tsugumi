@@ -46,8 +46,9 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
-  /** Hostd chooses how to produce version notes. */
-  versionNoteMode: 'mechanical' | 'agent'
+  /** Domains web search is limited to, and domains it may not use (hostd passes them to the provider). */
+  webSearchAllowedDomains: string[]
+  webSearchBlockedDomains: string[]
   allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
@@ -60,51 +61,55 @@ interface Settings {
 }
 
 // The host keeps presentation snapshots only; persistence and validation are RPC.
-const SHARED_KEYS: Record<string, string> = {
+// hostd decides whether a key is host-wide or belongs to this surface, and
+// guards all of them with one revision.
+const SETTINGS_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
-  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch',
+  webSearchAllowedDomains: 'agent.webSearch.allowedDomains', webSearchBlockedDomains: 'agent.webSearch.blockedDomains', language: 'app.language',
+  trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB',
+  skillFolders: 'agent.skillFolders',
 }
-const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
-const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
-// One settings profile per host, shared with the desktop app: connection,
-// ChatGPT accounts, Skill folders and the guide's progress.
+// One settings profile per host, shared with the desktop app (owner
+// decision): hostd routes each key to host-wide or surface storage, and
+// the surface is the desktop app's.
 const PROFILE = 'desktop'
 const localProfile = () => PROFILE
-const settingsProfile = () => PROFILE
-function settingsProfiles() {
-  const profiles = new Map<string, Record<string, string>>()
-  for (const [profile, keys] of [[PROFILE, SHARED_KEYS], [PROFILE, LOCAL_KEYS], [PROFILE, HOST_KEYS]] as const) {
-    profiles.set(profile, { ...profiles.get(profile), ...keys })
-  }
-  return profiles
-}
+const providerProfile = () => PROFILE
+type SettingsReply = { revision: string; values: { key: string; value_json: string }[] }
+let revision = ''
+let settingsConnection = 0
 let snapshot = {} as Settings
 const settings = (): Settings => snapshot
+function applySettings(reply: SettingsReply) {
+  if (reply.revision < revision) return
+  const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
+  snapshot = Object.fromEntries(Object.entries(SETTINGS_KEYS).map(([name, key]) => [name, values[key]])) as unknown as Settings
+  revision = reply.revision
+}
 async function loadSettings() {
-  const next: Partial<Settings> = {}
-  const revision: Record<string, number> = {}
-  for (const [profile, keys] of settingsProfiles()) {
-    const reply = await core.getSettings(profile)
-    revision[profile] = reply.revision
-    const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
-    for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) Object.assign(next, { [name]: values[key] })
-  }
-  snapshot = next as Settings
+  let connection: number
+  do {
+    connection = settingsConnection
+    const reply = await core.getSettings(localProfile())
+    if (connection === settingsConnection) applySettings(reply)
+  } while (connection !== settingsConnection)
   return { ...snapshot, revision }
 }
-async function patchSettings(change: Partial<Settings>, expected?: Record<string, number>, chatGPTAccount?: string) {
-  for (const [profile, keys] of settingsProfiles()) {
-    const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify(change[name as keyof Settings]) }))
-    if (!changes.length) continue
-    const revision = expected ? expected[profile] : (await core.getSettings(profile)).revision
-    if (revision === undefined) throw ctx.httpError(400, 'Missing settings revision')
-    const chatgpt_account = chatGPTAccount && changes.some(change => change.key === SHARED_KEYS.provider)
-      ? { profile: localProfile(), client_id: chatGPTAccount } : undefined
-    await core.user.call('SettingsUpdateRequest', { profile, revision, changes, chatgpt_account })
-  }
-  return loadSettings()
+async function patchSettings(change: Partial<Settings>, expected?: string, chatGPTAccount?: string) {
+  const changes = Object.entries(SETTINGS_KEYS).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify(change[name as keyof Settings]) }))
+  if (!changes.length) return loadSettings()
+  const connection = settingsConnection
+  const chatgpt_account = chatGPTAccount && changes.some(change => change.key === SETTINGS_KEYS.provider)
+    ? { profile: localProfile(), client_id: chatGPTAccount } : undefined
+  const reply = await core.user.call<SettingsReply>('SettingsUpdateRequest', {
+    profile: localProfile(), revision: expected ?? (await core.getSettings(localProfile())).revision, changes, chatgpt_account,
+  })
+  if (connection !== settingsConnection) return loadSettings()
+  applySettings(reply)
+  return { ...snapshot, revision }
 }
 const PROVIDERS = { anthropic: { name: 'Anthropic' }, openai: { name: 'OpenAI' } } as const
 type KeyedProvider = keyof typeof PROVIDERS
@@ -113,14 +118,14 @@ function keyedProvider(id: unknown): KeyedProvider {
   throw ctx.httpError(400, 'Unknown provider')
 }
 async function keySource(p: KeyedProvider) {
-  return core.keys.source(p, settingsProfile())
+  return core.keys.source(p, providerProfile())
 }
 async function saveKey(p: KeyedProvider, key: string) {
-  await core.keys.save(p, key, settingsProfile())
+  await core.keys.save(p, key, providerProfile())
   return L('hostd に保存しました。キーは Card やプロジェクト・設定・ログには残りません。')
 }
 async function deleteKey(p: KeyedProvider) {
-  await core.keys.delete(p, settingsProfile())
+  await core.keys.delete(p, providerProfile())
   return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
 
@@ -138,7 +143,7 @@ async function chatProvider(): Promise<ProviderConfig> {
 
 /** Presentation labels and opaque service references for the chosen model. */
 async function providerFor(id: ProviderId): Promise<ProviderConfig> {
-  return { ...await providerDisplay(id), profile: settingsProfile(), accountProfile: localProfile() }
+  return { ...await providerDisplay(id), profile: providerProfile(), accountProfile: localProfile() }
 }
 
 async function providerDisplay(id: ProviderId): Promise<ProviderConfig> {
@@ -226,7 +231,7 @@ async function guideTurn() {
 
 /** The host chooses the guide/summary model from settings and its catalog. */
 async function purposeProvider(purpose: 'guide' | 'summary'): Promise<ProviderConfig> {
-  const value = await core.user.call<{ provider: { providerId: ProviderId; model: string } }>('ModelSelectionRequest', { profile: settingsProfile(), purpose })
+  const value = await core.user.call<{ provider: { providerId: ProviderId; model: string } }>('ModelSelectionRequest', { profile: providerProfile(), purpose })
   return { ...await providerFor(value.provider.providerId), model: value.provider.model, purpose }
 }
 
@@ -282,11 +287,21 @@ async function modelCatalogs() {
 
 interface AccessRequest {
   id: string; state: string; conversation_id: string; project_path?: string
-  asked: string[]; groups?: AccessGroup[]
+  asked: string[]; groups?: AccessGroup[]; call_id?: string
 }
 
-const pendingAccess = async () =>
-  (await core.user.call<{ requests: AccessRequest[] }>('AccessListRequest')).requests.filter(r => r.state === 'pending')
+/** Pending requests, read page by page within the RPC frame budget. */
+async function pendingAccess(filter: { conversation_id?: string; project_id?: string } = {}) {
+  const pending: AccessRequest[] = []
+  let cursor = '0'
+  do {
+    const page = await core.user.call<{ requests: AccessRequest[]; next_cursor: string }>(
+      'AccessListRequest', { ...filter, cursor, pending_only: true })
+    pending.push(...page.requests.filter(r => r.state === 'pending'))
+    cursor = page.next_cursor
+  } while (cursor && cursor !== '0')
+  return pending
+}
 
 const answerPermission = (id: string, allow: boolean, selected?: Access[]) =>
   core.user.call('AccessResolveRequest', { request_id: id, allow, selected })
@@ -342,13 +357,23 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   core = c.core ?? new CoreHost(c.envs)
+  revision = ''
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
     if (['SignInChanged', 'ProviderChanged'].includes(event.type) && event.value.profile === localProfile())
       c.broadcast({ type: 'chatgptChanged' })
-    if (event.type === 'SettingsChanged' && event.value.profile === PROFILE) {
-      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }), (error) => console.error(error))
+    const connected = event.type === 'Connected'
+    if (connected) {
+      // A new host connection may be a new store; its revisions start over.
+      settingsConnection++
+      revision = ''
+    }
+    if (connected || event.type === 'SettingsChanged') {
+      const connection = settingsConnection
+      void loadSettings().then(() => {
+        if (connection === settingsConnection) c.broadcast({ type: 'settingsChanged' })
+      }).catch(error => console.error('Host settings refresh failed:', error))
     }
   })
   const initialSettings = loadSettings()
@@ -375,7 +400,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
-    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), profile: settingsProfile(), language: settings().language })
+    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), language: settings().language })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),
@@ -437,7 +462,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const id = String(b.session)
     const a = await core.conversation(id, project)
     const pending = (await pendingAccess()).filter(r => r.conversation_id === id || r.project_path === project)
-    const permissions = pending.map(r => ({ id: r.id, asked: r.asked, groups: r.groups,
+    const permissions = pending.map(r => ({ id: r.id, asked: r.asked, groups: r.groups, call_id: r.call_id,
       from: r.conversation_id !== id && r.conversation_id !== 'guide' ? 'Claude Code' : undefined }))
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {

@@ -55,10 +55,12 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "AUTOINCREMENT, conversation TEXT NOT NULL, json TEXT NOT NULL);"
       "CREATE INDEX IF NOT EXISTS events_conversation ON "
       "events(conversation,seq);"
-      "CREATE TABLE IF NOT EXISTS turns(conversation TEXT NOT NULL, id TEXT "
+      "CREATE TABLE IF NOT EXISTS conversation_turns(conversation TEXT NOT "
+      "NULL, id TEXT "
       "NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, action INTEGER "
-      "NOT NULL, operation TEXT NOT NULL, PRIMARY "
-      "KEY(conversation,id));"
+      "NOT NULL, operation TEXT NOT NULL, frame BLOB, message_index INTEGER, "
+      "approval_digest TEXT, "
+      "PRIMARY KEY(conversation,id));"
       "CREATE TABLE IF NOT EXISTS receipts(conversation TEXT NOT NULL, id "
       "TEXT NOT NULL, digest TEXT NOT NULL, state TEXT NOT NULL, result TEXT "
       "NOT NULL, error INTEGER NOT NULL, project TEXT NOT NULL, operation "
@@ -79,10 +81,6 @@ auto CreateConversationTables(sql::Db& db) -> void {
       "NULL, messages TEXT NOT NULL, result TEXT NOT NULL, state TEXT "
       "NOT NULL, spec TEXT NOT NULL, anchor INTEGER NOT NULL, archive TEXT "
       "NOT NULL, PRIMARY KEY(conversation,parent_call,task))");
-  db.exec(
-      "CREATE TABLE IF NOT EXISTS pending_sends(conversation TEXT "
-      "PRIMARY KEY, turn TEXT NOT NULL, frame BLOB NOT NULL, "
-      "message_index INTEGER NOT NULL)");
 }
 
 }  // namespace
@@ -116,7 +114,9 @@ ConversationStore::ConversationStore(host::StateGate& g, sql::Db& home,
       has_grant(std::move(grant)),
       is_running(std::move(busy)) {
   CreateConversationTables(db);
-  db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
+  db.exec(
+      "UPDATE conversation_turns SET state='interrupted' WHERE "
+      "state='running'");
 }
 ConversationStore::~ConversationStore() = default;
 auto ConversationStore::OpenedPath(const std::string& project)
@@ -179,7 +179,9 @@ auto ConversationStore::ProjectDatabase(const std::string& project, bool create)
         "Restore the matching .tsugumi folder from a backup. To start new "
         "conversations, close the project, move agent.sqlite out of .tsugumi "
         "to preserve it, then reopen the project. No records were deleted.");
-  store->db.exec("UPDATE turns SET state='interrupted' WHERE state='running'");
+  store->db.exec(
+      "UPDATE conversation_turns SET state='interrupted' WHERE "
+      "state='running'");
   auto* result = &store->db;
   project_stores.emplace(project, std::move(store));
   return result;
@@ -305,7 +307,7 @@ auto ConversationStore::RememberResource(const std::string& id,
 
 auto ConversationStore::AuthorizeHistory(const std::string& id) -> void {
   for (const auto& resource : Resources(id))
-    if (!has_grant(resource, id, Tsugumi::Service::Access::Read))
+    if (!has_grant(resource, Tsugumi::Service::Access::Read))
       throw Failure("permission_denied",
                     "Historical content belongs to a resource whose "
                     "permission was revoked");
@@ -421,10 +423,10 @@ auto ConversationStore::ConversationData(const Conversation& c)
                                    {"isError", q.i64(2) ? "true" : "false"},
                                    {"state", json::Quote(q.text(3))}}));
   auto approvals = db.prepare(
-      "SELECT o.call,o.preview,a.state FROM operation_approvals o "
-      "JOIN access_requests a ON a.id=o.request WHERE o.conversation=? ORDER "
-      "BY o.rowid");
-  approvals.bind(1, c.id);
+      "SELECT call,reason,state FROM permission_requests WHERE conversation=? "
+      "AND access=? ORDER BY rowid");
+  approvals.bind(1, c.id).bind(
+      2, static_cast<int>(Tsugumi::Service::Access::CardPermissions));
   while (approvals.step()) {
     auto receipt = ConversationDatabase(c.id).prepare(
         "SELECT result,error FROM receipts WHERE conversation=? AND id=?");
@@ -554,12 +556,8 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   // Remove conversation prompts; project grants outlive conversations.
   {
     sql::Transaction tx(db);
-    auto prompts = db.prepare(
-        "DELETE FROM access_prompt_items WHERE request IN "
-        "(SELECT id FROM access_requests WHERE conversation=?)");
-    prompts.bind(1, id).run();
-    for (const auto* table : {"providers", "skill_catalogs",
-                              "operation_approvals", "access_requests"}) {
+    for (const auto* table :
+         {"providers", "skill_catalogs", "permission_requests"}) {
       auto q = db.prepare(std::string("DELETE FROM ") + table +
                           " WHERE conversation=?");
       q.bind(1, id).run();
@@ -569,9 +567,9 @@ auto ConversationStore::Delete(const std::string& id) -> void {
   {
     sql::Transaction tx(store);
     for (const auto* table :
-         {"events", "receipts", "turns", "model_bindings", "archives", "usage",
-          "conversation_resources", "helpers", "helper_delegations",
-          "pending_sends"}) {
+         {"events", "receipts", "conversation_turns", "model_bindings",
+          "archives", "usage", "conversation_resources", "helpers",
+          "helper_delegations"}) {
       auto q = store.prepare(std::string("DELETE FROM ") + table +
                              " WHERE conversation=?");
       q.bind(1, id).run();

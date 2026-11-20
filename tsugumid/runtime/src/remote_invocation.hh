@@ -20,7 +20,7 @@ auto stage_remote_archive(const RemoteJobClient& client,
                           const std::string& instance,
                           const std::string& job_id,
                           const std::filesystem::path& archive,
-                          const std::atomic<bool>& cancel,
+                          std::stop_token cancel,
                           const TransferProgress& progress = {}) -> std::string;
 
 auto stage_remote_invocation(
@@ -36,7 +36,7 @@ auto import_remote_result(
     const std::filesystem::path& directory,
     const std::filesystem::path& module_cache,
     const std::vector<types::PortType>& outputs,
-    const WorkerProc::DisplaySink& display, const std::atomic<bool>& stop,
+    const WorkerProc::DisplaySink& display, std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult;

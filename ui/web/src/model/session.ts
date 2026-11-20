@@ -440,11 +440,22 @@ export class ProjectSession extends Observable {
   // Runs
   private runProvenance = new Map<string, R.RunStatusT>()
   private loadingProvenance = new Set<string>()
+  private stopRunId?: string
+  stopError?: string
+  get stopRequested() { return this.stopRunId !== undefined }
+  get canStopRun() {
+    return this.runActive && !this.stopRequested && this.runStatus?.state !== D.RunState.cancelling
+  }
   private _runStatus?: R.RunStatusT
   get runStatus() { return this._runStatus }
   set runStatus(status: R.RunStatusT | undefined) {
+    const previousId = this.currentRunId
     this._runStatus = status
     if (status?.runId) this.runProvenance.set(s(status.runId), status)
+    if (previousId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
+      this.stopError = undefined
+    if (this.stopRunId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
+      this.stopRunId = undefined
   }
   markForRun(runId: string) { return runMark(this.runProvenance.get(runId)) }
   cardStates = new Map<CardKey, CardRunState>()
@@ -1270,11 +1281,21 @@ export class ProjectSession extends Observable {
 
   async cancelRun() {
     const id = this.currentRunId
-    if (!this.client || !id) return
+    if (!id || !this.canStopRun) return
+    this.stopRunId = id
+    this.stopError = undefined
+    this.changed()
     try {
-      this.runStatus = await this.client.cancel(id)
-      this.changed()
-    } catch {}
+      if (!this.client) throw new RPCError('disconnected', L('接続していません'))
+      const status = await this.client.cancel(id)
+      if (this.stopRunId !== id || sOpt(status.runId) !== id) return
+      this.runStatus = status
+    } catch (error) {
+      if (this.stopRunId !== id) return
+      this.stopRunId = undefined
+      this.stopError = L('停止を要求できませんでした（{0}）', errorText(error))
+    }
+    this.changed()
   }
 
   // ---- Document helpers ------------------------------------------------------------
@@ -2211,31 +2232,13 @@ export class ProjectSession extends Observable {
     } catch {}
   }
 
-  versionNoteMode: 'mechanical' | 'agent' = 'mechanical'
-
-  async loadVersionNoteMode() {
-    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings')
-    this.versionNoteMode = v.versionNoteMode
-    this.changed()
-  }
-
-  async setVersionNoteMode(mode: 'mechanical' | 'agent') {
-    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings', { versionNoteMode: mode })
-    this.versionNoteMode = v.versionNoteMode
-    this.versionNotes.clear()
-    this.versionNoteRequests.clear()
-    this.versionNoteBusy.clear()
-    this.versionNoteErrors.clear()
-    this.changed()
-  }
-
-  /** Ask hostd for the displayed note; it owns policy, generation and storage. */
   async loadVersionComments(commit: string) {
     if (!this.projectId || this.versionComments.has(commit)) return
     this.versionComments.set(commit, await this.projectHost.comments(this.projectId, commit))
     this.changed()
   }
 
+  /** Read a version's change record from hostd; no model is called. */
   async loadVersionNote(commit: string) {
     if (!this.client) return
     const request = uuid()

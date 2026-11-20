@@ -98,7 +98,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
-    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language)
+    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.language)
     case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
@@ -110,7 +110,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [])
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
-    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0),
+    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, v.revision ?? '',
       (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)),
       v.chatgpt_account ? new ExpectedAccountT(v.chatgpt_account.profile, v.chatgpt_account.client_id) : null)
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove)
@@ -161,7 +161,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AccessRequest': return new AAccessRequest(v.project_id, v.conversation_id, enumValue(Access, v.access), v.reason)
     case 'AccessResolveRequest': return new AAccessResolveRequest(v.request_id, v.allow, v.selected ?? [])
     case 'AccessRevokeRequest': return new AAccessRevokeRequest(v.grant_id)
-    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id)
+    case 'AccessListRequest': return new AAccessListRequest(v.conversation_id, v.request_id, v.project_id, v.pending_only ?? false, BigInt(v.cursor ?? 0))
     case 'ConversationSummarizeRequest': return new AConversationSummarizeRequest(v.conversation_id, provider(v.provider))
   }
   throw new Error(`Unknown ${host ? 'Host' : 'Agent'} request: ${method}`)
@@ -199,11 +199,12 @@ function view(value: any): any {
   for (const [key, v] of Object.entries(value)) {
     const name = key === 'clientId' && 'signedIn' in value ? 'clientId' : names[key] ?? key
     if (v === null || v === undefined) {
-      if (['title', 'text', 'projectId', 'conversationId', 'reason', 'state'].includes(key)) out[name] = ''
+      if (['title', 'text', 'projectId', 'conversationId', 'state'].includes(key)) out[name] = ''
       if (key === 'summary' || key === 'resultJson' && 'callId' in value) out[name] = null
       continue
     }
     if (key === 'resultJson' && 'callId' in value) { out[name] = JSON.parse(String(v)); continue }
+    if (key === 'nextCursor') { out.next_cursor = String(v); continue }
     if (key === 'grade') { out[name] = String(v); continue }
     if (key === 'access') { out[name] = Access[v as number]; continue }
     out[name] = ['seq', 'eventSeq', 'nextSeq'].includes(key) ? v : ['contentJson', 'providerContentJson', 'inputSchemaJson'].includes(key) ? JSON.parse(String(v)) : view(v)

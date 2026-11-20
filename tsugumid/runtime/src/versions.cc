@@ -319,7 +319,7 @@ auto compare_comments(git_repository* repo, git_tree* before, git_tree* after)
                            comments::of(comment_files(repo, after)));
 }
 
-auto summary_reads(const std::string& path) -> bool {
+auto diff_reads(const std::string& path) -> bool {
   if (path == "tsugumi.json")
     return true;  // layout.json is where things sit, not what they do
   std::vector<std::string> parts;
@@ -1164,7 +1164,7 @@ auto Versions::diff(const std::string& commit, const std::string& from)
     const auto* delta = git_diff_get_delta(changes.get(), i);
     const char* path =
         delta->new_file.path ? delta->new_file.path : delta->old_file.path;
-    if (!path || !summary_reads(path)) continue;
+    if (!path || !diff_reads(path)) continue;
     Patch patch;
     check(git_patch_from_diff(patch.out(), changes.get(), i), "file patch");
     if (!patch) continue;
@@ -1204,33 +1204,6 @@ auto Versions::comment_changes(const std::string& commit)
   check(git_commit_tree(mine.out(), target.get()), "tree");
   parent_tree(target.get(), theirs);
   return compare_comments(repo.get(), theirs.get(), mine.get());
-}
-
-auto Versions::summary(const std::string& commit, bool english,
-                       const std::optional<std::string>& text) -> std::string {
-  std::lock_guard lock(mu_);
-  Repo repo;
-  if (!open(repo, root_))
-    throw Failed(FailureKind::not_found, "Project has no version repository");
-  Commit target;
-  lookup_version(repo.get(), commit, target);
-  const auto* oid = git_commit_id(target.get());
-  const auto* ref =
-      english ? "refs/notes/tsugumi-summary-en" : "refs/notes/tsugumi-summary-ja";
-  if (text) {
-    Sig sig;
-    signature(sig, repo.get());
-    git_oid result;
-    check(git_note_create(&result, repo.get(), ref, sig.get(), sig.get(), oid,
-                          text->c_str(), 1),
-          "store version summary");
-    return *text;
-  }
-  Note note;
-  const auto status = git_note_read(note.out(), repo.get(), ref, oid);
-  if (status == GIT_ENOTFOUND) return "";
-  check(status, "read version summary");
-  return git_note_message(note.get());
 }
 
 }  // namespace tsugumi

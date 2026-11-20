@@ -64,6 +64,10 @@ auto Snapshot(const ProviderConfig& config, std::string_view system,
                         std::to_string(static_cast<int>(config.api)) + "\n" +
                         std::to_string(config.web_search) + "\n" +
                         std::string(system);
+  for (const auto& domain : config.search_allowed_domains)
+    request += "\nallow " + domain;
+  for (const auto& domain : config.search_blocked_domains)
+    request += "\nblock " + domain;
   for (const auto& tool : tools)
     request +=
         "\n" + tool.name + "\n" + tool.description + "\n" + tool.input_schema;
@@ -693,14 +697,21 @@ auto Runtime::Compact(const ProviderConfig& config, std::string_view system,
   if (reply.stop_reason == "max_tokens" || reply.stop_reason == "tool_use")
     throw ProviderError("model did not complete the conversation summary");
   std::string text;
+  std::vector<ContentBlock> searches;
   for (const auto& block : reply.message.content)
-    if (block.type == "text") text += block.text;
+    if (block.type == "text")
+      text += block.text;
+    else if (block.type == "web_search")
+      searches.push_back(block);
   if (text.empty())
     throw ProviderError("model returned an empty conversation summary");
   std::vector<Message> compacted;
   compacted.push_back(TextMessage(
       "user", "Summary of the earlier conversation:\n" + text, resources));
   compacted.back().context_summary = true;
+  // Searches made while summarizing stay in the conversation's record.
+  compacted.back().content.insert(compacted.back().content.end(),
+                                  searches.begin(), searches.end());
   compacted.insert(compacted.end(),
                    messages.begin() + static_cast<std::ptrdiff_t>(cut),
                    messages.end());

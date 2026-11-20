@@ -457,10 +457,10 @@ public actor CoreHostClient {
     return result.comments.compactMap { $0 }
   }
 
-  /// hostd chooses the note mode, the model and its key.
+  /// The version's change record, rendered by hostd in `language`.
   public func versionNote(project: String, commit: String, language: String) async throws -> String {
     let request = Tsugumi_Host_VersionNoteRequestT(); request.projectId = project; request.commit = commit
-    request.profile = "desktop"; request.language = language
+    request.language = language
     let result: Tsugumi_Service_TextResultT = try await hostCall(.versionnoterequest, request)
     return result.text ?? ""
   }

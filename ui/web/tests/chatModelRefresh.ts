@@ -13,7 +13,7 @@ const originalFetch = globalThis.fetch, originalInterval = globalThis.setInterva
 let intervals = 0, reads = 0
 let selected = 'gpt-6.1-sol', accepted: string | undefined
 const provider = () => ({ name: 'ChatGPT', model: accepted ?? selected, api: 'openAIResponses', plan: true, remote: true, modelNames: {} })
-const settings = () => ({ provider: 'chatgpt', chatGPTModel: selected, chatProvider: provider(), revision: { desktop: 1 } })
+const settings = () => ({ provider: 'chatgpt', chatGPTModel: selected, chatProvider: provider(), revision: 'host:1' })
 const flush = async () => { for (let i = 0; i < 40; i++) await Promise.resolve() }
 globalThis.setInterval = ((...args: Parameters<typeof setInterval>) => { intervals++; return originalInterval(...args) }) as typeof setInterval
 globalThis.fetch = (async (url, init) => {

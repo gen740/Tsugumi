@@ -157,7 +157,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
       request.body.Set(std::move(value));
     }
     const auto authorization =
-        boundary ? boundary->authorization() : std::string{};
+        boundary ? boundary->authorization() : std::nullopt;
     std::optional<host::AgentExclude> policy;
     HelperScope::Reader read;
     auto use_inspection = [&](const host::SaveBase& base) {
@@ -184,7 +184,7 @@ auto Tools::EditProjectTool(const std::string& conversation,
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
       {
         std::lock_guard lock(mutex);
-        if (boundary) RequireHelperPermission(conversation, *boundary);
+        if (boundary) RequireHelperPermission(*boundary);
       }
       use_inspection(base);
       if (read) boundary->CheckCurrentSave(plan, read);

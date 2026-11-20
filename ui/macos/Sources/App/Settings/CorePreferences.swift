@@ -10,7 +10,7 @@ import TsugumiRPC
 final class CorePreferences {
   static let shared = CorePreferences()
   private var values: [String: Any] = [:]
-  private var revision: UInt64?
+  private var revision: String?
   private var modelValues: [String: Any] = [:]
   private(set) var summarySelection: Tsugumi_Service_ProviderSelectionT?
   private var editGeneration = 0
@@ -19,10 +19,18 @@ final class CorePreferences {
   init() {
     Task { [weak self] in
       _ = await CoreHostClient.shared.observeHost { [weak self] event in
-        guard event["profile"] as? String == "desktop" else { return }
-        if event["type"] as? String == "SettingsChanged" {
-          Task { @MainActor [weak self] in await self?.reload() }
-        } else if event["type"] as? String == "ProviderChanged" {
+        let type = event["type"] as? String
+        if type == "Connected" || type == "SettingsChanged" {
+          Task { @MainActor [weak self] in
+            guard let self else { return }
+            if type == "Connected" {
+              self.editGeneration += 1
+              self.revision = nil
+              self.summarySelection = nil
+            }
+            await self.reload()
+          }
+        } else if event["type"] as? String == "ProviderChanged", event["profile"] as? String == "desktop" {
           Task { @MainActor [weak self] in
             await self?.refreshProviderAvailability()
             self?.summarySelection = try? await CoreHostClient.shared.modelSelection("summary")
@@ -37,12 +45,14 @@ final class CorePreferences {
     await loadSnapshot()
   }
   private func loadSnapshot() async {
+    let generation = editGeneration
     do {
       let value = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      guard generation == editGeneration else { return await loadSnapshot() }
       let firstSnapshot = revision == nil
       let previousFolders = stringArray(forKey: "agent.trustedFolders") ?? []
-      let nextRevision = (value["revision"] as? NSNumber)?.uint64Value ?? 0
-      if nextRevision == revision { return }
+      let nextRevision = value["revision"] as? String ?? ""
+      if let revision, nextRevision <= revision { return }
       revision = nextRevision
       values = Dictionary(uniqueKeysWithValues: (value["values"] as? [[String: String]] ?? []).compactMap { item in
         guard let key = item["key"], let raw = item["value_json"], let data = raw.data(using: .utf8),
@@ -86,7 +96,7 @@ final class CorePreferences {
     await loadSnapshot()
   }
 
-  private func writeSetting(_ key: String, json: String, revision: UInt64,
+  private func writeSetting(_ key: String, json: String, revision: String,
                             account: Tsugumi_Host_ExpectedAccountT? = nil) async throws {
     let change = Tsugumi_Host_SettingT()
     change.key = key
@@ -110,9 +120,13 @@ final class CorePreferences {
       await previous?.value
       guard generation == editGeneration else { return }
       do {
-        try await writeSetting(key, json: raw, revision: revision ?? 0)
+        try await writeSetting(key, json: raw, revision: revision ?? "")
         error = nil
-      } catch { editGeneration += 1; self.error = String(describing: error) }
+      } catch {
+        editGeneration += 1
+        revision = nil
+        self.error = String(describing: error)
+      }
       await loadSnapshot()
     }
   }

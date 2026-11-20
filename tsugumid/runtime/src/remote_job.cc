@@ -16,7 +16,6 @@
 #include <array>
 #include <cctype>
 #include <charconv>
-#include <chrono>
 #include <cstdlib>
 #include <cstring>
 #include <limits>
@@ -30,41 +29,40 @@ namespace tsugumi {
 namespace {
 
 namespace R = Tsugumi::RemoteWorker;
-using namespace std::chrono_literals;
-constexpr auto kStopCheckInterval = 100ms;
-
-struct BrokerIo {
-  const std::atomic<bool>& stopped;
-  const std::atomic<bool>* cancel;
-  bool upload;
-
-  auto check() const -> void {
-    if (stopped.load())
-      throw BrokerDisconnected("execution broker stopped for shutdown");
-    if (cancel && cancel->load()) {
-      if (upload)
-        throw Failed(FailureKind::cancelled, "remote upload cancelled");
-      throw BrokerDisconnected("remote download paused for shutdown");
-    }
-  }
-
-  auto wait(int fd, short events) const -> void {
-    for (;;) {
-      check();
-      pollfd ready{fd, events, 0};
-      const int n =
-          ::poll(&ready, 1, static_cast<int>(kStopCheckInterval.count()));
-      if (n > 0) return;
-      if (n < 0 && errno != EINTR)
-        throw BrokerDisconnected("execution broker socket poll failed");
-    }
-  }
-};
-
 struct Connection {
   int fd;
   ~Connection() {
     if (fd >= 0) ::close(fd);
+  }
+};
+
+auto check_broker_stop(std::stop_token stopped, std::stop_token cancel,
+                       bool upload) -> void {
+  if (stopped.stop_requested())
+    throw BrokerDisconnected("execution broker stopped for shutdown");
+  if (cancel.stop_requested()) {
+    if (upload)
+      throw Failed(FailureKind::cancelled, "remote upload cancelled");
+    throw BrokerDisconnected("execution broker request interrupted");
+  }
+}
+
+struct BrokerIo {
+  std::stop_token stopped, cancel;
+  int wake;
+  bool upload;
+
+  auto check() const -> void { check_broker_stop(stopped, cancel, upload); }
+
+  auto wait(int fd, short events) const -> void {
+    pollfd ready[]{{fd, events, 0}, {wake, POLLIN, 0}};
+    int n;
+    do {
+      n = ::poll(ready, 2, -1);
+    } while (n < 0 && errno == EINTR);
+    check();
+    if (n < 0)
+      throw BrokerDisconnected("execution broker socket poll failed");
   }
 };
 
@@ -215,12 +213,29 @@ RemoteJobClient::RemoteJobClient()
 RemoteJobClient::~RemoteJobClient() { stop(); }
 
 auto RemoteJobClient::request(R::RequestT q,
-                              const std::atomic<bool>* cancel) const
+                              std::stop_token cancel) const
     -> R::ReplyT {
   q.core_life_id = core_life_id_;
   const bool upload = q.body.type == R::RequestBody::PutBlobRequest;
-  const BrokerIo io{stopped_, cancel, upload};
-  Connection socket{connect_broker(endpoint_, !capability_file_.empty(), io)};
+  int wake[2];
+  if (::pipe(wake) < 0)
+    throw BrokerDisconnected("cannot open execution broker wake pipe");
+  Connection reader{wake[0]}, writer{wake[1]};
+  if (::fcntl(reader.fd, F_SETFD, FD_CLOEXEC) < 0 ||
+      ::fcntl(writer.fd, F_SETFD, FD_CLOEXEC) < 0)
+    throw BrokerDisconnected("cannot configure execution broker wake pipe");
+  const BrokerIo io{stopped_.get_token(), cancel, reader.fd, upload};
+  const auto wake_io = [&] {
+    while (::write(writer.fd, "x", 1) < 0 && errno == EINTR) {}
+  };
+  std::stop_callback shutdown(io.stopped, wake_io);
+  std::stop_callback interrupt(io.cancel, wake_io);
+  auto endpoint = endpoint_;
+  if (q.body.AsCancelRequest()) {
+    if (endpoint.starts_with("unix:")) endpoint += ".c";
+    if (endpoint == "vsock:1027") endpoint = "vsock:1028";
+  }
+  Connection socket{connect_broker(endpoint, !capability_file_.empty(), io)};
   auto capability = fs::read_file(capability_file_);
   if (!capability || capability->empty() || capability->size() > 256)
     throw BrokerDisconnected("cannot read execution broker capability");
@@ -236,7 +251,6 @@ auto RemoteJobClient::request(R::RequestT q,
   trace::Link link;
   trace::Observe(link, "project core", "hostd execution broker", true, bytes,
                  &trace::kFlatBufferCodec);
-  ::shutdown(socket.fd, SHUT_WR);
   std::string prefix(4, '\0');
   read_exact(socket.fd, prefix.data(), prefix.size(), io);
   std::string response(workerd::frame_length(prefix), '\0');
@@ -261,9 +275,9 @@ auto RemoteJobClient::request(R::RequestT q,
   }
   return std::move(*reply);
 }
-auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
+auto RemoteJobClient::catalog(std::stop_token stop) const -> std::vector<RemoteTarget> {
   if (!enabled()) return {};
-  auto reply = request(command(R::CatalogRequestT{}));
+  auto reply = request(command(R::CatalogRequestT{}), stop);
   const auto* catalog = reply.body.AsCatalog();
   if (!catalog) throw BrokerDisconnected("expected execution broker catalog");
   std::vector<RemoteTarget> targets;
@@ -276,13 +290,18 @@ auto RemoteJobClient::catalog() const -> std::vector<RemoteTarget> {
   return targets;
 }
 auto RemoteJobClient::probe(std::string_view service,
-                            std::string_view registered_server) const
+                            std::string_view registered_server,
+                            std::stop_token stop) const
     -> RemoteProbe {
   R::ReplyT reply;
   try {
-    reply = request(command(R::ProbeRequestT{}, service));
+    reply = request(command(R::ProbeRequestT{}, service), stop);
   } catch (const BrokerRequestRejected& error) {
     throw Failed(FailureKind::unsupported, error.what());
+  } catch (const BrokerDisconnected&) {
+    if (stop.stop_requested())
+      throw Failed(FailureKind::cancelled, "worker selection cancelled");
+    throw;
   }
   const auto& c = *reply.body.AsCapabilities();
   // The catalog may have been replaced before the broker received this probe.
@@ -297,14 +316,14 @@ auto RemoteJobClient::put_blob(std::string_view service,
                                std::string_view instance, std::string_view job,
                                std::string_view digest, uint64_t size,
                                std::istream& contents,
-                               const std::atomic<bool>* cancel,
+                               std::stop_token cancel,
                                const TransferProgress& progress) const -> void {
   if (size > workerd::kMaxBlob)
     throw std::runtime_error("upload exceeds 64 GiB");
   uint64_t offset = 0;
   if (progress) progress(0, size);
   do {
-    BrokerIo{stopped_, cancel, true}.check();
+    check_broker_stop(stopped_.get_token(), cancel, true);
     R::PutBlobRequestT chunk;
     chunk.digest = digest;
     chunk.total = size;
@@ -328,12 +347,12 @@ auto RemoteJobClient::get_blob(std::string_view service,
                                std::string_view digest,
                                std::ostream& destination, uint64_t limit,
                                std::optional<uint64_t> expected_size,
-                               const std::atomic<bool>* stop,
+                               std::stop_token stop,
                                const TransferProgress& progress) const -> void {
   crypto::Sha256 hash;
   uint64_t offset = 0, total = 0;
   do {
-    BrokerIo{stopped_, stop, false}.check();
+    check_broker_stop(stopped_.get_token(), stop, false);
     R::GetBlobRequestT chunk;
     chunk.digest = digest;
     chunk.offset = offset;
@@ -364,16 +383,16 @@ auto RemoteJobClient::get_blob(std::string_view service,
 }
 auto RemoteJobClient::submit(std::string_view service,
                              std::string_view instance, std::string_view job,
-                             std::string_view spec) const -> RemoteJobState {
+                             std::string_view spec, std::stop_token stop) const -> RemoteJobState {
   R::SubmitRequestT body;
   body.spec.assign(spec.begin(), spec.end());
-  return job_state(request(command(std::move(body), service, instance, job)));
+  return job_state(request(command(std::move(body), service, instance, job), stop));
 }
 auto RemoteJobClient::status(std::string_view service,
                              std::string_view instance,
-                             std::string_view job) const -> RemoteJobState {
+                             std::string_view job, std::stop_token stop) const -> RemoteJobState {
   return job_state(
-      request(command(R::StatusRequestT{}, service, instance, job)));
+      request(command(R::StatusRequestT{}, service, instance, job), stop));
 }
 auto RemoteJobClient::cancel(std::string_view service,
                              std::string_view instance, std::string_view job,

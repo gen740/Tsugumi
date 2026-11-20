@@ -33,13 +33,12 @@ auto SkillNameKey(std::string_view name) -> std::string;
 // Built-in names resolve by project > registered folders > built-in.
 // Untrusted project entries remain available only for explicit selection.
 // Metadata does not constitute a Read grant.
-auto ProjectTrusted(sql::Db& db, const std::filesystem::path& path,
-                    const std::vector<std::string>& folders = {}) -> bool;
-auto ProjectTrust(sql::Db& db, const std::filesystem::path& path,
-                  const std::vector<std::string>& folders = {})
-    -> Tsugumi::Host::ProjectTrustDecision;
-auto TrustedParent(const std::filesystem::path& path,
-                   const std::vector<std::string>& folders) -> std::string;
+auto ProjectTrusted(sql::Db& db, const std::filesystem::path& path) -> bool;
+auto ProjectTrust(sql::Db& db, const std::filesystem::path& path)
+    -> Tsugumi::Host::ProjectTrustT;
+auto TrustedFolders(sql::Db& db) -> std::vector<std::string>;
+auto SetTrustedFolders(sql::Db& db, const std::vector<std::string>& folders)
+    -> void;
 auto SetProjectTrust(sql::Db& db, const std::filesystem::path& path,
                      Tsugumi::Host::ProjectTrustDecision decision) -> void;
 auto ListSkills(const std::filesystem::path& project,

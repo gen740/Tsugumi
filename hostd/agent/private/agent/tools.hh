@@ -37,18 +37,10 @@ struct Tools {
   struct Dependencies {
     std::function<std::string(std::string)> scrub;
     std::function<void(const std::string&, const std::string&)> event;
-    std::function<std::vector<std::string>(
-        const std::string&, const std::string&, const ToolCall&,
-        const std::string&, const json::Members&, bool, std::stop_token,
-        const std::vector<std::string>&)>
-        approve_operation;
     std::function<std::string(const std::string&, const std::string&, size_t,
                               const std::string&, std::stop_token,
-                              const std::string&)>
+                              const std::optional<host::TurnAuthorization>&)>
         run_helper;
-    std::function<std::string(const std::string&, const std::string&,
-                              const std::string&, size_t)>
-        helper_result;
   };
   Tools(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
@@ -94,10 +86,19 @@ struct Tools {
   auto RawProjectCall(const std::string& project, const std::string& name,
                       const std::string& arguments, std::stop_token stop = {},
                       std::string* raw = nullptr) -> std::string;
-  auto HelperReader(const std::string& conversation, std::stop_token stop,
-                    const std::string& revision = {},
-                    const std::string& authorization = {},
-                    const host::SaveBase* inspected = nullptr)
+  auto ApproveOperation(const std::string& project,
+                        const std::string& conversation, const ToolCall& call,
+                        const std::string& digest, const json::Members& args,
+                        bool wait, std::stop_token stop,
+                        const std::vector<std::string>& permissions)
+      -> std::vector<std::string>;
+  auto ToolResources(const std::string& conversation,
+                     const HelperScope* boundary) -> std::vector<std::string>;
+  auto HelperReader(
+      const std::string& conversation, std::stop_token stop,
+      const std::string& revision = {},
+      const std::optional<host::TurnAuthorization>& authorization = {},
+      const host::SaveBase* inspected = nullptr)
       -> HelperScope::Reader;
   auto ScopedResult(HelperScope& scope, const ToolCall& call, ToolResult result,
                     const HelperScope::Reader& read) -> ToolResult;
@@ -109,8 +110,7 @@ struct Tools {
                     const std::string& scope = {}) -> std::string;
   auto Hooks(const std::string& id, bool helper = false,
              std::shared_ptr<HelperScope> boundary = {}) -> RuntimeHooks;
-  auto RequireHelperPermission(const std::string& conversation,
-                               const HelperScope& boundary) -> void;
+  auto RequireHelperPermission(const HelperScope& boundary) -> void;
   auto Handle(const RequestIn& request, bool human,
               std::unique_lock<std::recursive_mutex>& lock) -> std::string;
 

@@ -63,7 +63,6 @@ TEST_F(VersionNote,
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).record_json, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  EXPECT_TRUE(versions.summary(params, true).empty());
   Put("definitions/a/_card.json",
       "{ \"params\": [ { \"data\": \"PRIVATE_SENTINEL\", \"name\": \"secret\" "
       "} ], \"language\": \"python\" "
@@ -82,9 +81,6 @@ TEST_F(VersionNote,
   EXPECT_TRUE(versions.diff(change).truncated);
   ExpectChanges(versions.note(change).record_json, {"c"}, {"b"},
                 {{"a", {"definition", "source", "wiring"}}});
-  versions.summary(change, true, "An Agent note");
-  EXPECT_EQ(versions.summary(change, true), "An Agent note");
-  EXPECT_TRUE(versions.summary(change, false).empty());
   EXPECT_EQ(host::ChangeText(
                 version_facts::changes(versions.note(change).record_json), true)
                 .find("SENTINEL"),

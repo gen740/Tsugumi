@@ -87,7 +87,7 @@ export class CoreHost {
   /** Opens the Host connection (its events start with it). */
   async connectHost() { await this.user.call('HostActivityRequest') }
 
-  async getSettings(profile: string): Promise<{ revision: number; values: { key: string; value_json: string }[] }> {
+  async getSettings(profile: string): Promise<{ revision: string; values: { key: string; value_json: string }[] }> {
     return this.user.call('SettingsGetRequest', { profile })
   }
 

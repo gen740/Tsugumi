@@ -71,7 +71,7 @@ public enum AgentEvent: Sendable {
 /// tools, persistence and authorization run behind the Agent socket.
 public actor Agent {
   public enum Role: String, Sendable { case worker, guide }
-  public typealias Approver = @Sendable ([String], [Tsugumi_Agent_AccessGroupT]) async -> Set<String>
+  public typealias Approver = @Sendable ([String], [Tsugumi_Agent_AccessGroupT], String?) async -> Set<String>
   public let id: String
   public private(set) var conversation = Conversation()
   private let transport: ToolTransport
@@ -235,13 +235,18 @@ public actor Agent {
         try await AgentObservation.read { try await self.refresh() }
         try Task.checkCancellation()
         events(.modelAccepted)
-        let access = try await AgentObservation.read { try await self.view("AccessListRequest", ["conversation_id": self.id]) }
-        try Task.checkCancellation()
-        for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
-          guard let requestID = request["id"] as? String else { continue }
-          guard let asked = request["asked"] as? [String] else { continue }
-          _ = try await answerAccess(requestID, asked: asked, groups: request["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
-        }
+        var cursor: Int64 = 0
+        repeat {
+          let access = try await AgentObservation.read {
+            try await self.view("AccessListRequest", ["conversation_id": self.id, "pending_only": true, "cursor": cursor])
+          }
+          try Task.checkCancellation()
+          for request in access["requests"] as? [[String: Any]] ?? [] where request["state"] as? String == "pending" {
+            guard let requestID = request["id"] as? String else { continue }
+            _ = try await answerAccess(requestID)
+          }
+          cursor = access["next_cursor"] as? Int64 ?? 0
+        } while cursor != 0
         while !Task.isCancelled {
           let result: Tsugumi_Agent_EventsPageT = try await AgentObservation.read { try await self.reply("EventsRequest", ["conversation_id": self.id, "after_seq": self.sequence]) }
           try Task.checkCancellation()
@@ -249,8 +254,7 @@ public actor Agent {
           for item in result.events.compactMap({ $0 }) {
             let event = try ServiceWire.replyView(item.event)
             if event["kind"] as? String == "permission", let request = event["id"] as? String {
-              let asked = event["asked"] as? [String] ?? ["project_access Project content"]
-              _ = try await answerAccess(request, asked: asked, groups: event["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [])
+              _ = try await answerAccess(request)
             } else if let event = Self.event(event) {
               if case .finished = event { try await AgentObservation.read { try await self.refresh() }; refreshed = true }
               try Task.checkCancellation()
@@ -282,16 +286,20 @@ public actor Agent {
     }
   }
 
-  private func answerAccess(_ request: String, asked: [String], groups: [Tsugumi_Agent_AccessGroupT]) async throws -> Bool {
+  private func answerAccess(_ request: String) async throws -> Bool {
     if let answer = answeredAccess[request] { return answer }
-    let access = try await self.view("AccessListRequest", ["conversation_id": id])
-    if let state = (access["requests"] as? [[String: Any]])?.first(where: { $0["id"] as? String == request })?["state"] as? String,
-       state != "pending" {
+    let access = try await self.view("AccessListRequest", ["conversation_id": id, "request_id": request])
+    guard let entry = (access["requests"] as? [[String: Any]])?.first,
+          let state = entry["state"] as? String else { return false }
+    if state == "unavailable" { return false }
+    if state != "pending" {
       answeredAccess[request] = state == "allowed"
       return state == "allowed"
     }
     guard let approver else { throw CancellationError() }
-    let answer = await approver(asked, groups)
+    let answer = await approver(entry["asked"] as? [String] ?? [],
+                                entry["groups"] as? [Tsugumi_Agent_AccessGroupT] ?? [],
+                                entry["call_id"] as? String)
     try Task.checkCancellation()
     let selected = answer.compactMap { line -> Tsugumi_Service_Access? in
       let prefix = "project_access "
@@ -306,7 +314,7 @@ public actor Agent {
       allowed = result["accepted"] as? Bool ?? false
     } catch let error as CoreHostFailure where error.code == "conflict" {
       // A human in another UI already answered; read the authoritative outcome.
-      return try await answerAccess(request, asked: asked, groups: groups)
+      return try await answerAccess(request)
     }
     answeredAccess[request] = allowed
     return allowed

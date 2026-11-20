@@ -206,6 +206,36 @@ auto SearchText(const ContentBlock& block) -> std::string {
   return text;
 }
 
+// The domains the search tool may use: an allow list with blocked domains
+// removed, or the block list alone. A request is not given the search tool
+// when an allow list was set but nothing on it is left.
+struct SearchDomains {
+  bool offered = false;
+  std::vector<std::string> allowed, blocked;
+};
+
+auto ResolveSearchDomains(const ProviderConfig& config) -> SearchDomains {
+  SearchDomains result;
+  if (!config.web_search || config.auth == ProviderAuth::None) return result;
+  const auto& blocked = config.search_blocked_domains;
+  for (const auto& domain : config.search_allowed_domains)
+    if (std::find(blocked.begin(), blocked.end(), domain) == blocked.end())
+      result.allowed.push_back(domain);
+  if (!config.search_allowed_domains.empty()) {
+    result.offered = !result.allowed.empty();
+    return result;
+  }
+  result.blocked = blocked;
+  result.offered = true;
+  return result;
+}
+
+auto QuotedList(const std::vector<std::string>& values) -> std::string {
+  std::vector<std::string> quoted;
+  for (const auto& value : values) quoted.push_back(Quote(value));
+  return json::Encode(quoted);
+}
+
 auto AnthropicBlock(const ContentBlock& block) -> std::string {
   if (block.type == "tool_use") {
     return Encode(
@@ -272,10 +302,18 @@ auto MessagesBody(const ProviderConfig& config, std::string_view system,
                       {"input_schema", tool.input_schema},
                       {"eager_input_streaming", "true"}}));
   }
-  if (config.web_search && config.auth != ProviderAuth::None) {
-    definitions.push_back(
-        "{\"type\":\"web_search_20250305\",\"name\":\"web_"
-        "search\",\"max_uses\":5}");
+  if (const auto search = ResolveSearchDomains(config); search.offered) {
+    Object definition{{"type", Quote("web_search_20250305")},
+                      {"name", Quote("web_search")},
+                      {"max_uses", "5"}};
+    // The Messages API takes one of the two lists per request. With both,
+    // a blocked subdomain of an allowed domain is not excluded; the settings
+    // note says so.
+    if (!search.allowed.empty())
+      definition["allowed_domains"] = QuotedList(search.allowed);
+    else if (!search.blocked.empty())
+      definition["blocked_domains"] = QuotedList(search.blocked);
+    definitions.push_back(Encode(definition));
   }
   if (!definitions.empty()) {
     auto last = Members(Parse(definitions.back()));
@@ -371,8 +409,15 @@ auto ResponsesBody(const ProviderConfig& config, std::string_view system,
   } else {
     definitions = std::move(functions);
   }
-  if (config.web_search && config.auth != ProviderAuth::None) {
-    definitions.push_back("{\"type\":\"web_search\"}");
+  // The Responses API filters by an allow list only, so a block list alone
+  // leaves the search tool out rather than searching without it.
+  if (const auto search = ResolveSearchDomains(config);
+      search.offered && search.blocked.empty()) {
+    Object definition{{"type", Quote("web_search")}};
+    if (!search.allowed.empty())
+      definition["filters"] =
+          Encode(Object{{"allowed_domains", QuotedList(search.allowed)}});
+    definitions.push_back(Encode(definition));
     if (!plan) body["include"] = "[\"web_search_call.action.sources\"]";
   }
   if (!definitions.empty()) body["tools"] = json::Encode(definitions);

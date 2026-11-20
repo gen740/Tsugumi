@@ -18,12 +18,6 @@ auto Now() -> int64_t {
 Credentials::Credentials(StateGate& g, sql::Db& database, std::stop_token token)
     : gate(g), db(database), stop(token) {}
 
-auto Credentials::Import(const std::string& id, const json::Members& value)
-    -> void {
-  std::lock_guard guard(credential_mutex);
-  Save(id, value);
-}
-
 auto Credentials::Get(const std::string& id) -> json::Members {
   std::lock_guard lock(gate.mutex);
   auto q = db.prepare("SELECT json FROM credentials WHERE id=?");
@@ -39,10 +33,27 @@ auto Credentials::Save(const std::string& id, const json::Members& value)
   auto q = db.prepare("INSERT OR REPLACE INTO credentials VALUES(?,?)");
   q.bind(1, id).bind(2, json::Encode(value)).run();
 }
-auto Credentials::AccessToken(const std::string& id, std::string_view stale)
-    -> std::string {
+auto Credentials::AccessToken(
+    const std::string& id, std::string_view stale,
+    const std::function<void(const std::string&)>& changed) -> std::string {
   std::lock_guard credential_lock(credential_mutex);
   auto value = Get(id);
+  const auto save = [&](const char* disabled_field = nullptr) {
+    std::lock_guard lock(gate.mutex);
+    sql::Transaction tx(db);
+    Save(id, value);
+    std::vector<std::string> profiles;
+    if (disabled_field) {
+      auto q = db.prepare(
+          "UPDATE accounts SET json=json_set(json, ?1, json('false')) "
+          "WHERE id=?2 AND json_extract(json, ?1) IS NOT 0 RETURNING profile");
+      q.bind(1, disabled_field).bind(2, id);
+      while (q.step()) profiles.push_back(q.text(0));
+    }
+    tx.commit();
+    if (changed)
+      for (const auto& profile : profiles) changed(profile);
+  };
   if (json::Text(value, "refresh_token").empty()) {
     agent::ProviderError failure("Sign in to ChatGPT again");
     failure.sign_in_required = true;
@@ -77,7 +88,7 @@ auto Credentials::AccessToken(const std::string& id, std::string_view stale)
       value.erase("access_token");
       value.erase("refresh_token");
       value.erase("expires_at_ms");
-      Save(id, value);
+      save("$.signed_in");
       agent::ProviderError failure("Sign in to ChatGPT again", false,
                                    error.status, error.retry_after, error.code,
                                    error.curl_code);
@@ -95,30 +106,29 @@ auto Credentials::AccessToken(const std::string& id, std::string_view stale)
   if (refreshed.has_scope) value["scope"] = json::Quote(refreshed.scope);
   // A successful refresh consumes the old token even if permission narrowed.
   // Persist its replacement before deciding whether inference is allowed.
-  Save(id, value);
   const auto granted = ' ' + json::Text(value, "scope") + ' ';
   const bool enabled =
       granted.find(" chatgpt.tokens.use.direct ") != std::string::npos;
+  save(enabled ? nullptr : "$.plan_enabled");
   if (!enabled)
     throw agent::ProviderError(
         "The ChatGPT plan is not enabled for this registration", false, 0, {},
         "chatgpt_plan_disabled");
   return refreshed.access_token;
 }
-auto Credentials::Forget(const std::string& id) -> bool {
-  std::lock_guard credential_lock(credential_mutex);
-  bool revoked = false;
+auto Credentials::Revoke(const std::string& id) -> bool {
   try {
     const auto value = Get(id);
-    agent::RevokeCredential(json::Text(value, "revocation_endpoint"), id,
-                            json::Text(value, "refresh_token"), stop);
-    revoked = true;
-  } catch (...) {
+    const auto endpoint = json::Text(value, "revocation_endpoint");
+    const auto token = json::Text(value, "refresh_token");
+    if (endpoint.empty() || token.empty()) return false;
+    agent::RevokeCredential(endpoint, id, token, stop);
+    return true;
+  } catch (const Failure&) {
+    return false;
+  } catch (const agent::ProviderError&) {
+    return false;
   }
-  std::lock_guard state_lock(gate.mutex);
-  auto q = db.prepare("DELETE FROM credentials WHERE id=?");
-  q.bind(1, id).run();
-  return revoked;
 }
 
 auto Credentials::Secrets() -> std::vector<std::string> {

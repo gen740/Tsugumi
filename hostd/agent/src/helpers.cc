@@ -1,6 +1,7 @@
 #include "agent/helpers.hh"
 
 #include <algorithm>
+#include <ranges>
 
 #include "agent/context.hh"
 #include "agent/helper_scope.hh"
@@ -29,20 +30,28 @@ Helpers::Helpers(host::StateGate& gate, ConversationStore& conversations,
       access_service(access),
       dependencies(std::move(dependencies)) {}
 
+auto Helpers::LastAnswer(const std::vector<Message>& messages) -> Message {
+  for (const auto& message : messages | std::views::reverse) {
+    if (message.role != "assistant") continue;
+    Message answer = message;
+    std::erase_if(answer.content,
+                  [](const auto& block) { return block.type != "text"; });
+    if (answer.content.empty()) continue;
+    answer.provider_content.clear();
+    return answer;
+  }
+  return {};
+}
+
 auto Helpers::HelperResult(const std::string& output,
                            const std::string& conversation,
                            const std::string& call, size_t task)
     -> std::string {
   const auto value = json::Object(output);
   std::string report;
-  const auto messages = ParseMessages(json::Get(value, "messages", "[]"));
-  for (auto message = messages.rbegin(); message != messages.rend();
-       ++message) {
-    if (message->role != "assistant") continue;
-    for (const auto& block : message->content)
-      if (block.type == "text") report += block.text;
-    if (!report.empty()) break;
-  }
+  for (const auto& block :
+       LastAnswer(ParseMessages(json::Get(value, "messages", "[]"))).content)
+    report += block.text;
   constexpr size_t kReportBytes = 8192;
   const bool shortened = report.size() > kReportBytes;
   if (shortened) {
@@ -78,11 +87,11 @@ auto Helpers::Displaced(const std::vector<Message>& previous,
   return displaced;
 }
 
-auto Helpers::RunHelper(const std::string& conversation,
-                        const std::string& parent_call, size_t index,
-                        const std::string& task, std::stop_token stop,
-                        const std::string& authorization) -> std::string {
-  const auto profile = providers->Profile(conversation);
+auto Helpers::RunHelper(
+    const std::string& conversation, const std::string& parent_call,
+    size_t index, const std::string& task, std::stop_token stop,
+    const std::optional<host::TurnAuthorization>& authorization)
+    -> std::string {
   std::shared_ptr<std::mutex> gate;
   {
     std::lock_guard lock(mutex);
@@ -95,7 +104,7 @@ auto Helpers::RunHelper(const std::string& conversation,
   }
   std::lock_guard helper_lock(*gate);
   const auto spec = json::Object(task);
-  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers(profile));
+  HelperScope::Validate(spec, host_settings->AllowUnscopedHelpers());
   const auto name = json::Text(spec, "name");
   const auto digest = crypto::sha256_hex(task);
   const auto scope = parent_call + "." + std::to_string(index) + ".";
@@ -115,9 +124,8 @@ auto Helpers::RunHelper(const std::string& conversation,
         throw Failure("conflict",
                       "A helper ID was reused for different instructions");
       messages = ParseMessages(old.text(1));
-      access_service.AuthorizeContext(conversation, messages);
-      if (old.text(3) == "completed")
-        return HelperResult(old.text(2), conversation, parent_call, index);
+      access_service.AuthorizeContext(messages, authorization);
+      if (old.text(3) == "completed") return old.text(2);
     } else {
       ContentBlock instruction;
       instruction.text =
@@ -130,15 +138,18 @@ auto Helpers::RunHelper(const std::string& conversation,
           json::Get(spec, "depth", "0") +
           "; count=" + json::Get(spec, "count", "0") +
           " children over your lifetime. The host enforces this capability.";
-      instruction.resource_ids = authorization.empty()
-                                     ? conversations->Resources(conversation)
-                                     : std::vector<std::string>{authorization};
+      instruction.resource_ids = authorization
+                                     ? std::vector{authorization->project()}
+                                     : conversations->Resources(conversation);
       messages.push_back(
           {"user", {instruction}, {}, {}, ProviderAPI::AnthropicMessages});
-      auto insert = conversations->ConversationDatabase(conversation)
-                        .prepare(
-                            "INSERT INTO helpers "
-                            "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
+      auto& store = conversations->ConversationDatabase(conversation);
+      sql::Transaction tx(store);
+      if (authorization)
+        conversations->RememberResource(conversation, authorization->project());
+      auto insert = store.prepare(
+          "INSERT INTO helpers "
+          "VALUES(?,?,?,?,?,'','running',?,?,'[]')");
       insert.bind(1, conversation)
           .bind(2, parent_call)
           .bind(3, static_cast<int>(index))
@@ -159,9 +170,14 @@ auto Helpers::RunHelper(const std::string& conversation,
                         return !message.context_summary;
                       })))
           .run();
+      tx.commit();
     }
     config = providers->ForConversation(conversation);
   }
+  if (authorization)
+    dependencies.event(conversation, json::Encode(json::Members{
+                                         {"kind", json::Quote("helperStarted")},
+                                         {"text", task}}));
   dependencies.event(conversation, json::Encode(json::Members{
                                        {"kind", json::Quote("helper")},
                                        {"id", json::Quote(parent_call)},
@@ -261,20 +277,9 @@ auto Helpers::RunHelper(const std::string& conversation,
   auto tools = this->tools->catalog.ModelSpecs(
       boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper,
       boundary->depth() > 0 && boundary->count() > 0);
-  std::string trusted_project;
-  const auto automatic =
-      turns->SkillContent(conversation, {}, true, stop, &trusted_project);
-  const auto authorize = hooks.authorize_context;
-  hooks.authorize_context = [this, authorize, automatic,
-                             trusted_project](const auto& context) {
-    turns->RequireSkillTrust(trusted_project);
-    auto with_skills = context;
-    with_skills.push_back(
-        {"user", {automatic}, {}, {}, ProviderAPI::AnthropicMessages});
-    authorize(with_skills);
-  };
-  const auto result = Runtime().Run(config, Turns::System() + automatic.text,
-                                    messages, tools, stop, hooks);
+  auto system = Turns::System();
+  if (!authorization) system += turns->AutomaticSkills(conversation, stop, hooks);
+  const auto result = Runtime().Run(config, system, messages, tools, stop, hooks);
   std::string output;
   {
     std::lock_guard lock(mutex);
@@ -301,7 +306,7 @@ auto Helpers::RunHelper(const std::string& conversation,
         .run();
     transaction.commit();
   }
-  return HelperResult(output, conversation, parent_call, index);
+  return output;
 }
 
 }  // namespace tsugumi::agent

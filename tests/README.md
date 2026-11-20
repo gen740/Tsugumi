@@ -8,7 +8,7 @@ Every test command must run through `build-ci/bin/tsugumi-test-env` (already use
 
 ### Secret isolation
 
-API keys live only in hostd's state folder (`host-settings.sqlite`); no client
+API keys live only in hostd's state folder (`host.sqlite`); no client
 uses an OS secret store. `run-isolated.py` still gives every run a private HOME
 (including Foundation's `CFFIXED_USER_HOME`), private support and state roots,
 and removes inherited Anthropic/OpenAI API keys from the environment, so a test
@@ -106,7 +106,7 @@ The VM support directory and its store are disposable and removed at session end
 
 `tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Text is evaluated with real models rather than phrase assertions. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `ui/macos/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
 
-Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`) and settings validation in `tsugumi_host_settings_tests --gtest_filter='HostSettingsStore.VersionNotes*'`. `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request, core model selection, concurrent windows, persistence across restart, mode switching, failure/retry and empty diffs (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`). Those RPC scenarios need Unix sockets and a local model fixture. `ui/web/tests/versions.ts` checks the presentation request, settings, retries and late responses without a browser.
+Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`). `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request in both languages and the Agent's `version_diff` (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`); it needs Unix sockets. `ui/web/tests/versions.ts` checks the presentation request, retries and late responses without a browser.
 
 For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Without Nix, site and Web builds and Web tests generate the player from `ui/web/node_modules` and `ui/web/shared/gen`.
 

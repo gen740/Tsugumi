@@ -349,14 +349,15 @@ class AgentFixture : public ::testing::Test {
           return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))
               .Union();
         });
-    const auto revision = current.HostValue()->value_as_Settings()->revision();
+    const auto revision =
+        current.HostValue()->value_as_Settings()->revision()->str();
     const auto selected =
         Call(*host, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
           const auto item =
               H::CreateSetting(b, b.CreateString("agent.provider"),
                                b.CreateString(Quote(provider)));
           return H::CreateSettingsUpdateRequest(
-                     b, b.CreateString("desktop"), revision,
+                     b, b.CreateString("desktop"), b.CreateString(revision),
                      b.CreateVector(std::vector{item}))
               .Union();
         });

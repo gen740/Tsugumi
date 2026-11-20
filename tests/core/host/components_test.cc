@@ -1,8 +1,14 @@
 #include <gtest/gtest.h>
 #include <sys/stat.h>
 
+#include <algorithm>
+#include <future>
+#include <set>
+
 #include "../agent_fixture_server.hh"
 #include "agent/providers.hh"
+#include "agent/store.hh"
+#include "host/access.hh"
 #include "host/credentials.hh"
 #include "host/demo_references.hh"
 #include "host/failure.hh"
@@ -10,6 +16,7 @@
 #include "host/settings.hh"
 #include "host/state_gate.hh"
 #include "host/store.hh"
+#include "tsugumi/rpc/transport.hh"
 
 namespace tsugumi::test {
 TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
@@ -22,10 +29,11 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
   ASSERT_TRUE(journal.step());
   EXPECT_EQ(journal.text(0), "wal");
   for (const auto* table :
-       {"projects", "folders", "access_requests", "grants", "providers",
-        "access_prompt_items", "operation_approvals", "credentials",
-        "environment_projects", "project_paths", "skill_catalogs",
-        "conversation_locations", "model_lists"}) {
+       {"projects", "folders", "permission_requests", "workspace_grants",
+        "providers", "credentials", "environment_projects", "project_paths",
+        "skill_catalogs", "conversation_locations", "model_lists",
+        "setting_values", "settings_revision", "accounts",
+        "provider_connections", "oauth_hosts"}) {
     auto query = store.db.prepare(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?");
     query.bind(1, table);
@@ -45,6 +53,155 @@ TEST(HostComponents, HostStoreKeepsOnePrivateWalDatabaseForHostTransactions) {
     EXPECT_EQ(query.i64(0), 0) << table;
   }
 }
+TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
+  TemporaryDirectory directory;
+  const auto retired_path = directory.path / "host-settings.sqlite";
+  {
+    sql::Db retired(retired_path.string());
+    retired.exec("CREATE TABLE secrets(id TEXT PRIMARY KEY, value TEXT);"
+                 "INSERT INTO secrets VALUES('desktop:anthropic','old-key')");
+  }
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::Credentials credentials(gate, store.db, {});
+  host::Settings settings(directory.path, credentials, nullptr);
+  const auto resolve = [&] {
+    return settings.Resolve({{"provider_id", Quote("anthropic")}});
+  };
+  EXPECT_THROW(resolve(), std::runtime_error);
+  ASSERT_TRUE(std::filesystem::remove(retired_path));
+  store.db.exec("INSERT INTO secrets VALUES('desktop:anthropic','new-key')");
+  EXPECT_EQ(resolve().credential, "new-key");
+}
+TEST(HostComponents, LargeApprovalListsPageWithinTheRpcFrame) {
+  namespace A = Tsugumi::Agent;
+  TemporaryDirectory directory;
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::ProjectRegistry registry(gate, store.db,
+                                 [](const auto&) { return std::nullopt; });
+  agent::ConversationStore conversations(
+      gate, store.db, registry, [](auto value) { return value; },
+      [](const auto&, auto) { return false; },
+      [](const auto&) { return false; });
+  bool stopping = false;
+  host::Access access(
+      gate, store.db, registry, conversations, stopping,
+      {[](const auto&, const auto&) {}, [](const auto&) {}});
+  std::lock_guard lock(gate.mutex);
+  store.db.exec(
+      "WITH RECURSIVE ids(n) AS (VALUES(1) UNION ALL SELECT n+1 FROM ids "
+      "WHERE n<501) INSERT INTO "
+      "permission_requests(id,project,conversation,access,reason,state) "
+      "SELECT n,'project','conversation',0,'old request','allowed' FROM ids;"
+      "INSERT INTO conversation_locations VALUES('missing','other');");
+  const auto missing_approval =
+      access.RequestApproval(host::ApprovalKind::Turn, "other", "missing",
+                             "turn", "digest", "secret scope");
+  const std::string preview(480 * 1024, 'p');
+  for (int i = 0; i < 40; ++i) {
+    const auto approval = access.RequestApproval(
+        host::ApprovalKind::Operation, "project", "conversation",
+        "large-call-" + std::to_string(i), "digest", preview);
+    if (i == 0) {
+      auto answer = store.db.prepare(
+          "UPDATE permission_requests SET state='allowed' WHERE id=?");
+      answer.bind(1, approval.id).run();
+    }
+  }
+  const auto recent = access.RequestApproval(
+      host::ApprovalKind::Operation, "project", "conversation",
+      "operation-call", "digest", "preview");
+  const auto list = [&](A::AccessListRequestT value) {
+    flatbuffers::FlatBufferBuilder b;
+    const auto request =
+        A::CreateRequest(b, A::RequestPayload::AccessListRequest,
+                         A::AccessListRequest::Pack(b, &value).Union());
+    A::FinishMessageBuffer(
+        b, A::CreateMessage(b, 1, A::Payload::Request, request.Union()));
+    RequestIn in;
+    in.request_id = 1;
+    in.frame = std::make_shared<const std::string>(
+        reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize());
+    return access.Handle(in, true);
+  };
+  const auto parse = [](const std::string& reply) {
+    return A::GetMessage(reply.data())
+        ->payload_as_Reply()
+        ->value_as_AccessList();
+  };
+  for (const bool pending_only : {false, true}) {
+    A::AccessListRequestT filter;
+    filter.project_id = "project";
+    filter.pending_only = pending_only;
+    std::set<std::string> ids;
+    size_t pages = 0;
+    do {
+      const auto reply = list(filter);
+      EXPECT_LE(reply.size(), TransportLimits{}.max_frame_bytes);
+      const auto* page = parse(reply);
+      ASSERT_NE(page, nullptr);
+      ASSERT_NE(page->requests(), nullptr);
+      for (const auto* entry : *page->requests()) {
+        EXPECT_TRUE(ids.insert(entry->id()->str()).second);
+        EXPECT_EQ(entry->project_id()->str(), "project");
+        if (pending_only) EXPECT_EQ(entry->state()->str(), "pending");
+      }
+      filter.cursor = page->next_cursor();
+      ++pages;
+    } while (filter.cursor);
+    EXPECT_GT(pages, 1u);
+    EXPECT_EQ(ids.size(), pending_only ? 40u : 542u);
+    EXPECT_TRUE(ids.contains(recent.id));
+  }
+  A::AccessListRequestT filter;
+  filter.request_id = recent.id;
+  const auto exact = list(filter);
+  const auto* listed = parse(exact);
+  ASSERT_EQ(listed->requests()->size(), 1u);
+  EXPECT_EQ(listed->requests()->Get(0)->call_id()->str(), "operation-call");
+
+  const auto global = list({});
+  EXPECT_NE(parse(global)->next_cursor(), 0);
+  filter.request_id = missing_approval.id;
+  const auto missing = list(filter);
+  ASSERT_EQ(parse(missing)->requests()->size(), 1u);
+  const auto* unavailable = parse(missing)->requests()->Get(0);
+  EXPECT_EQ(unavailable->state()->str(), "unavailable");
+  EXPECT_GT(unavailable->unavailable_reason()->size(), 0u);
+}
+
+TEST(HostComponents, RetiringUnlinkedOAuthCredentialsKeepsCurrentAccounts) {
+  TemporaryDirectory directory;
+  const auto retired_path = directory.path / "host-settings.sqlite";
+  {
+    sql::Db retired(retired_path.string());
+    retired.exec(
+        "CREATE TABLE accounts(profile TEXT,id TEXT,json TEXT NOT NULL,"
+        "PRIMARY KEY(profile,id));"
+        "INSERT INTO accounts VALUES('desktop','retired','{}')");
+    sql::Db old_host((directory.path / "host.sqlite").string());
+    old_host.exec(
+        "CREATE TABLE credentials(id TEXT PRIMARY KEY,json TEXT NOT NULL);"
+        R"(INSERT INTO credentials VALUES('retired','{"refresh_token":"old"}'))");
+  }
+  ASSERT_TRUE(std::filesystem::remove(retired_path));
+  host::HostStore store(directory.path);
+  host::StateGate gate;
+  host::Credentials credentials(gate, store.db, {});
+  credentials.Save("current", {{"refresh_token", Quote("new")}});
+  store.db.exec("INSERT INTO accounts VALUES('web','current','{}')");
+  ASSERT_NO_THROW(credentials.Get("retired"));
+
+  // Apply the offline retirement procedure documented in security.md.
+  store.db.exec(
+      "PRAGMA secure_delete = ON;"
+      "DELETE FROM credentials WHERE NOT EXISTS "
+      "(SELECT 1 FROM accounts WHERE accounts.id = credentials.id);"
+      "VACUUM; PRAGMA wal_checkpoint(TRUNCATE);");
+  EXPECT_THROW(credentials.Get("retired"), host::Failure);
+  EXPECT_EQ(credentials.Get("current").at("refresh_token"), Quote("new"));
+}
 TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
@@ -52,7 +209,7 @@ TEST(HostComponents, CredentialsKeepCachedTokensAndConcurrentRefreshRechecks) {
   std::stop_source shutdown;
   host::Credentials credentials(gate, store.db, shutdown.get_token());
   EXPECT_THROW(credentials.Get("absent"), host::Failure);
-  credentials.Import(
+  credentials.Save(
       "account",
       ::tsugumi::json::Object(
           R"({"access_token":"current","refresh_token":"refresh","id_token":"identity","expires_at_ms":9999999999999,"scope":"chatgpt.tokens.use.direct"})"));
@@ -78,30 +235,22 @@ class CredentialRefreshTest : public testing::Test {
   host::StateGate gate;
   ModelServer endpoint;
   host::Credentials credentials{gate, store.db, {}};
-  host::Settings settings{directory.path,
-                          [](const auto&, const auto&) {},
-                          [&](const auto& id, auto stale) {
-                            return credentials.AccessToken(id, stale);
-                          },
-                          [](const auto&) { return true; },
-                          nullptr};
-
+  host::Settings settings{directory.path, credentials, nullptr};
   std::function<std::string(std::string_view)> access_token;
-  sql::Db settings_db{(directory.path / "host-settings.sqlite").string()};
 
   CredentialRefreshTest() {
     auto value = ::tsugumi::json::Object(
         R"({"access_token":"old-access","refresh_token":"old-refresh","id_token":"old-id","scope":"openid chatgpt.tokens.use.direct","expires_at_ms":0,"resource":"https://api.openai.com/v1"})");
     value["token_endpoint"] = Quote(endpoint.URL());
-    credentials.Import("account", value);
-    settings_db.exec(
+    credentials.Save("account", value);
+    store.db.exec(
         R"(INSERT INTO accounts VALUES('desktop','account','{"active":true,"signed_in":true,"plan_enabled":true}'))");
     access_token =
         settings.Resolve({{"provider_id", Quote("chatgpt")}}).access_token;
   }
   auto Account() -> ::tsugumi::json::Members {
     auto q =
-        settings_db.prepare("SELECT json FROM accounts WHERE id='account'");
+        store.db.prepare("SELECT json FROM accounts WHERE id='account'");
     if (!q.step()) throw std::runtime_error("missing test account");
     return ::tsugumi::json::Object(q.text(0));
   }
@@ -177,7 +326,7 @@ TEST_F(CredentialRefreshTest,
     SCOPED_TRACE(code);
     auto value = credentials.Get("account");
     value["refresh_token"] = Quote("old-refresh");
-    credentials.Import("account", value);
+    credentials.Save("account", value);
     endpoint.QueueHTTP("{\"error\":{\"code\":" + Quote(code) +
                            ",\"message\":\"old-refresh\"}}",
                        400);
@@ -201,6 +350,31 @@ TEST_F(CredentialRefreshTest,
     EXPECT_THROW(access_token(""), agent::ProviderError);
     EXPECT_EQ(endpoint.Requests().size(), requests);
   }
+}
+TEST_F(CredentialRefreshTest, RefreshFailureDoesNotOverwriteNewSignIn) {
+  auto refresh = std::async(std::launch::async, [&] {
+    EXPECT_THROW(access_token(""), agent::ProviderError);
+  });
+  EXPECT_TRUE(endpoint.WaitForRequests(1, std::chrono::seconds(10)));
+  auto sign_in = std::async(std::launch::async, [&] {
+    std::lock_guard operation(credentials.credential_mutex);
+    std::lock_guard lock(gate.mutex);
+    sql::Transaction tx(store.db);
+    EXPECT_FALSE(Status()->configured);
+    auto value = credentials.Get("account");
+    value["access_token"] = Quote("new-access");
+    value["refresh_token"] = Quote("new-refresh");
+    value["expires_at_ms"] = "9999999999999";
+    credentials.Save("account", value);
+    store.db.exec(
+        "UPDATE accounts SET json=json_set(json,'$.signed_in',json('true'))");
+    tx.commit();
+  });
+  endpoint.QueueHTTP(R"({"error":"invalid_grant"})", 400);
+  refresh.get();
+  sign_in.get();
+  EXPECT_TRUE(Status()->configured);
+  EXPECT_EQ(access_token(""), "new-access");
 }
 TEST_F(CredentialRefreshTest,
        TemporaryFailuresKeepCredentialsAndConfiguration) {
@@ -256,10 +430,8 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   TemporaryDirectory directory;
   host::HostStore store(directory.path);
   host::StateGate gate;
-  host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      nullptr);
+  host::Credentials credentials{gate, store.db, {}};
+  host::Settings settings(directory.path, credentials, nullptr);
   agent::Providers providers(gate, store.db, settings);
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());

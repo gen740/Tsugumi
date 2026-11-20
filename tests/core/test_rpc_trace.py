@@ -132,7 +132,9 @@ def test_trace_connection_does_not_duplicate_host_events(tmp_path):
         setting = SettingT()
         setting.key = "app.language"
         setting.valueJson = '"en"'
-        host.call("SettingsUpdateRequest", profile="trace-test", changes=[setting])
+        revision = host.call("SettingsGetRequest", profile="trace-test").revision
+        host.call("SettingsUpdateRequest", profile="trace-test", revision=revision,
+                  changes=[setting])
         assert host.next_event().valueType == EventPayload.SettingsChanged
         assert viewer.next_event().valueType == EventPayload.TraceChanged
         snapshot = viewer.call("HostTraceRequest", source="").snapshot

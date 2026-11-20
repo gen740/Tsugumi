@@ -2,9 +2,11 @@
 
 #include <functional>
 #include <map>
+#include <optional>
 #include <set>
 #include <string>
 
+#include "host/authorization.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
@@ -16,10 +18,13 @@ class HelperScope {
  public:
   // Missing files return an empty string; transport/revision errors throw.
   using Reader = std::function<std::string(const std::string&)>;
-  explicit HelperScope(const json::Members& task,
-                       std::string authorization = {},
-                       std::string scratch_identity = {});
-  auto authorization() const -> const std::string& { return authorization_; }
+  explicit HelperScope(
+      const json::Members& task,
+      std::optional<host::TurnAuthorization> authorization = {},
+      std::string scratch_identity = {});
+  auto authorization() const -> const std::optional<host::TurnAuthorization>& {
+    return authorization_;
+  }
   auto RequireRun(const std::string& card) const -> void;
   auto Ran(const std::string& run_id, const std::string& card) -> void;
   static auto Validate(const json::Members& task, bool allow_unscoped) -> void;
@@ -68,7 +73,7 @@ class HelperScope {
   uint64_t depth_, count_;
   bool scoped_;
   std::set<std::string> reads_, writes_, runs_;
-  std::string authorization_;
+  std::optional<host::TurnAuthorization> authorization_;
   std::string scratch_identity_;
   std::map<std::string, std::string> runs_started_;
   std::map<std::string, std::string> created_;

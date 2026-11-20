@@ -17,27 +17,32 @@ import pytest
 from harness import remote_worker as R
 from harness.fixtures import worker_project
 from harness.scenario import Project
-from projects import FILE_FBS, start_run, wait_invocation, wait_run
+from projects import FILE_FBS, start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunEventValue import RunEventValue
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
-from tsugumi_client import RpcFailure, path, text
+from tsugumi_client import RpcFailure, make, new_id, path, text
 
 
-class Gateway(socketserver.UnixStreamServer):
+class Gateway(socketserver.ThreadingUnixStreamServer):
     """Double of hostd's local broker, not its TLS worker connection.
 
     Keep partial/lost replies at the core-facing boundary so these tests still
     exercise core deadlines, shutdown and core lifetime interruption. Real hostd/TLS
     authentication is covered by the broker RPC and remote integration suites.
     """
+    # hostd's broker listens with a backlog of 64. socketserver's default of 5
+    # refuses a burst of concurrent connections on macOS, where a full Unix
+    # socket backlog fails connect() instead of waiting.
+    request_queue_size = 64
     instance = "1" * 64
     server_id = "2" * 64
     system = "x86_64-linux"
@@ -64,8 +69,15 @@ class Gateway(socketserver.UnixStreamServer):
         self.catalog_system = self.system
         self.results = {}
         self.stall = None
+        self.skip_stall = 0
+        self.hold_cancel = False
+        self.defer_submit = False
+        self.submit_applied = threading.Event()
         self.stall_operation = R.RequestBody.StatusRequest
         self.stalled = threading.Event()
+        self.stalls = 0
+        self.stalls_expected = 1
+        self.stall_lock = threading.Lock()
         self.resume = threading.Event()
 
     def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
@@ -160,11 +172,15 @@ class Gateway(socketserver.UnixStreamServer):
             self.specs[job] = spec
             assert {R.string(d) for d in spec.inputBlobs} <= self.blobs
             assert R.string(spec.system) == self.system
-            self.receipts[job] = {"state": "running", "fingerprint": hashlib.sha256(bytes(body.spec)).hexdigest()}
+            fingerprint = hashlib.sha256(bytes(body.spec)).hexdigest()
+            receipt = self.receipts.setdefault(job, {"state": "running", "fingerprint": fingerprint})
+            assert receipt["fingerprint"] == fingerprint
+            self.submit_applied.set()
             return None  # the receipt exists, but its reply was lost
         if kind == R.RequestBody.CancelRequest:
-            receipt = self.receipts[job]
-            assert receipt["fingerprint"] == R.string(body.fingerprint)
+            fingerprint = R.string(body.fingerprint)
+            receipt = self.receipts.setdefault(job, {"state": "cancelled", "fingerprint": fingerprint})
+            assert receipt["fingerprint"] == fingerprint
             if receipt["state"] not in {"succeeded", "failed", "cancelled"}:
                 receipt["state"] = "cancelled"
             self.cancelled.add(job)
@@ -185,18 +201,33 @@ class Handler(socketserver.StreamRequestHandler):
             q = R.read_broker_request(self.rfile)
         except EOFError:
             return
+        if self.server.hold_cancel and q.bodyType == R.RequestBody.CancelRequest:
+            self.server.resume.wait()
+            return
         mode = self.server.stall
+        if mode and q.bodyType == self.server.stall_operation and self.server.skip_stall:
+            self.server.skip_stall -= 1
+            mode = None
         if mode and q.bodyType == self.server.stall_operation:
             try:
+                if q.bodyType == R.RequestBody.SubmitRequest and not self.server.defer_submit:
+                    self.server.operation(q)
                 if mode == "trickle":
                     self.wfile.write(struct.pack("<I", 8192) + b"\x00")
-                self.server.stalled.set()
+                with self.server.stall_lock:
+                    self.server.stalls += 1
+                    if self.server.stalls == self.server.stalls_expected:
+                        self.server.stalled.set()
                 if mode == "trickle":
                     # Keep sending a partial frame until the test releases it.
                     while not self.server.resume.wait(0.05):
                         self.wfile.write(b"\x00")
                 else:
                     self.server.resume.wait()
+                    if q.bodyType == R.RequestBody.CatalogRequest:
+                        self.wfile.write(R.frame(self.server.operation(q)))
+                    if q.bodyType == R.RequestBody.SubmitRequest and self.server.defer_submit:
+                        self.server.operation(q)
             except (BrokenPipeError, ConnectionResetError):
                 pass
             return
@@ -223,6 +254,7 @@ def remote_gateway(monkeypatch):
         capability_file.chmod(0o600)
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", str(capability_file))
         with Gateway(endpoint) as gateway:
+            os.symlink(endpoint, endpoint + ".c")
             server = threading.Thread(target=gateway.serve_forever, kwargs={"poll_interval": 0.02})
             server.start()
             try:
@@ -231,6 +263,52 @@ def remote_gateway(monkeypatch):
                 gateway.resume.set()
                 gateway.shutdown()
                 server.join()
+
+
+def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    client.ensure_subscription()
+    rev = client.call("ProjectInspectRequest").rev
+    remote_gateway.stall_operation = R.RequestBody.CatalogRequest
+    # Accept queries the catalog once to validate the run. Hold the next lookup
+    # inside the accepted run's worker selection.
+    remote_gateway.skip_stall = 1
+    remote_gateway.stall = "blackhole"
+    selection_catalog = remote_gateway.stalled
+    try:
+        start = client.send("RunRequest", make("RunRequest", baseRev=rev, opId=new_id(),
+                                               origin="test", card=path("work"), propagate=False))
+        accepted = client.wait_notification(
+            lambda n: n.valueType == NotificationPayload.RunEvent
+            and n.value.valueType == RunEventValue.RunAcceptedEvent,
+            timeout=10,
+        )
+        run_id = text(accepted.value.runId)
+        assert selection_catalog.wait(10), "worker selection never requested the catalog"
+        assert text(client.wait_reply(start).run.runId) == run_id
+        remote_gateway.stalled = threading.Event()
+        # Worker selection holds the first Catalog. Block all six RPC readers as well.
+        remote_gateway.stalls_expected = 7
+        plans = [client.send("RunPlanRequest", make("RunPlanRequest", card=path("work"),
+                                                   propagate=False)) for _ in range(6)]
+        assert remote_gateway.stalled.wait(10), "RunPlan requests did not fill the read pool"
+        stop = client.send("RunCancelRequest", make("RunCancelRequest", runId=run_id))
+        client.wait_notification(
+            lambda n: n.valueType == NotificationPayload.RunEvent
+            and text(n.value.runId) == run_id
+            and n.value.valueType == RunEventValue.RunStatusChanged
+            and n.value.value.status.state == RunState.cancelling,
+            timeout=5,
+        )
+        assert client.wait_reply(stop).state == RunState.cancelling
+        assert wait_run_notification(client, run_id, timeout=5).state == RunState.cancelled
+    finally:
+        remote_gateway.resume.set()
+    for plan in plans:
+        client.wait_reply(plan)
+    assert remote_gateway.submit_count == 0
 
 
 @pytest.fixture
@@ -489,6 +567,67 @@ def test_network_cut_within_same_core_life_resumes(running_job):
     assert gateway.core_ids == original
 
 
+@pytest.mark.parametrize("operation", [R.RequestBody.StatusRequest, R.RequestBody.SubmitRequest],
+                         ids=["pending-status", "pending-submit"])
+def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gateway, core_factory, tmp_path, operation):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    if operation == R.RequestBody.StatusRequest:
+        run_id = start_run(client, "work", propagate=False)
+        wait_for_state(client, run_id, RemoteExecutionState.running)
+    remote_gateway.stall_operation = operation
+    remote_gateway.stall = "blackhole"
+    try:
+        if operation == R.RequestBody.SubmitRequest:
+            run_id = start_run(client, "work", propagate=False)
+        assert remote_gateway.stalled.wait(10), "remote job never reached the gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert remote_gateway.cancel_received.wait(5), "Cancel waited behind the gated reply"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        assert len(remote_gateway.cancelled) == 1
+        assert remote_gateway.submit_count == 1
+    finally:
+        remote_gateway.resume.set()
+
+
+def test_stop_reaches_worker_before_submit_is_applied(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
+                   executionService="cluster")
+    remote_gateway.stall_operation = R.RequestBody.SubmitRequest
+    remote_gateway.stall = "blackhole"
+    remote_gateway.defer_submit = True
+    run_id = start_run(client, "work", propagate=False)
+    try:
+        assert remote_gateway.stalled.wait(10), "Submit did not reach its gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert remote_gateway.cancel_received.wait(5), "Cancel waited for Submit"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        job, = remote_gateway.cancelled
+        assert job not in remote_gateway.specs
+    finally:
+        remote_gateway.resume.set()
+    assert remote_gateway.submit_applied.wait(5)
+    assert remote_gateway.receipts[job]["state"] == "cancelled"
+
+
+def test_stop_interrupts_a_pending_result_download(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    gateway.stall_operation = R.RequestBody.GetBlobRequest
+    gateway.stall = "blackhole"
+    gateway.finish(job_id)
+    try:
+        assert gateway.stalled.wait(10), "the result download did not reach the gate"
+        assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+        assert gateway.cancel_received.wait(5), "Cancel waited behind the result download"
+        assert wait_run(client, run_id, timeout=5).state == RunState.cancelled
+        assert gateway.receipts[job_id]["state"] == "succeeded"
+        assert gateway.download_count == 0
+    finally:
+        gateway.resume.set()
+
+
 @pytest.mark.parametrize("mode,operation,request_cancel", [
     ("blackhole", R.RequestBody.CancelRequest, True),
     ("trickle", R.RequestBody.StatusRequest, True),
@@ -498,6 +637,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     """SIGTERM stops waiting; the next core interrupts rather than importing."""
     gateway, daemon, client, run_id, job_id = running_job
     gateway.stall_operation = operation
+    gateway.hold_cancel = request_cancel and operation == R.RequestBody.StatusRequest
     gateway.stall = mode
     if request_cancel and operation == R.RequestBody.CancelRequest:
         client.call("RunCancelRequest", runId=run_id)
@@ -510,6 +650,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.receipts[job_id]["state"] == "running"
 
     gateway.stall = None
+    gateway.hold_cancel = False
     gateway.resume.set()
     daemon.restart()
     client = daemon.connect()

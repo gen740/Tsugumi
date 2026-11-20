@@ -56,7 +56,7 @@ struct ExecutionRequest {
   std::function<bool()> cancel_requested;
   // Set when the process leaves the run while its invocations may still run
   // elsewhere (shutdown).
-  const std::atomic<bool>& detach;
+  std::stop_token detach;
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
   // Called with the call's begin and end (ms) right after the call answers.
@@ -76,6 +76,7 @@ struct ExecutionRequest {
   // First omission reported by a remote worker, before its logs are imported.
   std::function<void()> log_truncated = {};
   std::function<void(int64_t, int64_t)> on_remote_validation = {};
+  std::stop_token stop = {};
 };
 
 // Thrown by execute() when shutdown stops waiting for remote execution.

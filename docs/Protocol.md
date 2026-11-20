@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 52 requests.
+There are 51 requests.
 
 ## Connection
 
@@ -468,7 +468,6 @@ No fields.
 | [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 | [`VersionDiff`](#versiondiff) | VersionDiff | Read a bounded patch of workflow, definitions and code. |
 | [`VersionComments`](#versioncomments) | VersionComments | Read a version’s comment changes from its first parent. |
-| [`VersionSummary`](#versionsummary) | VersionSummary | Read or store a generated summary in the language’s Git notes. |
 
 ### VersionInit
 
@@ -527,14 +526,6 @@ No fields.
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
 
-### VersionSummary
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `commit` | `string` | yes |  |
-| `english` | `bool` |  |  |
-| `text` | `string` |  | When present, store this text before returning it. |
-
 ## Notifications
 
 Sent from `tsugumid` to connected clients.
@@ -584,7 +575,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
 | `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [Tsugumi.Service.Access]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
-| `AccessListRequest` | `conversation_id: string` |
+| `AccessListRequest` | `conversation_id: string`, `request_id: string`, `project_id: string`, `pending_only: bool`, `cursor: long` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
@@ -609,7 +600,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
-| `SettingsUpdateRequest` | `profile: string` (required), `revision: ulong`, `changes: [Setting]`, `chatgpt_account: ExpectedAccount` |
+| `SettingsUpdateRequest` | `profile: string` (required), `revision: string` (required), `changes: [Setting]`, `chatgpt_account: ExpectedAccount` |
 | `ProviderSetRequest` | `profile: string` (required), `id: string` (required), `provider: ProviderInput`, `remove: bool`, `ephemeral: bool`, `source: string` |
 | `ProviderStatusRequest` | `profile: string` (required), `id: string` (required), `key_profile: string` |
 | `SignInBeginRequest` | `profile: string` (required), `client_id: string`, `consent: bool`, `issuer: string`, `resource: string`, `replace_pending: bool` |
@@ -645,7 +636,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
-| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
+| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `language: string` (required) |
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
