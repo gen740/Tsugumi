@@ -56,8 +56,8 @@ struct Tools {
         host::Access& access, Dependencies dependencies);
   auto SaveProject(const std::string& project, json::Members args,
                    std::stop_token stop,
-                   const std::function<void(const host::SaveBase&)>& check = {},
-                   const host::LayoutWrite& may_write = {}) -> std::string;
+                   const std::function<void(const host::SaveBase&)>& check = {})
+      -> std::string;
   std::recursive_mutex save_mutex;
   host::ProjectOperations operations;
   auto EditProjectTool(const std::string& conversation,
@@ -71,10 +71,7 @@ struct Tools {
   auto ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
-                         std::stop_token stop,
-                         const host::LayoutWrite& may_write = {},
-                         const host::SourcePatches& patches = {})
-      -> std::string;
+                         std::stop_token stop) -> std::string;
   auto Exclusions(const std::string& project, std::stop_token stop = {})
       -> host::AgentExclude;
   auto UnfilteredProjectCall(const std::string& project,

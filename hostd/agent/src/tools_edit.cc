@@ -175,20 +175,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
           conversation, stop, json::Get(base.snapshot, "rev"), authorization);
       boundary->Check("project_file_read", {{"path", json::Quote(path)}}, read);
     };
-    context.layout_scope =
-        [&](const host::SaveBase& base) -> host::LayoutWrite {
-      if (!boundary || !boundary->scoped()) return {};
-      const auto read = HelperReader(
-          conversation, stop, json::Get(base.snapshot, "rev"), authorization);
-      const auto roots = boundary->LayoutWriteCards(read);
-      return [roots](const auto& path, const auto& id) {
-        const auto prefix = path.substr(0, path.size() - 11);
-        if (!id.empty()) return roots.contains(prefix + "definitions/" + id);
-        return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
-          return root.substr(0, root.rfind("definitions/")) == prefix;
-        });
-      };
-    };
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
       {
         std::lock_guard lock(mutex);

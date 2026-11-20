@@ -225,7 +225,8 @@ TEST_F(AgentProjectFixture,
   });
   // Always unblock approval on an assertion failure before joining the helper.
   std::string approval;
-  // Agent save approvals are read through AccessListRequest without a push event.
+  // Agent save approvals are read through AccessListRequest without a push
+  // event.
   const auto deadline = std::chrono::steady_clock::now() + 10s;
   while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
     const auto list =
@@ -301,7 +302,7 @@ TEST_F(AgentProjectFixture,
 
 namespace tsugumi::test {
 namespace {
-TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
+TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   namespace json = ::tsugumi::json;
   const auto nested = directory.path / "project/externals/storage";
   const std::string document =
@@ -335,7 +336,6 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
   const auto rev = json::Get(snapshot, "rev");
-  const auto before_layout = json::Object(Read(nested / "layout.json"));
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool(
@@ -394,12 +394,14 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorGetsAPlaceInItsAddingRevision) {
                 "value"));
   EXPECT_EQ(json::UInt(json::Text(final, "rev")),
             json::UInt(json::String(rev, rev)) + 1);
-  const auto positions =
-      json::Object(json::Object(Read(nested / "layout.json")).at("cards"));
-  EXPECT_TRUE(positions.contains(id));
-  for (const auto& [key, value] : json::Object(before_layout.at("cards")))
-    EXPECT_EQ(positions.at(key), value);
-  EXPECT_NE(Read(nested / "tsugumi.json").find("secret"), std::string::npos);
+  EXPECT_FALSE(std::filesystem::exists(nested / "layout.json"));
+  const auto canvas =
+      json::Object(json::Object(Read(nested / "tsugumi.json")).at("canvas"));
+  const auto cards = json::Array(canvas.at("cards"));
+  for (const auto& expected : {id, std::string("secret")})
+    EXPECT_TRUE(std::any_of(cards.begin(), cards.end(), [&](const auto& card) {
+      return json::Text(json::Object(card), "id") == expected;
+    }));
   EXPECT_EQ(response.find("secret"), std::string::npos);
 }
 }  // namespace
@@ -409,7 +411,7 @@ namespace tsugumi::test {
 namespace {
 class ScopedSourceOperation : public AgentProjectFixture,
                               public ::testing::WithParamInterface<bool> {};
-TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
+TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
   const auto root = directory.path / "project";
   const std::string graph =
       R"({"name":"Nested","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})";
@@ -429,7 +431,7 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
       R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");
   const auto conversation = Conversation("source-only-scoped");
   Grant(conversation);
-  // A read grant never authorizes a save or its implicit placement writes.
+  // A read grant never authorizes a save.
   const auto tool = GetParam() ? "project_edit" : "project_save";
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
@@ -461,10 +463,7 @@ TEST_P(ScopedSourceOperation, SourceEditsMaterializeOnlyWritableCards) {
        {std::string{}, std::string{"externals/assigned/"}}) {
     EXPECT_EQ(Read(root / prefix / "definitions/a/code.py"),
               prefix.empty() ? "print(1)" : "print(2)");
-    const auto places = json::Object(
-        json::Get(json::Object(Read(root / prefix / "layout.json")), "cards"));
-    EXPECT_EQ(places.size(), 1u);
-    EXPECT_TRUE(places.contains("a"));
+    EXPECT_EQ(Read(root / prefix / "layout.json"), "{}");
   }
   EXPECT_EQ(Read(root / "externals/unrelated/layout.json"), "{}");
 }

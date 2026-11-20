@@ -421,9 +421,6 @@ table LayoutValidated { json:string (required); }
 /// their _card.json text. Same document yields the same places on every client.
 /// The returned layout is presentation only; opening never saves it.
 table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
-/// Add missing places and deletion cleanup to the caller's exact CAS save.
-/// No write, retry or merge occurs here. The caller sends the returned save to
-/// the core as its single transaction. Agent saves use the same implementation.
 /// -> VersionCanvas. Draw the raw definition data and layout returned by the
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {

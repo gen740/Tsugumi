@@ -682,10 +682,45 @@ extension ProjectOperationTests {
     #expect(s.comments("plan").isEmpty)
   }
 
+  @Test func writingANewDraftWaitsForPlacementAndRevealsIt() async throws {
+    let (s, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let placements = AsyncStream<CheckedContinuation<String, Never>>.makeStream()
+    defer { placements.continuation.finish() }
+    s.prepareLayout = { project, _, _ in
+      let cards = try JSONValue.parse(project)["canvas"]?["cards"]?.array
+      guard cards?.first?["id"]?.string == "draft" else { return "{}" }
+      return await withCheckedContinuation { placements.continuation.yield($0) }
+    }
+    s.cardIdProvider = { name, _ in name }
+    s.operateProject = { request in
+      let d = self.delta(s.rev, request.opId, "draft")
+      d.projectJson = #"{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}"#
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    let tab = WorkflowTab(scope: [])
+    let canvas = GraphCanvas(workspace: Workspace(), session: s, tab: tab)
+    let viewport = CGSize(width: 800, height: 600)
+    let draft = try await s.addCard(template: .draft, in: [], at: .zero, name: "draft", automaticPlacement: true)
+    var waiting = placements.stream.makeAsyncIterator()
+    let placement = try #require(await waiting.next())
+    let writing = canvas.writeDraft(draft, in: viewport)
+    #expect(s.inlineDraft == nil)
+    placement.resume(returning: #"{"cards":{"draft":{"x":4000,"y":4000}}}"#)
+    await writing.value
+
+    let origin = s.placedPosition(draft), geometry = s.geometry(draft).size
+    let a = canvas.screen(origin)
+    let b = canvas.screen(CGPoint(x: origin.x + geometry.width, y: origin.y + geometry.height))
+    #expect(a.x >= 0 && a.y >= 0 && b.x <= viewport.width && b.y <= viewport.height)
+    #expect(s.inlineDraft?.card == draft)
+  }
+
   @Test func automaticAndExplicitCardPlacementReachTheHost() async throws {
     let (s, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
     s.cardIdProvider = { name, _ in name }
+    s.prepareLayout = { _, _, _ in #"{"cards":{"auto":{"x":50,"y":4000}}}"# }
     let here = CGPoint(x: 4000, y: 4000)
     var placements: [Bool] = []
     s.operateProject = { request in
@@ -693,13 +728,17 @@ extension ProjectOperationTests {
       #expect(add.x == here.x && add.y == here.y && add.template == "draft")
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
-      d.projectJson = nil
-      let x = add.automaticPlacement ? 50 : 4000
-      d.layoutJson = #"{"cards":{"\#(add.id)":{"x":\#(x),"y":4000}}}"#
+      let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#
+      d.projectJson = #"{"canvas":{"cards":[\#(cards)],"connections":[]}}"#
+      if !add.automaticPlacement {
+        d.layoutJson = #"{"cards":{"drop":{"x":4000,"y":4000}}}"#
+      }
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
     }
     let auto = try await s.addCard(template: .draft, in: [], at: here, name: "auto", automaticPlacement: true)
-    #expect(s.position(auto).x == 50)
+    await s.refreshDerivedLayout().value
+    #expect(s.layout["cards"]?["auto"] == nil)
+    #expect(s.position(auto) == CGPoint(x: 50, y: 4000))
     let dropped = try await s.addCard(template: .draft, in: [], at: here, name: "drop")
     #expect(s.position(dropped) == here)
     #expect(placements == [true, false])

@@ -152,6 +152,29 @@ auto Prepare(
   else
     throw Failure("invalid_request", "missing operation body");
   const auto project = required(prefix + "tsugumi.json");
+  const auto layout_path = prefix + "layout.json";
+  auto read_layout = [&] { return get(layout_path).value_or("{}"); };
+  auto read_geometry =
+      [&](const std::string& relative) -> std::optional<LayoutFile> {
+    const auto bytes = get(prefix + relative);
+    if (!bytes) return std::nullopt;
+    return LayoutFile{*bytes, {}};
+  };
+  auto displayed_positions = [&](const std::string& layout) {
+    return json::Object(
+        json::Get(json::Object(CompleteLayout(project, layout, read_geometry)),
+                  "cards", "{}"));
+  };
+  auto write_position = [&](const std::string& id, const std::string& x,
+                            const std::string& y, json::Members entry = {}) {
+    auto layout = json::Object(read_layout(), layout_path);
+    auto positions = json::Object(json::Get(layout, "cards", "{}"));
+    entry["x"] = x;
+    entry["y"] = y;
+    positions[id] = json::Encode(entry);
+    layout["cards"] = json::Encode(positions);
+    put(layout_path, json::Encode(layout));
+  };
   auto place = [&](const std::string& id, double x, double y,
                    bool automatic = false) {
     if (!valid_id(id))
@@ -181,16 +204,7 @@ auto Prepare(
       layout[field] = json::Encode(entries);
       put(prefix + "layout.json", json::Encode(layout));
     }
-    if (!automatic) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                                 prefix + "layout.json");
-      auto positions = json::Object(json::Get(layout, "cards", "{}"),
-                                    prefix + "layout.json.cards");
-      positions[id] = json::Encode(
-          json::Members{{"x", std::to_string(x)}, {"y", std::to_string(y)}});
-      layout["cards"] = json::Encode(positions);
-      put(prefix + "layout.json", json::Encode(layout));
-    }
+    if (!automatic) write_position(id, std::to_string(x), std::to_string(y));
   };
   auto definition = [&](const std::string& dir, const std::string& raw) {
     const auto parts = json::Object(raw);
@@ -495,6 +509,11 @@ auto Prepare(
     if (copy->items.empty())
       throw Failure("invalid_request", "choose Cards to copy");
     const auto state = document_state(base.files);
+    const auto layout = copy->copy_connections ? read_layout() : "{}";
+    const auto positions = copy->copy_connections ? displayed_positions(layout)
+                                                   : json::Members{};
+    const auto saved = json::Object(
+        json::Get(json::Object(layout), "cards", "{}"));
     std::map<std::string, std::string> copied_ids;
     for (const auto& item : copy->items) {
       if (!valid_id(item->id))
@@ -569,14 +588,14 @@ auto Prepare(
         const auto old = item->from.substr(
             prefix.size() + 12, item->from.size() - prefix.size() - 13);
         copied_ids[old] = item->id;
-        const auto positions = json::Object(
-            json::Get(json::Object(get(prefix + "layout.json").value_or("{}"),
-                                   prefix + "layout.json"),
-                      "cards", "{}"));
-        const auto position = json::Object(json::Get(positions, old, "{}"),
-                                           prefix + "layout.json.cards." + old);
-        x = std::stod(json::Get(position, "x", "0")) + 30;
-        y = std::stod(json::Get(position, "y", "0")) + 30;
+        if (!positions.contains(old))
+          throw Failure("not_found", "Card is missing from the canvas: " + old);
+        const auto position = json::Object(positions.at(old));
+        auto previous = json::Object(json::Get(saved, old, "{}"));
+        if (!previous.contains("x") || !previous.contains("y"))
+          write_position(old, position.at("x"), position.at("y"), std::move(previous));
+        x = std::stod(position.at("x")) + 30;
+        y = std::stod(position.at("y")) + 30;
       }
       place(item->id, x, y);
     }
@@ -616,9 +635,8 @@ auto Prepare(
         PreserveProjectBytes(project, nested.external_json));
     put(prefix + "definitions/" + subgraph->id + "/_link.json",
         nested.link_json);
-    auto positions = json::Object(json::Get(
-        json::Object(required(prefix + "layout.json"), prefix + "layout.json"),
-        "cards", "{}"));
+    auto outer_layout = json::Object(read_layout(), layout_path);
+    const auto positions = displayed_positions(json::Encode(outer_layout));
     json::Members inner_positions;
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
@@ -656,27 +674,24 @@ auto Prepare(
         // nested definitions use the ordinary concrete source removals.
         if (path.starts_with(definition) || !shared_external) remove(path);
       }
-      if (positions.contains(id)) inner_positions[id] = positions.at(id);
+      inner_positions[id] = positions.at(id);
     }
     double cx = 0, cy = 0;
     for (const auto& id : subgraph->cards) {
-      const auto pos = json::Object(json::Get(positions, id, "{}"),
-                                    prefix + "layout.json.cards." + id);
-      cx += std::stod(json::Get(pos, "x", "0"));
-      cy += std::stod(json::Get(pos, "y", "0"));
+      const auto pos = json::Object(positions.at(id));
+      cx += std::stod(pos.at("x"));
+      cy += std::stod(pos.at("y"));
     }
     cx /= subgraph->cards.size();
     cy /= subgraph->cards.size();
     for (auto& [id, raw] : inner_positions) {
       auto pos = json::Object(raw, prefix + "layout.json.cards." + id);
-      pos["x"] = std::to_string(std::stod(json::Get(pos, "x", "0")) - cx);
-      pos["y"] = std::to_string(std::stod(json::Get(pos, "y", "0")) - cy);
+      pos["x"] = std::to_string(std::stod(pos.at("x")) - cx);
+      pos["y"] = std::to_string(std::stod(pos.at("y")) - cy);
       raw = json::Encode(pos);
     }
     put(destination + "layout.json",
         json::Encode(json::Members{{"cards", json::Encode(inner_positions)}}));
-    auto outer_layout =
-        json::Object(required(prefix + "layout.json"), prefix + "layout.json");
     auto selected = [&](const std::string& id) {
       return std::find(subgraph->cards.begin(), subgraph->cards.end(), id) !=
              subgraph->cards.end();
@@ -726,29 +741,16 @@ auto Prepare(
       put(prefix + "definitions/" + subgraph->id + "/_meta.json",
           json::Encode(json::Members{{"name", json::Quote(subgraph->name)}}));
   } else if (const auto* move = body.AsProjectMove()) {
-    put(prefix + "layout.json",
-        MoveProjectLayout(
-            project, required(prefix + "layout.json"),
-            [&](const auto& relative) -> std::optional<LayoutFile> {
-              const auto bytes = get(prefix + relative);
-              return bytes ? std::optional<LayoutFile>{{*bytes, {}}}
-                           : std::nullopt;
-            },
-            *move));
+    put(layout_path,
+        MoveProjectLayout(project, read_layout(), read_geometry, *move));
   } else if (const auto* layout = body.AsProjectLayout()) {
     if (layout->action != H::ProjectLayoutAction::Arrange &&
         layout->action != H::ProjectLayoutAction::Untangle)
       throw Failure("invalid_request", "unknown layout action");
-    const auto path = prefix + "layout.json";
-    put(path, ArrangeProjectLayout(
-                  project, required(path),
-                  [&](const auto& relative) -> std::optional<LayoutFile> {
-                    const auto bytes = get(prefix + relative);
-                    return bytes ? std::optional<LayoutFile>{{*bytes, {}}}
-                                 : std::nullopt;
-                  },
-                  layout->action == H::ProjectLayoutAction::Untangle,
-                  layout->scene.get()));
+    put(layout_path,
+        ArrangeProjectLayout(project, read_layout(), read_geometry,
+                             layout->action == H::ProjectLayoutAction::Untangle,
+                             layout->scene.get()));
   }
   // Deleting a root definition is a guarded folder replacement; independent
   // _card/_link removals remain invalid in the public edit vocabulary.
@@ -974,16 +976,8 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                                   crypto::sha256_hex(*bytes)}}
                      : std::nullopt;
       };
-      std::vector<std::string> documents{"tsugumi.json"};
-      for (const auto& [path, ignored] : inspection.base.files) {
-        (void)ignored;
-        if (IsExternalDocument(path, "tsugumi.json")) documents.push_back(path);
-      }
       plan = Preserve(
-          json::Object(PrepareLayoutSave(
-              json::Encode(plan), layout_read, documents,
-              context.layout_scope ? context.layout_scope(inspection.base)
-                                   : LayoutWrite{})),
+          json::Object(PrepareLayoutSave(json::Encode(plan), layout_read)),
           authored);
       if (context.authorize) context.authorize(plan, inspection.base);
       plan["check_permissions"] = context.origin == "agent" ? "true" : "false";
