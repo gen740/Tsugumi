@@ -38,6 +38,8 @@ public enum ChatGPTError: Error, CustomStringConvertible, Equatable {
     switch code {
     case "chatgpt_sign_in_required":
       return String(localized: "ChatGPT にもう一度サインインしてください。")
+    case "chatgpt_account_changed":
+      return String(localized: "使用中の ChatGPT アカウントが変わりました。セットアップを完了するには、もう一度サインインしてください。")
     case "chatgpt_plan_disabled":
       return String(localized: "このアカウントでは ChatGPT プランの利用が許可されていないため、Agent は使えません。許可するか、API キーの接続を選んでください。")
     default: return nil

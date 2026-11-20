@@ -72,6 +72,33 @@ final class CorePreferences {
   func stringArray(forKey key: String) -> [String]? { values[key] as? [String] }
   func data(forKey key: String) -> Data? { values[key].flatMap { try? JSONSerialization.data(withJSONObject: $0, options: .fragmentsAllowed) } }
   func value<T>(_ key: String, fallback: T) -> T { values[key] as? T ?? fallback }
+
+  /// Onboarding waits for the write against the current Host account and revision.
+  func selectChatGPT(clientId: String) async throws {
+    await pending?.value
+    let get = Tsugumi_Host_SettingsGetRequestT()
+    get.profile = "desktop"
+    let current: Tsugumi_Host_SettingsT = try await CoreHostClient.shared.hostCall(.settingsgetrequest, get)
+    let account = Tsugumi_Host_ExpectedAccountT()
+    account.profile = get.profile
+    account.clientId = clientId
+    try await writeSetting("agent.provider", json: #""chatgpt""#, revision: current.revision, account: account)
+    await loadSnapshot()
+  }
+
+  private func writeSetting(_ key: String, json: String, revision: UInt64,
+                            account: Tsugumi_Host_ExpectedAccountT? = nil) async throws {
+    let change = Tsugumi_Host_SettingT()
+    change.key = key
+    change.valueJson = json
+    let update = Tsugumi_Host_SettingsUpdateRequestT()
+    update.profile = "desktop"
+    update.revision = revision
+    update.changes = [change]
+    update.chatgptAccount = account
+    let _: Tsugumi_Host_SettingsT = try await CoreHostClient.shared.hostCall(.settingsupdaterequest, update)
+  }
+
   func set(_ value: Any?, forKey key: String) {
     guard let value, let data = try? JSONSerialization.data(withJSONObject: value, options: .fragmentsAllowed), let raw = String(data: data, encoding: .utf8) else { return }
     if let old = values[key], let before = try? JSONSerialization.data(withJSONObject: old, options: [.fragmentsAllowed, .sortedKeys]),
@@ -83,8 +110,7 @@ final class CorePreferences {
       await previous?.value
       guard generation == editGeneration else { return }
       do {
-        _ = try await CoreHostClient.shared.call("SettingsUpdateRequest", ["profile": "desktop", "revision": NSNumber(value: revision ?? 0),
-          "changes": [["key": key, "value_json": raw]]])
+        try await writeSetting(key, json: raw, revision: revision ?? 0)
         error = nil
       } catch { editGeneration += 1; self.error = String(describing: error) }
       await loadSnapshot()
