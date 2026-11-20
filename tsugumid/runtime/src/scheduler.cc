@@ -402,11 +402,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   void record_card_log(const CardPath& card, uint64_t inv, LogStream stream,
-                       const std::string& text) {
+                       std::string text) {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), card, inv, stream, text, run, ends](sql::Db& db) {
+        [&h = svc_.history(), card, inv, stream, text = std::move(text), run,
+         ends](sql::Db& db) {
           *ends = h.append_log(db, run, card, inv, stream, text);
         },
         [self = shared_from_this(), ends](bool ok) {
@@ -443,13 +444,24 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 const std::string& text) {
+    card_log(card, inv, stream, {std::span(&text, 1)});
+  }
+
+  void card_log(const CardPath& card, uint64_t inv, LogStream stream,
+                proc::LineChunk received) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
     auto& budget = log_budget(card, inv);
     if (budget.truncated()) return;
-    if (budget.append(stream, text))
-      record_card_log(card, inv, stream, text);
-    else
-      mark_card_log_truncated(card, inv);
+    // The budget still measures each log entry. Store the accepted prefix
+    // with one insert and publish its end before any truncation notice.
+    std::string chunk;
+    for (const auto& line : received.lines) {
+      if (!budget.append(stream, line)) break;
+      chunk += line;
+    }
+    if (!chunk.empty()) record_card_log(card, inv, stream, std::move(chunk));
+    if (received.truncated) budget.truncate();
+    if (budget.truncated()) mark_card_log_truncated(card, inv);
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -851,7 +863,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return *rt.build;
     }
     // Until evaluation identifies a member, keep its diagnostics off the
-    // invocation history. Use the same budget as the rest of its log.
+    // invocation history. Use the same budget as the rest of its log, and
+    // keep each read's accepted prefix together as one history write.
     workerd::InvocationLog pending_budget(kInvocationLogLimitBytes);
     std::vector<std::string> pending_logs;
     bool published = false;
@@ -859,8 +872,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       std::lock_guard lock(log_policy_mu_);
       auto& budget = log_budget(node.path, s.invocation);
       budget = std::move(pending_budget);
-      for (const auto& line : pending_logs)
-        record_card_log(node.path, s.invocation, LogStream::build, line);
+      for (auto& chunk : pending_logs)
+        record_card_log(node.path, s.invocation, LogStream::build,
+                        std::move(chunk));
       if (budget.truncated()) mark_card_log_truncated(node.path, s.invocation);
       pending_logs.clear();
     };
@@ -868,11 +882,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
                                              stage.phase, lane, stage.start, end));
     };
-    request.log = [&](const std::string& line) {
+    request.log = [&](proc::LineChunk received) {
       if (published)
-        card_log(node.path, s.invocation, LogStream::build, line);
-      else if (pending_budget.append(LogStream::build, line))
-        pending_logs.push_back(line);
+        return card_log(node.path, s.invocation, LogStream::build, received);
+      std::string chunk;
+      for (const auto& line : received.lines) {
+        if (!pending_budget.append(LogStream::build, line)) break;
+        chunk += line;
+      }
+      if (!chunk.empty()) pending_logs.push_back(std::move(chunk));
+      if (received.truncated) pending_budget.truncate();
     };
     request.on_phase = [&](Phase phase) {
       if (s.phase == phase) return;

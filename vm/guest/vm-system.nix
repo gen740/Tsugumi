@@ -64,8 +64,9 @@ let
         mkdir -p /run/rosetta
         mount -t virtiofs -o ro rosetta /run/rosetta || { echo "x86_64-linux: Rosetta's share is missing"; exit 0; }
         interpreter=/run/rosetta/rosetta
-        # Rosetta reads its own folder while it runs: Nix's build sandbox sees it.
-        sandbox=/run/rosetta ;;
+        # Nix bind-mounts the socket when present. An absolute symlink into
+        # /persist would be broken inside the build sandbox.
+        sandbox="/run/rosetta /run/rosettad/rosetta.sock?" ;;
       qemu)
         NIX_REMOTE=daemon nix-store --realise ${qemu} >/dev/null || { echo "x86_64-linux: cannot fetch qemu-user"; exit 0; }
         interpreter=${qemu}/bin/qemu-x86_64

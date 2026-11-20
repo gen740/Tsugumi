@@ -1,9 +1,8 @@
 // The Nix evaluator inside tsugumid (libnixexpr / libnixstore): one evaluator
 // and store connection per process, used from a single thread of its own, so
 // that nixpkgs is read once and evaluation state is reused between Cards and
-// runs. Builds and transfers run on the caller's thread, each build on a daemon
-// connection of its own: how many build at once is the Nix daemon's choice. No
-// Nix CLI is involved.
+// runs. Transfers use libnix on the caller's thread. Native builds use a
+// separate Nix client so each connection has its own build options.
 #pragma once
 
 #include <atomic>
@@ -18,6 +17,7 @@
 #include <tuple>
 #include <vector>
 
+#include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/store_result.hh"
 
 namespace tsugumi {
@@ -28,6 +28,8 @@ inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 // checked by reuse(). Operational limits/deadlines are applied on every call.
 using EvaluationKey =
     std::tuple<std::string, std::string, std::string, std::string>;
+
+using NixOutput = std::function<void(proc::LineChunk)>;
 
 struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
@@ -43,11 +45,12 @@ struct NixCall {
   // symlink (registered as an indirect root outside /nix/var/nix/gcroots).
   std::filesystem::path root_dir;
   std::string root_prefix;
+  std::optional<uint32_t> jobs;
+  std::optional<uint32_t> cores;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   const std::atomic<bool>* cancel = nullptr;
   std::optional<std::chrono::steady_clock::time_point> deadline;
-  std::function<void(const std::string&)>
-      log;  // evaluation messages and build output
+  NixOutput log;  // evaluation messages and build output
   std::function<void(bool building)>
       on_phase;  // false: evaluating, true: building
   auto evaluation_key() const -> EvaluationKey {
@@ -74,6 +77,8 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
+  // Dispatch the private build-client mode before starting the evaluator.
+  static auto build_client(int argc, char** argv) -> std::optional<int>;
   // `entry` is the entry function's source; `allowed` the folders evaluation
   // may read (restricted mode): the SDK and the evaluation folder.
   NixEvaluator(std::string entry, std::vector<std::string> allowed);

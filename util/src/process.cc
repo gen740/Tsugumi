@@ -10,7 +10,9 @@
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
+#include <exception>
 #include <stdexcept>
+#include <string_view>
 
 namespace tsugumi::proc {
 
@@ -197,7 +199,8 @@ int wait(pid_t pid) {
 
 Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
-           const std::function<void(const std::string&)>& on_stderr,
+           const std::function<void(LineChunk)>& on_stderr,
+           std::optional<size_t> stderr_line_limit,
            std::chrono::milliseconds grace) {
   int out_pipe[2] = {-1, -1};
   int err_pipe[2] = {-1, -1};
@@ -223,7 +226,19 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   ::close(out_pipe[1]);
   ::close(err_pipe[1]);
   Result res;
-  std::string err_line;
+  std::exception_ptr log_error;
+  const auto deliver = [&](LineChunk chunk) {
+    if (chunk.lines.empty() && !chunk.truncated) return;
+    try {
+      on_stderr(chunk);
+    } catch (...) {
+      log_error = std::current_exception();
+      kill_group(pid, SIGKILL);
+    }
+  };
+  std::string pending;
+  std::vector<std::string> lines;
+  bool truncated = false;
   bool out_open = true;
   bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -246,13 +261,31 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0) {
         err_open = false;
-      } else {
-        err_line.append(buf, static_cast<size_t>(r));
-        size_t nl;
-        while ((nl = err_line.find('\n')) != std::string::npos) {
-          if (on_stderr) on_stderr(err_line.substr(0, nl + 1));
-          err_line.erase(0, nl + 1);
+      } else if (on_stderr && !log_error && !truncated) {
+        std::string_view remaining(buf, static_cast<size_t>(r));
+        while (!remaining.empty()) {
+          const auto newline = remaining.find('\n');
+          const auto fragment = remaining.substr(
+              0, newline == remaining.npos ? remaining.size() : newline + 1);
+          if (stderr_line_limit &&
+              fragment.size() > *stderr_line_limit - pending.size()) {
+            truncated = true;
+            std::string{}.swap(pending);
+            break;
+          }
+          remaining.remove_prefix(fragment.size());
+          if (newline == remaining.npos) {
+            pending.append(fragment);
+          } else if (pending.empty()) {
+            lines.emplace_back(fragment);
+          } else {
+            pending.append(fragment);
+            lines.push_back(std::move(pending));
+            pending.clear();
+          }
         }
+        deliver({lines, truncated});
+        lines.clear();
       }
     }
     auto now = std::chrono::steady_clock::now();
@@ -276,12 +309,13 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       kill_at.reset();
     }
   }
-  if (!err_line.empty() && on_stderr) on_stderr(err_line);
+  if (!pending.empty() && !log_error) deliver({std::span(&pending, 1)});
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
   res.status = wait(pid);
   // Make sure no orphaned grandchildren survive a cancelled build.
   if (term_sent) kill_group(pid, SIGKILL);
+  if (log_error) std::rethrow_exception(log_error);
   return res;
 }
 

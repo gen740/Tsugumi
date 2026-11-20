@@ -29,6 +29,8 @@ stdenv.mkDerivation rec {
     url = "https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-${version}.tar.xz";
     hash = "sha256-DskP5LIEIrG2ZLd+bS3eIrQL1B5+ssrYrIc5pHScsbs=";
   };
+  # Let Rosetta opt its translated threads into hardware x86 memory ordering.
+  patches = [ ./kernel/rosetta-tso-6.12.patch ];
   nativeBuildInputs = [
     flex
     bison
@@ -54,13 +56,15 @@ stdenv.mkDerivation rec {
     scripts/config --disable SECURITY_SELINUX \
       --disable DEFAULT_SECURITY_SELINUX --enable DEFAULT_SECURITY_DAC \
       --set-str LSM "landlock,lockdown,yama,loadpin,safesetid,smack,tomoyo,apparmor,ipe,bpf" \
-      --disable IO_URING --enable BPF_UNPRIV_DEFAULT_OFF --enable SECURITY_YAMA
+      --disable IO_URING --enable BPF_UNPRIV_DEFAULT_OFF --enable SECURITY_YAMA \
+      --enable ARM64_TSO
     make $makeFlags olddefconfig
     # Fail when the result still has SELinux or io_uring, or allows unprivileged BPF.
     ! grep -q '^CONFIG_SECURITY_SELINUX=y' .config
     ! grep -q '^CONFIG_IO_URING=y' .config
     grep -q '^CONFIG_BPF_UNPRIV_DEFAULT_OFF=y' .config
     grep -q '^CONFIG_SECURITY_YAMA=y' .config
+    grep -q '^CONFIG_ARM64_TSO=y' .config
     runHook postConfigure
   '';
   buildPhase = ''

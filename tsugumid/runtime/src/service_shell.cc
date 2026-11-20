@@ -147,8 +147,7 @@ auto shell::Execute(const std::string& command, const std::string& cwd,
         closure.env = {"HOME=" + temporary.path.string()};
         const auto result =
             proc::run(closure, &cancelled,
-                      Clock::now() + std::chrono::milliseconds(timeout),
-                      [](const auto&) {});
+                      Clock::now() + std::chrono::milliseconds(timeout), {});
         if (!proc::exited_ok(result.status))
           throw Failed(FailureKind::permission_denied,
                        "cannot resolve the shell tool runtime closure");

@@ -24,6 +24,7 @@
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <grp.h>
+#include <linux/sched.h>
 #include <linux/vm_sockets.h>
 #include <netinet/in.h>
 #include <poll.h>
@@ -47,8 +48,10 @@
 #include <array>
 #include <atomic>
 #include <cerrno>
+#include <chrono>
 #include <condition_variable>
 #include <cstdarg>
+#include <cstdint>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -87,6 +90,9 @@ struct Options {
   int terminal_port = 1026;
 };
 Options opt;
+pid_t rosettad_pid = -1;
+int rosettad_pidfd = -1;
+bool rosettad_listening = false;
 
 int control_fd = -1;
 int ready_events = -1;
@@ -718,6 +724,16 @@ auto reap_children(sigset_t signals) -> void {
       const auto pid = ::waitpid(-1, &status, WNOHANG);
       if (pid < 0 && errno == EINTR) continue;
       if (pid <= 0) break;
+      if (pid == rosettad_pid) {
+        rosettad_pid = -1;
+        if (rosettad_listening && !powering_off)
+          logf(
+              "Rosetta AOT: rosettad exited (%s %d); translating without the "
+              "cache",
+              WIFEXITED(status) ? "status" : "signal",
+              WIFEXITED(status) ? WEXITSTATUS(status) : WTERMSIG(status));
+        continue;
+      }
       std::lock_guard lock(mu);
       const auto project = std::find_if(
           projects.begin(), projects.end(), [pid](const auto& entry) {
@@ -940,6 +956,34 @@ bool wait_for_empty_cgroup(const std::string& id) {
   return empty;
 }
 
+auto signal_daemon(int fd, int sig) -> bool {
+  return ::syscall(SYS_pidfd_send_signal, fd, sig, nullptr, 0) == 0 ||
+         errno == ESRCH;
+}
+
+auto wait_for_daemon_exit(pollfd& process) -> bool {
+  int ready;
+  do {
+    ready = ::poll(&process, 1, -1);
+  } while (ready < 0 && errno == EINTR);
+  return ready > 0 && (process.revents & (POLLIN | POLLHUP));
+}
+
+auto stop_rosetta_cache() -> bool {
+  if (rosettad_pidfd < 0) return true;
+  if (!signal_daemon(rosettad_pidfd, SIGTERM)) {
+    logf("Rosetta AOT: cannot terminate rosettad: %s", std::strerror(errno));
+    return false;
+  }
+  pollfd process{rosettad_pidfd, POLLIN, 0};
+  if (!wait_for_daemon_exit(process)) {
+    logf("Rosetta AOT: cannot verify that rosettad exited");
+    return false;
+  }
+  ::close(rosettad_pidfd);
+  return true;
+}
+
 void shutdown_vm() {
   if (powering_off.exchange(true)) return;
   std::vector<std::string> ids;
@@ -950,24 +994,28 @@ void shutdown_vm() {
   std::vector<std::jthread> stops;
   for (const auto& id : ids) stops.emplace_back([id] { stop_project(id); });
   stops.clear();
-  logf("syncing and remounting persistent disks read-only");
   // Run with the boot image's tools, independent of a cached vm-system.
   // The reaper may collect this child; the marker is managed by the script.
   bool drained = true;
   for (const auto& id : ids) drained = wait_for_empty_cgroup(id) && drained;
   if (!drained) logf("cannot verify that project cgroups drained; keeping dirty marker");
-  const auto child = drained ? ::fork() : -1;
+  const bool cache_stopped = stop_rosetta_cache();
+  if (!cache_stopped) logf("Rosetta AOT: keeping the dirty marker");
+  const auto child = drained && cache_stopped ? ::fork() : -1;
+  if (child < 0 && drained && cache_stopped)
+    logf("cannot start store-health: %s", std::strerror(errno));
   if (child == 0) {
     ::execl("/run/tsugumi/store-health", "store-health", "poweroff", "/persist",
             "/run/tsugumi/vmd", nullptr);
     ::_exit(127);
   }
   if (child > 0) {
+    logf("syncing persistent disks");
     std::unique_lock lock(mu);
     exited.wait(lock, [&] { return exit_status.contains(child); });
     if (auto it = exit_status.find(child); it != exit_status.end()) {
       if (it->second != 0)
-        logf("read-only remount failed; next boot will check the store");
+        logf("store shutdown failed; next boot will check the store");
       exit_status.erase(it);
     }
   }
@@ -1124,22 +1172,105 @@ void rpc(int conn) {
 }
 
 // Boot waits for the daemon's socket or for the process to exit.
+auto wait_for_daemon_socket(
+    int child, const fs::path& socket,
+    std::optional<std::chrono::steady_clock::time_point> deadline = {})
+    -> bool {
+  const int events = ::inotify_init1(IN_CLOEXEC);
+  if (events < 0) return false;
+  bool listening = false;
+  if (::inotify_add_watch(events, socket.parent_path().c_str(),
+                          IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF) >= 0) {
+    for (;;) {
+      struct stat st{};
+      if (::stat(socket.c_str(), &st) == 0 && S_ISSOCK(st.st_mode)) {
+        listening = true;
+        break;
+      }
+      int timeout = -1;
+      if (deadline) {
+        const auto remaining = *deadline - std::chrono::steady_clock::now();
+        if (remaining <= std::chrono::steady_clock::duration::zero()) break;
+        timeout = static_cast<int>(
+            std::chrono::ceil<std::chrono::milliseconds>(remaining).count());
+      }
+      pollfd fds[] = {{child, POLLIN, 0}, {events, POLLIN, 0}};
+      const auto ready = ::poll(fds, 2, timeout);
+      if (ready < 0 && errno == EINTR) continue;
+      if (ready <= 0 || fds[0].revents || !(fds[1].revents & POLLIN)) break;
+      std::array<char, 4096> buffer;
+      if (::read(events, buffer.data(), buffer.size()) <= 0) break;
+    }
+  }
+  ::close(events);
+  return listening;
+}
+
 int wait_daemon(pid_t pid, const fs::path& socket) {
   const int child = static_cast<int>(::syscall(SYS_pidfd_open, pid, 0));
-  const int events = ::inotify_init1(IN_CLOEXEC);
-  if (child < 0 || events < 0 ||
-      ::inotify_add_watch(events, socket.parent_path().c_str(),
-                          IN_CREATE | IN_MOVED_TO | IN_DELETE_SELF) < 0)
-    return 1;
-  for (;;) {
-    struct stat st{};
-    if (::stat(socket.c_str(), &st) == 0 && S_ISSOCK(st.st_mode)) return 0;
-    pollfd fds[] = {{child, POLLIN, 0}, {events, POLLIN, 0}};
-    const auto ready = ::poll(fds, 2, -1);
-    if (ready < 0 && errno == EINTR) continue;
-    if (ready < 0 || fds[0].revents || !(fds[1].revents & POLLIN)) return 1;
-    std::array<char, 4096> buffer;
-    if (::read(events, buffer.data(), buffer.size()) <= 0) return 1;
+  if (child < 0) return 1;
+  const bool ready = wait_for_daemon_socket(child, socket);
+  ::close(child);
+  return ready ? 0 : 1;
+}
+
+auto start_rosetta_cache() -> void {
+  if (::access("/run/rosetta/rosetta", X_OK) != 0) return;
+  constexpr auto executable = "/run/rosetta/rosettad";
+  constexpr auto cache = "/persist/rosettad";
+  const fs::path socket = fs::path(cache) / "uds" / "rosetta.sock";
+  const fs::path visible = "/run/rosettad/rosetta.sock";
+  try {
+    if (::access(executable, X_OK) != 0)
+      throw std::runtime_error(system_error("access", executable));
+    fs::create_directories(socket.parent_path());
+    if (::chmod(cache, 0700) != 0)
+      throw std::runtime_error(system_error("chmod", cache));
+    fs::remove(socket);
+    fs::create_directories(visible.parent_path());
+    // Acquire the lifetime handle when creating the child.
+    struct clone_args args{};
+    args.flags = CLONE_PIDFD;
+    args.pidfd = reinterpret_cast<uintptr_t>(&rosettad_pidfd);
+    args.exit_signal = SIGCHLD;
+    const auto child =
+        static_cast<pid_t>(::syscall(SYS_clone3, &args, sizeof args));
+    if (child < 0) throw std::runtime_error(system_error("start", executable));
+    if (child == 0) {
+      sigset_t mask;
+      ::sigemptyset(&mask);
+      ::sigprocmask(SIG_SETMASK, &mask, nullptr);
+      ::signal(SIGPIPE, SIG_DFL);
+      ::execl(executable, executable, "daemon", cache, nullptr);
+      std::perror(executable);
+      ::_exit(127);
+    }
+    rosettad_pid = child;
+    // This optional service must not block project startup if it wedges.
+    const auto deadline =
+        std::chrono::steady_clock::now() + std::chrono::seconds(5);
+    if (!wait_for_daemon_socket(rosettad_pidfd, socket, deadline))
+      throw std::runtime_error(
+          "rosettad exited or did not provide a usable socket");
+    if (::chmod(socket.c_str(), 0666) != 0)
+      throw std::runtime_error(system_error("chmod", socket));
+    const int mountpoint =
+        ::open(visible.c_str(), O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0644);
+    if (mountpoint < 0)
+      throw std::runtime_error(system_error("create", visible));
+    ::close(mountpoint);
+    if (::mount(socket.c_str(), visible.c_str(), nullptr, MS_BIND, nullptr) !=
+        0) {
+      const auto error = system_error("bind", visible);
+      fs::remove(visible);
+      throw std::runtime_error(error);
+    }
+    rosettad_listening = true;
+    logf("Rosetta AOT: cache socket ready at %s", visible.c_str());
+  } catch (const std::exception& error) {
+    if (rosettad_pidfd >= 0 && !signal_daemon(rosettad_pidfd, SIGKILL))
+      logf("Rosetta AOT: cannot kill rosettad: %s", std::strerror(errno));
+    logf("Rosetta AOT: %s; translating without the cache", error.what());
   }
 }
 
@@ -1165,19 +1296,14 @@ int stop_nix() {
         ::close(fd);
         continue;
       }
-      if (::syscall(SYS_pidfd_send_signal, fd, SIGTERM, nullptr, 0) < 0 &&
-          errno != ESRCH)
-        return 1;
+      if (!signal_daemon(fd, SIGTERM)) return 1;
       daemons.push_back(process);
     }
     if (daemons.empty()) return 0;
     for (auto& process : daemons) {
-      int ready;
-      do {
-        ready = ::poll(&process, 1, -1);
-      } while (ready < 0 && errno == EINTR);
+      const bool stopped = wait_for_daemon_exit(process);
       ::close(process.fd);
-      if (ready < 0) return 1;
+      if (!stopped) return 1;
     }
   }
 }
@@ -1255,6 +1381,7 @@ int main(int argc, char** argv) {
   ::chmod(kScratch.c_str(), 0700);
   fs::create_directories(kRpc);
   ::chmod(kRpc.c_str(), 0711);
+  start_rosetta_cache();
   tsugumi::NixStore::init_process();
   cache_usage = std::make_unique<tsugumi::CacheUsage>(
       kRoots, kScratch, fs::path{}, fs::path{}, "", kUsage);
