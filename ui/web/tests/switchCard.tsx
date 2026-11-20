@@ -70,7 +70,7 @@ console.log('Switch Card: template, operation/undo, typed ports and accessible r
 // start's title and the branch's centre, stealing a body drag to start a wire.
 for (const flow of ['topToBottom', 'leftToRight'] as const) {
   for (const zoom of [1, 0.2]) {
-    for (const kind of ['trigger', 'branch', 'fork', 'merge', 'collect', 'switch'] as const) {
+    for (const kind of ['trigger', 'branch', 'merge', 'collect', 'switch'] as const) {
       const data = { ...session.nodeData(card), kind,
         inputs: kind === 'trigger' || kind === 'switch' ? [] : [{ name: 'value' }, { name: 'condition' }],
         outputs: [{ name: 'a' }, { name: 'b' }] }

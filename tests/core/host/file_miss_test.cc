@@ -15,7 +15,7 @@ auto Snapshot(const std::string& kind) -> json::Members {
 }
 TEST(FileMiss, BuiltinSchemasDescribeTheCardFilesAndResolvedTypeTool) {
   for (const auto* kind :
-       {"fork", "branch", "merge", "collect", "trigger", "switch", "draft"}) {
+       {"branch", "merge", "collect", "trigger", "switch", "draft"}) {
     for (const auto* file : {"_outputs.fbs", "_inputs.fbs"}) {
       const auto diagnostic = DescribeFileMiss(
           "definitions/share/" + std::string(file), Snapshot(kind), {});
@@ -78,7 +78,7 @@ TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
         EXPECT_EQ(method, "project_file_read");
         EXPECT_EQ(json::Text(args, "path"), root + "_card.json");
         EXPECT_EQ(json::Text(args, "at_rev"), "7");
-        return {{"bytes", json::Quote(R"({"template":"fork"})")}};
+        return {{"bytes", json::Quote(R"({"template":"collect"})")}};
       });
   EXPECT_EQ(reads, 1);
   EXPECT_FALSE(diagnostic.empty());

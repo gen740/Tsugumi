@@ -885,7 +885,6 @@
 "出力検証・保存" = "Output validation, saving";
 "出力表示を戻す" = "Show Output Display Again";
 "分岐" = "Branch";
-"分配" = "Fork";
 "分野を選び直す" = "Choose Another Field";
 "切断" = "Disconnect";
 "初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（設定のサイズまで、使った分だけ）を作ります。" = "When a project is first opened, the VM image is unpacked and the Nix store's space is made (up to the size in Settings, only what is used).";

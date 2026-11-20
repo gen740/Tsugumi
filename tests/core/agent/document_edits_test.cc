@@ -42,61 +42,38 @@ auto ConnectionWires(const std::string& state) -> std::set<std::string> {
   }
   return result;
 }
-TEST(DocumentConnect, SecondWireInsertsForkAndLaterWiresExtendIt) {
+TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
   const std::string state =
-      R"({"project":{"pkgsPath":"pinned","canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"layout":{"cards":{"start":{"x":0,"y":20},"a":{"x":600,"y":100}}},"definitions":{"start":{"card":{"template":"trigger"}},"a":{"card":{}},"b":{"card":{}},"c":{"card":{}}}})";
-  const auto first = ConnectDocuments(state, "start", "out", "a", "in", "");
-  EXPECT_FALSE(first.needs_fork);
-  const auto plan =
-      ConnectDocuments(first.state_json, "start", "out", "b", "in", "");
-  EXPECT_TRUE(plan.needs_fork);
-  const auto second =
-      ConnectDocuments(first.state_json, "start", "out", "b", "in", "fork");
-  EXPECT_EQ(second.inserted_id, "fork");
-  EXPECT_EQ(ConnectionWires(second.state_json),
-            (std::set<std::string>{"start.out>fork.in", "fork.a>a.in",
-                                   "fork.b>b.in"}));
-  // Every newly inserted Card follows the host's missing-place rule on save.
-  EXPECT_EQ(json::Object(second.state_json).at("layout"),
-            json::Object(state).at("layout"));
-  const auto third =
-      ConnectDocuments(second.state_json, "start", "out", "c", "in", "");
-  EXPECT_FALSE(third.needs_fork);
-  EXPECT_TRUE(ConnectionWires(third.state_json).contains("fork.c>c.in"));
-  const auto branch =
-      ConnectDocuments(third.state_json, "fork", "a", "c", "other", "");
-  EXPECT_TRUE(ConnectionWires(branch.state_json).contains("fork.c_2>c.other"));
-  EXPECT_EQ(json::Object(json::Object(branch.state_json).at("project"))
-                .at("pkgsPath"),
-            json::Quote("pinned"));
+      R"({"project":{"canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"start":{"card":{"template":"trigger"}}}})";
+  const auto first = ConnectDocuments(state, "start", "out", "a", "in");
+  const auto second = ConnectDocuments(first, "start", "out", "b", "in");
+  EXPECT_EQ(ConnectionWires(second),
+            (std::set<std::string>{"start.out>a.in", "start.out>b.in"}));
+  EXPECT_EQ(Normalized(json::Object(second).at("definitions")),
+            Normalized(json::Object(state).at("definitions")));
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
       R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"template":"draft"},"meta":{"content":"planned"}},"new":{"card":{"template":"trigger"}},"dest":{"card":{"language":"python"}}}})";
-  const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in", "");
-  EXPECT_EQ(ConnectionWires(replaced.state_json),
+  const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
+  EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
-  EXPECT_EQ(Normalized(json::Object(replaced.state_json).at("definitions")),
+  EXPECT_EQ(Normalized(json::Object(replaced).at("definitions")),
             Normalized(json::Object(state).at("definitions")));
 }
 TEST(DocumentConnect,
      DraftGesturesKeepMultipleIncomingAndOutgoingWiresPortless) {
   const std::string state =
       R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}},"c":{"card":{"template":"draft"}}}})";
-  const auto first = ConnectDocuments(state, "a", "+", "b", "+", "");
-  EXPECT_EQ(ConnectionWires(first.state_json),
-            (std::set<std::string>{"a.>b."}));
-  const auto second =
-      ConnectDocuments(first.state_json, "a", "+", "c", "+", "");
-  EXPECT_FALSE(second.needs_fork);
-  const auto third =
-      ConnectDocuments(second.state_json, "c", "+", "b", "+", "");
-  EXPECT_FALSE(third.needs_fork);
-  EXPECT_EQ(ConnectionWires(third.state_json),
+  const auto first = ConnectDocuments(state, "a", "+", "b", "+");
+  EXPECT_EQ(ConnectionWires(first), (std::set<std::string>{"a.>b."}));
+  const auto second = ConnectDocuments(first, "a", "+", "c", "+");
+  const auto third = ConnectDocuments(second, "c", "+", "b", "+");
+  EXPECT_EQ(ConnectionWires(third),
             (std::set<std::string>{"a.>b.", "a.>c.", "c.>b."}));
-  EXPECT_EQ(Normalized(json::Object(third.state_json).at("definitions")),
+  EXPECT_EQ(Normalized(json::Object(third).at("definitions")),
             Normalized(json::Object(state).at("definitions")));
-  EXPECT_THROW(ConnectDocuments(state, "missing", "out", "b", "+", ""),
+  EXPECT_THROW(ConnectDocuments(state, "missing", "out", "b", "+"),
                std::runtime_error);
 }
 
@@ -107,7 +84,7 @@ TEST(DocumentTemplate,
   EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
   EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
   for (const auto* name :
-       {"trigger", "fork", "branch", "collect", "merge", "input", "switch"}) {
+       {"trigger", "branch", "collect", "merge", "input", "switch"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));
@@ -211,7 +188,7 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{},"link":{"external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"template":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"template":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/x/_meta.json",
@@ -226,7 +203,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   EXPECT_EQ(
       json::Text(json::Object(
                      json::Object(defs.at("externals/target/definitions/copy/"))
-                         .at("link")),
+                         .at("card")),
                  "external"),
       "copy");
   const auto exts = json::Object(patch.at("externals"));
@@ -252,9 +229,8 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
-      CopyDocuments(
-          R"({"definitions":{"a":{"card":{},"link":{"external":"missing"}}}})",
-          {}, "definitions/a/", "definitions/b/", ""),
+      CopyDocuments(R"({"definitions":{"a":{"card":{"external":"missing"}}}})",
+                    {}, "definitions/a/", "definitions/b/", ""),
       std::runtime_error);
   EXPECT_THROW(
       CopyDocuments("{}", {}, "externals/missing/", "externals/copy/", ""),

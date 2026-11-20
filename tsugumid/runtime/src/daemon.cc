@@ -263,31 +263,32 @@ int run_daemon(int argc, char** argv) {
     stdfs::remove(opt.control_dir / "server.startup-error.json");
   }
   Service service(so);
+  const auto report_startup_failure = [&](schema::StartupError error,
+                                          const std::exception& cause) {
+    *error.message = cause.what();
+    if (!opt.control_dir.empty())
+      fs::write_atomic(opt.control_dir / "server.startup-error.json",
+                       schema::encode(error), 0600);
+    log::error(std::string("cannot open the project: ") + cause.what());
+    return 6;
+  };
   try {
     service.open();
   } catch (const IncompatibleHistory& e) {
-    if (!opt.control_dir.empty()) {
-      schema::StartupError error;
-      *error.kind = "incompatible_history";
-      *error.found = e.found;
-      *error.expected = e.expected;
-      *error.source = e.source;
-      *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json",
-                       schema::encode(error), 0600);
-    }
-    log::error(std::string("cannot open the project: ") + e.what());
-    return 6;
+    schema::StartupError error;
+    *error.kind = "incompatible_history";
+    *error.found = e.found;
+    *error.expected = e.expected;
+    *error.source = e.source;
+    return report_startup_failure(std::move(error), e);
   } catch (const std::exception& e) {
-    if (!opt.control_dir.empty()) {
-      schema::StartupError error;
-      *error.kind = "project_open_failed";
-      *error.message = e.what();
-      fs::write_atomic(opt.control_dir / "server.startup-error.json",
-                       schema::encode(error), 0600);
-    }
-    log::error(std::string("cannot open the project: ") + e.what());
-    return 6;
+    schema::StartupError error;
+    const auto* failure = dynamic_cast<const Failed*>(&e);
+    *error.kind =
+        failure && failure->failure.kind == FailureKind::resource_limit
+            ? "resource_limit"
+            : "project_open_failed";
+    return report_startup_failure(std::move(error), e);
   }
   if (!opt.prepare_cards.empty()) {
     std::ofstream out(opt.prepare_cards, std::ios::trunc);

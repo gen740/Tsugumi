@@ -335,7 +335,7 @@ enum Shared {
     {
       "name": "project_connect",
       "mutating": true,
-      "description": "Connect Card ports atomically, replacing the destination wire and adding a fork if needed (reserve fork_id with card_id). Returns the save result. project_path selects an external project; omitted means root.",
+      "description": "Connect Card ports atomically. An output can feed several inputs. Replaces the wire at the destination input, or adds a wire to a Draft. Returns the save result. project_path selects an external project; omitted means root.",
       "inputSchema": {
         "type": "object",
         "properties": {
@@ -352,9 +352,6 @@ enum Shared {
             "type": "string"
           },
           "to_port": {
-            "type": "string"
-          },
-          "fork_id": {
             "type": "string"
           }
         },

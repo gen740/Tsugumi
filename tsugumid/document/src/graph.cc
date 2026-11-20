@@ -38,8 +38,6 @@ const char* template_name(Template t) {
       return "input";
     case Template::Switch:
       return "switch";
-    case Template::Fork:
-      return "fork";
     case Template::Branch:
       return "branch";
     case Template::Merge:
@@ -213,23 +211,17 @@ std::optional<std::string> check_param_value(
 
 Template template_of(const DefinitionDoc* def) {
   if (!def) return Template::Draft;
-  if (def->link) return Template::Subgraph;
+  if (schema::get(def->card.external)) return Template::Subgraph;
   const auto* t = schema::get(def->card.template_name);
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
       {"trigger", Template::Trigger}, {"input", Template::Input},
-      {"fork", Template::Fork},       {"branch", Template::Branch},
-      {"merge", Template::Merge},     {"collect", Template::Collect},
-      {"draft", Template::Draft},     {"switch", Template::Switch},
+      {"branch", Template::Branch},   {"merge", Template::Merge},
+      {"collect", Template::Collect}, {"draft", Template::Draft},
+      {"switch", Template::Switch},
   };
   auto it = m.find(*t);
   return it == m.end() ? Template::Code : it->second;
-}
-
-std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v) {
-  schema::v::Array<schema::v::String> a;
-  if (schema::decode(v, a)) return {};
-  return a.value();
 }
 
 const PortType* Node::input(const std::string& n) const {
@@ -323,7 +315,7 @@ class Builder {
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || def->link) return;
+    if (!def || schema::get(def->card.external)) return;
     const auto& d = def->card;
     auto str = [&](const auto& f, std::string& out) {
       if (const auto* v = schema::get(f)) out = *v;
@@ -549,23 +541,16 @@ class Builder {
   // The definition of a Card written in an external project (read as sources).
   const DefinitionDoc* external_definition(Node& n) {
     auto card = read_(n.def_dir + "_card.json");
-    auto link = read_(n.def_dir + "_link.json");
-    if (card.has_value() == link.has_value()) {
+    if (!card) {
       n.diags.push_back(
-          diag(n.path, "invalid_document",
-               n.def_dir + " needs _card.json or _link.json (one of them)"));
+          diag(n.path, "invalid_document", n.def_dir + " needs _card.json"));
       return nullptr;
     }
     DefinitionDoc d;
     const std::string& id = n.path.back();
     try {
-      if (card) {
-        d.card = parse_card_json(id, *card);
-        d.card_json = *card;
-      } else {
-        d.link = parse_link_json(id, *link).external->value();
-        d.link_json = *link;
-      }
+      d.card = parse_card_json(id, *card);
+      d.card_json = *card;
       if (auto meta = read_(n.def_dir + "_meta.json")) {
         check_meta_json(*meta);
         d.meta_json = *meta;
@@ -637,23 +622,6 @@ class Builder {
           n.outputs.push_back(
               {"out", PortKind::FlatBuffer, false, types::empty_type()});
           break;
-        case Template::Fork: {
-          n.input_defs = {{"in", false}};
-          std::vector<std::string> branches = {"out1", "out2"};
-          if (const auto* p = param(n, "branches");
-              p && p->data && p->type == ParamType::StringArray) {
-            branches.clear();
-            for (const auto& b : string_array_param(*p->data))
-              if (valid_id(b))
-                branches.push_back(b);
-              else
-                n.diags.push_back(
-                    diag(n.path, "invalid_param", "fork branches must be ids"));
-          }
-          for (const auto& b : branches)
-            n.outputs.push_back({b, PortKind::FlatBuffer, false, nullptr});
-          break;
-        }
         case Template::Branch:
           n.input_defs = {{"value", false}, {"condition", false}};
           n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
@@ -695,7 +663,7 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      std::optional<std::string> link = def ? def->link : std::nullopt;
+      const auto* link = def ? schema::get(def->card.external) : nullptr;
       res_->nodes.push_back(std::move(n));
 
       if (link) {
@@ -799,6 +767,7 @@ class Builder {
                               "boundary", false))
             res_->endpoints[{path_key(node.path), port.name, output}] = *end;
     }
+    std::set<std::tuple<size_t, std::string, size_t, std::string>> wires;
     for (const auto& e : raw_) {
       CardPath from = e.scope;
       CardPath to = e.scope;
@@ -858,31 +827,16 @@ class Builder {
       };
       check(sn, src->second, true);
       check(dn, dst->second, false);
-      if (ok)
-        res_->edges.push_back(
-            {src->first, src->second, dst->first, dst->second});
-    }
-    // One output feeds one wire: a value goes to several Cards through a
-    // fork Card (one way to write it, drawn as a hub on the canvas).
-    std::map<std::tuple<CardPath, std::string, std::string>, size_t> wires;
-    for (const auto& e : raw_) ++wires[{e.scope, e.from, e.from_port}];
-    for (const auto& [k, count] : wires) {
-      if (count < 2) continue;
-      CardPath from = std::get<0>(k);
-      from.push_back(std::get<1>(k));
-      auto source = res_->index.find(path_key(from));
-      if (source != res_->index.end() &&
-          res_->nodes[source->second].kind == Template::Draft)
+      if (!ok) continue;
+      if (sn.kind != Template::Draft && dn.kind != Template::Draft &&
+          !wires.emplace(src->first, src->second, dst->first, dst->second)
+               .second) {
+        dn.diags.push_back(diag(dn.path, "duplicate_wire",
+                               wire + ": " + src->second + " -> " +
+                                   dst->second + " repeats a connection"));
         continue;
-      std::string msg = "output " + std::get<2>(k) + " has " +
-                        std::to_string(count) +
-                        " wires; an output feeds one input (send a value to "
-                        "several Cards through a fork Card)";
-      auto it = res_->index.find(path_key(from));
-      if (it != res_->index.end())
-        res_->nodes[it->second].diags.push_back(diag(from, "fan_out", msg));
-      else
-        res_->diags.push_back(diag(from, "fan_out", msg));
+      }
+      res_->edges.push_back({src->first, src->second, dst->first, dst->second});
     }
   }
 
@@ -1013,17 +967,6 @@ class Builder {
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
-      case Template::Fork: {
-        const auto* in = n.input("in");
-        if (in && in->type)
-          for (auto& o : n.outputs)
-            if (!o.type) {
-              o.type = in->type;
-              o.kind = in->kind;
-              changed = true;
-            }
-        break;
-      }
       case Template::Branch: {
         const auto* v = n.input("value");
         if (v && v->type)
@@ -1209,8 +1152,8 @@ class Builder {
   auto trace_nix_producers(size_t source, std::set<size_t>& visiting,
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
-    if (kind != Template::Fork && kind != Template::Collect &&
-        kind != Template::Branch && kind != Template::Merge) {
+    if (kind != Template::Collect && kind != Template::Branch &&
+        kind != Template::Merge) {
       result.insert(source);
       return;
     }

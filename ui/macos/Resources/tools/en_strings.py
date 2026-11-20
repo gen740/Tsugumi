@@ -995,7 +995,6 @@ EN = {
 "出力ポート": "Output ports",
 "出力表示を戻す": "Show Output Display Again",
 "分岐": "Branch",
-"分配": "Fork",
 "切断": "Disconnect",
 "中断": "Interrupted",
 "初回の準備をしています": "Preparing for the first time",

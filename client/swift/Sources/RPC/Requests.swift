@@ -302,12 +302,11 @@ public enum Change {
     return wrap(v, .setlayout)
   }
 
-  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?, linkJSON: String? = nil) -> Tsugumi_RPC_DocumentChangeT {
+  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_PutDefinitionT()
     v.id = id
-    v.cardJson = linkJSON == nil ? cardJSON : ""
+    v.cardJson = cardJSON
     v.metaJson = metaJSON
-    v.linkJson = linkJSON
     return wrap(v, .putdefinition)
   }
 
