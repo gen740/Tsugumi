@@ -15,7 +15,7 @@ struct ChatGPTSettings: View {
 
   var body: some View {
     Section {
-      ChatGPTConnection(model: connection) { GuideController.shared.connectionSaved() }
+      ChatGPTConnection(model: connection) { _ in GuideController.shared.connectionSaved() }
     } header: {
       HStack {
         Text("ChatGPT プラン（Sign in with ChatGPT）")
@@ -64,7 +64,7 @@ final class ChatGPTSignInModel {
   var message: String?
   var welcome: String?
   var active: ChatGPTAccountInfo? { accounts.first(where: \.active) }
-  private var connected: (() async throws -> Void)?
+  private var connected: ((String) async throws -> Void)?
   private let authenticate: (String?, Bool) async throws -> ChatGPTAuth.SignInResult
   private let load: () async -> ChatGPTAuth.Status
   private let acknowledge: (String) async throws -> Void
@@ -83,17 +83,17 @@ final class ChatGPTSignInModel {
     self.acknowledge = acknowledge
   }
 
-  func refresh(onConnected: (() async throws -> Void)? = nil) async {
+  func refresh(onConnected: ((String) async throws -> Void)? = nil) async {
     if let onConnected { connected = onConnected }
     let status = await load()
     accounts = status.accounts
     if let message = status.message { self.message = message }
-    if let result = status.result, result.account.signedIn, result.account.planEnabled, result.welcome {
+    if let result = status.result, result.account.active, result.account.signedIn, result.account.planEnabled, result.welcome {
       welcome = result.account.clientId
     }
   }
 
-  func signIn(clientId: String? = nil, consent: Bool = false, onConnected: @escaping () async throws -> Void) {
+  func signIn(clientId: String? = nil, consent: Bool = false, onConnected: @escaping (String) async throws -> Void) {
     guard signingIn == nil else { return }
     message = nil
     connected = onConnected
@@ -103,16 +103,16 @@ final class ChatGPTSignInModel {
       do {
         let r = try await authenticate(clientId, consent)
         try Task.checkCancellation()
-        message = r.account.planEnabled
+        message = r.planEnabled
           ? String(localized: "\(r.account.email ?? r.account.clientId) でサインインしました。")
           : String(localized: "サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。")
         await refresh()
         try Task.checkCancellation()
-        if r.account.planEnabled {
+        if r.planEnabled {
           if r.welcome {
             connected = onConnected
             welcome = r.account.clientId
-          } else { try await onConnected() }
+          } else { try await onConnected(r.account.clientId) }
         }
       } catch is CancellationError {
         message = String(localized: "サインインを中止しました。")
@@ -129,7 +129,7 @@ final class ChatGPTSignInModel {
       welcome = nil
       let done = connected
       connected = nil
-      try await done?()
+      try await done?(id)
     } catch { message = "\(error)" }
   }
 }
@@ -138,7 +138,7 @@ final class ChatGPTSignInModel {
 struct ChatGPTConnection: View {
   @Bindable var model: ChatGPTSignInModel
   var onboarding = false
-  var onConnected: () async throws -> Void
+  var onConnected: (String) async throws -> Void
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {

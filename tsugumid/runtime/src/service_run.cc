@@ -85,13 +85,15 @@ void Service::run(RequestIn& req) {
     p.card = wire::card_arg(r->card());
     p.propagate = r->propagate().value_or(true);
     p.max_concurrency = r->max_concurrency().value_or(4);
-    p.nix_jobs = r->nix_jobs().value_or(1);
-    p.nix_cores = r->nix_cores().value_or(1);
+    if (auto jobs = r->nix_jobs()) p.nix_jobs = *jobs;
+    if (auto cores = r->nix_cores()) p.nix_cores = *cores;
     if (p.max_concurrency < 1 || p.max_concurrency > 64)
       throw Failed(FailureKind::invalid_request,
                    "max_concurrency must be 1..64");
-    if (p.nix_jobs < 1 || p.nix_cores < 1 || p.nix_jobs > opts_.env_cpus ||
-        p.nix_cores > opts_.env_cpus)
+    const auto invalid_parallelism = [&](std::optional<uint32_t> value) {
+      return value && (*value < 1 || *value > opts_.env_cpus);
+    };
+    if (invalid_parallelism(p.nix_jobs) || invalid_parallelism(p.nix_cores))
       throw Failed(
           FailureKind::invalid_request,
           "nix_jobs and nix_cores must be between 1 and the environment's " +
@@ -226,11 +228,13 @@ void Service::run_cancel(RequestIn& req) {
 void Service::run_status(RequestIn& req) {
   const auto* r = project_request(req)->value_as_RunStatusRequest();
   RunStatusData st;
+  std::vector<InvocationSummaryData> live;
   if (r->run_id()) {
     require_run_id(*r->run_id(), "run_id");
     auto active = scheduler_->active_status();
     if (active && active->run_id == r->run_id()->str()) {
       st = *active;
+      live = history_->live(*st.run_id);
     } else {
       auto run = history_->read(
           [&](sql::Db& db) { return History::run(db, r->run_id()->str()); });
@@ -241,9 +245,10 @@ void Service::run_status(RequestIn& req) {
     }
   } else {
     st = current_run_status();
+    if (st.run_id && !st.terminal()) live = history_->live(*st.run_id);
   }
   FBB b;
-  auto off = wire::run_status(b, st);
+  auto off = wire::run_status(b, st, live);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::RunStatus,
                          off.Union()));
 }
@@ -1036,6 +1041,10 @@ void Service::log_range(RequestIn& req) {
         "stream must be standard_output, standard_error, build or journal");
   bool tail = r->tail().value_or(false);
   uint64_t offset = r->offset().value_or(0);
+  const auto before = r->before();
+  if (before && (tail || offset != 0))
+    throw Failed(FailureKind::invalid_request,
+                 "before cannot be combined with tail or offset");
   if (tail && offset != 0)
     throw Failed(FailureKind::invalid_request,
                  "tail and offset cannot be combined");
@@ -1046,11 +1055,15 @@ void Service::log_range(RequestIn& req) {
                  "limit_bytes must be " +
                      std::to_string(protocol::kMinLogRangeBytes) + ".." +
                      std::to_string(protocol::kMaxLogRangeBytes));
+  if (r->terminal_since() && (!r->terminal() || tail || before))
+    throw Failed(FailureKind::invalid_request,
+                 "terminal_since requires a forward terminal read");
   auto slice = history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     return history_->read_log(db, run_id, card, inv, stream, offset, tail,
-                              limit);
+                              limit, before, r->terminal(),
+                              r->terminal_since());
   });
   FBB b(slice.text.size() + 512);
   auto t = b.CreateString(slice.text);
@@ -1059,6 +1072,10 @@ void Service::log_range(RequestIn& req) {
   lb.add_offset(slice.offset);
   lb.add_next_offset(slice.next_offset);
   lb.add_size_bytes(slice.size);
+  lb.add_line_number(slice.line_number);
+  lb.add_starts_line(slice.starts_line);
+  if (slice.raw_size) lb.add_raw_size_bytes(*slice.raw_size);
+  lb.add_reset(slice.reset);
   lb.add_exists(slice.exists);
   lb.add_truncated(slice.truncated);
   if (slice.log_truncated_at_bytes)

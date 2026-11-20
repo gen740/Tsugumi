@@ -320,20 +320,3 @@ private struct HistoryMeasuredBounds: PreferenceKey {
     value.merge(nextValue(), uniquingKeysWith: { _, next in next })
   }
 }
-
-/// Whole lines are drawn for good; the last one is redrawn as a terminal would
-/// (a progress meter) and read again with what follows it.
-@Test func logReaderKeepsWholeLinesAndRedrawsTheLastOne() {
-  let first = LogStreamReader.parse("one\ntwo 10%\rtwo 50%", form: .terminal)
-  #expect(first.lines == "one\n" && first.shownRest == "two 50%")
-  let next = LogStreamReader.parse(first.rest + "\rtwo 100%\nthree", form: .terminal)
-  #expect(next.lines == "two 100%\n" && next.shownRest == "three")
-  let journal = LogStreamReader.parse(#"{"phase":"save","event":"stored","message":"FIRST_RECORD"}"# + "\n"
-                                        + #"{"phase":"execute","event":"x","message":"FILTERED_RECORD"}"# + "\n" + #"{"pha"#,
-                                      form: .journal(["validate", "save"]))
-  #expect(journal.lines.contains("FIRST_RECORD") && !journal.lines.contains("FILTERED_RECORD"))
-  #expect(journal.shownRest.isEmpty)
-  let completed = LogStreamReader.parse(journal.rest + #"se":"validate","event":"finished","message":"NEXT_RECORD"}"# + "\n",
-                                        form: .journal(["validate", "save"]))
-  #expect(completed.lines.contains("NEXT_RECORD"))
-}

@@ -176,3 +176,10 @@ TEST_F(DefinitionEvaluation,
 
 }  // namespace
 }  // namespace tsugumi
+
+auto main(int argc, char** argv) -> int {
+  if (auto result = tsugumi::NixEvaluator::build_client(argc, argv))
+    return *result;
+  testing::InitGoogleTest(&argc, argv);
+  return RUN_ALL_TESTS();
+}

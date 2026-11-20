@@ -29,7 +29,8 @@ table ProviderChanged { profile:string (required); }
 
 table Setting { key:string (required); value_json:string (required, trace_secret); }
 table SettingsGetRequest { profile:string (required); }
-table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; client:string; }
+table ExpectedAccount { profile:string (required); client_id:string (required); }
+table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; chatgpt_account:ExpectedAccount; }
 table Settings { revision:ulong; values:[Setting]; }
 // ephemeral source: env, keychain, or memory (omitted). The host selects env
 // before keychain before memory, then a stored key on Linux only. On macOS
@@ -43,12 +44,13 @@ table ModelSelectionRequest { profile:string (required); purpose:string (require
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
 // storage tells the platform adapter where an explicit Save must go.
 table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; storage:string; message:string; code:string; }
-table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; }
+table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; replace_pending:bool; }
 table SignInBegin { attempt_id:string (required); url:string (required, trace_secret); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
 table SignInStatusRequest { profile:string (required); attempt_id:string; }
 table Account { client_id:string (required); email:string; signed_in:bool; plan_enabled:bool; active:bool; }
-table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; }
+// client_id and plan_enabled describe the completed attempt, separate from the current accounts.
+table SignInStatus { attempt_id:string; state:string (required); message:string; accounts:[Account]; welcome:string; revoked:bool; client_id:string; plan_enabled:bool; }
 // Environments outlive clients and hostd restarts. Stop is explicit. Start
 // updates origins only; folders change through explicit add/remove operations.
 enum EnvironmentAction:ubyte { State, Start, Stop, AddFolders, RemoveFolders }
@@ -119,7 +121,10 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
 /// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
 table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, TraceChanged:Tsugumi.Trace.TraceChanged }
+table SignInChanged { profile:string (required); }
+// The durable event and its presentation are read with Agent EventsRequest.
+table ConversationChanged { conversation_id:string; answered_permission:string; }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -431,24 +436,8 @@ table VersionCanvasRequest {
   wires:[VersionCanvasWire];
 }
 
-/// A comment on a Card that a version or a save changed.
-table VersionComment {
-  card:string (id: 0, required);
-  text:string (id: 1, required);
-  /// added, edited, resolved, reopened or removed. A comment written and
-  /// resolved within one version is resolved.
-  change:string (id: 2, required);
-  resolution:string (id: 3);
-  /// Who did it, as the comment records it: agent or user. Absent when it is
-  /// not recorded, as for a comment that is gone.
-  by:string (id: 4);
-  /// The Cards the save that resolved it changed.
-  cards:[string] (id: 5);
-}
-
-// The host reads comment records from the registered project repository.
+/// Read the project version’s comment changes from its first parent.
 table VersionCommentsRequest { project:string (required); commit:string (required); }
-table VersionComments { comments:[VersionComment]; }
 
 /// -> InputTypes. Read each incoming wire's source, kind and complete input
 /// definition as Card code sees it. May help when writing a Card; routing types
@@ -479,7 +468,6 @@ table FileFormatRequest { path:string (required); text:string (required); langua
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
 // Language applies on every read, including commits/runs created by another client.
 table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }
-table VersionDiff { text:string (required); truncated:bool; }
 table HostVersionGraphRequest { project:string (required); language:string; limit:uint = 500; }
 
 // Reference demos and version notes do not depend on a conversation.
@@ -511,12 +499,12 @@ union RequestPayload {
 table Request { value:RequestPayload; }
 union ReplyPayload {
   ProjectOperationResult, ProjectPermissionList,
-  VersionComments,
+  VersionComments:Tsugumi.RPC.VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   BinaryCaches, GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutValidated, VersionCanvas,
-  FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
+  FileFormatResult, VersionDiff:Tsugumi.RPC.VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,

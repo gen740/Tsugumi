@@ -558,7 +558,6 @@ private struct SkillSettings: View {
 /// Model connections. API keys go to the host-side Agent service (one per
 /// provider); they are never written to project files, settings or logs.
 private struct APISettings: View {
-  @Environment(AppPreferences.self) private var prefs
   @HostStorage("agent.provider") private var provider = "anthropic"
   @HostStorage("agent.model") private var anthropicModel = ProviderConfig.anthropic.model
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
@@ -589,16 +588,6 @@ private struct APISettings: View {
       ChatGPTSettings()
       ProjectPermissionSettings()
       Section {
-        ForEach(CardPermission.allCases) { k in
-          Toggle(isOn: Binding(get: { prefs.allowedPermissions.contains(k.rawValue) },
-                               set: { on in if on { prefs.allowedPermissions.insert(k.rawValue) } else { prefs.allowedPermissions.remove(k.rawValue) } })) {
-            Label(k.label, systemImage: k.symbol)
-          }
-        }
-      } header: {
-        InfoHeader("Agent が確認なしに Card に与えてよい権限", info: "オフの権限を Agent が Card に与えようとすると、保存の前に確認します。あなた自身が Card の設定で変えるときは確認しません。")
-      }
-      Section {
         Toggle("範囲を指定しないヘルパーを許可する", isOn: $allowUnscopedHelpers)
       } header: {
         InfoHeader("ヘルパー", info: "オフにすると、各ヘルパーが読める Card と変更・実行できる Card を Agent が指定します。")
@@ -626,7 +615,6 @@ private struct APISettings: View {
       }
     }
     .formStyle(.grouped)
-    .task { await PermissionCatalog.shared.load() }
     .onAppear { GuideController.shared.refreshAvailability() }
     .onChange(of: provider) { GuideController.shared.refreshAvailability() }
   }

@@ -1,4 +1,4 @@
-import { api } from '../api'
+import { api, onServerEvent } from '../api'
 import { errorText } from './session'
 import { Observable } from './observable'
 
@@ -6,7 +6,8 @@ export interface ChatGPTAccountInfo { clientId: string; email: string | null; si
 export interface ChatGPTState {
   accounts: ChatGPTAccountInfo[]
   signingIn: boolean
-  outcome: { ok: boolean; message: string; welcome?: string } | null
+  attemptId?: string
+  outcome: { ok: boolean; message: string; clientId?: string; planEnabled?: boolean; welcome?: string } | null
   usageURL: string
   connectionMessage?: string
 }
@@ -22,35 +23,86 @@ export function chatGPTSignInIsLocal(hostname: string) {
 export class ChatGPTSignInModel extends Observable {
   state: ChatGPTState = { accounts: [], signingIn: false, outcome: null, usageURL: 'https://chatgpt.com/settings/usage' }
   message?: string
+  connectionError?: string
   url?: string
-  onConnected: () => void | Promise<void> = () => {}
-  private completing = false
+  onConnected: (clientId: string) => void | Promise<void> = () => {}
   private disposed = false
-  private polling = false
   private beginning = false
   private cancelRequested = false
+  private attempt?: { id: string; status?: ChatGPTState; notified: boolean }
+  private shared = this.state
+  private read = 0
+  private unobserve?: () => void
   constructor(
     readonly local = chatGPTSignInIsLocal(globalThis.location?.hostname ?? ''),
     private readonly request: typeof api = api,
     private readonly open: typeof window.open = (...args) => window.open(...args),
+    private readonly observe: typeof onServerEvent = onServerEvent,
   ) { super() }
 
-  mount() { this.disposed = false }
+  mount() {
+    this.disposed = false
+    this.unobserve = this.observe(e => {
+      if (['chatgptChanged', 'eventsConnected', 'reconnected'].includes(e.type)) void this.synchronize()
+      if (e.type === 'hostUnavailable') {
+        this.connectionError = e.message
+        this.changed()
+      }
+    })
+    return this.synchronize()
+  }
+  synchronize() {
+    return this.run(async () => { await this.reload(); return this.message })
+  }
   dispose() {
     this.disposed = true
-    if (this.beginning || this.state.signingIn) void this.cancel()
+    this.unobserve?.()
+    if (this.beginning || (this.attempt && this.attempt.status?.signingIn !== false)) void this.cancel(this.attempt?.id)
   }
-  private canComplete(st: ChatGPTState) {
-    const active = st.accounts.find(a => a.active)
-    return st.outcome?.ok && active?.signedIn && active.planEnabled
+  private connectedAccount(st: ChatGPTState) {
+    return st.outcome?.planEnabled ? st.outcome.clientId : undefined
   }
-  setState = (value: ChatGPTState) => { this.state = value; this.changed() }
   async reload() {
-    const state = await this.request<ChatGPTState>('/api/chatgpt')
-    // An initial status read may finish after the user has clicked Sign In.
-    const current = this.beginning ? { ...state, signingIn: true, outcome: null } : state
-    this.setState(current)
-    return current
+    const read = ++this.read
+    const attempt = this.attempt
+    const [shared, own] = await Promise.allSettled([
+      this.request<ChatGPTState>('/api/chatgpt'),
+      attempt && (attempt.notified ? attempt.status : this.request<ChatGPTState>(`/api/chatgpt?attemptId=${encodeURIComponent(attempt.id)}`)),
+    ])
+    if (read !== this.read || attempt !== this.attempt) return this.state
+    const failure = [shared, own].find(result => result.status === 'rejected')
+    this.connectionError = failure && errorText(failure.reason)
+    if (shared.status === 'fulfilled') this.shared = shared.value
+    if (attempt) {
+      let status = own.status === 'fulfilled' ? own.value : undefined
+      if ((!status || status.signingIn) && shared.status === 'fulfilled' && shared.value.attemptId === attempt.id)
+        status = shared.value
+      if (status) {
+        if (!status.signingIn && attempt.status?.signingIn !== false) {
+          this.message = status.outcome?.message
+          this.url = undefined
+        }
+        attempt.status = status
+      }
+    }
+    const perAttempt = attempt?.status
+    const latest = this.shared.attemptId === perAttempt?.attemptId && perAttempt ? perAttempt : this.shared
+    // The attempt read also contains current accounts when the shared read fails.
+    const current = shared.status === 'rejected' && !attempt?.notified && own.status === 'fulfilled' && own.value
+      ? own.value : this.shared
+    this.state = { ...latest, accounts: current.accounts, connectionMessage: current.connectionMessage,
+      signingIn: this.beginning || latest.signingIn || (!!attempt && perAttempt?.signingIn !== false),
+      outcome: this.beginning ? null : attempt ? perAttempt?.outcome ?? null : latest.outcome,
+    }
+    this.changed()
+    if (attempt && !attempt.notified && !this.state.outcome?.welcome && !this.disposed) {
+      const clientId = this.connectedAccount(this.state)
+      if (clientId) {
+        attempt.notified = true
+        await this.onConnected(clientId)
+      }
+    }
+    return this.state
   }
   async run(f: () => Promise<string | undefined>) {
     try { this.message = await f() }
@@ -58,66 +110,67 @@ export class ChatGPTSignInModel extends Observable {
     this.changed()
   }
   signIn(clientId?: string, consent = false) {
-    if (this.disposed || !this.local || this.beginning || this.state?.signingIn) return
+    if (this.disposed || !this.local || this.beginning || this.state.signingIn) return
     const tab = this.open('about:blank', '_blank')
-    // Also disables the button while begin is pending.
-    if (this.state) this.setState({ ...this.state, signingIn: true, outcome: null })
-    this.message = undefined
-    this.completing = false
     this.beginning = true
     this.cancelRequested = false
+    this.message = undefined
+    ++this.read
+    this.state = { ...this.state, signingIn: true, outcome: null }
+    this.changed()
     void this.run(async () => {
+      let result: { url: string; attemptId: string }
       try {
-        const r = await this.request<{ url: string }>('/api/chatgpt/signin', { clientId, consent })
-        this.beginning = false
-        this.url = r.url
-        if (this.cancelRequested) {
-          tab?.close()
-          await this.request('/api/chatgpt/cancel', {})
-        } else if (tab) { tab.opener = null; tab.location.href = r.url }
-        await this.poll()
-      } catch (e) {
+        result = await this.request('/api/chatgpt/signin', { clientId, consent })
+      } catch (error) {
         this.beginning = false
         tab?.close()
-        if (this.state) this.setState({ ...this.state, signingIn: false })
-        throw e
+        this.state = { ...this.state, signingIn: false }
+        await this.reload()
+        throw error
+      }
+      this.beginning = false
+      this.attempt = { id: result.attemptId, notified: false }
+      if (this.cancelRequested) {
+        tab?.close()
+        await this.cancel(result.attemptId)
+      } else {
+        this.url = result.url
+        if (tab) { tab.opener = null; tab.location.href = result.url }
+        this.changed()
+        // Read once after Begin, even if its completion event already arrived.
+        await this.reload()
       }
       return this.message
     })
   }
-  async poll() {
-    if (this.polling || this.beginning) return
-    this.polling = true
-    try {
-      const v = await this.reload()
-      if (v.signingIn) return
-      this.url = undefined
-      if (v.outcome) this.message = v.outcome.message
-      if (!this.disposed && this.canComplete(v) && !this.completing) {
-        this.completing = true
-        // Keep the setup sheet mounted until the once-only welcome is answered.
-        if (!v.outcome?.welcome) await this.onConnected()
-      }
-      this.changed()
-    } catch (e) { this.message = errorText(e); this.changed() }
-    finally { this.polling = false }
-  }
-  async cancel() {
+  async cancel(attemptId = this.attempt?.status?.signingIn === false ? this.state.attemptId : this.attempt?.id ?? this.state.attemptId) {
     this.cancelRequested = true
-    if (this.beginning) return
+    if (this.beginning || !attemptId) return
     await this.run(async () => {
-      await this.request('/api/chatgpt/cancel', {})
-      await this.poll()
+      await this.request('/api/chatgpt/cancel', { attemptId })
+      await this.reload()
       return this.message
+    })
+  }
+  updateAccount(action: 'select' | 'signout', clientId: string, onChanged?: () => void) {
+    return this.run(async () => {
+      const result = await this.request<{ message?: string }>(`/api/chatgpt/${action}`, { clientId })
+      await this.reload()
+      onChanged?.()
+      return result.message ?? this.message
     })
   }
   async welcomed(go: boolean) {
     const st = this.state
-    if (!st?.outcome?.welcome) return
+    const clientId = st.outcome?.welcome
+    if (!clientId) return
+    const restored = !this.attempt && this.connectedAccount(st)
     if (go) this.open(st.usageURL, '_blank', 'noopener,noreferrer')
     await this.run(async () => {
-      this.setState(await this.request<ChatGPTState>('/api/chatgpt/welcomed', { clientId: st.outcome!.welcome }))
-      if (!this.disposed && this.canComplete(st)) await this.onConnected()
+      await this.request('/api/chatgpt/welcomed', { clientId })
+      await this.reload()
+      if (restored && !this.disposed) await this.onConnected(restored)
       return this.message
     })
   }

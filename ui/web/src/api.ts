@@ -1,19 +1,12 @@
 import { modelErrorMessage } from './i18n'
 // Calls to the host server (files, processes, the Agent).
 
-let settingsRevision: Record<string, number> | undefined
-
 export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  if (path === '/api/settings' && body !== undefined) {
-    if (!settingsRevision) await api('/api/settings')
-    body = { revision: settingsRevision, ...(body as object) }
-  }
   const r = await fetch(path, body === undefined
     ? { signal, headers: { 'x-tsugumi': '1' } }
     : { signal, method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
-  if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
   }
@@ -52,19 +45,18 @@ export function onServerEvent(fn: Listener): () => void {
     source.onerror = () => {
       lost = true
     }
-    source.onopen = () => {
-      if (!lost) return
-      lost = false
-      // A new stream is a new page to the server.
-      reportPageProject(reported)
-      for (const l of [...listeners]) l({ type: 'reconnected' })
-    }
     source.onmessage = (m) => {
-      let v: unknown
+      let v: { type?: string }
       try {
         v = JSON.parse(m.data)
       } catch {
         return
+      }
+      if ((v?.type === 'eventsConnected' || v?.type === 'reconnected') && lost) {
+        lost = false
+        // A new authenticated stream is a new page to the server.
+        reportPageProject(reported)
+        v = { type: 'reconnected' }
       }
       for (const l of [...listeners]) l(v)
     }

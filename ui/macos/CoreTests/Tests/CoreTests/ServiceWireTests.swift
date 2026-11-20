@@ -368,12 +368,16 @@ final class ServiceWireTests: XCTestCase {
     account.active = true
     let status = Tsugumi_Host_SignInStatusT()
     status.state = "complete"
+    status.clientId = "client-1"
+    status.planEnabled = true
     status.accounts = [account]
     status.revoked = true
-    let polled = try ServiceWire.decode(hostReply(status, type: .signinstatus), host: true)
-    XCTAssertEqual(polled["state"] as? String, "complete")
-    XCTAssertEqual(polled["revoked"] as? Bool, true)
-    let accounts = try XCTUnwrap(polled["accounts"] as? [[String: Any]])
+    let signedIn = try ServiceWire.decode(hostReply(status, type: .signinstatus), host: true)
+    XCTAssertEqual(signedIn["state"] as? String, "complete")
+    XCTAssertEqual(signedIn["client_id"] as? String, "client-1")
+    XCTAssertEqual(signedIn["plan_enabled"] as? Bool, true)
+    XCTAssertEqual(signedIn["revoked"] as? Bool, true)
+    let accounts = try XCTUnwrap(signedIn["accounts"] as? [[String: Any]])
     XCTAssertEqual(accounts.count, 1)
     XCTAssertEqual(accounts.first?["clientId"] as? String, "client-1")
     XCTAssertEqual(accounts.first?["signedIn"] as? Bool, true)

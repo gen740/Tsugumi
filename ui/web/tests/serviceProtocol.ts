@@ -1,8 +1,14 @@
+import * as H from '../shared/gen/tsugumi/host'
+import { HostConnection } from '../src/wire/host'
 import { Access } from '../shared/gen/tsugumi/service/access'
+import { AcknowledgementT } from '../shared/gen/tsugumi/service/acknowledgement'
 import { ProjectTrust } from '../shared/gen/tsugumi/host/project-trust'
 import { PermissionKinds } from '../shared/gen/tsugumi/host/permission-kinds'
 import { Settings } from '../shared/gen/tsugumi/host/settings'
 import { SignInStatus } from '../shared/gen/tsugumi/host/sign-in-status'
+import { SignInChangedT } from '../shared/gen/tsugumi/host/sign-in-changed'
+import { EventT as HostEventT } from '../shared/gen/tsugumi/host/event'
+import { EventPayload as HostEventPayload } from '../shared/gen/tsugumi/host/event-payload'
 import { Reply as HostReply } from '../shared/gen/tsugumi/host/reply'
 import { ReplyPayload as HostReplyPayload } from '../shared/gen/tsugumi/host/reply-payload'
 import { Payload as HostPayload } from '../shared/gen/tsugumi/host/payload'
@@ -26,7 +32,7 @@ import { EventsPageT } from '../shared/gen/tsugumi/agent/events-page'
 import { SequencedEventT } from '../shared/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../shared/gen/tsugumi/agent/event'
 import { FailureT } from '../shared/gen/tsugumi/service/failure'
-import { Message as HostMessage } from '../shared/gen/tsugumi/host/message'
+import { Message as HostMessage, MessageT as HostMessageT } from '../shared/gen/tsugumi/host/message'
 import { hostProjectErrorText } from '../server/hostProjects'
 import { setLanguage } from '../server/i18n'
 
@@ -64,21 +70,29 @@ assert.ok(failure.error instanceof CoreHostError)
 assert.equal(failure.error.requestId, 'permission-1')
 console.log('Agent/Host binary protocol: exact uint64, separation, typed events and failures passed')
 
-// Execution settings send management requests only to the Host contract.
-for (const [method, fields] of [
-  ['ExecutionServicesRequest', {}],
-  ['ExecutionServicePutRequest', { id: 'compute', name: 'Compute', endpoint: 'unix:/tmp/worker', workerPublicKey: 'ed25519:test' }],
-  ['ExecutionServiceRemoveRequest', { id: 'compute' }],
-  ['ExecutionProjectAuthorizeRequest', { project_id: 'project', path: '/project', control_dir: '/control', guest: true }],
-  ['ExecutionProjectRevokeRequest', { project_id: 'project' }],
-] as const) {
-  assert.equal(hostMethod(method), true)
-  const bytes = encodeRequest(method, fields, 2n, true)
-  const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
-  assert.equal(request.requestId, 2n)
-  assert.throws(() => encodeRequest(method, fields, 2n, false))
+async function browserRequest(type: H.RequestPayload, value: H.RequestT['value']) {
+  let request!: H.RequestT
+  const client = new HostConnection({
+    async call(bytes) {
+      const decoded = H.Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
+      request = decoded.payload as H.RequestT
+      const builder = new fb.Builder()
+      const reply = new H.ReplyT(H.ReplyPayload.Acknowledgement, new AcknowledgementT(true))
+      const message = new H.MessageT(decoded.requestId, H.Payload.Reply, reply)
+      H.Message.finishMessageBuffer(builder, message.pack(builder))
+      return builder.asUint8Array()
+    },
+    close() {},
+  })
+  await client.call(type, value, H.ReplyPayload.Acknowledgement)
+  return request
 }
-console.log('Execution service settings: Host RPC adapters passed')
+
+const grade = (1n << 63n) + 3n
+const service = (await browserRequest(H.RequestPayload.ExecutionServicePutRequest,
+  new H.ExecutionServicePutRequestT('compute', 'Compute', 'tls://worker:8765', 'ed25519:test', true, grade))).value as H.ExecutionServicePutRequestT
+assert.equal(service.grade, grade)
+assert.equal(service.verify, true)
 
 // C++ object packing omits optional empty vectors. Every Host list reader
 // must return an empty list even when the vector offset is absent on the wire.
@@ -102,13 +116,32 @@ console.log('Host list readers: omitted vectors are empty')
 for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   const b = new fb.Builder()
   const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
-    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false)
+    : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0, false)
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
   const decoded = decodeReply(b.asUint8Array(), true).value
   assert.deepEqual(type === HostReplyPayload.Settings ? decoded.values : decoded.accounts, [])
 }
 console.log('Settings and sign-in readers: omitted vectors are empty')
+
+{
+  const b = new fb.Builder()
+  const attempt = b.createString('attempt-a')
+  const client = b.createString('account-a')
+  const status = SignInStatus.createSignInStatus(b, attempt, b.createString('complete'), 0, 0, 0, false, client, true)
+  const reply = HostReply.createReply(b, HostReplyPayload.SignInStatus, status)
+  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
+  const decoded = decodeReply(b.asUint8Array(), true).value
+  assert.equal(decoded.attempt_id, 'attempt-a')
+  assert.equal(decoded.client_id, 'account-a')
+  assert.equal(decoded.planEnabled, true)
+}
+{
+  const b = new fb.Builder()
+  const change = new HostEventT(HostEventPayload.SignInChanged, new SignInChangedT('web:fixture'))
+  HostMessage.finishMessageBuffer(b, new HostMessageT(0n, HostPayload.Event, change).pack(b))
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SignInChanged', value: { profile: 'web:fixture' } })
+}
 
 // Guide replies expose presentation fields directly; omitted vectors are empty.
 const { GuideState } = await import('../shared/gen/tsugumi/host/guide-state')
@@ -173,28 +206,11 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   assert.deepEqual(value.selected, [Access.Write])
 }
 
-// Formatting and version presentation are Host operations, independently of the core PATH/language.
-{
-  for (const [method, fields] of [
-    ['FileFormatRequest', { path: 'x.json', text: '{"a":1}' }],
-    ['HostVersionGraphRequest', { project: 'p', language: 'en' }],
-    ['HostVersionDiffRequest', { project: 'p', commit: 'next', from_commit: 'before' }],
-  ] as const) {
-    assert.equal(hostMethod(method), true)
-    const frame = encodeRequest(method, fields, 7n, true)
-    const request = HostMessage.getRootAsMessage(new fb.ByteBuffer(frame)).unpack()
-    const value = (request.payload as any).value
-    for (const [key, field] of Object.entries(fields)) assert.equal(value[key === 'from_commit' ? 'fromCommit' : key], field)
-    assert.throws(() => encodeRequest(method, fields, 7n, false))
-  }
-  const { FileFormatResult } = await import('../shared/gen/tsugumi/host/file-format-result')
-  const b = new fb.Builder()
-  const formatted = FileFormatResult.createFileFormatResult(b, b.createString('{}\n'), 0)
-  const reply = HostReply.createReply(b, HostReplyPayload.FileFormatResult, formatted)
-  HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 7n, HostPayload.Reply, reply))
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).value, { text: '{}\n', diagnostics: [] })
-}
-console.log('Host formatting and version presentation adapters: passed')
+// Formatting and version reads use the same generated Host request objects.
+const format = new H.FileFormatRequestT('x.json', '{"a":1}')
+assert.deepEqual((await browserRequest(H.RequestPayload.FileFormatRequest, format)).value, format)
+const diff = new H.HostVersionDiffRequestT('project', 'after', 'before')
+assert.deepEqual((await browserRequest(H.RequestPayload.HostVersionDiffRequest, diff)).value, diff)
 
 // Flatc goldens are shared with Swift and C++ so union renumbering cannot
 // silently send a moved Host method to the external Agent listener.
@@ -203,13 +219,22 @@ const path = await import('node:path')
 const { BFBS } = await import('../shared/bfbs')
 const { ToolCatalog } = await import('../server/agent')
 const serviceVectors = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/service-contract.json'), 'utf8'))
+const directHost: Record<string, (fields: any) => H.RequestT['value']> = {
+  IdentifierReserveRequest: (f) => new H.IdentifierReserveRequestT(f.project_id, f.kind, f.scope, f.occupied),
+  ProjectPermissionsRequest: () => new H.ProjectPermissionsRequestT(),
+  ProjectPermissionSetRequest: (f) => new H.ProjectPermissionSetRequestT(f.project_id, f.resource_id, Access[f.access as keyof typeof Access], f.allow),
+}
 for (const c of serviceVectors.requests) {
   assert.equal(hostMethod(c.method), c.host, c.method)
   const native = (bytes: Uint8Array) => c.host
     ? HostMessage.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
     : Message.getRootAsMessage(new fb.ByteBuffer(bytes)).unpack()
   const golden = native(Buffer.from(c.hex, 'hex'))
-  assert.deepEqual(native(encodeRequest(c.method, c.fields, 7n, c.host)), golden, c.method)
+  const direct = directHost[c.method]
+  if (direct) {
+    const type = H.RequestPayload[c.method as keyof typeof H.RequestPayload] as H.RequestPayload
+    assert.deepEqual(await browserRequest(type, direct(c.fields)), golden.payload, c.method)
+  } else assert.deepEqual(native(encodeRequest(c.method, c.fields, 7n, c.host)), golden, c.method)
   assert.throws(() => encodeRequest(c.method, c.fields, 7n, !c.host))
 }
 for (const c of serviceVectors.replies) {

@@ -9,6 +9,7 @@ await import("./clientViewState")
 await import("./serviceProtocol")
 await import("./rpcProxy")
 await import("./agentRequests")
+await import("./agentEvents")
 await import('./chatModelRefresh')
 await import('./chatFailure')
 await import('./scopedSkills')
@@ -43,7 +44,7 @@ await import("./providerKeys")
 await import('./thoughts')
 
 await import("./chatFollow")
-await import("./terminalText")
+await import("./logWindow")
 
 await import("./projectActions")
 

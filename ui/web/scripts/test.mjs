@@ -1,4 +1,4 @@
-// Run behavioral regression tests without a browser.
+// Run behavioral regression tests and, with a configured Chromium, the log viewport test.
 import * as esbuild from 'esbuild'
 import childProcess, { execFileSync } from 'node:child_process'
 import { syncBuiltinESMExports } from 'node:module'
@@ -57,6 +57,10 @@ try {
   })
   process.argv = [process.argv[0], out, path.resolve(web, '../..'), ...process.argv.slice(2)]
   await import(pathToFileURL(out).href)
+  if (process.env.TSUGUMI_CHROMIUM) {
+    const { checkLogInChromium } = await import('../tests/logBrowser.mjs')
+    await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
+  }
 } finally {
   console.log(`Web suite: recorded Keychain OS commands ${JSON.stringify(securityCommands)}`)
   fs.rmSync(dir, { recursive: true, force: true })

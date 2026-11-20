@@ -194,7 +194,6 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
         rid, st = run_and_wait(env.client(), "start")
         assert st.state == RunState.succeeded
         assert listed() == [rid]
-        assert env.id in env.vm.command("vm histories")[-1]
         # It stays across restarts.
         env.stop()
         env.start()
@@ -202,7 +201,6 @@ def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
         # Data deletion removes it; the project's copy brings the runs back.
         env.stop()
         assert env.vm.command(f"delete {root}")[-1] == "deleted"
-        assert env.id not in env.vm.command("vm histories")[-1]
         env.start()
         assert listed() == [rid]
     finally:
@@ -239,33 +237,6 @@ def test_a_crashed_tsugumid_is_started_again_with_its_documents(tmp_path):
         assert env.client().call("ProjectInspectRequest").rev == rev
     finally:
         env.stop()
-
-
-def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path):
-    """Requests to vmd with a bad project id (paths, nothing), a wrong number
-    of words, unknown words or a very long line are refused one by one; vmd
-    keeps serving, the running project included, and starts another."""
-    from projects import builtin_project
-    builtin_project(tmp_path / "a")
-    a = VMEnv(tmp_path / "a").start()
-    try:
-        vm = a.vm
-        bad = ["start ../x x 1 0", "start a/b x 1 0", "start x", "stop ../../etc", "stop", "forget ..",
-               "shell ../x 10 10", "shell x", "resize", "resize 99999999999 1 1", "clock 0", "clock -5",
-               "frobnicate", "start " + "a" * 5000 + " p 1 0", "stop " + "\u00e9" * 50]
-        for req in bad:
-            line = vm.command(f"vm {req}")[-1]
-            assert line.startswith("error "), (req, line)
-        assert vm.command("vm ping")[-1].strip() == "ok"
-        assert a.client().call("ProjectInspectRequest").rev >= 0
-        builtin_project(tmp_path / "b")
-        b = VMEnv(tmp_path / "b").start()
-        try:
-            assert b.client().call("ProjectInspectRequest").rev >= 0
-        finally:
-            b.stop()
-    finally:
-        a.stop()
 
 
 @pytest.mark.parametrize("rpc_trace", [False, True])

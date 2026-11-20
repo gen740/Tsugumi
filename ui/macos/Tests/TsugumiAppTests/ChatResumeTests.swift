@@ -241,13 +241,15 @@ import TsugumiTestSupport
       try await until("the held model is streaming") { observing.failed || (observing.busy && reply(observing, after: 1)) }
       try #require(observing.busy, "\(observing.status ?? "")")
       try await t.restartAgent()
-      try await until("the running observer sees the interruption") { observing.interrupted }
+      try await until("the running observer sees the interruption") { observing.interrupted || observing.failed }
+      try #require(observing.interrupted, "\(observing.status ?? "")")
       let before = try await t.snapshot()
       try #require(before.resumable)
       #expect(before.interruptedOperation?.kind == "model")
 
       let reopened = t.makeChat()
-      try await until("reopening shows the interruption") { reopened.ready && reopened.interrupted }
+      try await until("reopening shows the interruption") { (reopened.ready && reopened.interrupted) || reopened.failed }
+      try #require(reopened.interrupted, "\(reopened.status ?? "")")
       let agent = Agent(id: t.conversationID, transport: RPCToolTransport(session: t.session), provider: .fixture)
       try await agent.open()
       try await agent.refresh()
@@ -260,7 +262,7 @@ import TsugumiTestSupport
       try await SyncTests.connected(t.session)
       try t.releaseStream()
       reopened.resume()
-      try await until("explicit resume finished") { !reopened.busy && !reopened.interrupted && reply(reopened, after: 1) }
+      try await until("explicit resume finished") { reopened.failed || (!reopened.busy && !reopened.interrupted && reply(reopened, after: 1)) }
       #expect(!reopened.failed)
     }
   }
@@ -276,7 +278,8 @@ import TsugumiTestSupport
       try await t.useManagedEnvironment()
       try await SyncTests.connected(t.session)
       let chat = t.makeChat()
-      try await until("the chat is ready") { chat.ready && chat.currentId == t.conversationID }
+      try await until("the chat is ready") { chat.failed || (chat.ready && chat.currentId == t.conversationID) }
+      try #require(!chat.failed, "\(chat.status ?? "")")
       // Invalid batches do not appear attached, and can be retried.
       await chat.attach(folders: [first, t.directory.appendingPathComponent("missing")])
       #expect(chat.folders.isEmpty && chat.status != nil && !chat.attaching)
@@ -320,24 +323,28 @@ import TsugumiTestSupport
       try t.holdStream()
       try await t.send()
       let chat = t.makeChat()
-      try await until("the model is streaming before project connection") { chat.busy && reply(chat, after: 1) }
+      try await until("the model is streaming before project connection") { chat.failed || (chat.busy && reply(chat, after: 1)) }
+      try #require(!chat.failed, "\(chat.status ?? "")")
       #expect(!t.session.connected)
       chat.cancel()
-      try await until("cancellation allows continuation") { !chat.busy && chat.canContinue }
+      try await until("cancellation allows continuation") { chat.failed || (!chat.busy && chat.canContinue) }
+      try #require(!chat.failed, "\(chat.status ?? "")")
       t.session.start()
       try await SyncTests.connected(t.session)
 
       chat.send("hello again")
       try await until("the next message is streaming") {
-        chat.busy && chat.items.last?.role == "assistant"
+        chat.failed || chat.busy && chat.items.last?.role == "assistant"
           && chat.items.contains { $0.role == "user" && $0.text == "hello again" }
       }
+      try #require(!chat.failed, "\(chat.status ?? "")")
       await chat.detach().value
       let reopened = t.makeChat()
-      try await until("the reopened chat is observing the held turn") { reopened.busy }
+      try await until("the reopened chat is observing the held turn") { reopened.busy || reopened.failed }
+      try #require(!reopened.failed, "\(reopened.status ?? "")")
       try t.releaseStream()
       try await until("the detached turn is complete") {
-        reopened.ready && !reopened.busy && reopened.items.last?.role == "assistant"
+        reopened.failed || reopened.ready && !reopened.busy && reopened.items.last?.role == "assistant"
       }
       let complete = try await t.snapshot()
       #expect(!complete.busy && !reopened.failed && reopened.status == nil)

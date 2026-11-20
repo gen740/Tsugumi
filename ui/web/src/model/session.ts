@@ -3,7 +3,7 @@ import { projectOperation, operationInverse } from './projectOperation'
 import { connectionsOf, SavePresence } from './presence'
 import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
-import { VersionCommentT } from '../../shared/gen/tsugumi/host/version-comment'
+import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
 // One open project: shared by every view showing it. Owns the RPC
@@ -12,7 +12,8 @@ import { registerModuleClient, ModuleBlobs } from './moduleSources'
 // the draft holds only what is on its way to the core, or what could not be
 // saved (a run in progress, a lost connection).
 import { api, onServerEvent } from '../api'
-import { onHostEvent } from '../wire/host'
+import { projectHost } from '../wire/projectHost'
+import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
@@ -346,19 +347,20 @@ type Notification = Parameters<NonNullable<RPCClient['onNotification']>>[0]
 export class ProjectSession extends Observable {
   readonly presence = new SavePresence()
 
+  projectHost = projectHost
   projectTrust: number | undefined
   trustedFolder = ''
   async refreshProjectTrust() {
-    const result = await api<{ decision: number; trusted_folder?: string }>('/api/project/trust', { path: this.dir })
+    const result = await this.projectHost.trust(this.dir)
     this.projectTrust = result.decision
-    this.trustedFolder = result.trusted_folder ?? ''
+    this.trustedFolder = s(result.trustedFolder)
     this.changed()
   }
   async setProjectTrust(trusted: boolean) {
     try {
-      const result = await api<{ decision: number; trusted_folder?: string }>('/api/project/trust', { path: this.dir, decision: trusted ? 1 : 2 })
+      const result = await this.projectHost.trust(this.dir, trusted ? H.ProjectTrustDecision.Trusted : H.ProjectTrustDecision.Untrusted)
       this.projectTrust = result.decision
-      this.trustedFolder = result.trusted_folder ?? ''
+      this.trustedFolder = s(result.trustedFolder)
     } catch (error) { this.connectionMessage = errorText(error) }
     this.changed()
   }
@@ -454,7 +456,12 @@ export class ProjectSession extends Observable {
   timeline: TimelineEntry[] = []
   /** Browser clock minus core clock (ms): the smallest difference seen. */
   coreClockOffset?: number
-  logRevision = 0 // bumps when new log bytes are available
+  private readonly logListeners = new Set<(notice?: R.LogAvailableT) => void>()
+
+  subscribeLogs(listener: (notice?: R.LogAvailableT) => void) {
+    this.logListeners.add(listener)
+    return () => { this.logListeners.delete(listener) }
+  }
 
   /** How many notifications the UI has taken in, and in how many batches. */
   notificationCount = 0
@@ -827,7 +834,7 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.LogAvailable:
-        this.logRevision++
+        for (const listener of this.logListeners) listener(e.value as R.LogAvailableT)
         break
     }
   }
@@ -971,7 +978,7 @@ export class ProjectSession extends Observable {
         }
         if (inv.executionState !== D.RemoteExecutionState.unspecified) {
           this.remoteHistoryRevision++
-          this.logRevision++
+          for (const listener of this.logListeners) listener()
           // Recovery also publishes events for runs already in history.
           if (s(e.runId) !== this.currentRunId) break
         }
@@ -1932,9 +1939,10 @@ export class ProjectSession extends Observable {
     }
     if (this.referenceIdProvider) return this.referenceIdProvider(kind, scope, occupied)
     if (!project) throw new RPCError('disconnected', L('接続していません'))
-    const result = await api<{ id: string }>('/api/identifiers/reserve', { project_id: project, kind, scope, occupied })
+    const result = await hostCall<H.IdentifierT>(H.RequestPayload.IdentifierReserveRequest,
+      new H.IdentifierReserveRequestT(project, kind, scope, occupied), H.ReplyPayload.Identifier)
     if (this.projectId !== project || !this.connected) throw new RPCError('disconnected', L('接続していません'))
-    return result.id
+    return s(result.id)
   }
 
   notes(scope: string[]): J[] {
@@ -2172,14 +2180,15 @@ export class ProjectSession extends Observable {
   /** Made or copied by this page: it becomes a repository when it connects. */
   makeRepositoryOnConnect = false
 
-  versionDiff(commit: string, from?: string) {
-    return api<{ text: string; truncated: boolean }>('/api/versions/diff', { path: this.dir, commit, from })
+  async versionDiff(commit: string, from?: string) {
+    if (!this.projectId) throw new RPCError('disconnected', L('接続していません'))
+    return this.projectHost.diff(this.projectId, commit, from)
   }
 
   async refreshVersions() {
-    if (!this.client) return
+    if (!this.client || !this.projectId) return
     try {
-      this.versionGraph = await api('/api/versions/graph', { path: this.dir })
+      this.versionGraph = await this.projectHost.graph(this.projectId)
       this.versionGraphError = undefined
     } catch (e) {
       this.versionGraphError = errorText(e)
@@ -2222,9 +2231,8 @@ export class ProjectSession extends Observable {
 
   /** Ask hostd for the displayed note; it owns policy, generation and storage. */
   async loadVersionComments(commit: string) {
-    if (this.versionComments.has(commit)) return
-    const value = await api<{ comments: VersionCommentT[] }>('/api/versions/comments', { path: this.dir, commit })
-    this.versionComments.set(commit, value.comments ?? [])
+    if (!this.projectId || this.versionComments.has(commit)) return
+    this.versionComments.set(commit, await this.projectHost.comments(this.projectId, commit))
     this.changed()
   }
 

@@ -1,31 +1,40 @@
 import { useEffect, useState } from 'react'
-import type { ExecutionServiceConnection, ExecutionServiceRegistration, ExecutionServicesState } from '../../shared/executionServices'
 import { L } from '../i18n'
-import { api } from '../api'
+import * as H from '../../shared/gen/tsugumi/host'
+import { hostCall } from '../wire/host'
+import { s } from '../wire/rpc'
 import { errorText } from '../model/session'
 import { Button, Form, Row, Section, Spinner, TextField, Value } from './controls'
 
-const route = '/api/execution-services'
+const executionServices = (type: H.RequestPayload, value: H.RequestT['value']) =>
+  hostCall<H.ExecutionServicesT>(type, value, H.ReplyPayload.ExecutionServices)
+
+interface Registration { id: string; name: string; endpoint: string; workerPublicKey: string; grade: string }
+
+const registration = (entry: H.ExecutionServiceT): Registration => ({
+  id: s(entry.id), name: s(entry.name), endpoint: s(entry.endpoint),
+  workerPublicKey: s(entry.workerPublicKey), grade: String(entry.grade),
+})
 
 export function ExecutionServicesSettings({ changed }: { changed: () => void }) {
   const [hostPublicKey, setHostPublicKey] = useState('')
-  function adopt(state: ExecutionServicesState) { setEntries(state.services); setHostPublicKey(state.hostPublicKey) }
-  const [entries, setEntries] = useState<ExecutionServiceConnection[]>([])
-  const [edit, setEdit] = useState<ExecutionServiceRegistration>()
+  function adopt(state: H.ExecutionServicesT) { setEntries(state.services); setHostPublicKey(s(state.hostPublicKey)) }
+  const [entries, setEntries] = useState<H.ExecutionServiceT[]>([])
+  const [edit, setEdit] = useState<Registration>()
   const [original, setOriginal] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [problem, setProblem] = useState<string>()
   const [message, setMessage] = useState<string>()
-  useEffect(() => { void api<ExecutionServicesState>(route).then(adopt, (e) => setProblem(errorText(e))) }, [])
+  useEffect(() => { void executionServices(H.RequestPayload.ExecutionServicesRequest, new H.ExecutionServicesRequestT()).then(adopt, (e) => setProblem(errorText(e))) }, [])
 
-  function choose(entry: ExecutionServiceRegistration, id?: string) {
+  function choose(entry: Registration, id?: string) {
     const { name, endpoint, workerPublicKey, grade, id: serviceId } = entry
     setEdit({ id: serviceId, name, endpoint, workerPublicKey, grade })
     setOriginal(id)
     setProblem(undefined)
     setMessage(undefined)
   }
-  function update(field: keyof ExecutionServiceRegistration, value: string | number) {
+  function update(field: keyof Registration, value: string | number) {
     setEdit((previous) => previous && {
       ...previous,
       [field]: value,
@@ -40,9 +49,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
     catch (e) { setProblem(errorText(e)) }
     finally { setBusy(false) }
   }
-  const saved = entries.find((entry) => entry.id === original)
-  const sameEndpoint = !!saved && saved.endpoint === edit?.endpoint.trim()
-  const caps = sameEndpoint && saved.capabilities.serverId ? saved.capabilities : undefined
+  const saved = entries.find((entry) => s(entry.id) === original)
+  const sameEndpoint = !!saved && s(saved.endpoint) === edit?.endpoint.trim()
+  const caps = sameEndpoint && saved.capabilities?.serverId ? saved.capabilities : undefined
   const valid = !!edit && [edit.id, edit.name, ...(edit.id === 'local' ? [] : [edit.endpoint, edit.workerPublicKey])].every((value) => value.trim())
     && /^(0x[0-9a-f]+|[0-9]+)$/i.test(edit.grade) && BigInt(edit.grade) <= 0xffffffffffffffffn
 
@@ -52,9 +61,9 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
         <Button disabled={!hostPublicKey} onClick={() => void perform(async () => { await navigator.clipboard.writeText(hostPublicKey) })}>{L('公開鍵をコピー')}</Button></Row>
     </Section>
     <Section title={L('実行サービス')}>
-      {entries.map((entry) => <Row key={entry.id}>
-        <Button kind="borderless" disabled={busy} onClick={() => choose(entry, entry.id)}>{entry.name} ({entry.id})</Button>
-        <span className="secondary">{entry.capabilities.nativeSystem}</span>
+      {entries.map((entry) => <Row key={s(entry.id)}>
+        <Button kind="borderless" disabled={busy} onClick={() => choose(registration(entry), s(entry.id))}>{s(entry.name)} ({s(entry.id)})</Button>
+        <span className="secondary">{s(entry.capabilities!.nativeSystem)}</span>
       </Row>)}
       <Row><Button icon="plus" disabled={busy} onClick={() => choose({ id: '', name: '', endpoint: '', workerPublicKey: '', grade: '1' })}>{L('実行サービスを追加')}</Button></Row>
     </Section>
@@ -76,16 +85,17 @@ export function ExecutionServicesSettings({ changed }: { changed: () => void }) 
       </>}
       <Row>
         <Button kind="prominent" disabled={!valid || busy} onClick={() => void perform(async () => {
-          const next = await api<ExecutionServicesState>(route + '/register', { ...edit, verify: !!original })
-          const registered = next.services.find((entry) => entry.id === edit.id)
+          const next = await executionServices(H.RequestPayload.ExecutionServicePutRequest,
+            new H.ExecutionServicePutRequestT(edit.id, edit.name, edit.endpoint, edit.workerPublicKey, !!original, BigInt(edit.grade)))
+          const registered = next.services.find((entry) => s(entry.id) === edit.id)
           if (!registered) throw Error(L('実行サービスを登録できませんでした。'))
           adopt(next)
-          choose(registered, registered.id)
+          choose(registration(registered), s(registered.id))
           setMessage(original ? L('接続を確認しました。') : L('公開鍵を登録しました。authorized_keys にホストの公開鍵を追加してから接続を確認してください。'))
           changed()
         })}>{original ? L('接続を確認して更新') : L('登録')}</Button>
         {original && original !== 'local' && <Button kind="destructive" disabled={busy} onClick={() => void perform(async () => {
-          adopt(await api<ExecutionServicesState>(route + '/remove', { id: original }))
+          adopt(await executionServices(H.RequestPayload.ExecutionServiceRemoveRequest, new H.ExecutionServiceRemoveRequestT(original)))
           setEdit(undefined)
           setOriginal(undefined)
           changed()

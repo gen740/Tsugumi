@@ -1,8 +1,7 @@
 import Foundation
 
-/// The VM console: the guest writes `console.log` in the VM folder (the
-/// previous boot's is `console.prev.log`); the app's own notes about the VM
-/// go to `launcher.log`. Both are kept in memory, in order, for the console view.
+/// The serial attachment writes `console.log` and the helper records its own
+/// notes and supervisor events in `launcher.log`. Both feed the console view.
 public final class ConsoleLog: @unchecked Sendable {
   private let lock = NSLock()
   private var lines: [String] = []

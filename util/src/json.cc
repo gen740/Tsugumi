@@ -2,6 +2,8 @@
 
 #include <stdexcept>
 
+#include "tsugumi/util/json_object.hh"
+
 namespace tsugumi::schema {
 
 namespace detail {
@@ -123,6 +125,39 @@ std::optional<DecodeError> validate(std::string_view text,
 
 std::string text(const hosq::json::GenericDom<>& value) {
   return std::string(value[""].source());
+}
+
+auto canonical_text(const hosq::json::GenericDom<>& value) -> std::string {
+  const auto raw = value[""].source();
+  switch (raw.front()) {
+    case '{': {
+      v::Mapping<v::String, Json> object;
+      if (auto error = decode(value, object))
+        throw std::runtime_error(error->message);
+      json::Members sorted;
+      for (const auto& [key, child] : object.value())
+        sorted.emplace(key, canonical_text(child));
+      return json::Encode(sorted);
+    }
+    case '[': {
+      v::Array<Json> array;
+      if (auto error = decode(value, array))
+        throw std::runtime_error(error->message);
+      std::vector<std::string> items;
+      items.reserve(array.value().size());
+      for (const auto& child : array.value())
+        items.push_back(canonical_text(child));
+      return json::Encode(items);
+    }
+    case '"': {
+      v::String string;
+      if (auto error = decode(value, string))
+        throw std::runtime_error(error->message);
+      return encode(string);
+    }
+    default:
+      return std::string(raw);
+  }
 }
 
 hosq::json::GenericDom<> capture(std::string_view json_text) {

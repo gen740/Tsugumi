@@ -59,6 +59,12 @@ struct StageTimeData {
   std::optional<int64_t> end;
 };
 
+// A derivation the invocation's Nix build is building now (kept in memory).
+struct BuildActivityData {
+  std::string derivation;
+  int64_t start = 0;
+};
+
 struct BuildEnvironmentData {
   std::string id, derivation, manifest, system;
   std::vector<std::string> paths;
@@ -78,6 +84,7 @@ struct InvocationSummaryData {
   std::optional<bool> build_cached;
   std::optional<uint64_t> log_truncated_at_bytes;
   std::vector<StageTimeData> stages;
+  std::vector<BuildActivityData> building;
   std::optional<bool> worker_reused;
   std::vector<std::string> outputs_sent;
   std::optional<int64_t> ready_at;

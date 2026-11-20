@@ -48,8 +48,8 @@ struct RunParams {
   CardPath card;
   bool propagate = true;
   uint32_t max_concurrency = 4;
-  uint32_t nix_jobs = 1;
-  uint32_t nix_cores = 1;
+  std::optional<uint32_t> nix_jobs;
+  std::optional<uint32_t> nix_cores;
 };
 
 class Scheduler {

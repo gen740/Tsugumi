@@ -225,10 +225,10 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
                 "SHFMT_NO_EDITORCONFIG=true"};
     spec.cwd = dir.string();
     std::string err;
-    auto res =
-        proc::run(spec, nullptr, std::nullopt, [&](const std::string& line) {
-          if (err.size() < 8192) err += line;
-        });
+    auto res = proc::run(spec, nullptr, std::nullopt, [&](auto chunk) {
+      for (const auto& line : chunk.lines)
+        if (err.size() < 8192) err += line;
+    });
     if (!proc::exited_ok(res.status)) {
       // Syntax errors: keep the text unchanged and point at the position.
       static const std::regex pos(R"((\d+):(\d+))");

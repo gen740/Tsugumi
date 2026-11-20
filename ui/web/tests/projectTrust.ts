@@ -1,20 +1,19 @@
 import assert from 'node:assert/strict'
 import { ProjectSession } from '../src/model/session'
+import * as H from '../shared/gen/tsugumi/host'
 
 const session = new ProjectSession('/trials/project', 'trust-key', 'Project')
-const originalFetch = globalThis.fetch
 const requests: unknown[] = []
 const replies = [
-  { decision: 0 },
-  { decision: 1, trusted_folder: '/trials' },
-  { decision: 2 },
-  { decision: 1 },
+  new H.ProjectTrustT(H.ProjectTrustDecision.Unknown),
+  new H.ProjectTrustT(H.ProjectTrustDecision.Trusted, '/trials'),
+  new H.ProjectTrustT(H.ProjectTrustDecision.Untrusted),
+  new H.ProjectTrustT(H.ProjectTrustDecision.Trusted),
 ]
-globalThis.fetch = async (url, init) => {
-  assert.equal(String(url), '/api/project/trust')
-  requests.push(JSON.parse(String(init?.body)))
-  return Response.json(replies.shift())
-}
+session.projectHost = { ...session.projectHost, trust: async (path, decision) => {
+  requests.push(decision === undefined ? { path } : { path, decision })
+  return replies.shift()!
+} }
 try {
   await session.refreshProjectTrust()
   assert.equal(session.projectTrust, 0)
@@ -34,5 +33,4 @@ try {
   ])
 } finally {
   session.dispose()
-  globalThis.fetch = originalFetch
 }

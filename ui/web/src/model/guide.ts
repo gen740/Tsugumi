@@ -4,6 +4,7 @@
 // tours; it only reads, and what it offers to do (guide_show) is done by the
 // user's own press of a button. The macOS app's GuideController does the same.
 import { api, onServerEvent } from '../api'
+import { ConversationEvents } from '../wire/agentEvents'
 import { AGENT, fill } from '../../shared/agentShared'
 import { D } from '../wire/rpc'
 import { app } from './app'
@@ -271,11 +272,17 @@ export class GuideController extends Observable {
   private readSession?: ProjectSession
   private observed?: string
 
+  private readonly events = new ConversationEvents(
+    (event) => { if (!this.contextSession) this.handle(event) },
+    (error) => {
+      this.status = L('うまく答えられませんでした: {0}', (error as Error).message)
+      this.changed()
+    },
+  )
+
   constructor() {
     super()
     onServerEvent((e) => {
-      // The guide's conversation is Home's: a tab on a project goes on undisturbed (and reads it on returning).
-      if (e.type === 'guide' && !this.contextSession) this.handle(e.event)
       if (e.type === 'agentWork' && e.project === this.contextSession?.dir) this.externalWork(String(e.from ?? 'Claude Code'), e.event)
       if (e.type === 'guideChanged' && e.origin !== this.origin) void this.syncGuide()
       if (['reconnected', 'providerChanged', 'settingsChanged'].includes(e.type)) void this.refresh(true)
@@ -326,7 +333,7 @@ export class GuideController extends Observable {
     // Retry a failed read once; reconnects and questions trigger later reads.
     for (let attempt = 0; attempt < 2; attempt++) {
       try {
-        const r = await api<{ available: boolean; connectionMessage?: string; setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null; busy: boolean; conversation: { archive: Message[]; messages: Message[] } | null }>('/api/guide', {})
+        const r = await api<{ available: boolean; connectionMessage?: string; setupDone: boolean; demoAnswered: boolean; tour: GuideTour | null; busy: boolean; eventSeq?: string; conversation: { archive: Message[]; messages: Message[] } | null }>('/api/guide', {})
         if (revision !== this.availabilityRevision) return false
         this.available = true
         this.connected = r.available
@@ -335,6 +342,8 @@ export class GuideController extends Observable {
         this.busy = r.busy
         this.loaded = true
         if (r.conversation && !this.busy) this.load([...r.conversation.archive, ...r.conversation.messages])
+        if (r.eventSeq !== undefined) this.events.start('guide', BigInt(r.eventSeq))
+        else this.events.close()
         this.changed()
         return true
       } catch (e) {
@@ -430,8 +439,8 @@ export class GuideController extends Observable {
   }
 
   /** Called only after sign-in with plan permission and its welcome. */
-  async finishChatGPTSetup() {
-    await api('/api/settings', { provider: 'chatgpt' })
+  async finishChatGPTSetup(clientId: string) {
+    await api('/api/settings', { provider: 'chatgpt', chatGPTAccount: clientId })
     await this.finishSetup(true)
   }
 
@@ -542,7 +551,7 @@ export class GuideController extends Observable {
 
   cancel() {
     this.queued = []
-    void api('/api/guide/cancel', {})
+    void api('/api/guide/cancel', {}).catch((e) => this.handle({ kind: 'error', message: e.message }))
     this.busy = false
     this.activity = undefined
     this.status = L('回答を止めました。')
@@ -559,11 +568,13 @@ export class GuideController extends Observable {
   async newConversation() {
     if (this.busy) return
     await api('/api/guide/reset', {})
+    this.events.close()
     this.items = []
     this.status = undefined
     this.failed = false
     this.clearHighlight()
     this.changed()
+    await this.refresh(true)
   }
 
   private begin() {

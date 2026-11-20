@@ -145,9 +145,9 @@ class NativeProcess final : public EnvironmentProcess {
     }
     return ::kill(pid, 0) == 0 ? std::nullopt : std::optional<int>(-1);
   }
-  auto WaitForReady(const std::filesystem::path& file, int64_t pid,
-                    std::stop_token stop, const std::function<bool()>& done)
-      -> void override {
+  auto WaitForReady(const std::filesystem::path& file, const std::string&,
+                    int64_t pid, std::stop_token stop,
+                    const std::function<bool()>& done) -> void override {
     WaitForNativeReadiness(file, pid, stop, done);
   }
   auto WaitForExit(int64_t pid, bool child) -> void override {

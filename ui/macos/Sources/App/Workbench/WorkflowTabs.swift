@@ -64,8 +64,8 @@ struct WorkflowTabs: View {
       Text("信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。")
     }
     .sheet(item: Binding(get: { model.chat(for: session).permissionPrompt }, set: { _ in })) { prompt in
-      PermissionPromptView(prompt: prompt) { allow, always, selected in
-        model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, always: always, selected: selected)
+      PermissionPromptView(prompt: prompt) { allow, selected in
+        model.chat(for: session).answerPermissions(id: prompt.id, allow: allow, selected: selected)
       }
     }
     // A demo tour: Tsugumi of this chat leads it, following the real runs.

@@ -1,4 +1,3 @@
-import EN from '../shared/i18n/en.json'
 import { Children, isValidElement, ReactElement } from 'react'
 import { Button, Toggle, Value } from '../src/ui/controls'
 // The space-management preview names only older folders, and deletion sends an

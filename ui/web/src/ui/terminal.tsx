@@ -61,15 +61,19 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   let mine: bigint | undefined
   let closed = false
   let opening = true
+  let exited = false
   const early: H.HostTerminalDataT[] = []
   const writeError = (e: unknown) => term.write(`\r\n${errorText(e)}\r\n`)
   const onEvent = (e: H.HostTerminalDataT) => {
     if (e.session !== mine) return
     if (e.data.length) term.write(Uint8Array.from(e.data))
     if (e.closed) {
+      exited = true
       mine = undefined
       term.write(L('\r\n[ターミナルは終了しました]\r\n'))
       onEnd(L('終了しました'))
+      // Do not release the Wasm binding from inside its event callback.
+      queueMicrotask(() => client?.close())
     }
   }
   const call = (request: H.HostTerminalRequestT) =>
@@ -97,7 +101,7 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
       client = await openHost()
       if (closed) { client.close(); return }
       client.onClose((reason) => {
-        if (closed) return
+        if (closed || exited) return
         mine = undefined
         term.write(`\r\n${reason}\r\n`)
         onEnd(L('終了しました'))
@@ -123,8 +127,7 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   return () => {
     closed = true
     seen.disconnect()
-    // hostd can release the session once its Open reply registers ownership.
-    if (!opening) client?.close()
+    client?.close()
     term.dispose()
   }
 }

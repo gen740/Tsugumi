@@ -6,6 +6,7 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/text.hh"
 
 namespace tsugumi {
@@ -344,51 +345,21 @@ void check_structure(const Document& doc) {
 namespace {
 // Project/Card documents are hashed by value: a client's JSON writer may
 // reorder or reindent the rest while changing a presentation field.
-auto execution_value(const hosq::json::GenericDom<>& value) -> std::string {
-  auto raw = schema::text(value);
-  auto first = raw.find_first_not_of(" \t\r\n");
-  if (first == std::string::npos) return "";
-  if (raw[first] == '{') {
-    schema::v::Mapping<schema::v::String, schema::Json> fields;
-    if (auto error = schema::decode(value, fields))
-      throw DocumentError("invalid_document", error->message);
-    std::map<std::string, std::string> sorted;
-    for (const auto& [key, item] : fields.value())
-      sorted[key] = execution_value(item);
-    std::string out = "{";
-    for (const auto& [key, item] : sorted)
-      out += (out.size() > 1 ? "," : "") +
-             schema::text(schema::string_value(key)) + ":" + item;
-    return out + "}";
-  }
-  if (raw[first] == '[') {
-    schema::v::Array<schema::Json> items;
-    if (auto error = schema::decode(value, items))
-      throw DocumentError("invalid_document", error->message);
-    std::string out = "[";
-    for (const auto& item : items.value())
-      out += (out.size() > 1 ? "," : "") + execution_value(item);
-    return out + "]";
-  }
-  if (raw[first] == '"') {
-    schema::v::String text;
-    if (auto error = schema::decode(value, text))
-      throw DocumentError("invalid_document", error->message);
-    return schema::encode(text);
-  }
-  return raw.substr(first, raw.find_last_not_of(" \t\r\n") - first + 1);
-}
 auto execution_json(const std::string& text, const char* omitted)
     -> std::string {
   schema::v::Mapping<schema::v::String, schema::Json> object;
   if (auto error = schema::decode(text, object))
     throw DocumentError("invalid_document", error->message);
-  std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> fields;
-  for (const auto& [key, value] : object.value())
-    if (key != omitted &&
-        !(std::string_view(omitted) == "name" && key == "agentExclude"))
-      fields.emplace_back(key, &value);
-  return execution_value(schema::capture(schema::object_text(fields)));
+  json::Members fields;
+  try {
+    for (const auto& [key, value] : object.value())
+      if (key != omitted &&
+          !(std::string_view(omitted) == "name" && key == "agentExclude"))
+        fields.emplace(key, schema::canonical_text(value));
+    return json::Encode(fields);
+  } catch (const std::runtime_error& error) {
+    throw DocumentError("invalid_document", error.what());
+  }
 }
 }  // namespace
 

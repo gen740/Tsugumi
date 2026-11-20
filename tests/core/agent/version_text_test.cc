@@ -63,7 +63,7 @@ TEST_F(VersionNote,
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).record_json, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  EXPECT_TRUE(host::ReadSummary(root, params, true).empty());
+  EXPECT_TRUE(versions.summary(params, true).empty());
   Put("definitions/a/_card.json",
       "{ \"params\": [ { \"data\": \"PRIVATE_SENTINEL\", \"name\": \"secret\" "
       "} ], \"language\": \"python\" "
@@ -79,12 +79,12 @@ TEST_F(VersionNote,
   Put("tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})");
   auto change = versions.commit_all("Change");
-  EXPECT_TRUE(host::VersionDiff(root, change).truncated);
+  EXPECT_TRUE(versions.diff(change).truncated);
   ExpectChanges(versions.note(change).record_json, {"c"}, {"b"},
                 {{"a", {"definition", "source", "wiring"}}});
-  host::StoreSummary(root, change, true, "An Agent note");
-  EXPECT_EQ(host::ReadSummary(root, change, true), "An Agent note");
-  EXPECT_TRUE(host::ReadSummary(root, change, false).empty());
+  versions.summary(change, true, "An Agent note");
+  EXPECT_EQ(versions.summary(change, true), "An Agent note");
+  EXPECT_TRUE(versions.summary(change, false).empty());
   EXPECT_EQ(host::ChangeText(
                 version_facts::changes(versions.note(change).record_json), true)
                 .find("SENTINEL"),
@@ -93,13 +93,13 @@ TEST_F(VersionNote,
   Put("definitions/a/data/data.csv", "PRIVATE_DATA_SENTINEL");
   change = versions.commit_all("Layout and data");
   ExpectChanges(versions.note(change).record_json, {}, {}, {});
-  EXPECT_TRUE(host::VersionDiff(root, change).text.empty());
+  EXPECT_TRUE(versions.diff(change).text.empty());
   EXPECT_THROW(versions.note(std::string(40, '0')), std::exception);
   Put("definitions/a/src/main.rs", "fn main() {}");
   Put("definitions/a/src/_card.json", "not a Card document");
   change = versions.commit_all("Source inputs");
   ExpectChanges(versions.note(change).record_json, {}, {}, {{"a", {"source"}}});
-  EXPECT_TRUE(host::VersionDiff(root, change).text.empty());
+  EXPECT_TRUE(versions.diff(change).text.empty());
 }
 TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   Put("tsugumi.json",
@@ -142,7 +142,7 @@ TEST_F(VersionNote, NeutralCommitsAndRunNotesSurviveReopening) {
                    facts.commits.front().runs.front().record_json)
                    .whole);
 }
-TEST_F(VersionNote, HostDiffComparesTheChosenVersionsWithoutChangingGit) {
+TEST_F(VersionNote, DiffComparesTheChosenVersionsWithoutChangingGit) {
   Put("tsugumi.json", "{}");
   Put("definitions/a/src/main.py", "# first\n");
   Put("definitions/a/src/values.csv", "PRIVATE_DATA\n");
@@ -152,16 +152,16 @@ TEST_F(VersionNote, HostDiffComparesTheChosenVersionsWithoutChangingGit) {
   versions.commit_all("Intermediate");
   Put("definitions/a/src/main.py", "# third\n");
   const auto third = versions.commit_all("Third");
-  const auto diff = host::VersionDiff(root, third, first);
+  const auto diff = versions.diff(third, first);
   EXPECT_NE(diff.text.find("first"), std::string::npos);
   EXPECT_NE(diff.text.find("third"), std::string::npos);
   EXPECT_EQ(diff.text.find("intermediate"), std::string::npos);
-  EXPECT_EQ(host::VersionDiff(root, first).text.find("PRIVATE_DATA"),
+  EXPECT_EQ(versions.diff(first).text.find("PRIVATE_DATA"),
             std::string::npos);
-  EXPECT_TRUE(host::VersionDiff(root, third, third).text.empty());
+  EXPECT_TRUE(versions.diff(third, third).text.empty());
   EXPECT_EQ(versions.graph(1).head, third);
   EXPECT_FALSE(versions.graph(1).dirty);
-  EXPECT_THROW(host::VersionDiff(root, third, std::string(40, '0')),
+  EXPECT_THROW(versions.diff(third, std::string(40, '0')),
                std::exception);
 }
 TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
@@ -182,12 +182,33 @@ TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
   EXPECT_TRUE(changes.added.empty());
   EXPECT_FALSE(host::ChangeText(changes, true).empty());
 }
-TEST(VersionText, ModelReadPolicyLivesOnTheHost) {
-  EXPECT_TRUE(host::SummaryReads("externals/p/definitions/a/src/main.py"));
-  EXPECT_TRUE(host::SummaryReads("definitions/a/_meta.json"));
-  EXPECT_FALSE(host::SummaryReads("definitions/a/src/data.csv"));
-  EXPECT_FALSE(host::SummaryReads("definitions/a/data/private.py"));
-  EXPECT_FALSE(host::SummaryReads("layout.json"));
+TEST_F(VersionNote,
+     RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {
+  Put("tsugumi.json", "{}");
+  Put("definitions/outer-id/_card.json", R"({"external":"library"})");
+  const auto meta = "externals/library/definitions/inner-id/_meta.json";
+  Put(meta, R"({"future":1,"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
+  Versions versions(root);
+  const auto first = versions.init();
+  auto changes = versions.comment_changes(first);
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_EQ(changes[0].card, "outer-id/inner-id");
+  EXPECT_EQ(changes[0].change, "added");
+  EXPECT_EQ(changes[0].by, "user");
+  Put(
+      meta,
+      R"({"name":false,"comments":[{"id":"c1","text":"Ask","author":"user","resolved":true,"stateBy":"agent","resolution":"Done","cards":["outer-id/inner-id"]}]})");
+  changes = versions.comment_changes(versions.commit_all("Resolve"));
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_EQ(changes[0].change, "resolved");
+  EXPECT_EQ(changes[0].by, "agent");
+  EXPECT_EQ(changes[0].resolution, "Done");
+  EXPECT_EQ(changes[0].cards, (std::vector<std::string>{"outer-id/inner-id"}));
+  std::filesystem::remove(root / meta);
+  changes = versions.comment_changes(versions.commit_all("Remove"));
+  ASSERT_EQ(changes.size(), 1u);
+  EXPECT_EQ(changes[0].change, "removed");
+  EXPECT_TRUE(changes[0].by.empty());
 }
 }  // namespace
 }  // namespace tsugumi

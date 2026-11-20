@@ -24,7 +24,6 @@ in
       };
       ci-mock = ci-core.override { target = "tsugumid-mock"; };
       ci-input-types = ci-core.override { target = "tsugumi_input_types_tests"; };
-      libgit2-local = pkgs.callPackage ../libgit2-local.nix { };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
@@ -41,7 +40,6 @@ in
           ci-mock
           ci-input-types
           client-wasm
-          libgit2-local
           web
           ;
         ci-vm-tests = ci-core.override { target = "tsugumi_vm_lifetime_tests"; };

@@ -419,7 +419,7 @@ export function StatusBar({ workspace, session, tab }: { workspace: Workspace; s
           </StatusButton>
         </span>
         {session.reloadApproval && <PermissionPrompt reload asked={session.reloadApproval.permissions}
-          onAnswer={(allow, _, selected) => void session.answerReloadApproval(allow, selected ?? [])} />}
+          onAnswer={(allow, selected) => void session.answerReloadApproval(allow, selected ?? [])} />}
         <Popover open={showSync} onClose={() => setShowSync(false)} anchor={syncRef} width={440}>
           <div className="popover-body">
             <div className="headline">{L('保存・同期')}</div>

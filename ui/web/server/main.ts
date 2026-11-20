@@ -10,10 +10,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { cancelChats, resumeChats, chatRoutes, chatStatus, hostReady, hostRequest } from './chat'
+import { chatRoutes, chatStatus, hostReady, hostRequest, observeHost } from './chat'
 import { hostEnvironments } from './environment'
 import type { VMHostOptions } from './environment'
-import { pageRpcUpgrade, proxyHostRpc } from './rpcProxy'
+import { pageRpcUpgrade, proxyRpc } from './rpcProxy'
 import { L, language } from './i18n'
 import { CoreHostError } from './coreHost'
 import { hostProjectErrorText } from './hostProjects'
@@ -182,11 +182,6 @@ const routes: Record<string, Handler> = {
   'POST /api/runtime/cache-usage': () => vm ? hostRequest('HostRuntimeRequest', { action: 'Command', command: 'cache-usage' }) : {},
   'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
-  'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
-  'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
-  'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
-  'POST /api/execution-services/register': (body) => hostRequest('ExecutionServicePutRequest', body),
-  'POST /api/execution-services/remove': (body) => hostRequest('ExecutionServiceRemoveRequest', body),
   'GET /api/status': async () => ({
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
@@ -195,7 +190,6 @@ const routes: Record<string, Handler> = {
     hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
   }),
-  'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
     return { path: recent.path, key: recent.path, name: recent.name }
@@ -225,7 +219,6 @@ const routes: Record<string, Handler> = {
     const elsewhere = [...streams.values()].some((p) => !p.detached && p.id !== page && pageProjects.get(p.id) === dir)
     if (elsewhere) return { ok: true }
     broadcast({ type: 'projectClosed', project: dir })
-    cancelChats(dir)
     return { ok: true }
   },
   'POST /api/page/open': (b) => {
@@ -239,8 +232,21 @@ const routes: Record<string, Handler> = {
     return listDir(dir)
   },
 
-  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, listeners: () => streams.size, showOnPage, openPage, desktop }),
+  ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, showOnPage, openPage, desktop }),
 }
+// Browser pages stay registered while the independent Host connection recovers.
+let hostDisconnected = false
+observeHost(event => {
+  if (event.type === 'Disconnected') {
+    hostDisconnected = true
+    if (streams.size) void hostReady().catch(error => {
+      broadcast({ type: 'hostUnavailable', message: (error as Error).message })
+    })
+  } else if (event.type === 'Connected' && hostDisconnected) {
+    hostDisconnected = false
+    broadcast({ type: 'reconnected' })
+  }
+})
 
 // The page is opened through the URL printed at start, which carries this
 // run's key: the server answers it with a cookie only the page's own origin
@@ -321,7 +327,8 @@ const server = http.createServer({ headersTimeout: 0, requestTimeout: 0 }, async
 })
 
 server.on('upgrade', async (req, socket, head) => {
-  if (!pageRpcUpgrade(req, (server.address() as net.AddressInfo).port, authorized(req))) {
+  const service = pageRpcUpgrade(req, (server.address() as net.AddressInfo).port, authorized(req))
+  if (!service) {
     socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
     return
   }
@@ -329,7 +336,7 @@ server.on('upgrade', async (req, socket, head) => {
   socket.once('error', close)
   try {
     const ready = await hostReady()
-    if (!socket.destroyed) proxyHostRpc(req, socket, head, ready.host_endpoint)
+    if (!socket.destroyed) proxyRpc(req, socket, head, service === 'host' ? ready.host_endpoint : ready.endpoint)
   } catch (error) {
     console.error((error as Error).message)
     socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n')
@@ -366,16 +373,22 @@ async function handle(req: http.IncomingMessage, res: http.ServerResponse) {
   }
   if (url.pathname === '/api/events') {
     res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' })
-    res.write(': hello\n\n')
     const page = { id: url.searchParams.get('page') ?? randomUUID(), detached: url.searchParams.has('detached') }
     streams.set(res, page)
-    resumeChats()
     const ping = setInterval(() => res.write(': ping\n\n'), 15_000)
-    req.on('close', () => {
+    res.on('close', () => {
       clearInterval(ping)
       streams.delete(res)
-      pageProjects.delete(page.id)
+      if (![...streams.values()].some(p => p.id === page.id)) pageProjects.delete(page.id)
     })
+    try {
+      await hostReady()
+      if (res.destroyed) return
+      res.write('data: {"type":"eventsConnected"}\n\n')
+    } catch (error) {
+      hostDisconnected = true
+      res.write(`data: ${JSON.stringify({ type: 'hostUnavailable', message: (error as Error).message })}\n\n`)
+    }
     return
   }
   if (url.pathname.startsWith('/api/')) {
@@ -463,7 +476,7 @@ async function shutdown() {
   try {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
-  for (const s of streams.keys()) s.end()
+  for (const stream of streams.keys()) stream.end()
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.
   process.exit(0)

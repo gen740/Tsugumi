@@ -1,4 +1,4 @@
-import type { ChatRow, AccessGroup } from '../shared/chatPresentation'
+import type { ChatRow } from '../shared/chatPresentation'
 // Presentation DTOs and schema reflection. Agent execution lives in core.
 import { BaseType, BFBS, Field } from '../shared/bfbs'
 
@@ -136,29 +136,6 @@ export interface Conversation {
   summary?: string
 }
 
-
-export type AgentEvent =
-  | { kind: 'presentation'; rows: ChatRow[] }
-  | { kind: 'modelAccepted' }
-  | { kind: 'text'; text: string }
-  | { kind: 'toolStarted'; id: string; name: string; arguments: string }
-  | { kind: 'toolFinished'; id: string; name: string; ok: boolean; summary: string }
-  /** A piece of a tool call's arguments as the model writes them, for the calls that carry whole files. */
-  | { kind: 'toolInput'; index: number; name: string; delta: string }
-  /** Earlier turns are being summarized: the next reply waits for it. */
-  | { kind: 'compacting' }
-  | { kind: 'compacted' }
-  | { kind: 'retrying'; message: string }
-  /** The text streamed so far in this reply is dropped: it is asked again. */
-  | { kind: 'discardText' }
-  | { kind: 'error'; message: string; code?: string }
-  | { kind: 'cancelled' }
-  | { kind: 'finished' }
-  /** What a helper started by `delegate` does (its own events). */
-  | { kind: 'helperStarted'; text: string }
-  | { kind: 'helper'; name: string; event: AgentEvent }
-  | { kind: 'permission'; id: string; asked: string[]; groups?: AccessGroup[]; from?: string }
-  | { kind: 'permissionAnswered'; id: string }
 
 // ---- Provider ------------------------------------------------------------------
 

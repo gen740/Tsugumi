@@ -1,6 +1,7 @@
 # Document loading and resolution are also used by the host before a project
 # daemon exists. Keep evaluation, execution and project storage out of that link.
 add_library(tsugumi_document STATIC
+  ${PROJECT_SOURCE_DIR}/tsugumid/document/src/comments.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/types.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/document.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/graph.cc

@@ -49,6 +49,36 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->nodes.front().diags.empty());
   EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
 }
+TEST_F(OpaqueMetadata, ExecutionFingerprintKeepsCanonicalBytes) {
+  Document document;
+  document.project_json =
+      R"( { "name": "presentation", "value": {"z": [1, 1.0, -0, 2e+1], "\u0061": "\u0062\n"}, "agentExclude": [] } )";
+  EXPECT_EQ(execution_fingerprint(document),
+            crypto::sha256_hex(
+                R"({"value":{"a":"b\n","z":[1,1.0,-0,2e+1]}})"));
+}
+
+TEST_F(OpaqueMetadata, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({
+        "pkgsPath": "tsugumi:default",
+        "canvas": {"cards": [{"id": "start"}], "connections": []},
+        "nixSources": [{
+          "name": "science",
+          "type": "flake",
+          "ref": "github:org/science/revision?narHash=sha256-pin",
+          "overrides": {"tool": {"override": {"z": [1.0, 1, null], "\u0061": "\u0062"}}}
+        }]
+      })");
+  Store store({root, ""});
+  store.open();
+  const auto& sources = store.current()->resolution->nodes.front().nix_sources;
+  ASSERT_EQ(sources.size(), 1u);
+  EXPECT_EQ(sources.front().overrides,
+            R"({"tool":{"override":{"a":"b","z":[1.0,1,null]}}})");
+}
+
 TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
   // A wire to an undeclared input of a code Card and an unknown param type:
   // each message carries the fix (the inputs entry, the valid types) on one

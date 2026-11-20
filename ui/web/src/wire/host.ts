@@ -33,9 +33,15 @@ export class HostConnection {
   close() { this.transport.close() }
 }
 
-export async function openHost(): Promise<HostConnection> {
+export async function openPageRpc(service: 'host' | 'agent') {
   const { token } = await api<{ token: string }>('/api/host/connect', {})
-  const client = new HostConnection(await webSocketTransport(`ws://${location.host}/rpc/host`, undefined, 2))
+  const transport = await webSocketTransport(`ws://${location.host}/rpc/${service}`, undefined, service === 'host' ? 2 : 1)
+  return { token, transport }
+}
+
+export async function openHost(): Promise<HostConnection> {
+  const { token, transport } = await openPageRpc('host')
+  const client = new HostConnection(transport)
   try {
     await client.call(H.RequestPayload.HelloRequest, new HelloRequestT(token, Client.Web), H.ReplyPayload.HelloResult)
     return client
@@ -48,19 +54,28 @@ export async function openHost(): Promise<HostConnection> {
 let connection: Promise<HostConnection> | undefined
 
 const listeners = new Set<(event: H.EventT) => void>()
+const closeListeners = new Set<() => void>()
 
 export function onHostEvent(fn: (event: H.EventT) => void): () => void {
   listeners.add(fn)
   return () => listeners.delete(fn)
 }
 
-function sharedHost(): Promise<HostConnection> {
+export function onHostClose(fn: () => void): () => void {
+  closeListeners.add(fn)
+  return () => closeListeners.delete(fn)
+}
+
+export function sharedHost(): Promise<HostConnection> {
   if (!connection) {
     const current = openHost()
     connection = current
     const clear = () => { if (connection === current) connection = undefined }
     void current.then((client) => {
-      client.onClose(clear)
+      client.onClose(() => {
+        clear()
+        for (const listener of closeListeners) listener()
+      })
       client.onEvent((event) => { for (const listener of listeners) listener(event) })
     }, clear)
   }

@@ -394,7 +394,7 @@ class AgentFixture : public ::testing::Test {
   }
 
   auto WaitUntilIdle(const std::string& conversation) -> std::string {
-    // Agent conversation status has a read API but no push notification.
+    // The fixture bounds waiting when the case does not observe Host events.
     const auto deadline = std::chrono::steady_clock::now() + 8s;
     do {
       auto state = Get(conversation, true).View();
