@@ -1,6 +1,6 @@
 // A version's minimap fits its Cards and draws each with its canvas shape.
 import assert from 'node:assert/strict'
-import * as H from '../shared/gen/tsugumi/host'
+import { VersionCommentT } from '../shared/gen/tsugumi/rpc/version-comment'
 
 const page = globalThis as Record<string, unknown>
 page.document = { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -129,7 +129,7 @@ try {
     async comments(project: string, commit: string) {
       assert.equal(project, 'project')
       assert.equal(commit, 'version')
-      return [new H.VersionCommentT('plan', 'Ask', 'resolved', null, 'agent', ['plan'])]
+      return [new VersionCommentT('plan', 'Ask', 'resolved', null, 'agent', ['plan'])]
     },
   }, versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
   await session.loadVersionNoteMode()

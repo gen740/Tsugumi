@@ -11,12 +11,16 @@ export interface PermissionInfo { kind: PermissionKind; label: string; icon: str
 class PermissionCatalog extends Observable {
   kinds: PermissionInfo[] = []
   private loaded = false
+  /** Reads the catalog from hostd; presentation tests replace it. */
+  read = async (): Promise<PermissionInfo[]> => {
+    const result = await hostCall<H.PermissionKindsT>(H.RequestPayload.PermissionKindsRequest,
+      new H.PermissionKindsRequestT(language()), H.ReplyPayload.PermissionKinds)
+    return result.kinds.map(p => ({ kind: s(p.id), label: s(p.label), icon: s(p.icon) }))
+  }
   async load() {
     if (this.loaded) return
     try {
-      const result = await hostCall<H.PermissionKindsT>(H.RequestPayload.PermissionKindsRequest,
-        new H.PermissionKindsRequestT(language()), H.ReplyPayload.PermissionKinds)
-      this.kinds = result.kinds.map(p => ({ kind: s(p.id), label: s(p.label), icon: s(p.icon) }))
+      this.kinds = await this.read()
       this.loaded = true
       this.changed()
     } catch { /* Requests still show their ids and require explicit selection. */ }

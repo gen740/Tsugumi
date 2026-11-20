@@ -145,17 +145,16 @@ const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], l
   return { request, operation: fields.access, neededNow: fields.needed_now }
 }) }]
 const selections: string[] = []
-const originalFetch = globalThis.fetch
+const originalRead = permissionCatalog.read
 const sandboxRequest = 'sandbox_off Collatz'
 const sandboxLabel = 'Run outside the sandbox'
 try {
-  globalThis.fetch = async () => { throw new Error('Host unavailable at startup') }
+  permissionCatalog.read = async () => { throw new Error('Host unavailable at startup') }
   await permissionCatalog.load()
   let requested = false
-  globalThis.fetch = async (url) => {
-    assert.equal(url, '/api/permission-kinds')
+  permissionCatalog.read = async () => {
     requested = true
-    return Response.json({ kinds: [{ id: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }] })
+    return [{ kind: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }]
   }
   const props = { asked: [sandboxRequest], selected: [], onSelect() {} }
   const refreshed = Promise.withResolvers<void>()
@@ -167,7 +166,7 @@ try {
     await refreshed.promise
     assert.ok(prompt.root.findByType('input').props['aria-label'].includes(sandboxLabel))
   } finally { unsubscribe(); prompt.unmount() }
-} finally { globalThis.fetch = originalFetch }
+} finally { permissionCatalog.read = originalRead }
 const view = create(createElement(PermissionRequests, {
   asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
 }))
