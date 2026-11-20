@@ -137,6 +137,10 @@ def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeyp
         doc["pkgsPath"] = ("https://github.com/NixOS/nixpkgs/archive/" + revision
                            + ".tar.gz#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         doc_file.write_text(json.dumps(doc))
+        # This fixture never answers. Its network deadlines must not end the
+        # wait on behalf of Stop (the host may configure a short connect timeout).
+        monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "")
+                           + "\nconnect-timeout = 0\nstalled-download-timeout = 0")
         monkeypatch.setenv("https_proxy", address)
         monkeypatch.setenv("no_proxy", "")
         client = core_factory(project_root=root).connect()
