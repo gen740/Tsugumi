@@ -393,9 +393,9 @@ class ChatHost {
 
 const chats = new Map<string, ChatHost>()
 function chatFor(dir: string): ChatHost {
-  const { key, real } = projectKey(dir)
+  const key = projectKey(dir)
   let chat = chats.get(key)
-  if (!chat) { chat = new ChatHost(real); chats.set(key, chat) }
+  if (!chat) { chat = new ChatHost(key); chats.set(key, chat) }
   return chat
 }
 
@@ -405,7 +405,7 @@ export function resumeChats() {
   if (guideAgent) guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
 }
 
-export function cancelChats(dir: string) { chats.get(projectKey(dir).key)?.detach() }
+export function cancelChats(dir: string) { chats.get(projectKey(dir))?.detach() }
 
 async function showExternalAccess(requestId: string, fallback?: string) {
   const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; groups?: AccessGroup[]; state: string }[] }>('AccessListRequest')
@@ -445,10 +445,6 @@ async function turnAgent(b: any) {
 
 // The same authenticated host connection also serves Home's project requests.
 export function hostReady() { return core.ready() }
-
-export function observeHost(handler: (event: import('./environment').HostEvent) => void) {
-  return core.observeHost(handler)
-}
 
 export function hostRequest<T = any>(method: string, fields: unknown = {}): Promise<T> {
   return core.user.call<T>(method, fields)

@@ -642,6 +642,10 @@ struct Service::State {
       result.state = std::make_unique<H::EnvironmentStateT>(std::move(state));
       return wire::HostReply(request.request_id, result);
     }
+    if (r->value_as_EnvironmentListRequest()) {
+      lock.unlock();
+      return wire::HostReply(request.request_id, environments->List());
+    }
     if (const auto* environment = r->value_as_EnvironmentRequest()) {
       if (environment->action() == H::EnvironmentAction::RemoveFolders &&
           environment->folders()) {

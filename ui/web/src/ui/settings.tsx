@@ -2,6 +2,7 @@ import { agentAppearance } from '../model/agentAppearance'
 // App-wide settings; the category on the left switches the content. While a
 // project is open its own settings follow the app's (kept in the project).
 import { useEffect, useState } from 'react'
+import { environmentHost } from '../wire/environment'
 import { api, onServerEvent } from '../api'
 import { app } from '../model/app'
 import { guide } from '../model/guide'
@@ -671,15 +672,16 @@ function KeySection({ id, s, reload, update }: { id: 'anthropic' | 'openai'; s: 
 
 /** RPC endpoints of the environments this server has started (loopback only). */
 function ConnectionSettings() {
-  const [list, setList] = useState<{ key: string; project: string; name: string; state: { state: string; endpoint?: string; projectId?: string; readyFile?: string; message?: string } }[]>([])
+  const [list, setList] = useState<Awaited<ReturnType<typeof environmentHost.list>>>()
+  const [problem, setProblem] = useState<string>()
   useEffect(() => {
-    void api('/api/env/list').then(setList)
+    void environmentHost.list().then(setList, (error) => setProblem(errorText(error)))
   }, [])
   return (
     <div className="col gap8 pad16 fill">
       <div className="row"><InfoButton>{L('開いているプロジェクトの tsugumid への接続先です。127.0.0.1 にだけ公開しています。外部クライアント（別の UI・Agent）は同じ RPC 契約で接続でき、認証 token は control フォルダの server.ready（0600）にだけ置かれます。')}</InfoButton></div>
       <div className="list bordered flex1">
-        {list.map((e) => (
+        {list?.map((e) => (
           <div key={e.key} className="list-row col-start gap4">
             <div className="row gap6 center">
               <span style={{ color: e.state.state === 'ready' ? 'var(--green)' : 'var(--secondary)' }}>●</span>
@@ -695,7 +697,8 @@ function ConnectionSettings() {
             )}
           </div>
         ))}
-        {!list.length && <Empty small title={L('開いているプロジェクトはありません')} icon="network.slash" />}
+        {problem && <span className="caption selectable" role="alert">{problem}</span>}
+        {list?.length === 0 && <Empty small title={L('開いているプロジェクトはありません')} icon="network.slash" />}
       </div>
     </div>
   )
