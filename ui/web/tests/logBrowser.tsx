@@ -12,8 +12,13 @@ function check(value: unknown, message: string): asserts value {
 async function test() {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const frames = new Map<number, FrameRequestCallback>()
+  const requesters = new Map<number, string>()
   let frameId = 0
-  window.requestAnimationFrame = (fn) => { frames.set(++frameId, fn); return frameId }
+  window.requestAnimationFrame = (fn) => {
+    frames.set(++frameId, fn)
+    requesters.set(frameId, new Error().stack?.split('\n').slice(2, 6).join('\n') ?? '')
+    return frameId
+  }
   window.cancelAnimationFrame = (id) => { frames.delete(id) }
   // Deliver resize notifications with the test's frames. Measurements come
   // from the styled element in Chromium.
@@ -71,7 +76,7 @@ async function test() {
   }
   async function settle() {
     for (let i = 0; frames.size > 0; ++i) {
-      check(i < 20, 'frames did not settle')
+      check(i < 20, `frames did not settle; requested by:\n${[...frames.keys()].map((id) => requesters.get(id)).join('\n--\n')}`)
       await tick()
     }
   }
