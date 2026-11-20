@@ -6,9 +6,9 @@ public typealias Message = Tsugumi_RPC_MessageT
 public typealias RequestPayload = Tsugumi_RPC_RequestPayload
 public typealias FailureKind = Tsugumi_Data_FailureKind
 
-/// The generated failure kinds are plain values (the generated file cannot
-/// declare it, so it is asserted here).
+// These generated enums contain only raw integer values.
 extension Tsugumi_Data_FailureKind: @unchecked Sendable {}
+extension Tsugumi_Trace_Mode: @unchecked Sendable {}
 
 /// A structured failure returned by tsugumid (never matched by its text).
 public struct RPCFailure: Error, CustomStringConvertible, Sendable {
@@ -80,8 +80,8 @@ private let nativeReplyCallback: tsugumi_client_callback = { context, bytes, cou
 }
 
 private final class NativeEvents {
-  var receive: ((Data) -> Void)?
-  var closed: (() -> Void)?
+  var receive: (@Sendable (Data) -> Void)?
+  var closed: (@Sendable () -> Void)?
 }
 
 /// This bridge only owns buffers and Swift continuations. The C++ library owns
@@ -94,7 +94,7 @@ public final class NativeByteTransport: @unchecked Sendable {
   public init(endpoint: String, contract: Contract = .project) { handle = tsugumi_client_create(endpoint, contract.rawValue) }
   deinit { tsugumi_client_destroy(handle) }
 
-  public func observe(receive: @escaping (Data) -> Void, closed: @escaping () -> Void) {
+  public func observe(receive: @escaping @Sendable (Data) -> Void, closed: @escaping @Sendable () -> Void) {
     events.receive = receive
     events.closed = closed
     let context = Unmanaged.passUnretained(events).toOpaque()

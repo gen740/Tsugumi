@@ -13,9 +13,6 @@
         "id": "filter"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "normalize"
       },
       {
@@ -23,9 +20,6 @@
       },
       {
         "id": "deseq"
-      },
-      {
-        "id": "fan"
       },
       {
         "id": "volcano"
@@ -73,24 +67,14 @@
           "port": "counts"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "normalize"
-        },
-        "to": {
           "card": "normalize",
           "port": "counts"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "deseq"
+          "card": "filter",
+          "port": "counts"
         },
         "to": {
           "card": "deseq",
@@ -99,8 +83,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "edger"
+          "card": "filter",
+          "port": "counts"
         },
         "to": {
           "card": "edger",
@@ -109,8 +93,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "design"
+          "card": "filter",
+          "port": "counts"
         },
         "to": {
           "card": "design",
@@ -133,24 +117,14 @@
           "port": "results"
         },
         "to": {
-          "card": "fan",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "fan",
-          "port": "volcano"
-        },
-        "to": {
           "card": "volcano",
           "port": "results"
         }
       },
       {
         "from": {
-          "card": "fan",
-          "port": "thresholds"
+          "card": "deseq",
+          "port": "results"
         },
         "to": {
           "card": "thresholds",
@@ -159,8 +133,8 @@
       },
       {
         "from": {
-          "card": "fan",
-          "port": "top"
+          "card": "deseq",
+          "port": "results"
         },
         "to": {
           "card": "top",
@@ -169,8 +143,8 @@
       },
       {
         "from": {
-          "card": "fan",
-          "port": "compare"
+          "card": "deseq",
+          "port": "results"
         },
         "to": {
           "card": "compare",
@@ -179,8 +153,8 @@
       },
       {
         "from": {
-          "card": "fan",
-          "port": "design"
+          "card": "deseq",
+          "port": "results"
         },
         "to": {
           "card": "design",

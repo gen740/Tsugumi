@@ -149,7 +149,7 @@ struct AppRun {
                          disk: resources.appendingPathComponent("payload.erofs"), diskReadOnly: true,
                          share: share, network: false, cpus: cpus, memoryGiB: memoryGiB, consoleLog: console)
     boot.scratch = scratch
-    // The first result is the first Code Card's: forks and triggers pass values on.
+    // The first result is the first Code Card's: built-in Cards supply and route values.
     let code = Set((manifest["cards"] as? [[String: Any]] ?? []).filter { $0["template"] as? String == "code" }
       .compactMap { $0["id"] as? String })
     var firstResult: TimeInterval?

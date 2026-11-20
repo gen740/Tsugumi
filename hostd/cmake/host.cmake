@@ -1,7 +1,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/agent-resources.cmake)
 
 set(_template_files "")
-foreach(name basic visualization reports csharp marimo go rust)
+foreach(name basic input/Sources/InputTemplates/inputs visualization reports csharp marimo go rust)
   list(APPEND _template_files ${PROJECT_SOURCE_DIR}/ui/shared/templates/${name}.json)
 endforeach()
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc

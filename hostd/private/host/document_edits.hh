@@ -9,7 +9,7 @@ namespace tsugumi::host {
 struct DocumentSubgraph {
   std::string project_json;
   std::string external_json;
-  std::string link_json;
+  std::string card_json;
 };
 struct DocumentFileCopy {
   std::string from;
@@ -19,12 +19,6 @@ struct DocumentCopy {
   std::string edits_json;
   std::vector<DocumentFileCopy> files;
 };
-struct DocumentConnect {
-  std::string state_json;
-  std::string inserted_id;
-  bool needs_fork = false;
-};
-
 // Pure document edits. The caller saves the returned documents, definitions
 // and file moves together through project_save; the host never writes them.
 auto MakeSubgraph(const std::string& project,
@@ -38,8 +32,7 @@ auto CopyDocuments(const std::string& state,
 
 auto ConnectDocuments(const std::string& state, const std::string& from_card,
                       const std::string& from_port, const std::string& to_card,
-                      const std::string& to_port, const std::string& fork_id)
-    -> DocumentConnect;
+                      const std::string& to_port) -> std::string;
 
 auto DocumentsEqual(const std::string& a, const std::string& b) -> bool;
 

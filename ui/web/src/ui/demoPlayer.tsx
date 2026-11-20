@@ -582,15 +582,18 @@ function ReplayElapsed({ frame, totalMs }: { frame: Frame; totalMs?: number }) {
 }
 
 export function RunControl({ data, frame, playing, onRun, onStop }: { data: DemoData; frame: Frame; playing: boolean; onRun: () => void; onStop: () => void }) {
-  const label = frame.mode === 'playing' ? L('再生中') : frame.mode === 'done' ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('待機中')
+  const real = data.run?.realOrder
+  const completed = real ? (data.run?.state === 'failed' ? L('失敗') : L('成功')) : L('完了')
+  const label = frame.mode === 'playing' ? L('再生中') : frame.mode === 'done' ? completed : L('待機中')
   const icon = frame.mode === 'playing' ? 'play.circle.fill' : frame.mode === 'done' ? 'checkmark.circle.fill' : 'circle'
   const color = frame.mode === 'playing' ? 'orange' : frame.mode === 'done' ? 'green' : 'secondary'
-  const real = data.run?.realOrder
+  const start = real || data.draftOnly ? L('実行') : L('プレビュー')
+  const help = real ? L('記録した実行を再生する') : L('配線の順にプレビューする')
   return (
     <div className="capsule material cv-run" onPointerDown={(e) => e.stopPropagation()}>
       <Button kind={playing ? 'danger' : 'prominent'} icon={playing ? 'stop.fill' : 'play.fill'} className="cv-run-button" disabled={data.draftOnly}
-        help={data.draftOnly ? L('Draft だけのプロジェクトは、まだ実行できません') : playing ? L('再生を止める') : L('記録した実行を再生する')} onClick={playing ? onStop : onRun}>
-        {playing ? L('停止') : L('実行')}
+        help={data.draftOnly ? L('Draft だけのプロジェクトは、まだ実行できません') : playing ? L('再生を止める') : help} onClick={playing ? onStop : onRun}>
+        {playing ? L('停止') : start}
       </Button>
       <span className="cv-run-state">
         <Icon name={icon} style={{ color: `var(--${color})` }} />

@@ -28,8 +28,7 @@ root_type Outputs;
 attribute "tsugumi";
 """
 
-# A zero-branch fork consumes its required input without emitting another value.
-SINK = {"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": []}]}
+SINK = {"template": "collect"}
 
 ENDED = (RunState.succeeded, RunState.failed, RunState.cancelled)
 
@@ -75,7 +74,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
             doc["boundary"] = inner["boundary"]
             put(root / "externals" / cid / "tsugumi.json", json.dumps(doc))
-            put(folder / "_link.json", json.dumps({"external": cid}))
+            put(folder / "_card.json", json.dumps({"external": cid}))
             continue
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"template": "draft"}
@@ -116,7 +115,6 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
                                                    {"name": "value", "type": "bool", "data": True}],
                    "_outputs": MSG_FBS},
         "sink": SINK,
-        "fork": {"template": "fork"},
         "branch": {"template": "branch"},
         "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }

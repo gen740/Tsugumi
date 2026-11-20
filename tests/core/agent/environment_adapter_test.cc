@@ -212,7 +212,7 @@ TEST(EnvironmentAdapterTest,
         "{\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
         "\"path\":" +
             Quote(data.string()) + "}]}");
-  Write(project / "definitions/nested/_link.json", R"({"external":"x"})");
+  Write(project / "definitions/nested/_card.json", R"({"external":"x"})");
   Write(
       project / "externals/x/tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"b"}],"connections":[]}})");

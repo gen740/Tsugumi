@@ -141,10 +141,10 @@ export interface CardNodeData {
   openComments?: number
 }
 
-export const isRouting = (d: CardNodeData) => d.kind === 'fork' || d.kind === 'branch' || d.kind === 'merge' || d.kind === 'collect'
+export const isRouting = (d: CardNodeData) => d.kind === 'branch' || d.kind === 'merge' || d.kind === 'collect'
 
-export type CardShape = 'card' | 'branch' | 'fork' | 'merge' | 'collect' | 'start' | 'switch'
-export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'fork' || k === 'merge' || k === 'collect' || k === 'switch' ? k : 'card')
+export type CardShape = 'card' | 'branch' | 'merge' | 'collect' | 'start'
+export const shapeOf = (k: CardKind): CardShape => (k === 'trigger' ? 'start' : k === 'branch' || k === 'merge' || k === 'collect' ? k : 'card')
 
 /** Whether a wire is drawn dotted: either end is a Draft, with no code behind
  *  it yet (no `to` at the bar of a Card in Card's outputs or inputs). */
@@ -224,7 +224,6 @@ export class CardGeometry {
     switch (this.shape) {
       // Its ports are at a quarter and three quarters of this.
       case 'branch': return { width: this.grid ? 4 * CardGeometry.rowPitch(this.grid) : 60, height: 48 }
-      case 'fork': return { width: this.fanWidth(this.outputs.length), height: this.fanLength(this.outputs.length) }
       case 'merge': return { width: this.fanWidth(this.inputs.length), height: this.fanLength(this.inputs.length) }
       case 'collect': return { width: this.grid ? gridLengthAtLeast(64, this.grid) : 64, height: 44 }
       // The start Card: its name and a run button, nothing more.
@@ -235,13 +234,13 @@ export class CardGeometry {
     }
   }
 
-  /** The wide edge of a fork or merge: it grows with its ports, so they are never squeezed. */
+  /** The wide edge of a Merge: it grows with its ports, so they are never squeezed. */
   private fanWidth(count: number) {
     if (!this.grid) return Math.max(56, count * 30 + 12)
     return gridLengthAtLeast(Math.max(56, (count - 1) * this.fanPitch(count, this.grid) + 16), this.grid)
   }
 
-  /** A fork or merge along the flow: a quarter of its wide edge once that is
+  /** A Merge along the flow: a quarter of its wide edge once that is
    *  past 40, so many ports make a bigger triangle and not a flatter one (its
    *  corners stay at 27 degrees or more). On whole grids, as far as it grows. */
   private fanLength(count: number) {
@@ -255,7 +254,7 @@ export class CardGeometry {
     return grid < CardGeometry.portRow ? Math.ceil(CardGeometry.portRow / grid) * grid : grid / Math.floor(grid / CardGeometry.portRow)
   }
 
-  /** Ports of a fork or merge. Two or four around the middle take twice the
+  /** Ports of a Merge. Two or four around the middle take twice the
    *  pitch to stay on the same lines as a Card's ports across a wire; more
    *  of them would make the mark too wide, and close up onto grid/2 instead. */
   private fanPitch(count: number, grid: number) {
@@ -302,7 +301,7 @@ export class CardGeometry {
     if (this.shape === 'card') return this.cardWidth / 2 + middle * this.edgePitch(count, this.grid)
     // A triangle's apex is one point: everything on that side is on it.
     const w = this.routingSize.width
-    return (this.shape === 'fork') === !output ? w / 2 : w / 2 + middle * this.fanPitch(count, this.grid)
+    return output ? w / 2 : w / 2 + middle * this.fanPitch(count, this.grid)
   }
 
   private get bandIn() {
@@ -349,10 +348,6 @@ export class CardGeometry {
   }
 
   get size() {
-    if (this.shape === 'switch') return {
-      width: this.grid ? gridLengthAtLeast(112, this.grid) : 112,
-      height: this.grid && this.flow === 'leftToRight' ? gridLengthAtLeast(38, CardGeometry.rowPitch(this.grid)) : 38,
-    }
     if (this.shape === 'start') return this.routingSize
     if (this.shape !== 'card') {
       const r = this.routingSize
@@ -373,7 +368,7 @@ export class CardGeometry {
   /** The outline's frame inside the Card's box. */
   get outlineRect(): Rect {
     const s = this.size
-    if (this.shape === 'card' || this.shape === 'start' || this.shape === 'switch') return { x: 0, y: 0, ...s }
+    if (this.shape === 'card' || this.shape === 'start') return { x: 0, y: 0, ...s }
     if (this.flow === 'topToBottom') return { x: 0, y: this.bandIn, width: s.width, height: s.height - this.bandIn - this.bandOut }
     return { x: 30, y: 0, width: s.width - 60, height: s.height }
   }
@@ -386,7 +381,7 @@ export class CardGeometry {
     switch (this.shape) {
       case 'card':
         return roundedRect(r, 9 * cornerScale)
-      case 'start': case 'switch':
+      case 'start':
         return roundedRect(r, r.height / 2)
       case 'branch':
         return roundedPolygon([P(r.x + r.width / 2, r.y), P(r.x + r.width, r.y + r.height / 2), P(r.x + r.width / 2, r.y + r.height), P(r.x, r.y + r.height / 2)], 6 * cornerScale)
@@ -398,19 +393,18 @@ export class CardGeometry {
           point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1), point(0.35, 1), point(0.35, 0.57),
         ], 3 * cornerScale)
       }
-      default: {
-        // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
+      case 'merge': {
+        // Triangle: downstream apex. The apex is listed
         // twice so it stays sharp: the ports of that side are on its very tip.
         // Its corners shrink with the zoom, as `r` does.
-        const fork = this.shape === 'fork'
         const radius = (7 * (this.flow === 'topToBottom' ? r.height : r.width)) / this.routingSize.height
         const right = r.x + r.width, bottom = r.y + r.height
         if (this.flow === 'topToBottom') {
-          const apex = P(r.x + r.width / 2, fork ? r.y : bottom)
-          return roundedPolygon(fork ? [apex, apex, P(right, bottom), P(r.x, bottom)] : [P(r.x, r.y), P(right, r.y), apex, apex], radius)
+          const apex = P(r.x + r.width / 2, bottom)
+          return roundedPolygon([P(r.x, r.y), P(right, r.y), apex, apex], radius)
         }
-        const apex = P(fork ? r.x : right, r.y + r.height / 2)
-        return roundedPolygon(fork ? [apex, apex, P(right, r.y), P(right, bottom)] : [P(r.x, r.y), apex, apex, P(r.x, bottom)], radius)
+        const apex = P(right, r.y + r.height / 2)
+        return roundedPolygon([P(r.x, r.y), apex, apex, P(r.x, bottom)], radius)
       }
     }
   }
@@ -418,7 +412,7 @@ export class CardGeometry {
   /** Where the icon of a routing Card sits in the outline `r`: on the axis of the
    *  flow, and in a triangle toward the wide edge, where it has room. */
   iconCenter(r: Rect): Pt {
-    const along = this.shape === 'fork' ? 0.62 : this.shape === 'merge' || this.shape === 'collect' ? 0.38 : 0.5
+    const along = this.shape === 'merge' || this.shape === 'collect' ? 0.38 : 0.5
     return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height * along } : { x: r.x + r.width * along, y: r.y + r.height / 2 }
   }
 
@@ -429,8 +423,7 @@ export class CardGeometry {
       return { start: 0, width: w }
     }
     const w = this.routingSize.width
-    const narrowSide = (this.shape === 'fork') === input
-    const span = narrowSide ? 0 : w
+    const span = input ? w : 0
     return { start: (w - span) / 2, width: span }
   }
 
@@ -453,8 +446,8 @@ export class CardGeometry {
     // Draft attachment points have no labels.
     if (this.draft) return false
     if (this.shape === 'card' && this.collapsed) return false
-    if (this.shape === 'start' || this.shape === 'switch') return false
-    if (this.shape === 'fork' || this.shape === 'merge' || this.shape === 'collect') return false
+    if (this.shape === 'start') return false
+    if (this.shape === 'merge' || this.shape === 'collect') return false
     if (this.shape === 'branch') return true
     return this.spacing(input) >= CardGeometry.minLabel
   }
@@ -482,7 +475,7 @@ export class CardGeometry {
     const index = Math.max(0, list.indexOf(name))
     const n = Math.max(list.length, 1)
     const r = this.outlineRect
-    if (this.shape === 'start' || this.shape === 'switch') {
+    if (this.shape === 'start') {
       // Its one output, in the middle of the downstream edge.
       return this.flow === 'topToBottom' ? { x: r.x + r.width / 2, y: r.y + r.height } : { x: r.x + r.width, y: r.y + r.height / 2 }
     }
@@ -501,8 +494,7 @@ export class CardGeometry {
     }
     if (this.shape !== 'card') {
       if (along !== undefined) return { x: output ? r.x + r.width : r.x, y: r.y + along }
-      const narrowSide = (this.shape === 'fork') === !output
-      const h = narrowSide ? 0 : r.height
+      const h = output ? 0 : r.height
       return { x: output ? r.x + r.width : r.x, y: r.y + r.height / 2 - h / 2 + (h * (index + 1)) / (n + 1) }
     }
     const x = output ? this.cardWidth : 0
@@ -671,7 +663,7 @@ export class WireRouter {
 
   /** How far along the flow a port's wire has to run to get out of a Card's box (0: not in it). */
   private depth(o: Rect, p: Pt, dir: 1 | -1) {
-    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // On an edge is not in it: a Card that begins where another Card's box ends is
     // beside the wire, and the wire would otherwise go on through all of it.
     if (p.x <= o.x || p.x >= o.x + o.width || p.y <= o.y || p.y >= o.y + o.height) return 0
     return dir > 0 ? o.y + o.height - p.y : p.y - o.y

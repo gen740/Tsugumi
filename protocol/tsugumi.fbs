@@ -25,15 +25,15 @@ table SourceInfo {
   exists:bool = null (id: 2);
   hash:string (id: 3);
   size_bytes:uint64 = null (id: 4);
+  /// Nested project, layout, Card or metadata text in snapshots and deltas.
+  document_json:string (id: 5);
 }
 
-/// definitions/<id>/: card_json (_card.json), or for a Card in Card
-/// link_json (_link.json) with an empty card_json.
+/// definitions/<id>/_card.json. An external field names a Card in Card.
 table Definition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
   meta_json:string (id: 2);
-  link_json:string (id: 3);
 }
 
 /// A static Card reference in default.nix. Target paths are absolute in the
@@ -136,13 +136,11 @@ table SetProject { json:string (id: 0, required); }
 table SetLayout { json:string (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
-  card_json:string (id: 1, required);  // empty with link_json
+  card_json:string (id: 1, required);
   /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
   meta_json:string (id: 2);
-  /// A Card in Card: _link.json instead of _card.json. Empty: none.
-  link_json:string (id: 3);
   /// Preserve existing _meta.json when meta_json is omitted.
-  keep_meta:bool = false (id: 4);
+  keep_meta:bool = false (id: 3);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 table PutSource {
@@ -588,6 +586,14 @@ table RunInvocationsRequest {
 /// -> InvocationPage. Read each Card's latest invocation in a run.
 table RunLatestInvocationsRequest { run_id:string (id: 0, required); }
 
+/// -> RunDefinitionPaths. Accepted definition files for the recorded Card
+/// and its enclosing Cards, or for the whole run if card is absent.
+table RunDefinitionPathsRequest {
+  run_id:string (required);
+  card:Tsugumi.Data.CardPath;
+}
+table RunDefinitionPaths { paths:[string] (required); }
+
 /// -> BuildEnvironmentPage. Read recorded environments in first-use order; no evaluation.
 table RunEnvironmentsRequest {
   run_id:string (id: 0, required);
@@ -771,6 +777,7 @@ union RequestPayload {
   InputTypesRequest = 54,
   ProjectActivityRequest = 55,
   CoreTraceRequest:Tsugumi.Trace.CoreTraceRequest = 56,
+  RunDefinitionPathsRequest = 57,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1141,6 +1148,7 @@ union ReplyPayload {
   InputTypesResult = 42,
   ProjectActivity = 43,
   TraceSnapshot:Tsugumi.Trace.Snapshot = 44,
+  RunDefinitionPaths = 45,
 }
 
 // ---- Notifications -----------------------------------------------------------
@@ -1193,6 +1201,7 @@ union NotificationPayload {
   RunEvent = 2,
   DisplayUpdated = 3,
   LogAvailable = 4,
+  TraceChanged:Tsugumi.Trace.TraceChanged = 5,
 }
 
 // ---- Frame -------------------------------------------------------------------

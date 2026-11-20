@@ -15,7 +15,7 @@ extern const char tsugumi_csharp_runtimeconfig[];
 }
 
 namespace {
-using Entry = int (*)(const tsugumi_call*, tsugumi_buffer*);
+using Entry = int (*)(const tsugumi_call*);
 load_assembly_and_get_function_pointer_fn g_load = nullptr;
 Entry g_main = nullptr;
 void* g_host = nullptr;
@@ -35,9 +35,6 @@ struct Field {
 #define TSUGUMI_FIELD(type, member) \
   Field { #type "." #member, offsetof(type, member), sizeof(type::member) }
 constexpr Field k_layout[] = {
-    TSUGUMI_STRUCT(tsugumi_buffer),
-    TSUGUMI_FIELD(tsugumi_buffer, data),
-    TSUGUMI_FIELD(tsugumi_buffer, size),
     TSUGUMI_STRUCT(tsugumi_blob),
     TSUGUMI_FIELD(tsugumi_blob, name),
     TSUGUMI_FIELD(tsugumi_blob, data),
@@ -48,14 +45,39 @@ constexpr Field k_layout[] = {
     TSUGUMI_FIELD(tsugumi_series, x),
     TSUGUMI_FIELD(tsugumi_series, y),
     TSUGUMI_FIELD(tsugumi_series, count),
+    TSUGUMI_STRUCT(tsugumi_scalar),
+    TSUGUMI_FIELD(tsugumi_scalar, value),
+    TSUGUMI_FIELD(tsugumi_scalar, label),
+    TSUGUMI_STRUCT(tsugumi_chart),
+    TSUGUMI_FIELD(tsugumi_chart, series),
+    TSUGUMI_FIELD(tsugumi_chart, count),
+    TSUGUMI_STRUCT(tsugumi_table),
+    TSUGUMI_FIELD(tsugumi_table, columns),
+    TSUGUMI_FIELD(tsugumi_table, column_count),
+    TSUGUMI_FIELD(tsugumi_table, cells),
+    TSUGUMI_FIELD(tsugumi_table, row_count),
+    TSUGUMI_STRUCT(tsugumi_image),
+    TSUGUMI_FIELD(tsugumi_image, media_type),
+    TSUGUMI_FIELD(tsugumi_image, data),
+    TSUGUMI_FIELD(tsugumi_image, size),
+    TSUGUMI_FIELD(tsugumi_image, alt),
+    TSUGUMI_STRUCT(tsugumi_points),
+    TSUGUMI_FIELD(tsugumi_points, x),
+    TSUGUMI_FIELD(tsugumi_points, y),
+    TSUGUMI_FIELD(tsugumi_points, z),
+    TSUGUMI_FIELD(tsugumi_points, colors),
+    TSUGUMI_FIELD(tsugumi_points, count),
+    TSUGUMI_STRUCT(tsugumi_module),
+    TSUGUMI_FIELD(tsugumi_module, name),
+    TSUGUMI_FIELD(tsugumi_module, config_json),
+    TSUGUMI_FIELD(tsugumi_module, blobs),
+    TSUGUMI_FIELD(tsugumi_module, count),
     TSUGUMI_STRUCT(tsugumi_call),
     TSUGUMI_FIELD(tsugumi_call, abi_version),
     TSUGUMI_FIELD(tsugumi_call, phase),
     TSUGUMI_FIELD(tsugumi_call, run_id),
     TSUGUMI_FIELD(tsugumi_call, card),
     TSUGUMI_FIELD(tsugumi_call, invocation),
-    TSUGUMI_FIELD(tsugumi_call, inputs),
-    TSUGUMI_FIELD(tsugumi_call, inputs_size),
     TSUGUMI_FIELD(tsugumi_call, params),
     TSUGUMI_FIELD(tsugumi_call, params_size),
     TSUGUMI_FIELD(tsugumi_call, working_directory),
@@ -64,23 +86,17 @@ constexpr Field k_layout[] = {
     TSUGUMI_FIELD(tsugumi_call, host),
     TSUGUMI_FIELD(tsugumi_call, effects),
     TSUGUMI_STRUCT(tsugumi_host),
-    TSUGUMI_FIELD(tsugumi_host, display_text),
-    TSUGUMI_FIELD(tsugumi_host, display_scalar),
-    TSUGUMI_FIELD(tsugumi_host, display_line_chart),
+    TSUGUMI_FIELD(tsugumi_host, display),
     TSUGUMI_FIELD(tsugumi_host, log),
     TSUGUMI_FIELD(tsugumi_host, cancelled),
     TSUGUMI_FIELD(tsugumi_host, remaining_ms),
     TSUGUMI_FIELD(tsugumi_host, fail),
-    TSUGUMI_FIELD(tsugumi_host, display_table),
-    TSUGUMI_FIELD(tsugumi_host, display_image),
-    TSUGUMI_FIELD(tsugumi_host, display_points),
-    TSUGUMI_FIELD(tsugumi_host, display_module),
-    TSUGUMI_FIELD(tsugumi_host, display_markdown),
+    TSUGUMI_FIELD(tsugumi_host, input),
+    TSUGUMI_FIELD(tsugumi_host, output),
     TSUGUMI_FIELD(tsugumi_host, inputs_json),
     TSUGUMI_FIELD(tsugumi_host, params_json),
     TSUGUMI_FIELD(tsugumi_host, input_kind),
-    TSUGUMI_FIELD(tsugumi_host, outputs_json),
-    TSUGUMI_FIELD(tsugumi_host, display_json),
+    TSUGUMI_FIELD(tsugumi_host, output_json),
     TSUGUMI_FIELD(tsugumi_host, fail_at),
 };
 #undef TSUGUMI_FIELD
@@ -150,13 +166,13 @@ static auto load_card() -> int {
   return load_entry(load, "Execute", reinterpret_cast<void**>(&g_main)) ? 0 : 1;
 }
 
-extern "C" auto tsugumi_card_invoke(const tsugumi_call* call,
-                                    tsugumi_buffer* outputs) -> int {
+extern "C" auto tsugumi_card_invoke(const tsugumi_call* call) -> int {
   switch (call->phase) {
     case TSUGUMI_PREPARE: return prepare();
     case TSUGUMI_LOAD: return load_card();
-    case TSUGUMI_RUN_START: return g_main(call, nullptr);
-    case TSUGUMI_RUN: return g_main(call, outputs);
+    case TSUGUMI_RUN_START:
+    case TSUGUMI_RUN:
+      return g_main(call);
   }
   return 1;
 }

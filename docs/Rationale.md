@@ -39,7 +39,7 @@ As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-si
 - A **Draft** is a Card with only a name and "what it does", not yet implemented. Press `E` to place one and write it; wire it directly to other Cards without declaring ports.
 - The diagram of Drafts is the specification: press "Generate Cards" at the top right to have the Agent implement it.
 - After implementation, output types decide the input types downstream, and a mismatched wire shows up as a diagnostic before anything runs.
-- One output carries one wire. To send a value to several Cards it goes through a fork Card, so the distribution is visible on the diagram as a Card too.
+- Connect an output to each input that needs its value. Each wire shows where the value goes.
 
 Intentions are written in words and relationships as wires, so people and AI point at the same place as they design, implement and check.
 

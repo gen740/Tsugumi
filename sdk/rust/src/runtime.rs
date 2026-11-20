@@ -41,13 +41,6 @@ pub unsafe fn runs_card(raw: *const c_void) -> bool {
 pub unsafe fn run_start(raw: *const c_void) -> bool {
     unsafe { tsugumi_rs_run_start(raw) != 0 }
 }
-pub unsafe fn return_outputs(outputs: *mut c_void, bytes: &[u8]) -> Result<()> {
-    if unsafe { tsugumi_rs_return(outputs, bytes.as_ptr(), bytes.len()) } != 0 {
-        return Err(Error::new("worker_failed", "cannot allocate Outputs"));
-    }
-    Ok(())
-}
-
 pub type Result<T> = std::result::Result<T, Error>;
 
 #[link(name = "tsugumi_rust_host", kind = "static")]
@@ -73,9 +66,9 @@ unsafe extern "C" {
 
     fn tsugumi_rs_runs_card(call: *const c_void) -> c_int;
     fn tsugumi_rs_run_start(call: *const c_void) -> c_int;
-    fn tsugumi_rs_return(outputs: *mut c_void, bytes: *const u8, size: usize) -> c_int;
+    fn tsugumi_rs_output(call: *const c_void, port: *const c_char, bytes: *const u8, size: usize) -> c_int;
     fn tsugumi_rs_check(call: *const c_void) -> c_int;
-    fn tsugumi_rs_inputs(call: *const c_void, size: *mut usize) -> *const u8;
+    fn tsugumi_rs_input(call: *const c_void, port: *const c_char, size: *mut usize) -> *const u8;
     fn tsugumi_rs_params(call: *const c_void, size: *mut usize) -> *const u8;
 
     fn tsugumi_rs_log(call: *const c_void, text: *const c_char);
@@ -116,7 +109,7 @@ fn accepted(code: c_int) -> Result<()> {
 }
 
 /// Valid only within the current invocation. It cannot be sent to another thread.
-/// Input/params views borrow this call; outputs are returned in owned storage.
+/// Input and parameter views borrow this call.
 #[doc(hidden)]
 pub struct Call<'call> {
     raw: *const c_void,
@@ -151,10 +144,17 @@ impl Call<'_> {
         unsafe { tsugumi_rs_invocation(self.raw) }
     }
 
-    pub fn inputs_bytes(&self) -> &[u8] {
+    pub fn input(&self, port: &CStr) -> Option<&[u8]> {
         let mut size = 0;
-        let data = unsafe { tsugumi_rs_inputs(self.raw, &mut size) };
-        unsafe { std::slice::from_raw_parts(data, size) }
+        let data = unsafe { tsugumi_rs_input(self.raw, port.as_ptr(), &mut size) };
+        if data.is_null() {
+            None
+        } else {
+            Some(unsafe { std::slice::from_raw_parts(data, size) })
+        }
+    }
+    pub fn output(&self, port: &CStr, bytes: &[u8]) -> Result<()> {
+        accepted(unsafe { tsugumi_rs_output(self.raw, port.as_ptr(), bytes.as_ptr(), bytes.len()) })
     }
     pub fn params_bytes(&self) -> &[u8] {
         let mut size = 0;

@@ -31,7 +31,7 @@ def sdk_tree(tmp_path_factory):
     for name, schema in {
         "inputs": "namespace inputs.number.sample; table Number { value:ulong; } namespace inputs; table Inputs { number:inputs.number.sample.Number (required); optional:inputs.number.sample.Number; } root_type Inputs;",
         "outputs": "namespace outputs.result.sample; table Number { value:ulong; } namespace outputs; table Outputs { result:outputs.result.sample.Number; next:outputs.result.sample.Number; last:outputs.result.sample.Number; } root_type Outputs;",
-        "params": "namespace params; table Params { threshold:ulong = null; samples:[double]; labels:[string]; } root_type Params;",
+        "params": "namespace parameters; table Params { threshold:ulong = null; samples:[double]; labels:[string]; } root_type Params;",
     }.items():
         path = tmp_path / (name + ".fbs")
         path.write_text(schema)
@@ -45,9 +45,9 @@ def sdk(tmp_path, monkeypatch, sdk_tree):
     (tmp_path / "_tsugumi_host.py").write_text('''
 import os
 events = []
-values = []
+values = {}
 parameter_bytes = b""
-def inputs(): return values
+def input(port): return values.get(port)
 def params(): return parameter_bytes
 def info():
     events.append("info")
@@ -60,24 +60,22 @@ def remaining_ms(): return -1
 def fail(kind, message, *position): events.append(("failure", kind, message, *position))
 ''')
     # Each test uses a distinct generated package and module lifetime.
-    names = [n for n in sys.modules if n.split(".")[0] in ("tsugumi", "_tsugumi_host", "inputs", "outputs", "params")]
+    names = [n for n in sys.modules if n.split(".")[0] in ("tsugumi", "_tsugumi_host", "inputs", "outputs", "parameters")]
     saved = {n: sys.modules.pop(n) for n in names}
     monkeypatch.syspath_prepend(str(tmp_path))
     try:
         module = importlib.import_module("tsugumi")
         host = importlib.import_module("_tsugumi_host")
         from inputs.number.sample.Number import NumberT
-        from inputs.Inputs import InputsT
-        from params.Params import ParamsT
+        from parameters.Params import ParamsT
         number = NumberT(); number.value = 9007199254740993
         parameters = ParamsT(); parameters.threshold = 21; parameters.samples = [1., 2.]; parameters.labels = [b"a", b"b"]
-        inputs = InputsT(); inputs.number = number
-        host.values = module.message(inputs)
+        host.values = {"number": module.message(number)}
         host.parameter_bytes = module.message(parameters)
         yield module, host
     finally:
         for name in list(sys.modules):
-            if name.split(".")[0] in ("tsugumi", "_tsugumi_host", "inputs", "outputs", "params"):
+            if name.split(".")[0] in ("tsugumi", "_tsugumi_host", "inputs", "outputs", "parameters"):
                 del sys.modules[name]
         sys.modules.update(saved)
 
@@ -94,29 +92,29 @@ def test_inputs_are_read_only_and_run_is_opt_in(sdk):
         with pytest.raises(AttributeError): inputs.params.threshold = 0
         with pytest.raises(AttributeError): inputs.number = None
         return {"result": inputs.input_bytes("number")}
-    from outputs.Outputs import Outputs
+    from outputs.result.sample.Number import Number
     from tsugumi.values import encode_outputs
     packed = encode_outputs(module._call(main))
-    assert Outputs.GetRootAs(packed).Result().Value() == 9007199254740993
+    assert Number.GetRootAs(packed["result"]).Value() == 9007199254740993
     assert all(event == "info" for event in host.events)
 
 
 def test_generated_objects_builders_and_bytes_are_results(sdk):
     module, host = sdk
     from outputs.result.sample.Number import NumberT
-    from outputs.Outputs import Outputs
+    from outputs.result.sample.Number import Number
     from tsugumi.values import encode_outputs
     number = NumberT(); number.value = 42
     b = module.builder(); root = number.Pack(b)
     values = [number, module.message(b, root), b]
     for value in values:
-        assert Outputs.GetRootAs(encode_outputs({"result": value})).Result().Value() == 42
+        assert Number.GetRootAs(encode_outputs({"result": value})["result"]).Value() == 42
     assert all(event == "info" for event in host.events)
 
 
 def test_displays_are_live_and_outputs_are_returned_together(sdk):
     from types import SimpleNamespace
-    from outputs.Outputs import Outputs
+    from outputs.result.sample.Number import Number
     module, host = sdk
     def main(inputs, report, run):
         assert run.invocation == 7 and run.remaining_ms() == -1
@@ -124,8 +122,9 @@ def test_displays_are_live_and_outputs_are_returned_together(sdk):
         report.log("between")
         return {"result": inputs.input_bytes("number"), "next": inputs.input_bytes("number")}
     module._card_module = SimpleNamespace(main=main)
-    value = Outputs.GetRootAs(module._invoke())
-    assert value.Result().Value() == value.Next().Value() == 9007199254740993
+    value = module._invoke()
+    assert set(value) == {"result", "next"}
+    assert all(Number.GetRootAs(data).Value() == 9007199254740993 for data in value.values())
     assert [e[0] for e in host.events if e != "info"] == ["text", "log"]
 
 
@@ -190,7 +189,7 @@ def test_python_reads_the_shared_numeric_vectors_without_changing_bits(sdk):
     import math
     import struct
     module, host = sdk
-    from params.Params import ParamsT
+    from parameters.Params import ParamsT
     vectors = json.loads((ROOT / 'tests/fixtures/number-vectors.json').read_text())
     params = ParamsT()
     params.samples = [float(token) for token in vectors['values']]
