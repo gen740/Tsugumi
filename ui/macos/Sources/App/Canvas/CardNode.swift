@@ -49,9 +49,6 @@ extension ProjectSession {
       return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
               r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
     }
-    if kind(k) == .switchCard {
-      return ([], [PortData(name: "value", typeName: "tsugumi.builtin.Condition")])
-    }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }

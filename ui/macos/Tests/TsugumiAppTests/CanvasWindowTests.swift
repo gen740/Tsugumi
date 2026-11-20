@@ -12,8 +12,8 @@ import Testing
   @Test func routingHitRegionsLeaveTheBodyForMoving() {
     for flow in [FlowDirection.topToBottom, .leftToRight] {
       for zoom in [1.0, 0.2] {
-        for kind in [CardKind.trigger, .branch, .merge, .collect, .switchCard] {
-          let inputs = kind == .trigger || kind == .switchCard ? [] :
+        for kind in [CardKind.trigger, .branch, .merge, .collect] {
+          let inputs = kind == .trigger ? [] :
             (kind == .branch ? [PortData(name: "value"), PortData(name: "condition")] : [PortData(name: "in")])
           let outputs = kind == .branch ? [PortData(name: "a"), PortData(name: "b")] : [PortData(name: "out")]
           let data = CardNodeData(title: "start", kind: kind, inputs: inputs, outputs: outputs)

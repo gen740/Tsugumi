@@ -711,13 +711,6 @@ TypeRef empty_type() {
   return t;
 }
 
-TypeRef bool_condition_type() {
-  static TypeRef t = make_builtin(
-      "namespace tsugumi.builtin; table Condition { value:bool (id: 0); }",
-      "tsugumi.builtin.Condition");
-  return t;
-}
-
 std::optional<TypeRef> merged_type(
     const std::vector<std::pair<std::string, TypeRef>>& inputs,
     std::string* error) {

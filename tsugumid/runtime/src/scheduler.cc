@@ -1753,8 +1753,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              {}});
         break;
       }
-      case Template::Input:
-      case Template::Switch: {
+      case Template::Input: {
         for (const auto& port : node.outputs) {
           if (!port.type)
             throw Failed(FailureKind::validation_failed,

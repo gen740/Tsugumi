@@ -83,8 +83,7 @@ TEST(DocumentTemplate,
       json::Object(WriteTemplate("draft", "new-card").definition_json);
   EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
   EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
-  for (const auto* name :
-       {"trigger", "branch", "collect", "merge", "input", "switch"}) {
+  for (const auto* name : {"trigger", "branch", "collect", "merge", "input"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));

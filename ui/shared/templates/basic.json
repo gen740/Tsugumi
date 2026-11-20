@@ -15,13 +15,6 @@
   "merge": {
     "_card.json": "{\n  \"template\": \"merge\",\n  \"inputs\": [\n    {\n      \"name\": \"a\"\n    },\n    {\n      \"name\": \"b\"\n    }\n  ]\n}\n"
   },
-  "input": {
-    "_card.json": "{\n  \"template\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"double\",\n      \"data\": 0\n    }\n  ]\n}\n",
-    "_outputs.fbs": "namespace @NAMESPACE@;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
-  },
-  "switch": {
-    "_card.json": "{\n  \"template\": \"switch\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"bool\",\n      \"data\": false\n    }\n  ]\n}\n"
-  },
   "python": {
     "_card.json": "{\n  \"language\": \"python\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
     "default.nix": "{ pkgs, inputs, params }:\nlet\n  sdk = inputs.tsugumi.sdk { languages = [ \"python\" ]; };\nin\n{\n  run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };\n}\n",

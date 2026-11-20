@@ -147,6 +147,34 @@ import TsugumiTestSupport
     calls.continuation.finish()
   }
 
+  @Test func draftInputPresetPreservesExistingSchema() async throws {
+    let (session, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+    snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
+    snapshot.layoutJson = "{}"
+    let definition = Tsugumi_RPC_DefinitionT()
+    definition.id = "a"; definition.cardJson = #"{"template":"draft"}"#
+    snapshot.definitions = [definition]
+    let schema = Tsugumi_RPC_SourceInfoT()
+    schema.path = "definitions/a/_outputs.fbs"; schema.hash = "custom"; schema.sizeBytes = 32
+    snapshot.sources = [schema]
+    session.receiveProjectSnapshot(snapshot, projectId: "p")
+    session.operateProject = { request in
+      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+      #expect(!body.edits.contains { $0?.value?.type == .projectfileput || $0?.value?.type == .projectfileremove })
+      let saved = self.delta(0, request.opId, "saved")
+      saved.projectJson = snapshot.projectJson
+      return self.result(saved)
+    }
+    let editor = CardEditorModel(session: session, cardKey: "a")
+    editor.implementAs("input")
+    editor.implementAs("input_bool")
+    #expect(editor.kind == .input)
+    #expect(await editor.apply())
+    #expect(session.sources[schema.path]?.hash == "custom")
+  }
+
   @Test func parameterAndDraftKeepTheirSelectedValues() async throws {
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }

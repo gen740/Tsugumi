@@ -91,10 +91,9 @@ and removes the run's temporary folder and scratch disk.
   the files it writes (an image viewer, a text editor): there is no viewer in
   this path.
 - **Parameters, not rebuilt definitions.** The recipient can change the
-  parameters of Code, input and switch Cards (`--set card.param=value`,
+  parameters of Code and Input Cards (`--set card.param=value`,
   `--params file.json`; `--help` lists them). Parameters marked `nix` change
-  the Card's build, and a branch's change the graph, so they are
-  fixed at export; the app refuses them rather than attempting a build offline.
+  the Card's build, so they are fixed at export; the app refuses them rather than attempting a build offline.
 - **Files through the input Card.** `--file CARD=PATH` replaces the file of
   an input Card whose output is a File. The core reads an input Card's file
   only from the Card's own folder, so the app copies the recipient's file
@@ -167,8 +166,7 @@ figures (PNG) and all seven Card logs are byte-identical to the app's. With a
 new input, `--set generate.seed=11 --set generate.cells=120 --set
 real.min_area=20`, the counts change (score: 96 by threshold, 117 by
 watershed) and are again byte-identical to the reference given the same
-values. Setting a `nix` parameter (`mitosis.hash`) is
-refused with its reason.
+values. Setting a `nix` parameter (`mitosis.hash`) is refused with its reason.
 
 **A recipient's file.** A three-Card Project (trigger, an input Card with a
 text file, a Python Card that counts lines and words and writes the text
