@@ -2232,31 +2232,13 @@ export class ProjectSession extends Observable {
     } catch {}
   }
 
-  versionNoteMode: 'mechanical' | 'agent' = 'mechanical'
-
-  async loadVersionNoteMode() {
-    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings')
-    this.versionNoteMode = v.versionNoteMode
-    this.changed()
-  }
-
-  async setVersionNoteMode(mode: 'mechanical' | 'agent') {
-    const v = await api<{ versionNoteMode: 'mechanical' | 'agent' }>('/api/settings', { versionNoteMode: mode })
-    this.versionNoteMode = v.versionNoteMode
-    this.versionNotes.clear()
-    this.versionNoteRequests.clear()
-    this.versionNoteBusy.clear()
-    this.versionNoteErrors.clear()
-    this.changed()
-  }
-
-  /** Ask hostd for the displayed note; it owns policy, generation and storage. */
   async loadVersionComments(commit: string) {
     if (!this.projectId || this.versionComments.has(commit)) return
     this.versionComments.set(commit, await this.projectHost.comments(this.projectId, commit))
     this.changed()
   }
 
+  /** Read a version's change record from hostd; no model is called. */
   async loadVersionNote(commit: string) {
     if (!this.client) return
     const request = uuid()

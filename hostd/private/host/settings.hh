@@ -50,11 +50,6 @@ class Settings {
   // takes VMDefaultResources' value.
   auto VMResources() -> Tsugumi::Host::VMResourcesT;
   auto Language() -> std::string;
-  auto VersionNoteMode() -> std::string;
-  auto VersionNoteProvider(const std::string& profile,
-                           const std::string& anthropic_keys,
-                           const std::string& openai_keys)
-      -> agent::ProviderConfig;
   auto ModelSelection(const std::string& profile, const std::string& purpose)
       -> Tsugumi::Service::ProviderSelectionT;
   auto Resolve(const ::tsugumi::json::Members& selection)

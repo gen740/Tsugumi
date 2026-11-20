@@ -608,8 +608,7 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionCanvas",
                                    "VersionNote",
                                    "VersionDiff",
-                                   "VersionComments",
-                                   "VersionSummary"};
+                                   "VersionComments"};
   // Every Display kind of the protocol.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE)
@@ -812,8 +811,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::version_diff);
     case P::VersionCommentsRequest:
       return on_lane(r, std::move(req), &Service::version_comments);
-    case P::VersionSummaryRequest:
-      return on_lane(m, std::move(req), &Service::version_summary);
     case P::ProjectInspectRequest:
       return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest:
@@ -1820,17 +1817,6 @@ void Service::version_comments(RequestIn& req) {
                            value.Union());
   check_frame(bytes.size(), "the version comments");
   reply(req, std::move(bytes));
-}
-
-void Service::version_summary(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_VersionSummaryRequest();
-  const auto text = versions_->summary(
-      r->commit()->str(), r->english(),
-      r->text() ? std::optional(r->text()->str()) : std::nullopt);
-  FBB b;
-  const auto value = R::CreateVersionSummary(b, b.CreateString(text));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionSummary,
-                         value.Union()));
 }
 
 void Service::cache_clear(RequestIn& req) {

@@ -476,7 +476,7 @@ table HostVersionGraphRequest { project:string (required); language:string; limi
 // Reference demos and version notes do not depend on a conversation.
 table DemoListRequest {}
 table DemoReadRequest { path:string (required); }
-table VersionNoteRequest { project_id:string (required); commit:string (required); profile:string (required); language:string (required); anthropic_key_profile:string; openai_key_profile:string; }
+table VersionNoteRequest { project_id:string (required); commit:string (required); language:string (required); }
 table DemoPaths { paths:[string]; }
 
 // Reserve an annotation reference across all clients of the project. kind is

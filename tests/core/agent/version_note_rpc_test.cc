@@ -1,4 +1,5 @@
-// UI note requests own no provider configuration or project mutation logic.
+// Version notes are the change record; the Agent reads a version diff only
+// when a person asks.
 #include <algorithm>
 #include <cctype>
 
@@ -8,13 +9,7 @@
 namespace tsugumi::test {
 namespace {
 TEST_F(AgentProjectFixture,
-       VersionNotesDefaultToFactsAndShareOneSavedAgentSummary) {
-  ModelServer model;
-  model.Queue(AnthropicText("  The workflow settings\n changed.  "), true);
-  // Let a regressed second generation finish, so it fails the count/text
-  // assertions rather than waiting forever for another provider response.
-  model.Queue(AnthropicText("Workflow の設定を変更しました。"));
-  Configure(model, "anthropic");
+       VersionNotesAreTheChangeRecordAndTheAgentReadsTheDiffWhenAsked) {
   StartProject(
       false,
       R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
@@ -23,78 +18,57 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, Tsugumi::Service::Access::Write);
   const auto initialized = ApprovedTool(conversation, "version_init", "{}");
   ASSERT_TRUE(initialized.Code().empty());
-  const auto result = JsonString(initialized.View(), "/text");
-  const auto commit = JsonString(result, "/value/commit");
-  ASSERT_EQ(commit.size(), 12u);
-  auto note = [&](client::Connection& connection,
-                  const std::string& language = "en",
-                  const std::string& spelling = "") {
+  const auto first =
+      JsonString(JsonString(initialized.View(), "/text"), "/value/commit");
+  Write(directory.path / "project/layout.json", R"({"flow":"topToBottom"})");
+  const auto marked = ApprovedTool(conversation, "version_mark",
+                                   R"({"name":"layout","message":"Layout"})");
+  ASSERT_TRUE(marked.Code().empty());
+  const auto commit =
+      JsonString(JsonString(marked.View(), "/text"), "/value/commit");
+  auto note = [&](client::Connection& connection, const std::string& language,
+                  const std::string& spelling) {
     return Call(
         connection, H::RequestPayload::VersionNoteRequest, [&](Builder& b) {
-          return H::CreateVersionNoteRequest(
-                     b, b.CreateString(project_id),
-                     b.CreateString(spelling.empty() ? commit : spelling),
-                     b.CreateString("desktop"), b.CreateString(language))
+          return H::CreateVersionNoteRequest(b, b.CreateString(project_id),
+                                             b.CreateString(spelling),
+                                             b.CreateString(language))
               .Union();
         });
   };
-  EXPECT_TRUE(note(*host).Code().empty());
-  EXPECT_TRUE(note(*host).Code().empty());
-  EXPECT_TRUE(model.Requests().empty());
-  ASSERT_TRUE(
-      SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("agent")}})
-          .Code()
-          .empty());
-  auto other = ConnectHost();
   // A shorter spelling always differs, even when the hash has only digits.
-  // Both spellings must resolve to one saved summary and generation gate.
   auto alternate = commit.substr(0, 7);
   std::transform(
       alternate.begin(), alternate.end(), alternate.begin(),
       [](unsigned char c) { return static_cast<char>(std::toupper(c)); });
   ASSERT_NE(alternate, commit);
-  auto first = std::async(std::launch::async, [&] { return note(*host); });
-  const bool requested = model.WaitForRequests(1);
-  if (!requested) model.Release();
-  EXPECT_TRUE(requested);
-  auto second = std::async(std::launch::async,
-                           [&] { return note(*other, "en", alternate); });
-  model.Release();
-  const auto a = first.get(), b = second.get();
-  ASSERT_TRUE(a.Code().empty()) << a.View();
-  ASSERT_TRUE(b.Code().empty()) << b.View();
-  EXPECT_EQ(a.HostValue()->value_as_TextResult()->text()->str(),
-            "The workflow settings changed.");
-  EXPECT_EQ(b.HostValue()->value_as_TextResult()->text()->str(),
-            "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 1u);
+  const auto english = note(*host, "en", commit);
+  ASSERT_TRUE(english.Code().empty()) << english.View();
+  EXPECT_EQ(english.HostValue()->value_as_TextResult()->text()->str(),
+            "No Card definition, source, parameter or wiring changes");
+  const auto other = note(*host, "en", alternate);
+  ASSERT_TRUE(other.Code().empty()) << other.View();
+  EXPECT_EQ(other.HostValue()->value_as_TextResult()->text()->str(),
+            english.HostValue()->value_as_TextResult()->text()->str());
+  const auto japanese = note(*host, "ja", commit);
+  ASSERT_TRUE(japanese.Code().empty());
+  EXPECT_NE(japanese.HostValue()->value_as_TextResult()->text()->str(),
+            english.HostValue()->value_as_TextResult()->text()->str());
   EXPECT_EQ(note(*host, "en", "HEAD").Code(), "invalid_request");
-  EXPECT_EQ(JsonString(model.Requests().front(), "/model"), "claude-haiku-5-5");
-  // Each display language owns its own generated summary.
-  EXPECT_EQ(note(*host, "ja").HostValue()->value_as_TextResult()->text()->str(),
-            "Workflow の設定を変更しました。");
-  EXPECT_EQ(model.Requests().size(), 2u);
-  ASSERT_TRUE(SettingsPatch(*host, "desktop",
-                            {{"versions.noteMode", Quote("mechanical")}})
-                  .Code()
-                  .empty());
-  EXPECT_TRUE(note(*host).Code().empty());
-  ASSERT_TRUE(
-      SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("agent")}})
-          .Code()
-          .empty());
-  EXPECT_EQ(note(*host).HostValue()->value_as_TextResult()->text()->str(),
-            "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 2u);
-  human.reset();
-  other.reset();
-  external.reset();
-  host.reset();
-  service.Stop();
-  StartHost();
-  EXPECT_EQ(note(*host).HostValue()->value_as_TextResult()->text()->str(),
-            "The workflow settings changed.");
-  EXPECT_EQ(model.Requests().size(), 2u);
+  const auto diff = [&](const std::string& args) {
+    const auto reply = Tool(conversation, "version_diff", args);
+    EXPECT_TRUE(reply.Code().empty()) << reply.View();
+    const auto value = JsonString(reply.View(), "/text");
+    EXPECT_EQ(JsonString(value, "/reply"), "VersionDiff");
+    return JsonString(value, "/value/text");
+  };
+  EXPECT_NE(diff(R"({"commit":")" + first + R"("})").find("tsugumi.json"),
+            std::string::npos);
+  // layout.json says where Cards sit, not what they do.
+  EXPECT_EQ(diff(R"({"commit":")" + commit + R"("})"), "");
+  EXPECT_EQ(diff(R"({"commit":")" + commit + R"(","from_commit":")" + first +
+                 R"("})"),
+            "");
 }
 TEST_F(AgentProjectFixture,
        HostGraphsRenderOneCommitInBothLanguagesAndAgentFormattingStaysOnHost) {
@@ -126,47 +100,6 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(formatted.Code().empty());
   EXPECT_EQ(JsonString(JsonString(formatted.View(), "/text"), "/value/text"),
             "{\n  \"a\": 1\n}\n");
-}
-TEST_F(AgentProjectFixture,
-       VersionNoteFailureCanBeRetriedAndEmptyDiffNeverCallsAModel) {
-  ModelServer model;
-  model.Queue(AnthropicText(""));
-  model.Queue(AnthropicText("Workflow settings changed."));
-  Configure(model);
-  StartProject(
-      false,
-      R"({"name":"PRIVATE_PROJECT_SENTINEL","agentExclude":[],"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  const auto conversation = Conversation("version-note-retry");
-  Grant(conversation, Tsugumi::Service::Access::Read);
-  Grant(conversation, Tsugumi::Service::Access::Write);
-  const auto initialized = ApprovedTool(conversation, "version_init", "{}");
-  ASSERT_TRUE(initialized.Code().empty());
-  auto commit =
-      JsonString(JsonString(initialized.View(), "/text"), "/value/commit");
-  ASSERT_TRUE(
-      SettingsPatch(*host, "desktop", {{"versions.noteMode", Quote("agent")}})
-          .Code()
-          .empty());
-  const auto note = [&] {
-    return Call(*host, H::RequestPayload::VersionNoteRequest, [&](Builder& b) {
-      return H::CreateVersionNoteRequest(
-                 b, b.CreateString(project_id), b.CreateString(commit),
-                 b.CreateString("desktop"), b.CreateString("en"))
-          .Union();
-    });
-  };
-  EXPECT_EQ(note().Code(), "unavailable");
-  EXPECT_TRUE(note().Code().empty());
-  EXPECT_EQ(model.Requests().size(), 2u);
-  Write(directory.path / "project/layout.json", R"({"flow":"topToBottom"})");
-  const auto marked = ApprovedTool(conversation, "version_mark",
-                                   R"({"name":"layout","message":"Layout"})");
-  ASSERT_TRUE(marked.Code().empty());
-  commit = JsonString(JsonString(marked.View(), "/text"), "/value/commit");
-  ASSERT_TRUE(note().Code().empty());
-  EXPECT_EQ(note().HostValue()->value_as_TextResult()->text()->str(),
-            "No Card definition, source, parameter or wiring changes");
-  EXPECT_EQ(model.Requests().size(), 2u);
 }
 }  // namespace
 }  // namespace tsugumi::test

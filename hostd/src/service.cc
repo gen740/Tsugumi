@@ -181,9 +181,7 @@ struct Service::State {
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
         [this](std::string raw) { return Scrub(std::move(raw)); });
-    versions = std::make_unique<host::Versions>(
-        *host_settings, *tools, *turns,
-        [this](std::string raw) { return Scrub(std::move(raw)); });
+    versions = std::make_unique<host::Versions>(*tools);
     events = std::make_unique<host::HostEvents>(
         state_gate, terminal_closes, [this](uint64_t session) {
           H::HostTerminalRequestT close;
@@ -352,7 +350,7 @@ struct Service::State {
         const auto key = query.text(3);
         if (options.vm.binary.empty() || key.empty()) continue;
         capability = fs::read_file(options.environment.directory / key /
-                                  "control/execution-broker-capability")
+                                   "control/execution-broker-capability")
                          .value_or("");
         if (capability.empty()) continue;
       }
@@ -544,7 +542,8 @@ struct Service::State {
         throw Failure("permission_denied",
                       "Host was started without RPC tracing");
       if (request.websocket)
-        throw Failure("permission_denied", "RPC capture requires local host access");
+        throw Failure("permission_denied",
+                      "RPC capture requires local host access");
       lock.unlock();
       auto result = debug_trace.Handle(request.conn, *debug, [this] {
         std::lock_guard lock(mutex);

@@ -269,7 +269,6 @@ auto Defaults() -> j::Members {
           {"agent.allowUnscopedHelpers", "false"},
           {"agent.skillFolders", "[]"},
           {"agent.trustedFolders", "[]"},
-          {"versions.noteMode", j::Quote("mechanical")},
           {"vm.cpus", "0"},
           {"vm.memoryGiB", "0"},
           {"vm.storeGiB", "0"},
@@ -817,7 +816,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
             auto value = item->value_json()->str();
             if (value.size() > 65536 || key == "agent.oauthHostID" ||
                 !(key.starts_with("agent.") || key.starts_with("vm.") ||
-                  key == "versions.noteMode" || key == "app.language"))
+                  key == "app.language"))
               throw std::runtime_error("Invalid setting");
             j::Object("{\"value\":" + value + "}");
             if (!IsSetting(defaults, key))
@@ -851,9 +850,6 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                      j::Get(entry, "enabled") != "false"))
                   throw std::runtime_error("Invalid skill folder");
               }
-            if (key == "versions.noteMode" &&
-                j::String(value) != "mechanical" && j::String(value) != "agent")
-              throw std::runtime_error("Unknown version note mode");
             if ((key == "agent.webSearch" || key == "agent.drawThoughts" ||
                  key == "agent.drawThoughtsAsked" ||
                  key == "agent.animateWork" ||
@@ -1101,12 +1097,6 @@ auto Settings::Language() -> std::string {
   return j::Text(state_->Values(), "app.language", "ja");
 }
 
-auto Settings::VersionNoteMode() -> std::string {
-  std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(), "versions.noteMode",
-                 "mechanical");
-}
-
 auto Settings::ModelSelection(const std::string& profile,
                               const std::string& purpose)
     -> S::ProviderSelectionT {
@@ -1166,18 +1156,6 @@ auto Settings::ModelSelection(const std::string& profile,
     }
   }
   return out;
-}
-
-auto Settings::VersionNoteProvider(const std::string& profile,
-                                   const std::string& anthropic_keys,
-                                   const std::string& openai_keys)
-    -> agent::ProviderConfig {
-  const auto selected = ModelSelection(profile, "summary");
-  return Resolve({{"profile", j::Quote(profile)},
-                  {"purpose", j::Quote("summary")},
-                  {"key_profile", j::Quote(selected.provider_id == "openai"
-                                               ? openai_keys
-                                               : anthropic_keys)}});
 }
 
 auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {

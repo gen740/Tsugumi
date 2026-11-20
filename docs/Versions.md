@@ -57,25 +57,15 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 ## Version notes
 
-Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects opened through the same hostd (`versions.noteMode`). Change record is the default.
+A version's note is its change record. The project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
 
-- **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
-- **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.
+The project RPC returns typed commit, run and change facts. Its Git note JSON format stays private to the project daemon; the host formats the public facts for both clients and tools. The clients request the note when a version is hovered or selected, and display the returned text. No model is called, so several versions can be browsed freely.
 
-The project RPC returns typed commit, run and change facts. Its Git note JSON format stays private to the project daemon; the host formats the public facts for both clients and tools.
+The core stores the language-neutral record in `refs/notes/tsugumi-record`: added and removed Card IDs, changed Card IDs with change kinds, and whether Workflow settings changed. It contains no sentence templates.
 
-The clients request a note when a version is hovered or selected, and display the returned text. The host Agent service chooses the mode and model, reads the authorized diff, generates the summary when needed and saves it. Requests from multiple windows for the same project and version share a gate: the saved Agent note is checked before any model call. A successful note is reused across windows and service restarts. Failed requests can be retried. Runs with no open version history do not request model summaries.
-
-The core stores the language-neutral mechanical record in `refs/notes/tsugumi-record`: added and removed Card IDs, changed Card IDs with change kinds, and whether Workflow settings changed. It contains no sentence templates. The host renders it in the requesting app's language. Generated Agent notes are stored separately per language. Switching to Change record shows the mechanical record even if an Agent note is saved; switching back reuses the saved Agent note.
-
-Agent summaries use the host's small-model override (`agent.thoughtModel` or `agent.thoughtModel.openai`) when set; the defaults are `claude-haiku-5-5` for Anthropic and the Agent's configured model for OpenAI. They are unavailable with the ChatGPT plan. If no code or settings changed, the mechanical record is returned without calling a model.
-
-The host owns `SummaryReads`, the file allowlist and diff limits. The model receives `VersionDiff`, limited to diffs of `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are sent.
-
-The host writes Agent notes to `refs/notes/tsugumi-summary-ja` or `refs/notes/tsugumi-summary-en`, apart from the neutral core records. `HostVersionDiffRequest` provides the same host-selected diff to run comparisons. Read it from git with:
+To learn what a change did in more detail, ask the Agent. It reads the version's diff with `version_diff` (in the `versions` tool family) and answers from it. The project core owns the file allowlist and diff limits: the diff covers `tsugumi.json`, the Cards' `_card.json`, `_meta.json`, `_outputs.fbs` and `default.nix`, and code in `src/` (`.py` `.cc` `.cpp` `.cxx` `.c` `.h` `.hh` `.hpp` `.nix` `.fbs` `.sh`). Data files such as `data/`, non-code files in `src/` and `layout.json` are excluded. Long diffs are cut (4,000 bytes per file, 12,000 in all). Parameter values and values written in code are included. `HostVersionDiffRequest` provides the same diff to run comparisons. Read the record from git with:
 
 ```bash
-git log --notes=tsugumi-summary-en
 git log --notes=tsugumi-record
 ```
 

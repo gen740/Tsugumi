@@ -98,7 +98,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
-    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
+    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.language)
     case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {

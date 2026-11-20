@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 52 requests.
+There are 51 requests.
 
 ## Connection
 
@@ -468,7 +468,6 @@ No fields.
 | [`VersionNote`](#versionnote) | VersionNote | Neutral facts, cached in refs/notes/tsugumi-record. |
 | [`VersionDiff`](#versiondiff) | VersionDiff | Read a bounded patch of workflow, definitions and code. |
 | [`VersionComments`](#versioncomments) | VersionComments | Read a version’s comment changes from its first parent. |
-| [`VersionSummary`](#versionsummary) | VersionSummary | Read or store a generated summary in the language’s Git notes. |
 
 ### VersionInit
 
@@ -526,14 +525,6 @@ No fields.
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `commit` | `string` | yes |  |
-
-### VersionSummary
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `commit` | `string` | yes |  |
-| `english` | `bool` |  |  |
-| `text` | `string` |  | When present, store this text before returning it. |
 
 ## Notifications
 
@@ -645,7 +636,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
-| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
+| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `language: string` (required) |
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |

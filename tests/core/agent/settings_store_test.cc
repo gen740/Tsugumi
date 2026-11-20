@@ -332,67 +332,6 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
   EXPECT_TRUE(update("desktop", "vm.cpus", "0"));
   EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
 }
-TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
-  TemporaryDirectory directory;
-  host::StateGate settings_gate;
-  host::HostStore settings_store{directory.path};
-  host::Credentials credentials{settings_gate, settings_store.db, {}};
-  auto memory = std::make_unique<MemorySecrets>();
-  auto* secrets = memory.get();
-  secrets->values["desktop:anthropic"] = "ANTHROPIC_NOTE_KEY";
-  secrets->values["desktop:openai"] = "OPENAI_NOTE_KEY";
-  host::Settings service(
-      directory.path, credentials,
-      std::move(memory), host::Settings::KeyStorage::Host);
-  EXPECT_EQ(service.VersionNoteMode(), "mechanical");
-  const auto update = [&](const std::string& mode,
-                          const std::string& key = "versions.noteMode") {
-    flatbuffers::FlatBufferBuilder b;
-    const auto change =
-        H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
-    const auto p = H::CreateSettingsUpdateRequest(
-        b, b.CreateString("desktop"),
-        b.CreateString(ReadSettingsRevision(service)),
-        b.CreateVector(std::vector{change}));
-    const auto request = H::CreateRequest(
-        b, H::RequestPayload::SettingsUpdateRequest, p.Union());
-    H::FinishMessageBuffer(
-        b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
-    return service.Handle(
-        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
-  };
-  for (const auto& invalid : {"true", "\"unknown\""}) {
-    const auto failure = update(invalid);
-    ASSERT_TRUE(
-        H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
-  }
-  auto reply = update("\"agent\"");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode(), "agent");
-  reply = update("\"mechanical\"");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode(), "mechanical");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential,
-            "ANTHROPIC_NOTE_KEY");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
-            "claude-haiku-5-5");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
-                .credential,
-            "ANTHROPIC_NOTE_KEY");
-  reply = update("\"openai\"", "agent.provider");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "")
-                .credential,
-            "OPENAI_NOTE_KEY");
-  reply = update("\"custom-small-model\"", "agent.thoughtModel.openai");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
-            "custom-small-model");
-}
 }  // namespace tsugumi::test
 
 namespace tsugumi::test {

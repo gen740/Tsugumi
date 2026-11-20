@@ -458,14 +458,6 @@ table VersionDiffRequest {
 /// -> VersionComments. Read a version’s comment changes from its first parent.
 table VersionCommentsRequest { commit:string (id: 0, required); }
 
-/// -> VersionSummary. Read or store a generated summary in the language’s Git notes.
-table VersionSummaryRequest {
-  commit:string (id: 0, required);
-  english:bool (id: 1);
-  /// When present, store this text before returning it.
-  text:string (id: 2);
-}
-
 /// -> OperationResult.
 table OperationGetRequest { op_id:string (id: 0, required); save_intent:string (id: 1); }
 
@@ -826,7 +818,6 @@ union RequestPayload {
   RunDefinitionPathsRequest = 57,
   VersionDiffRequest = 58,
   VersionCommentsRequest = 59,
-  VersionSummaryRequest = 60,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -924,7 +915,6 @@ table VersionComment {
 
 table VersionDiff { text:string (required); truncated:bool; }
 table VersionComments { comments:[VersionComment] (required); }
-table VersionSummary { text:string (required); }
 
 table VersionGraph {
   enabled:bool (id: 0);
@@ -1229,7 +1219,6 @@ union ReplyPayload {
   RunDefinitionPaths = 45,
   VersionDiff = 46,
   VersionComments = 47,
-  VersionSummary = 48,
 }
 
 // ---- Notifications -----------------------------------------------------------

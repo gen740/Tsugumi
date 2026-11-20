@@ -788,9 +788,8 @@ auto Tools::HelperReader(
       context->inspected = host::CaptureSaveBase(InspectProject(project, stop));
     const auto& base = inspected ? *inspected : *context->inspected;
     const auto at_rev = json::Get(base.snapshot, "rev");
-    if (!revision.empty() &&
-        json::UInt(json::String(revision, revision)) !=
-            json::UInt(json::String(at_rev, at_rev)))
+    if (!revision.empty() && json::UInt(json::String(revision, revision)) !=
+                                 json::UInt(json::String(at_rev, at_rev)))
       throw Failure("revision_conflict",
                     "The project changed; read the project again and "
                     "re-apply your input.");
@@ -802,13 +801,14 @@ auto Tools::HelperReader(
     if (const auto found = base.files.find(path); found != base.files.end())
       return cache.emplace(path, context->policy->FileText(path, found->second))
           .first->second;
-    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"},
+    json::Members args{{"path", json::Quote(path)},
+                       {"limit_bytes", "1048576"},
                        {"at_rev", at_rev}};
     std::string bytes;
     for (;;) {
       args["offset"] = std::to_string(bytes.size());
-      const auto reply = json::Object(
-          RawProjectCall(project, "project_file_read", json::Encode(args), stop));
+      const auto reply = json::Object(RawProjectCall(
+          project, "project_file_read", json::Encode(args), stop));
       if (json::Text(reply, "reply") == "Failure") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
         const auto kind = json::Text(failure, "kind");
@@ -1386,6 +1386,15 @@ auto Tools::ExecuteTool(const std::string& conversation,
       } catch (const host::FolderReadFailure& error) {
         throw Failure(error.code, error.what());
       }
+    } else if (call.name == "version_diff") {
+      // The project core applies the same allowlisted, size-limited diff as
+      // Compare Runs.
+      result = RawProjectCall(
+          project, "version_diff",
+          json::Encode(json::Members{
+              {"commit", json::Quote(json::Text(args, "commit"))},
+              {"from_commit", json::Quote(json::Text(args, "from_commit"))}}),
+          stop);
     } else if (spec->host) {
       const auto bytes = catalog.HostRequest(call.name, json::Encode(args), 1);
       try {
