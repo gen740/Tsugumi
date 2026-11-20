@@ -76,6 +76,8 @@ struct BuildRequest {
   std::function<void(Phase)>
       on_phase;  // evaluate, then build (only when the store lacks the result)
   std::function<void(uint32_t)> on_plan;  // implementation count before build
+  std::function<void(const std::string& derivation, bool active)>
+      on_build;  // a derivation build starting or ending
 };
 
 struct CacheClearOutcome {
@@ -132,8 +134,7 @@ class NixRunner {
   // The prepared build of `card` (--prepared-cards), checked against the
   // evaluation the core would run now.
   auto prepared(const std::string& card, const std::string& key,
-                uint32_t max_implementations) const
-      -> NixResult;
+                uint32_t max_implementations) const -> NixResult;
   std::filesystem::path content_dir(
       const char* kind, const std::string& digest,
       const std::function<std::map<std::string, std::string>()>& files);

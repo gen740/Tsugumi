@@ -879,7 +879,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     };
     const auto trace_phase = [&](const StageTimeData& stage, int64_t end) {
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
-                                             stage.phase, lane, stage.start, end));
+                                             stage.phase, lane, stage.start,
+                                             end));
     };
     request.log = [&](proc::LineChunk received) {
       if (published)
@@ -899,6 +900,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       stage_begin(s, phase, StageOutcome::running, now);
       if (published) card_status(s);
     };
+    request.on_build = [&](const std::string& derivation, bool active) {
+      std::erase_if(s.building, [&](const BuildActivityData& b) {
+        return b.derivation == derivation;
+      });
+      if (active) s.building.push_back({derivation, now_ms()});
+      if (published) svc_.history().set_live(s);
+    };
     request.on_plan = [&](uint32_t implementations) {
       if (implementations == 0) return;
       published = true;
@@ -913,9 +921,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     try {
       rt.build = svc_.nix().build(request);
     } catch (...) {
+      s.building.clear();
       if (!published) flush_evaluation_log();
       throw;
     }
+    s.building.clear();
     rt.build_target = request.target;
     if (rt.build->implementations.empty()) {
       if (!pending_logs.empty() || pending_budget.truncated()) {

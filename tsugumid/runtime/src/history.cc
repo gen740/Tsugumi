@@ -1498,6 +1498,14 @@ void History::clear_live(const InvocationSummaryData& s) {
   live_.erase(live_key(s));
 }
 
+std::vector<InvocationSummaryData> History::live(const std::string& run_id) {
+  std::lock_guard<std::mutex> l(live_mu_);
+  std::vector<InvocationSummaryData> out;
+  for (const auto& [_, s] : live_)
+    if (s.run_id == run_id) out.push_back(s);
+  return out;
+}
+
 void History::overlay(InvocationSummaryData& s) {
   if (s.state != CardState::running && s.state != CardState::preparing) return;
   std::lock_guard<std::mutex> l(live_mu_);

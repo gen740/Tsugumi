@@ -53,6 +53,8 @@ struct NixCall {
   NixOutput log;  // evaluation messages and build output
   std::function<void(bool building)>
       on_phase;  // false: evaluating, true: building
+  std::function<void(const std::string& derivation, bool active)>
+      on_build;  // a derivation build starting or ending
   auto evaluation_key() const -> EvaluationKey {
     return {pin_url, pin_hash, system, args};
   }

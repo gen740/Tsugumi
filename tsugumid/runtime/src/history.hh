@@ -295,6 +295,8 @@ class History {
  public:
   void set_live(const InvocationSummaryData& s);
   void clear_live(const InvocationSummaryData& s);
+  // The progress of a run's running invocations.
+  std::vector<InvocationSummaryData> live(const std::string& run_id);
   // Replaces a persisted in-progress status with its current progress.
   void overlay(InvocationSummaryData& s);
 };

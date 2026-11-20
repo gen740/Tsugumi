@@ -29,7 +29,9 @@ Off<R::SourceInfo> source_info(FBB& b, const std::string& path,
                                const std::string* document_json = nullptr);
 Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d);
-Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s);
+Off<R::RunStatus> run_status(
+    FBB& b, const RunStatusData& s,
+    const std::vector<InvocationSummaryData>& active = {});
 Off<R::RunSummary> run_summary(FBB& b, const RunSummaryData& s);
 Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s);
 auto run_batch(FBB& b, const RunBatchData& batch) -> Off<R::RunBatch>;

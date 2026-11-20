@@ -243,6 +243,7 @@ class CallScope {
         }) {
     t_call = &c;
     g_logger->set_thread(c.log ? &log_line_ : nullptr);
+    g_logger->set_thread_builds(c.on_build ? &c.on_build : nullptr);
     std::lock_guard l(g_calls_mu);
     g_calls.emplace_back(pthread_self(), &c);
   }
@@ -255,6 +256,7 @@ class CallScope {
       });
     }
     g_logger->set_thread(nullptr);
+    g_logger->set_thread_builds(nullptr);
     t_call = nullptr;
   }
   CallScope(const CallScope&) = delete;

@@ -650,6 +650,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   if (req.timeout_seconds)
     call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
+  call.on_build = req.on_build;
   call.on_phase = [&](bool building) {
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
   };
