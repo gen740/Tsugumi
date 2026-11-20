@@ -285,7 +285,10 @@ final class ServiceWireTests: XCTestCase {
     for type in [Tsugumi_Host_ReplyPayload.settings, .signinstatus] {
       var b = FlatBufferBuilder(initialSize: 128)
       let value: Offset
-      if type == .settings { value = Tsugumi_Host_Settings.createSettings(&b) }
+      if type == .settings {
+        let revision = b.create(string: "host:0")
+        value = Tsugumi_Host_Settings.createSettings(&b, revisionOffset: revision)
+      }
       else {
         let state = b.create(string: "idle")
         value = Tsugumi_Host_SignInStatus.createSignInStatus(&b, stateOffset: state)
@@ -348,10 +351,10 @@ final class ServiceWireTests: XCTestCase {
     setting.key = "agent.model.openai"
     setting.valueJson = #""from-the-app""#
     let settings = Tsugumi_Host_SettingsT()
-    settings.revision = UInt64.max - 1
+    settings.revision = "host:0000000000000000042"
     settings.values = [setting]
     let saved = try ServiceWire.decode(hostReply(settings, type: .settings), host: true)
-    XCTAssertEqual(saved["revision"] as? UInt64, UInt64.max - 1)
+    XCTAssertEqual(saved["revision"] as? String, "host:0000000000000000042")
     let values = try XCTUnwrap(saved["values"] as? [[String: String]])
     XCTAssertEqual(values, [["key": "agent.model.openai", "value_json": #""from-the-app""#]])
 
