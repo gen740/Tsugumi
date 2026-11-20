@@ -30,6 +30,7 @@
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <sstream>
 #include <thread>
 #include <vector>
@@ -44,6 +45,7 @@ extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store) -> void;
+auto jobs_main(stdfs::path root, std::span<char*> args) -> int;
 namespace {
 using namespace std::chrono_literals;
 constexpr size_t kConnections = 64;
@@ -139,7 +141,7 @@ auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
   cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
-  return ::open((journal.root() / "locks" / (job + ".supervisor")).c_str(),
+  return ::open(journal.supervisor_lock_path(job).c_str(),
                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 }
 
@@ -392,10 +394,20 @@ class Daemon {
           log(e.what());
         }
       }
-    std::ranges::sort(pending, [](const auto& a, const auto& b) {
-      return stdfs::last_write_time(a.first->job_path(a.second) / "spec.fb") <
-             stdfs::last_write_time(b.first->job_path(b.second) / "spec.fb");
-    });
+    // Read each submission time once: `tsugumi-workerd jobs remove` can erase
+    // a queued job's spec meanwhile, and its claim then finds the tombstone.
+    std::vector<std::pair<stdfs::file_time_type, size_t>> order;
+    for (size_t i = 0; i < pending.size(); ++i) {
+      std::error_code ec;
+      order.emplace_back(
+          stdfs::last_write_time(
+              pending[i].first->job_path(pending[i].second) / "spec.fb", ec),
+          i);
+    }
+    std::ranges::sort(order);
+    decltype(pending) sorted;
+    for (const auto& [_, i] : order) sorted.push_back(std::move(pending[i]));
+    pending = std::move(sorted);
     active_jobs_.store(static_cast<uint32_t>(active + pending.size()));
     for (const auto& [p, job] : pending) {
       if (active >= config_.max_jobs || stopping) break;
@@ -705,6 +717,9 @@ auto remote_workerd_main(int argc, char** argv) -> int {
       invoke(argv[2], argv[3], argv[4]);
       return 0;
     }
+    if (argc >= 2 && std::string_view(argv[1]) == "jobs")
+      return jobs_main(default_root(),
+                       std::span(argv + 2, static_cast<size_t>(argc - 2)));
     const auto self = stdfs::canonical("/proc/self/exe").string();
     if (argc == 7 && std::string_view(argv[1]) == "--supervise")
       return supervise(self, argv[2], argv[3], std::stoi(argv[4]), argv[5],

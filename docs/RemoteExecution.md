@@ -67,8 +67,23 @@ State defaults to `$XDG_STATE_HOME/tsugumi/remote-execution` or `$HOME/.local/st
 - `state` is atomically replaced and fsynced. It records state, fingerprint, deadline, submitting core life, supervisor identity and the result reference or bounded diagnostic needed within that life. Locks serialize submission, cancellation, completion and release. A cancellation that wins before terminal commit suppresses the result.
 - The core's completion transaction queues cancellation and a separate payload-deletion decision in a small acknowledgement outbox (local history format 10; portable history stays at 8). Startup interruption records that payloads must be kept. Other completions send `ReleaseRequest` after the local completion is durable. It retries after disconnects and restarts. On release the worker first commits a `Released` tombstone, then removes **all** job scratch, including inputs, outputs and logs. A crash during deletion is finished at the next inspection. Only identity/fingerprint tombstones and lock files remain to reject delayed submissions; they contain no spec, result reference, logs or run payload. Release is idempotent.
 
-Cancellation and core startup cleanup free execution slots without deleting accepted-job payloads or importing old results. The same applies when the supervisor is lost. Removing host run history does not itself delete remote jobs.
+Cancellation and core startup cleanup free execution slots without deleting accepted-job payloads or importing old results. The same applies when the supervisor is lost. Removing host run history does not itself delete remote jobs; see [Data left on a worker](#data-left-on-a-worker).
 
-**Open owner question:** what should let a person see and delete remote leftovers? Today, `ProjectCacheUsage` lists local/VM build cache and run scratch only, and `RunScratchDelete` accepts local `runs/<project run number>` paths only. The remote protocol has no usage listing or person-facing deletion request; `ReleaseRequest` is the core's transfer acknowledgement, not a cleanup UI. Kept data therefore do not appear in those lists. Until a separate design is decided, an operator can inspect `STATE/projects/SCOPE/jobs/JOB/` on the worker and, after stopping the listener and ensuring its supervisors have exited, explicitly remove selected abandoned job directories. This is manual deletion, not an automatic retention policy. Host-side run retention and artifact choices are unchanged.
+### Data left on a worker
+
+A person who can log into the worker machine sees and removes what is left there with `tsugumi-workerd jobs`. It reads the same state directory as the listener (`--state-dir` or the defaults above) and works whether or not the listener is running. Nothing is removed automatically, and there is no "remove everything old" mode: the command shows, the person decides.
+
+```sh
+tsugumi-workerd jobs list            # jobs that still hold data
+tsugumi-workerd jobs list --all      # also released tombstones
+tsugumi-workerd jobs list --json     # full IDs, for scripts
+tsugumi-workerd jobs remove PROJECT/JOB...
+```
+
+`list` prints one row per job: project scope, job ID, state, size on disk, last written time (UTC), the core life that submitted it, when that core was last seen, and why the data is still there, such as `inputs staged, never submitted`, `not released: the result was never collected` or `running (supervisor pid N)`. The worker does not record when a core was last seen, so that column says `unknown`; whether the run's `tsugumid` still lives is known only on its host. The text form shortens IDs to 12 characters; `--json` gives them in full.
+
+`remove` takes `PROJECT/JOB`, each an unambiguous prefix of at least 8 characters, and removes only the jobs named. For each job it takes the job's supervisor lock and journal lock, as the listener does, then commits a `Released` tombstone and erases the job's scratch, exactly as a release from the core does. The tombstone keeps rejecting a late transfer or submission for that job. A job that a supervisor process is running is never removed: cancel its run first. A job the journal records as queued, running or cancelling without a supervisor is kept unless `--active` is added, once nothing should run it any more; a running listener would otherwise start a queued job, or record a supervisor-less one as interrupted.
+
+`ProjectCacheUsage` and `RunScratchDelete` on the host still cover only local and VM data; the remote protocol has no usage listing or person-facing deletion request, and `ReleaseRequest` stays the core's transfer acknowledgement. Host-side run retention and artifact choices are unchanged.
 
 For integration checks, use [Repository tests](../tests/README.md).
