@@ -53,6 +53,7 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
   private var stateObservers: [UUID: @Sendable (VMState) -> Void] = [:]
   private var stopWaiters: [CheckedContinuation<Void, Never>] = []
   private var readyWaiters: [CheckedContinuation<Void, Error>] = []
+  private var consoleFile: ConsoleFile?
   /// The running VM's size (under `lock`; nil while none runs).
   private var _resources: VMResources?
   /// What uses the VM now (under `lock`): attached projects, open terminals
@@ -292,11 +293,10 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     c.entropyDevices = [VZVirtioEntropyDeviceConfiguration()]
     c.memoryBalloonDevices = [VZVirtioTraditionalMemoryBalloonDeviceConfiguration()]
     // The guest console goes straight to console.log (a pipe attachment
-    // delivered nothing); a reader follows the file for stages and the view.
+    // delivered nothing). ConsoleLog already created the file for this boot.
     let serial = VZVirtioConsoleDeviceSerialPortConfiguration()
-    serial.attachment = try VZFileSerialPortAttachment(url: consoleURL, append: false)
+    serial.attachment = try VZFileSerialPortAttachment(url: consoleURL, append: true)
     c.serialPorts = [serial]
-    followConsole(consoleURL, boot: bootCount)
     try c.validate()
     return c
   }
@@ -337,37 +337,6 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     }
   }
 
-  /// Reads what the guest appends to the console file until the next boot.
-  private func followConsole(_ url: URL, boot: Int) {
-    Thread.detachNewThread { [weak self] in
-      // By path and offset: the attachment may replace the file when it opens it.
-      var offset: UInt64 = 0
-      var idle = 0.05
-      while let self, self.bootCount == boot {
-        var data = Data()
-        if let h = try? FileHandle(forReadingFrom: url) {
-          let size = (try? h.seekToEnd()) ?? 0
-          if size < offset { offset = 0 }
-          if size > offset {
-            try? h.seek(toOffset: offset)
-            data = (try? h.read(upToCount: Int(size - offset))) ?? Data()
-            offset += UInt64(data.count)
-          }
-          try? h.close()
-        }
-        if data.isEmpty {
-          if case .stopped = self.state { return }
-          if case .failed = self.state { return }
-          Thread.sleep(forTimeInterval: idle)
-          idle = min(idle * 2, 0.5)
-          continue
-        }
-        idle = 0.05
-        for line in self.console.feed(data) { self.consoleLine(line) }
-      }
-    }
-  }
-
   private func consoleLine(_ line: String) {
     if line.hasPrefix("TSUGUMI-STAGE ") {
       let name = String(line.dropFirst("TSUGUMI-STAGE ".count)).trimmingCharacters(in: .whitespaces)
@@ -389,6 +358,21 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
         guard !self.stopping, !self.ending, self.bootGeneration == generation else {
           self.lock.unlock()
           c.resume(throwing: LauncherError.notReady("the VM is shutting down"))
+          return
+        }
+        do {
+          self.consoleFile = try ConsoleFile(self.consoleURL, queue: self.queue) { [weak self = self] result in
+            guard let self else { return }
+            switch result {
+            case .success(let data):
+              for line in self.console.feed(data) { self.consoleLine(line) }
+            case .failure(let error):
+              self.setVMState(.failed("cannot follow the VM console: \(error)"))
+            }
+          }
+        } catch {
+          self.lock.unlock()
+          c.resume(throwing: error)
           return
         }
         let vm = VZVirtualMachine(configuration: handed.value, queue: self.queue)
@@ -461,6 +445,8 @@ public final class SharedVM: NSObject, VZVirtualMachineDelegate, @unchecked Send
     let handed = OnVMQueue(which)
     queue.async {
       if self.vm === handed.value {
+        self.consoleFile?.cancel()
+        self.consoleFile = nil
         self.vm = nil
         self.fileSystems = []
         self.socket = nil
