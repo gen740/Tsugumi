@@ -52,6 +52,9 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
+  /** Domains web search is limited to, and domains it may not use (hostd passes them to the provider). */
+  webSearchAllowedDomains: string[]
+  webSearchBlockedDomains: string[]
   allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
@@ -70,7 +73,8 @@ const SETTINGS_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
-  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch',
+  webSearchAllowedDomains: 'agent.webSearch.allowedDomains', webSearchBlockedDomains: 'agent.webSearch.blockedDomains', language: 'app.language',
   trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB',
   skillFolders: 'agent.skillFolders',
 }
