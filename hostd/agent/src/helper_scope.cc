@@ -4,8 +4,10 @@
 #include <cctype>
 #include <stdexcept>
 
+#include "host/comments.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/save.hh"
 #include "tsugumi/util/fs.hh"
 
 namespace tsugumi::agent {
@@ -65,6 +67,9 @@ auto Card(std::string_view raw) -> std::string {
     path += json::String(part);
   }
   return path;
+}
+auto HasExternal(const std::string& card) -> bool {
+  return !card.empty() && json::Object(card).contains("external");
 }
 auto ValidCard(const std::string& card) -> bool {
   if (!fs::valid_relative_path(card)) return false;
@@ -168,7 +173,7 @@ auto HelperScope::Root(const std::string& card, const Reader& read,
     const auto id = card.substr(begin, end - begin);
     if (end == std::string::npos) return prefix + "definitions/" + id;
     const auto link =
-        json::Object(read(prefix + "definitions/" + id + "/_link.json"));
+        json::Object(read(prefix + "definitions/" + id + "/_card.json"));
     const auto external = json::Text(link, "external");
     if (!ValidCard(external) || external.find('/') != std::string::npos)
       Deny("unresolved nested Card " + card);
@@ -182,7 +187,7 @@ auto HelperScope::Root(const std::string& card, const Reader& read,
       const auto sibling = json::Text(json::Object(raw), "id");
       if (sibling == id || !ValidCard(sibling)) continue;
       const auto sibling_link =
-          read(prefix + "definitions/" + sibling + "/_link.json");
+          read(prefix + "definitions/" + sibling + "/_card.json");
       if (sibling_link.empty()) continue;
       if (json::Text(json::Object(sibling_link), "external") == external)
         aliases.insert(sibling);
@@ -214,11 +219,7 @@ auto HelperScope::File(const std::string& path, bool writing,
       continue;
     }
     if (path == root || path.starts_with(root + '/')) {
-      // Replacing a container's link changes the meaning of all nested paths.
-      if (writing && path == root + "/_link.json")
-        Deny("changing a container link");
-      if (writing && path == root + "/_card.json" &&
-          !read(root + "/_link.json").empty())
+      if (writing && path == root + "/_card.json" && HasExternal(read(path)))
         Deny("replacing a container definition");
       return;
     }
@@ -243,7 +244,7 @@ auto HelperScope::Created(const std::string& id,
           break;
         }
       }
-      const auto link_text = read(root + "/_link.json");
+      const auto link_text = read(root + "/_card.json");
       if (link_text.empty()) continue;
       const auto link = json::Object(link_text);
       const auto external = json::Text(link, "external");
@@ -260,13 +261,6 @@ auto HelperScope::Created(const std::string& id,
   runs_.insert(card);
   created_[card] = project_path + "definitions/" + id;
 }
-auto HelperScope::LayoutWriteCards(const Reader& read) const
-    -> std::set<std::string> {
-  std::set<std::string> roots;
-  for (const auto& card : writes_) roots.insert(Root(card, read, true));
-  return roots;
-}
-
 auto HelperScope::ProjectPrefix(const std::string& path,
                                 const Reader& read) const -> std::string {
   if (path == "tsugumi.json") return "";
@@ -677,15 +671,26 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
       } else if (type == "PutDefinition" || type == "RemoveDefinition") {
         const auto id = json::Text(value, "id");
         Require(id, true);
-        const auto old_link = read(Root(id, read, true) + "/_link.json");
-        if (!old_link.empty()) Deny("replacing a container definition");
-        if (!json::Text(value, "link_json").empty())
+        const auto old_card = read(Root(id, read, true) + "/_card.json");
+        if (HasExternal(old_card)) Deny("replacing a container definition");
+        if (HasExternal(json::Text(value, "card_json")))
           Deny("changing a container link");
       } else if (type == "PutSource" || type == "PatchSource" ||
                  type == "RemoveSource") {
         const auto path = json::Text(value, "path");
         if (type == "PutSource" && path.ends_with("/tsugumi.json")) continue;
         File(path, true, read);
+        if (type != "RemoveSource" && path.ends_with("/_card.json") &&
+            host::comments::is_meta(path.substr(0, path.size() - 10) +
+                                    "_meta.json")) {
+          const host::SourcePatches patches;
+          const auto card =
+              type == "PutSource"
+                  ? host::DecodeSourceBytes(json::Get(value, "bytes"))
+                  : patches.Project(read(path),
+                                    json::Array(json::Get(value, "patches")));
+          if (HasExternal(card)) Deny("changing a container link");
+        }
       } else {
         Deny(
             "project-wide save (the parent handles canvas and layout changes)");

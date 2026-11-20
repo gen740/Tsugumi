@@ -378,8 +378,8 @@ const nativeError = (error: NativeClientError) => new RPCError(
   error.message,
 )
 
-/** Browser project connections use the shared C++ byte transport. */
-export async function webSocketTransport(url: string, signal?: AbortSignal): Promise<Transport> {
+/** Browser RPC connections use the shared C++ byte transport. */
+export async function webSocketTransport(url: string, signal?: AbortSignal, protocol = 0): Promise<Transport> {
   if (!wasmModule) {
     const moduleUrl = '/client/tsugumi-client.js'
     wasmModule = import(moduleUrl).then((module) => module.default() as Promise<WasmModule>)
@@ -387,7 +387,7 @@ export async function webSocketTransport(url: string, signal?: AbortSignal): Pro
   }
   const module = await wasmModule
   signal?.throwIfAborted()
-  const client = new module.RpcClient(url, 0)
+  const client = new module.RpcClient(url, protocol)
   let released = false
   const release = () => {
     if (released) return

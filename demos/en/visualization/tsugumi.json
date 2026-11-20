@@ -10,9 +10,6 @@
         "id": "aggregate"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "line"
       },
       {
@@ -42,16 +39,6 @@
           "port": "data"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "line"
-        },
-        "to": {
           "card": "line",
           "port": "data"
         }
@@ -68,8 +55,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "scatter"
+          "card": "aggregate",
+          "port": "data"
         },
         "to": {
           "card": "scatter",
@@ -88,8 +75,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "histogram"
+          "card": "aggregate",
+          "port": "data"
         },
         "to": {
           "card": "histogram",

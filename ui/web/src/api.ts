@@ -131,8 +131,3 @@ export interface FolderListing {
   project: boolean
   entries: { name: string; project: boolean }[]
 }
-
-/** Events of a terminal (a shell in the project's folder on this host). */
-export type TerminalEvent =
-  | { type: 'terminal'; id: string; data: string }
-  | { type: 'terminal-exit'; id: string; code: number | null; signal: string | null }

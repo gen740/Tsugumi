@@ -158,8 +158,6 @@ auto run_worker(const W::WorkerCall& call,
   request.number = call.invocation().value_or(0);
   request.inputs = values;
   request.outputs = std::move(outputs);
-  if (call.input_schema()) request.input_schema = call.input_schema()->str();
-  if (call.output_schema()) request.output_schema = call.output_schema()->str();
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());

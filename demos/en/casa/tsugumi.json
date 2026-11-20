@@ -14,9 +14,6 @@
         "id": "start"
       },
       {
-        "id": "begin"
-      },
-      {
         "id": "ciao"
       },
       {
@@ -24,9 +21,6 @@
       },
       {
         "id": "bands"
-      },
-      {
-        "id": "share"
       },
       {
         "id": "rgb"
@@ -42,24 +36,14 @@
           "port": "out"
         },
         "to": {
-          "card": "begin",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "begin",
-          "port": "tool"
-        },
-        "to": {
           "card": "ciao",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "begin",
-          "port": "data"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "load",
@@ -92,24 +76,14 @@
           "port": "images"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "rgb"
-        },
-        "to": {
           "card": "rgb",
           "port": "input"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "spectrum"
+          "card": "bands",
+          "port": "images"
         },
         "to": {
           "card": "spectrum",

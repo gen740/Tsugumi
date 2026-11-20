@@ -137,7 +137,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       value.from_port = json::Text(args, "from_port");
       value.to_card = json::Text(args, "to_card");
       value.to_port = json::Text(args, "to_port");
-      value.fork_id = json::Text(args, "fork_id");
       request.body.Set(std::move(value));
     } else if (call.name == "project_make_subgraph") {
       H::ProjectMakeSubgraphT value;
@@ -159,11 +158,27 @@ auto Tools::EditProjectTool(const std::string& conversation,
     }
     const auto authorization =
         boundary ? boundary->authorization() : std::nullopt;
+    std::string revision;
+    std::optional<host::AgentExclude> policy;
+    HelperScope::Reader read;
+    std::optional<host::SaveBase> scoped_base;
+    auto use_inspection = [&](const host::SaveBase& base) {
+      const auto current = json::Get(base.snapshot, "rev");
+      if (policy && current == revision) return;
+      revision = current;
+      policy = ExclusionsFor(project, base);
+      if (boundary && boundary->scoped()) {
+        scoped_base = base;
+        read = HelperReader(conversation, stop, revision, authorization,
+                            &*scoped_base);
+      }
+    };
     host::OperationContext context;
     context.origin = "agent";
     context.authorize_file = [&](const std::string& path,
                                  const host::SaveBase& base) {
-      Exclusions(project, stop).Check(path);
+      use_inspection(base);
+      policy->Check(path);
       if (std::filesystem::path(path).is_absolute()) return;
       if (!boundary || !boundary->scoped()) return;
       // Project documents are read by the host only; the expanded graph diff is
@@ -171,35 +186,16 @@ auto Tools::EditProjectTool(const std::string& conversation,
       if (path == "tsugumi.json" ||
           host::IsExternalDocument(path, "tsugumi.json"))
         return;
-      const auto read = HelperReader(
-          conversation, stop, json::Get(base.snapshot, "rev"), authorization);
       boundary->Check("project_file_read", {{"path", json::Quote(path)}}, read);
-    };
-    context.layout_scope =
-        [&](const host::SaveBase& base) -> host::LayoutWrite {
-      if (!boundary || !boundary->scoped()) return {};
-      const auto read = HelperReader(
-          conversation, stop, json::Get(base.snapshot, "rev"), authorization);
-      const auto roots = boundary->LayoutWriteCards(read);
-      return [roots](const auto& path, const auto& id) {
-        const auto prefix = path.substr(0, path.size() - 11);
-        if (!id.empty()) return roots.contains(prefix + "definitions/" + id);
-        return std::any_of(roots.begin(), roots.end(), [&](const auto& root) {
-          return root.substr(0, root.rfind("definitions/")) == prefix;
-        });
-      };
     };
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
       {
         std::lock_guard lock(mutex);
         if (boundary) RequireHelperPermission(*boundary);
       }
-      if (boundary && boundary->scoped()) {
-        const auto read = HelperReader(
-            conversation, stop, json::Get(base.snapshot, "rev"), authorization);
-        boundary->CheckCurrentSave(plan, read);
-      }
-      Exclusions(project, stop).CheckSave(plan, base);
+      use_inspection(base);
+      if (read) boundary->CheckCurrentSave(plan, read);
+      policy->CheckSave(plan, base);
       if (args.contains("approved_permissions"))
         plan["approved_permissions"] = args.at("approved_permissions");
     };

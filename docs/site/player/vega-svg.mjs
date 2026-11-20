@@ -5,7 +5,7 @@ import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
 
-const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'web')
+const WEB = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..', '..', 'ui', 'web')
 const { resolve } = createRequire(path.join(WEB, 'package.json'))
 const load = (name) => import(pathToFileURL(resolve(name)).href)
 const [vega, vl] = await Promise.all([load('vega'), load('vega-lite')])

@@ -36,8 +36,14 @@ static int tsugumi_native_input_kind(const char* port) {
 static uint64_t tsugumi_native_invocation(void) {
   return current_call ? current_call->invocation : 0;
 }
+static int tsugumi_native_output(const char* port, const char* json) {
+  return current_call ? current_call->effects->output_json(current_call->host,
+                                                           port, json)
+                      : 1;
+}
 static int tsugumi_native_display(const char* json) {
-  return current_call ? current_call->effects->display_json(current_call->host, json)
+  return current_call ? current_call->effects->display(
+                            current_call->host, TSUGUMI_DISPLAY_JSON, json)
                       : 1;
 }
 static int tsugumi_native_cancelled(void) {

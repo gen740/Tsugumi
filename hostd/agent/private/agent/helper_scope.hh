@@ -37,7 +37,6 @@ class HelperScope {
       -> void;
   auto ExpandSave(json::Members args, const Reader& read) const
       -> json::Members;
-  auto LayoutWriteCards(const Reader& read) const -> std::set<std::string>;
   auto ProjectPrefix(const std::string& path, const Reader& read) const
       -> std::string;
   auto FailureResult(const std::string& result, const Reader& read) const

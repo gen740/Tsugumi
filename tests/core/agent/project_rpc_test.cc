@@ -105,9 +105,9 @@ TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   EXPECT_EQ(Inspect(second).Code(), "grant_required");
   EXPECT_NO_THROW(ConnectHost(false, false, false));
 }
-TEST_F(AgentProjectFixture, MissingForkSchemaReportsTypedFailureAndPath) {
+TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
   Write(directory.path / "project/definitions/share/_card.json",
-        R"({"template":"fork"})");
+        R"({"template":"collect"})");
   Write(directory.path / "project/definitions/share/_meta.json", "{}");
   StartProject();
   const auto conversation = Conversation("missing-schema");
@@ -2680,8 +2680,8 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
 TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   StartProject();
   const auto conversation = Conversation("unlisted-tools");
-  for (const auto* name :
-       {"view_save", "view_set_visible", "project_open", "session_hello"})
+  for (const auto* name : {"view_save", "view_set_visible", "project_open",
+                           "session_hello", "run_definition_paths"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 
@@ -2697,7 +2697,7 @@ TEST_F(AgentProjectFixture,
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/secret/_meta.json",
         R"({"description":"HIDDEN_CARD_SENTINEL"})");
-  Write(directory.path / "project/definitions/outer/_link.json",
+  Write(directory.path / "project/definitions/outer/_card.json",
         R"({"external":"different-directory"})");
   Write(directory.path / "project/externals/different-directory/tsugumi.json",
         R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");

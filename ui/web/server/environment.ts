@@ -1,7 +1,6 @@
 // Presentation adapter for core-owned project environments.
 import fs from 'node:fs'
 import path from 'node:path'
-import { TextDecoder } from 'node:util'
 import { L } from './i18n'
 import { HistoryVersionMismatch, historyVersionMismatch } from '../shared/historyVersion'
 import { EnvironmentPhase } from '../shared/gen/tsugumi/host/environment-phase'
@@ -21,10 +20,6 @@ const STAGES: Record<string, string> = {
 }
 
 export interface VMHostOptions { host: string; image: string; support: string }
-export interface VMTerminal {
-  cols: number; rows: number; write(data: string): void; resize(cols: number, rows: number): void; kill(): void;
-  onData(fn: (data: string) => void): void; onExit(fn: (event: { exitCode: number }) => void): void;
-}
 export type HostEvent = { type: string; value: any }
 type Request = <T = any>(method: string, fields?: unknown) => Promise<T>
 type Observe = (fn: (event: HostEvent) => void) => () => boolean
@@ -68,9 +63,6 @@ export class EnvironmentManager implements Environments {
   private envs = new Map<string, Env>()
   private listeners = new Set<(key: string, state: EnvState) => void>()
   private observing = false
-  private terminals = new Map<number, { data: (value: string) => void; exit: (value: { exitCode: number }) => void; decoder: TextDecoder }>()
-  private terminalOutput = new Map<number, { data: number[]; closed: boolean }>()
-  private openingTerminals = 0
   readonly hostArguments: string[]
 
   constructor(readonly bins: Binaries, readonly support: string, private origins: () => string[],
@@ -101,20 +93,6 @@ export class EnvironmentManager implements Environments {
     return state
   }
   private event(event: HostEvent) {
-    if (event.type === 'HostTerminalData') {
-      const value = event.value
-      const terminal = this.terminals.get(value.session)
-      if (terminal) {
-        if (value.data?.length) terminal.data(terminal.decoder.decode(Uint8Array.from(value.data), { stream: true }))
-        if (value.closed) { terminal.exit({ exitCode: 0 }); this.terminals.delete(value.session) }
-      } else if (this.openingTerminals > 0) {
-        const pending = this.terminalOutput.get(value.session) ?? { data: [], closed: false }
-        pending.data.push(...(value.data ?? []))
-        pending.closed ||= !!value.closed
-        this.terminalOutput.set(value.session, pending)
-      }
-      return
-    }
     const value = event.type === 'EnvironmentStopped' ? event.value.state : event.value
     const entry = this.envs.get(value?.project) ?? [...this.envs.values()].find(e => e.hostKey === value?.key)
     if (!entry) return
@@ -157,30 +135,6 @@ export class EnvironmentManager implements Environments {
   }
   async removeFolders(dir: string, folders: string[]) {
     await this.request('EnvironmentRequest', { project: this.env(dir).project, action: 'RemoveFolders', folders })
-  }
-  async terminal(dir: string, cols: number, rows: number): Promise<VMTerminal> {
-    const ready = await this.start(dir)
-    if (ready.state !== 'ready') throw new Error(ready.state === 'failed' ? ready.message : L('実行環境が起動していません'))
-    this.openingTerminals++
-    let session: number
-    try {
-      const reply = await this.request('HostTerminalRequest', { project: dir, action: 'Open', rows, cols })
-      session = reply.session
-    } finally {
-      this.openingTerminals--
-    }
-    const handlers = { data: (_value: string) => {}, exit: (_value: { exitCode: number }) => {}, decoder: new TextDecoder() }
-    this.terminals.set(session, handlers)
-    const call = (action: string, fields: unknown = {}) => this.request('HostTerminalRequest', { action, session, ...fields as object }).catch(() => {})
-    const terminal: VMTerminal = {
-      cols, rows,
-      write: (value) => void call('Input', { data: [...Buffer.from(value)] }),
-      resize: (cols, rows) => { terminal.cols = cols; terminal.rows = rows; void call('Resize', { cols, rows }) },
-      kill: () => void call('Close'),
-      onData: (fn) => { handlers.data = fn; const pending = this.terminalOutput.get(session); if (pending?.data.length) { fn(handlers.decoder.decode(Uint8Array.from(pending.data), { stream: true })); pending.data = [] } },
-      onExit: (fn) => { handlers.exit = fn; const pending = this.terminalOutput.get(session); if (pending?.closed) fn({ exitCode: 0 }); this.terminalOutput.delete(session) },
-    }
-    return terminal
   }
   list() { return [...this.envs.values()].map(({ key, project, state }) => ({ key, project, state })) }
 }

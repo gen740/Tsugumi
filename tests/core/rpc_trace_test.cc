@@ -50,15 +50,16 @@ class RpcTrace : public testing::Test {
     if (!snapshot.entries.empty()) after_ = snapshot.entries.back().sequence;
   }
 
-  void TearDown() override { SetMode(Mode::Off); }
-
-  auto Entries() const -> std::vector<Entry> {
-    auto entries = Read().entries;
-    std::erase_if(entries, [this](const Entry& entry) {
-      return entry.sequence <= after_;
-    });
-    return entries;
+  void TearDown() override {
+    CancelWatch();
+    SetMode(Mode::Off);
   }
+
+  auto ReadNew(std::function<void()> changed = {}) const -> Snapshot {
+    return Read(std::move(changed), after_);
+  }
+
+  auto Entries() const -> std::vector<Entry> { return ReadNew().entries; }
 
   auto ObserveFrame(std::string_view frame, bool reply = false) -> void {
     Observe(link_, reply ? "hostd" : "macOS app", reply ? "macOS app" : "hostd",
@@ -99,6 +100,27 @@ TEST_F(RpcTrace, TraceRecordsMetadataAndCorrelatesRepliesWithoutContent) {
   EXPECT_TRUE(entries[1].content.json.empty());
 }
 
+TEST_F(RpcTrace, SnapshotWatchWakesOnceUntilTheNextRead) {
+  SetMode(Mode::Trace);
+  int changes = 0;
+  const auto changed = [&changes] { ++changes; };
+  ReadNew(changed);
+
+  ObserveFrame(Request(H::HostActivityRequestT{}, 1));
+  ObserveFrame(Request(H::HostActivityRequestT{}, 2));
+  EXPECT_EQ(changes, 1);
+
+  const auto snapshot = ReadNew(changed);
+  ASSERT_EQ(snapshot.entries.size(), 2);
+  EXPECT_EQ(snapshot.entries.back().request_id, 2);
+
+  ObserveFrame(Request(H::HostActivityRequestT{}, 3));
+  EXPECT_EQ(changes, 2);
+  const auto delta = Read({}, snapshot.entries.back().sequence);
+  ASSERT_EQ(delta.entries.size(), 1);
+  EXPECT_EQ(delta.entries.front().request_id, 3);
+}
+
 TEST_F(RpcTrace, CaptureDecodesAndClearsContentOnModeChange) {
   SetMode(Mode::Capture);
   H::SettingsGetRequestT settings;
@@ -108,7 +130,11 @@ TEST_F(RpcTrace, CaptureDecodesAndClearsContentOnModeChange) {
   ASSERT_EQ(entries.size(), 1);
   EXPECT_NE(entries[0].content.json.find("\"profile\": \"desktop\""),
             std::string::npos);
+  const auto captured = entries.back().sequence;
   SetMode(Mode::Trace);
+  const auto delta = Read({}, captured);
+  EXPECT_TRUE(delta.entries.empty());
+  EXPECT_EQ(delta.cleared_through, captured);
   entries = Entries();
   ASSERT_EQ(entries.size(), 1);
   EXPECT_TRUE(entries[0].content.json.empty());
@@ -207,6 +233,8 @@ TEST_F(RpcTrace, CapsMetadataAndContentIndependently) {
   auto entries = Entries();
   ASSERT_EQ(entries.size(), kMaxEntries);
   EXPECT_EQ(entries.front().request_id, 2);
+  EXPECT_EQ(Read({}, entries.back().sequence).first_sequence,
+            entries.front().sequence);
 
   SetMode(Mode::Capture);
   H::SettingsGetRequestT settings;
@@ -224,6 +252,9 @@ TEST_F(RpcTrace, CapsMetadataAndContentIndependently) {
   }
   EXPECT_LE(total, kMaxContentBytes);
   EXPECT_TRUE(evicted);
+  const auto delta = Read({}, entries.back().sequence);
+  EXPECT_TRUE(delta.entries.empty());
+  EXPECT_GT(delta.evicted_through, delta.cleared_through);
   EXPECT_FALSE(entries.back().content.json.empty());
 
   settings.profile.resize(kMaxFrameToDecode + 1, 'a');

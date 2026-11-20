@@ -16,8 +16,8 @@ namespace {
 using host::Failure;
 namespace H = Tsugumi::Host;
 const std::set<std::string> kProtected{
-    "tsugumi.json", "layout.json", "_card.json",   "_meta.json",
-    "_link.json",   "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
+    "tsugumi.json", "layout.json",  "_card.json", "_meta.json",
+    "_inputs.fbs",  "_outputs.fbs", "_params.fbs"};
 auto CardRoot(const std::string& path) -> std::string {
   if (!fs::valid_relative_path(path)) return {};
   auto rest = path;
@@ -39,17 +39,9 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
   for (const auto& part : std::filesystem::path(path))
     if (part == ".tsugumi" || part == ".git") return false;
   const auto file = path.substr(root.size() + 1);
-  if (file.empty() || file == "_card.json" || file == "_meta.json" ||
-      file == "_link.json")
+  if (file.empty() || file == "_card.json" || file == "_meta.json")
     return false;
   return !shell || !kProtected.contains(file);
-}
-auto Value(const std::string& result) -> json::Members {
-  const auto envelope = json::Object(result);
-  const auto value = json::Object(json::Get(envelope, "value", "{}"));
-  if (json::Text(envelope, "reply") == "Failure")
-    throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
-  return value;
 }
 }  // namespace
 
@@ -173,9 +165,10 @@ auto Tools::FileOperation(const std::string& conversation,
       throw Failure("invalid_request",
                     "base_rev must be an unsigned decimal integer");
   }
-  const auto policy = Exclusions(project, stop);
-  const auto snapshot =
-      Value(ProjectCall(project, "project_inspect", "{}", stop));
+  const auto inspected = host::CaptureSaveBase(InspectProject(project, stop));
+  const auto policy = ExclusionsFor(project, inspected);
+  policy.Check("tsugumi.json");
+  const auto snapshot = json::Object(policy.Filter(json::Encode(inspected.snapshot)));
   const auto revision = json::Get(snapshot, "rev");
   if (args.contains("base_rev") &&
       json::UInt(json::String(args.at("base_rev"), args.at("base_rev"))) !=
@@ -238,13 +231,14 @@ auto Tools::FileOperation(const std::string& conversation,
         boundary->CheckCurrentSave(
             plan,
             HelperReader(conversation, stop, json::Get(base.snapshot, "rev"),
-                         boundary->authorization()));
+                         boundary->authorization(), &base));
     };
     return OperateProject(request, context, stop).json;
   }
   const auto read_scope =
       HelperReader(conversation, stop, revision,
-                   boundary ? boundary->authorization() : std::nullopt);
+                   boundary ? boundary->authorization() : std::nullopt,
+                   &inspected);
   auto check = [&](const std::string& path, bool writing) {
     policy.Check(path);
     if (!boundary || !boundary->scoped()) return;
@@ -278,9 +272,8 @@ auto Tools::FileOperation(const std::string& conversation,
        json::Array(json::Get(snapshot, "definitions", "[]"))) {
     const auto definition = json::Object(raw);
     const auto dir = "definitions/" + json::Text(definition, "id") + '/';
-    for (const auto& [field, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}}) {
+    for (const auto& [field, file] :
+         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}}) {
       const auto bytes = json::Text(definition, field);
       if (!bytes.empty()) hashes[dir + file] = crypto::sha256_hex(bytes);
     }
@@ -297,8 +290,7 @@ auto Tools::FileOperation(const std::string& conversation,
           "copy a whole Card with card + id: " +
               path);
     const auto card = CardRoot(path);
-    if (!hashes.contains(card + "/_card.json") &&
-        !hashes.contains(card + "/_link.json"))
+    if (!hashes.contains(card + "/_card.json"))
       throw Failure("not_found", "Destination Card does not exist: " + card);
     check(path, true);
     json::Members transfer{{"path", json::Quote(path)},

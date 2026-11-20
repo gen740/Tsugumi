@@ -102,7 +102,7 @@ final class AppModel {
     // TSUGUMI_SUPPORT_DIR: another support folder (VM, store), for checks
     // that must not touch the user's own environment.
     let support = ProcessInfo.processInfo.environment["TSUGUMI_SUPPORT_DIR"].map { URL(fileURLWithPath: $0) }
-    environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle))
+    environments = EnvironmentManager(support: support, image: VMImage.find(bundle: bundle), client: .shared)
     if refreshOnInit { initialRefresh = Task { await refreshHome() } }
   }
 

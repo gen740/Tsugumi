@@ -7,7 +7,7 @@ namespace {
 const HelperScope::Reader kRead = [](const std::string& path) -> std::string {
   if (path == "tsugumi.json")
     return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
-  if (path == "definitions/outer/_link.json")
+  if (path == "definitions/outer/_card.json")
     return R"({"external":"storage"})";
   return "";
 };
@@ -81,7 +81,7 @@ TEST(HelperScope, FailureKeepsNestedCardAndFileNamesWithinReadScope) {
   const auto read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}]}})";
-    if (path == "definitions/outer/_link.json")
+    if (path == "definitions/outer/_card.json")
       return R"({"external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"child"},{"id":"SECRET"}]}})";
@@ -303,8 +303,8 @@ TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
   const HelperScope::Reader read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"},{"id":"alias"}]}})";
-    if (path == "definitions/outer/_link.json" ||
-        path == "definitions/alias/_link.json")
+    if (path == "definitions/outer/_card.json" ||
+        path == "definitions/alias/_card.json")
       return R"({"external":"storage"})";
     return "";
   };
@@ -540,7 +540,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
   const HelperScope::Reader read = [](const std::string& path) -> std::string {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
-    if (path == "definitions/outer/_link.json")
+    if (path == "definitions/outer/_card.json")
       return R"({"external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
       return R"({"boundary":{"inputs":{"visible":{"card":"draft","port":""},"hidden":{"card":"secret","port":"in"}},"outputs":{}},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
@@ -575,7 +575,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
   EXPECT_NE(json::Text(value, "bytes").find("secret"), std::string::npos);
   const HelperScope::Reader changed =
       [&](const std::string& path) -> std::string {
-    return path == "definitions/outer/_link.json"
+    return path == "definitions/outer/_card.json"
                ? R"({"external":"elsewhere"})"
                : read(path);
   };

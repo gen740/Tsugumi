@@ -7,8 +7,6 @@ import * as H from '../shared/gen/tsugumi/host'
 import { ModelSelectionRequestT } from '../shared/gen/tsugumi/host/model-selection-request'
 import { VersionCommentsRequestT } from '../shared/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../shared/gen/tsugumi/host/runtime-action'
-import { TerminalAction } from '../shared/gen/tsugumi/host/terminal-action'
-import { HostTerminalRequestT } from '../shared/gen/tsugumi/host/host-terminal-request'
 import { AttachFoldersRequestT } from '../shared/gen/tsugumi/host/attach-folders-request'
 import { EnvironmentRequestT } from '../shared/gen/tsugumi/host/environment-request'
 import { EnvironmentAction } from '../shared/gen/tsugumi/host/environment-action'
@@ -106,7 +104,6 @@ export function hostMethod(method: string): boolean {
 }
 function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
-    case 'ProjectOperateRequest': return H.ProjectOperateRequest.getRootAsProjectOperateRequest(new fb.ByteBuffer(new Uint8Array(v.bytes))).unpack()
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
     case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
@@ -114,12 +111,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
     case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
-    case 'DisplayGeometryRequest': return new H.DisplayGeometryRequestT()
-    case 'LayoutCompleteRequest': return new H.LayoutCompleteRequestT(v.project_json, v.layout_json, v.definitions_json)
-    case 'LayoutValidateRequest': return new H.LayoutValidateRequestT(v.json, v.removedCards)
-    case 'VersionCanvasRequest': return new H.VersionCanvasRequestT(v.layoutJson,
-      v.cards.map((c: any) => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
-      v.wires.map((w: any) => new H.VersionCanvasWireT(w.from, w.to)))
     case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
     case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
@@ -131,7 +122,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AttachFoldersRequest': return new AttachFoldersRequestT(v.project, v.folders ?? [])
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [])
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
-    case 'HostTerminalRequest': return new HostTerminalRequestT(v.project, enumValue(TerminalAction, v.action), BigInt(v.session ?? 0), v.rows ?? 24, v.cols ?? 80, v.data ?? [])
     case 'ProjectPermissionsRequest': return new H.ProjectPermissionsRequestT()
     case 'ProjectPermissionSetRequest': return new H.ProjectPermissionSetRequestT(v.project_id, v.resource_id, enumValue(Access, v.access), v.allow === true)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
@@ -241,12 +231,6 @@ export function decodeReply(bytes: Uint8Array, host: boolean): { id: bigint; val
     return { id: 0n, value: undefined, event: { type: HostEventPayload[event.valueType], value: view(event.value) } }
   }
   const reply = message.payload as any
-  // Generated unpack() normalizes omitted Host vectors to empty arrays.
-  if (host && reply.valueType === H.ReplyPayload.ProjectOperationResult) {
-    const builder = new fb.Builder()
-    builder.finish(reply.value.pack(builder))
-    return { id: message.requestId, value: { bytes: Array.from(builder.asUint8Array()) } }
-  }
   if (reply.valueType === (host ? H.ReplyPayload.Failure : AgentReplyPayload.Failure)) {
     const failure = reply.value
     return { id: message.requestId, value: undefined,
