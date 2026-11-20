@@ -1,7 +1,8 @@
 // Report connection failures after the host confirms project readiness.
 import assert from 'node:assert/strict'
 import { RPCError } from '../src/wire/rpc'
-import { historyVersionMismatch } from '../shared/historyVersion'
+import { environmentState } from '../src/wire/environment'
+import * as H from '../shared/gen/tsugumi/host'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -10,13 +11,13 @@ page.matchMedia ??= () => ({ matches: false, addEventListener() {} })
 page.EventSource ??= class { addEventListener() {} close() {} }
 const { ProjectSession } = await import('../src/model/session')
 
-// The host says the environment is ready.
-const realFetch = globalThis.fetch
-globalThis.fetch = (async () => new Response(JSON.stringify({ state: 'ready', endpoint: 'ws://127.0.0.1:1/rpc', token: 't', projectId: 'p' }))) as typeof fetch
-
 type Inner = { openConnection(): Promise<void> }
 const open = async (fail: () => Error) => {
   const s = new ProjectSession('/p', 'k', 'p')
+  s.refreshProjectTrust = async () => {}
+  s.environmentHost = { ...s.environmentHost,
+    start: async () => ({ state: 'ready', endpoint: 'ws://127.0.0.1:1/rpc', token: 't', projectId: 'p' }),
+  }
   let tries = 0
   s.openTransport = async () => {
     tries++
@@ -26,7 +27,7 @@ const open = async (fail: () => Error) => {
   return { s, tries }
 }
 
-try {
+{
   // A transport failure is surfaced after the connection closes.
   {
     const { s, tries } = await open(() => new RPCError('disconnected', 'cannot connect to ws://127.0.0.1:1/rpc (1006)'))
@@ -45,20 +46,18 @@ try {
   // A failed history open stays failed until the person retries explicitly.
   {
     const mismatch = { kind: 'incompatible_history', found: '2', expected: '3' }
-    assert.deepEqual(historyVersionMismatch(mismatch), mismatch)
-    const routes: string[] = []
-    globalThis.fetch = (async (url) => {
-      routes.push(String(url))
-      return new Response(JSON.stringify({ state: 'failed', historyVersionMismatch: mismatch }))
-    }) as typeof fetch
     const session = new ProjectSession('/p', 'k', 'p')
+    session.refreshProjectTrust = async () => {}
+    session.environmentHost = { ...session.environmentHost, start: async () =>
+      environmentState(Object.assign(new H.EnvironmentStateT(), {
+        phase: H.EnvironmentPhase.Failed, startupErrorJson: JSON.stringify(mismatch),
+      })),
+    }
+    session.openTransport = async () => { assert.fail('Failed environment cannot open a project transport') }
     await (session as unknown as Inner).openConnection()
     assert.equal(session.environment.state, 'failed')
     assert.equal(session.environment.historyVersionMismatch?.found, '2')
-    assert.ok(routes.every(route => !route.includes('archive')))
     session.dispose()
   }
-} finally {
-  globalThis.fetch = realFetch
 }
 console.log('session connect: passed')

@@ -47,12 +47,26 @@ export async function openHost(): Promise<HostConnection> {
 
 let connection: Promise<HostConnection> | undefined
 
-export async function hostCall<T>(type: H.RequestPayload, value: H.RequestT['value'], expected: H.ReplyPayload): Promise<T> {
+const listeners = new Set<(event: H.EventT) => void>()
+
+export function onHostEvent(fn: (event: H.EventT) => void): () => void {
+  listeners.add(fn)
+  return () => listeners.delete(fn)
+}
+
+function sharedHost(): Promise<HostConnection> {
   if (!connection) {
     const current = openHost()
     connection = current
     const clear = () => { if (connection === current) connection = undefined }
-    void current.then((client) => client.onClose(clear), clear)
+    void current.then((client) => {
+      client.onClose(clear)
+      client.onEvent((event) => { for (const listener of listeners) listener(event) })
+    }, clear)
   }
-  return (await connection).call<T>(type, value, expected)
+  return connection
+}
+
+export async function hostCall<T>(type: H.RequestPayload, value: H.RequestT['value'], expected: H.ReplyPayload): Promise<T> {
+  return (await sharedHost()).call<T>(type, value, expected)
 }

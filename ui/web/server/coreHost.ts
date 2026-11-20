@@ -13,6 +13,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Environments, HostEvent } from './environment'
+import { EnvironmentPhase } from '../shared/gen/tsugumi/host/environment-phase'
 import { ToolCatalog, type ProviderConfig, type AgentEvent, type Conversation } from './agent'
 import { BFBS } from '../shared/bfbs'
 
@@ -216,9 +217,9 @@ export class CoreHost {
 
   async project(folder: string): Promise<string> {
     const state = await this.envs.start(folder)
-    if (state.state !== 'ready') throw new Error(state.state === 'failed' ? state.message : 'Project core is not ready')
-    this.projects.set(folder, state.projectId)
-    return state.projectId
+    if (state.phase !== EnvironmentPhase.Ready || !state.project_id) throw new Error(state.message || 'Project core is not ready')
+    this.projects.set(folder, state.project_id)
+    return state.project_id
   }
 
   projectFolder(resource: string): string | undefined {
