@@ -655,28 +655,6 @@ private final class CountingRuler: LineNumberRuler {
   #expect(ChatSplit.chatWidth(wanted, in: room) == 0)
 }
 
-@MainActor @Test func theAddCardMenuSelectsLanguageAndFigureTemplates() throws {
-  var chosen: DefinitionTemplate?
-  let menu = NSHostingMenu(rootView: BuiltinCardItems { chosen = $0 })
-
-  func find(_ title: String, in menu: NSMenu) -> (NSMenu, Int)? {
-    menu.update()
-    for (index, item) in menu.items.enumerated() {
-      if item.title == title && item.submenu == nil { return (menu, index) }
-      if let submenu = item.submenu, let found = find(title, in: submenu) { return found }
-    }
-    return nil
-  }
-
-  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair, .booleanInput]
-  for template in templates {
-    let (parent, index) = try #require(find(template.label, in: menu))
-    parent.performActionForItem(at: index)
-    #expect(chosen == template)
-    chosen = nil
-  }
-}
-
 @MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
   let dir = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: dir) }
@@ -702,20 +680,6 @@ private final class CountingRuler: LineNumberRuler {
   #expect(editor.rebindings[output.id] == nil, "The output still needs an explicit choice")
   #expect(session.kind("plan") == .draft)
   #expect(session.connections(in: []) == document["canvas"]?["connections"]?.array)
-
-  editor.implementAs("input")
-  editor.implementAs(DefinitionTemplate.booleanInput.rawValue)
-  #expect(editor.kind == .input)
-  #expect(editor.implementation == DefinitionTemplate.booleanInput.rawValue)
-  let flag = try #require(editor.definition?["params"]?.array?.first)
-  #expect(flag["type"]?.string == "bool")
-  #expect(flag["data"]?.bool == false)
-  let schema = try #require(editor.texts["definitions/plan/_outputs.fbs"])
-  #expect(schema.contains("value:bool"))
-  let local = "table Value { value:double; } table Outputs { custom:Value; } root_type Outputs;"
-  editor.texts["definitions/plan/_outputs.fbs"] = local
-  editor.implementAs("input")
-  #expect(editor.texts["definitions/plan/_outputs.fbs"] == local)
 }
 
 

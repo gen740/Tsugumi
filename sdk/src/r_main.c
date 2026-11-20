@@ -79,6 +79,11 @@ static SEXP host_display(SEXP json) {
   return Rf_ScalarLogical(
       tsugumi_native_display(Rf_translateCharUTF8(STRING_ELT(json, 0))) == 0);
 }
+static SEXP host_output(SEXP port, SEXP json) {
+  return Rf_ScalarLogical(
+      tsugumi_native_output(Rf_translateCharUTF8(STRING_ELT(port, 0)),
+                            Rf_translateCharUTF8(STRING_ELT(json, 0))) == 0);
+}
 static SEXP host_cancelled(void) {
   return Rf_ScalarLogical(tsugumi_native_cancelled());
 }
@@ -109,6 +114,7 @@ static const R_CallMethodDef methods[] = {
     {"tsugumi_input_kind", (DL_FUNC)&host_kind, 1},
     {"tsugumi_invocation", (DL_FUNC)&host_invocation, 0},
     {"tsugumi_display", (DL_FUNC)&host_display, 1},
+    {"tsugumi_output", (DL_FUNC)&host_output, 2},
     {"tsugumi_cancelled", (DL_FUNC)&host_cancelled, 0},
     {"tsugumi_remaining", (DL_FUNC)&host_remaining, 0},
     {"tsugumi_log", (DL_FUNC)&host_log, 1},
@@ -172,29 +178,24 @@ static int load(const tsugumi_call* call) {
   return error;
 }
 
-static int invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+static int invoke(const tsugumi_call* call) {
   current_call = call;
-  SEXP arg = PROTECT(Rf_ScalarLogical(outputs == NULL));
+  SEXP arg = PROTECT(Rf_ScalarLogical(call->phase == TSUGUMI_RUN_START));
   SEXP expr = PROTECT(Rf_lang2(Rf_install(".tsugumi_invoke"), arg));
   int error = 0;
   SEXP result = PROTECT(R_tryEval(expr, R_GlobalEnv, &error));
-  if (!error) {
-    if (outputs)
-      error = TYPEOF(result) != STRSXP ||
-              call->effects->outputs_json(call->host, CHAR(STRING_ELT(result, 0)), outputs);
-    else
-      error = Rf_asLogical(result) != TRUE;
-  }
+  if (!error) error = Rf_asLogical(result) != TRUE;
   UNPROTECT(3);
   current_call = NULL;
   return error;
 }
-int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+int tsugumi_card_invoke(const tsugumi_call* call) {
   switch (call->phase) {
     case TSUGUMI_PREPARE: return prepare();
     case TSUGUMI_LOAD: return load(call);
-    case TSUGUMI_RUN_START: return invoke(call, NULL);
-    case TSUGUMI_RUN: return invoke(call, outputs);
+    case TSUGUMI_RUN_START:
+    case TSUGUMI_RUN:
+      return invoke(call);
   }
   return 1;
 }
