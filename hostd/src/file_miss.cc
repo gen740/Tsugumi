@@ -52,8 +52,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
   if (definition.contains("external")) {
     kind = "subgraph";
   } else {
-    const std::set<std::string> builtins{"trigger", "input", "branch", "merge",
-                                         "collect", "draft"};
+    const std::set<std::string> builtins{"trigger", "input", "branch", "fork",
+                                         "merge",   "collect", "draft"};
     if (!builtins.contains(kind)) kind = "code";
   }
   std::string out = id + " is a " + kind + " Card; it has ";
@@ -73,7 +73,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
              "; project_inspect reports resolved port types in "
              "resolution[].inputs/outputs"
              " (root_type and schema_bfbs)";
-      if (kind == "branch" || kind == "merge" || kind == "collect")
+      if (kind == "branch" || kind == "fork" || kind == "merge" ||
+          kind == "collect")
         out += "; their types follow the connected upstream ports";
     }
   }

@@ -118,6 +118,7 @@ final class CardEditorModel {
       definition = .object([("language", .string(value))])
     } else { definition = .object([("template", .string(value))]) }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
+    if value == "fork" { definition?["outputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
   }
 
   /// Source files of the definition (documents excluded), with local changes.
@@ -647,7 +648,7 @@ private struct GeneralCategory: View {
         Section {
           Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
             ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input",
-                     DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "merge", "collect"], id: \.self) { value in
+                     DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "fork", "merge", "collect"], id: \.self) { value in
               Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
             }
           }
@@ -1040,7 +1041,7 @@ private struct PortsCategory: View {
         Text("入力の型は接続元の出力から決まります（_inputs.fbs は生成され、手で書きません）。")
           .font(.caption).foregroundStyle(.secondary)
       }
-      OutputPortsSection(model: model)
+      if model.kind == .fork && model.definition != nil { ForkOutputsSection(model: model) } else { OutputPortsSection(model: model) }
       if model.kind != .subgraph && model.kind != .draft {
         Section("記録と成果物") {
           toggle("recordIO", label: "入出力を記録")
@@ -1101,6 +1102,49 @@ func portNote(_ model: CardEditorModel, _ list: String, _ name: String) -> Bindi
     m[list] = items.isEmpty ? nil : .array(items)
     model.meta = (m.object?.isEmpty ?? true) ? nil : m
   })
+}
+
+/// A Fork's outputs, declared in _card.json (a and b until they are). Each one
+/// receives the value, with its type.
+private struct ForkOutputsSection: View {
+  @Bindable var model: CardEditorModel
+
+  var body: some View {
+    let r = model.session.resolution[model.cardKey]
+    let names = outputs.map { $0["name"]?.string ?? "" }
+    Section {
+      ForEach(names.indices, id: \.self) { i in
+        HStack {
+          TextField("名前", text: Binding(get: { names[i] }, set: { v in edit { $0[i]["name"] = .string(v) } }))
+            .textFieldStyle(.roundedBorder).labelsHidden()
+            .frame(maxWidth: 140)
+            .help("出力ポートの名前")
+          TextField("用途", text: portNote(model, "outputs", names[i]), prompt: Text("用途（何を出すか）"))
+            .textFieldStyle(.roundedBorder).labelsHidden()
+          Text(r?.outputs.first { $0.name == names[i] }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
+          Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
+            .disabled(names.count <= 1)
+            .help("出力を削除")
+        }
+      }
+      Button("出力を追加") {
+        let name = "abcdefghijklmnopqrstuvwxyz".map(String.init).first { !names.contains($0) } ?? "out\(names.count + 1)"
+        edit { $0.append(.object([("name", .string(name))])) }
+      }
+    } header: { Text("出力ポート") } footer: {
+      Text("分配は受け取った値をすべての出力へ送ります。出力の型は value と同じです。").font(.caption).foregroundStyle(.secondary)
+    }
+  }
+
+  private var outputs: [JSONValue] {
+    model.definition?["outputs"]?.array ?? [.object([("name", .string("a"))]), .object([("name", .string("b"))])]
+  }
+
+  private func edit(_ fn: (inout [JSONValue]) -> Void) {
+    var list = outputs
+    fn(&list)
+    model.definition?["outputs"] = .array(list)
+  }
 }
 
 /// Output ports as `_outputs.fbs` defines them (its source is the truth).

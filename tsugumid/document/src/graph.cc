@@ -37,6 +37,8 @@ const char* template_name(Template t) {
       return "input";
     case Template::Branch:
       return "branch";
+    case Template::Fork:
+      return "fork";
     case Template::Merge:
       return "merge";
     case Template::Collect:
@@ -177,11 +179,23 @@ Template template_of(const DefinitionDoc* def) {
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
       {"trigger", Template::Trigger}, {"input", Template::Input},
-      {"branch", Template::Branch},   {"merge", Template::Merge},
-      {"collect", Template::Collect}, {"draft", Template::Draft},
+      {"branch", Template::Branch},   {"fork", Template::Fork},
+      {"merge", Template::Merge},     {"collect", Template::Collect},
+      {"draft", Template::Draft},
   };
   auto it = m.find(*t);
   return it == m.end() ? Template::Code : it->second;
+}
+
+std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
+  const auto* outputs = schema::get(def.card.outputs);
+  if (!outputs) return {"a", "b"};
+  std::vector<std::string> names;
+  for (const auto& o : *outputs) {
+    const auto* name = schema::get(o.name);
+    names.push_back(name ? *name : "");
+  }
+  return names;
 }
 
 const PortType* Node::input(const std::string& n) const {
@@ -572,6 +586,25 @@ class Builder {
           n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
                        {"b", PortKind::FlatBuffer, true, nullptr}};
           break;
+        case Template::Fork: {
+          // Every output always receives the value, unlike a Branch's.
+          n.input_defs = {{"value", false}};
+          std::set<std::string> seen;
+          for (const auto& name : fork_outputs(*def)) {
+            if (!valid_id(name))
+              n.diags.push_back(diag(n.path, "invalid_setting",
+                                     "outputs entries need a valid name"));
+            else if (!seen.insert(name).second)
+              n.diags.push_back(
+                  diag(n.path, "invalid_setting", "duplicate output " + name));
+            else
+              n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
+          }
+          if (n.outputs.empty())
+            n.diags.push_back(
+                diag(n.path, "invalid_setting", "fork needs declared outputs"));
+          break;
+        }
         case Template::Merge:
           n.settings.any_mode = true;
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
@@ -912,7 +945,8 @@ class Builder {
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
-      case Template::Branch: {
+      case Template::Branch:
+      case Template::Fork: {
         const auto* v = n.input("value");
         if (v && v->type)
           for (auto& o : n.outputs)
@@ -1098,7 +1132,7 @@ class Builder {
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
     if (kind != Template::Collect && kind != Template::Branch &&
-        kind != Template::Merge) {
+        kind != Template::Fork && kind != Template::Merge) {
       result.insert(source);
       return;
     }

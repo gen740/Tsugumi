@@ -9,6 +9,9 @@
   "branch": {
     "_card.json": "{\n  \"template\": \"branch\"\n}\n"
   },
+  "fork": {
+    "_card.json": "{\n  \"template\": \"fork\",\n  \"outputs\": [\n    {\n      \"name\": \"a\"\n    },\n    {\n      \"name\": \"b\"\n    }\n  ]\n}\n"
+  },
   "collect": {
     "_card.json": "{\n  \"template\": \"collect\"\n}\n"
   },

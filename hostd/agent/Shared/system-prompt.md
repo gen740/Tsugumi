@@ -20,7 +20,8 @@ the person's decision.
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
   permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs. Input types come from the connected outputs.
+  links use. An output port can feed several inputs; a fork Card ({"template": "fork", "outputs": [{"name": "a"},
+  {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
 - How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
   large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
   (en/report/definitions/generate/src/main.py); demo_list lists each demo's path, name and one line.

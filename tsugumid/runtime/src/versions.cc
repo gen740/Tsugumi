@@ -363,8 +363,8 @@ auto document_fields(const std::optional<std::string>& text)
   return out;
 }
 
-// What a Card is in this version and, for a Merge, how many ports it
-// fans over: the same answers graph.cc gives from the same files.
+// What a Card is in this version and, for a Merge or a Fork, how many ports
+// it fans over: the same answers graph.cc gives from the same files.
 void read_definition(git_repository* r, git_tree* tree,
                      VersionCanvasData::Card& card) {
   const std::string dir = "definitions/" + card.id + "/";
@@ -376,6 +376,8 @@ void read_definition(git_repository* r, git_tree* tree,
   if (kind == Template::Merge) {
     if (const auto* inputs = schema::get(def.card.inputs))
       card.fan = static_cast<uint32_t>(inputs->size());
+  } else if (kind == Template::Fork) {
+    card.fan = static_cast<uint32_t>(fork_outputs(def).size());
   }
 }
 

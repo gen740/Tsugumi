@@ -1639,7 +1639,7 @@ struct BuiltinCardItems: View {
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
   static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
-  static let fixed: [DefinitionTemplate] = [.trigger, .input, .booleanInput, .branch, .merge, .collect]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .booleanInput, .branch, .fork, .merge, .collect]
 
   var body: some View {
     Menu("レポート（HTML・PDF 未対応）") {
