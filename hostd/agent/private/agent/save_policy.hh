@@ -6,16 +6,12 @@
 #include "host/save.hh"
 
 namespace tsugumi::agent {
-using ProjectRead =
-    std::function<json::Members(const std::string&, const json::Members&)>;
-struct SaveRevisionConflict : std::runtime_error {
-  using std::runtime_error::runtime_error;
-};
 struct AgentSave {
   json::Members arguments;
   std::string comments;
 };
-auto PrepareAgentSave(json::Members arguments, const ProjectRead& read,
+auto PrepareAgentSave(json::Members arguments, const host::SaveBase& base,
+                      const host::SaveRead& read,
                       const host::comments::ReserveComment& reserve = {},
                       const host::SourcePatches& patches = {}) -> AgentSave;
 }  // namespace tsugumi::agent

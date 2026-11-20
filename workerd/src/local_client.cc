@@ -3,6 +3,7 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/local.hh"
 
@@ -39,6 +40,8 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       spec.argv = {binary_.string(), "--local", "3", scratch_.string()};
       spec.fds = {{3, pair[1]}};
       spec.stderr_fd = STDERR_FILENO;
+      if (trace::LaunchEnabled())
+        spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
       for (const auto* variable : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
         if (const auto* value = std::getenv(variable))
           spec.env.push_back(std::string(variable) + "=" + value);

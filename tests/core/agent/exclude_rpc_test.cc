@@ -101,7 +101,7 @@ TEST_F(AgentExclusionRPC,
   const std::map<std::string, std::string> files{
       {"tsugumi.json", project},
       {"layout.json", R"({"cards":{"sub":{"x":10,"y":20}}})"},
-      {"definitions/sub/_link.json", R"({"external":"inner"})"},
+      {"definitions/sub/_card.json", R"({"external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"data"}],"connections":[]}})"},
       {"externals/inner/definitions/data/_card.json",
@@ -132,7 +132,7 @@ TEST_F(AgentExclusionRPC,
     EXPECT_EQ(Read(folder / path), bytes) << path;
   }
   EXPECT_EQ(
-      j::Text(j::Object(Read(destination / "definitions/imported/_link.json")),
+      j::Text(j::Object(Read(destination / "definitions/imported/_card.json")),
               "external"),
       "imported");
   EXPECT_EQ(
@@ -251,11 +251,11 @@ TEST_F(AgentExclusionRPC,
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
   const std::string binary("\0\xff\x80\n", 4);
   Write(folder / "tsugumi.json", project);
-  Write(folder / "definitions/sub/_link.json", R"({"external":"inner"})");
+  Write(folder / "definitions/sub/_card.json", R"({"external":"inner"})");
   Write(folder / "definitions/sub/_meta.json",
         R"({"name":"Original","description":"Keep this"})");
   Write(folder / "externals/inner/tsugumi.json", project);
-  Write(folder / "externals/inner/definitions/next/_link.json",
+  Write(folder / "externals/inner/definitions/next/_card.json",
         R"({"external":"deep"})");
   Write(folder / "externals/inner/externals/deep/tsugumi.json", project);
   const auto definition =
@@ -283,7 +283,7 @@ TEST_F(AgentExclusionRPC,
                  "externals/copied/externals/deep/definitions/data/_card.json"),
             Read(folder / definition));
   EXPECT_EQ(
-      j::Text(j::Object(Read(destination / "definitions/copied/_link.json")),
+      j::Text(j::Object(Read(destination / "definitions/copied/_card.json")),
               "external"),
       "copied");
   const auto meta =
@@ -303,7 +303,7 @@ TEST_F(AgentExclusionRPC,
 TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
   const auto folder = directory.path / "attached";
   Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
-  Write(folder / "definitions/sub/_link.json", R"({"external":"inner"})");
+  Write(folder / "definitions/sub/_card.json", R"({"external":"inner"})");
   Write(folder / "externals/inner/tsugumi.json",
         R"({"canvas":{"cards":[],"connections":[]}})");
   Write(folder / "externals/inner/definitions/data/_card.json",

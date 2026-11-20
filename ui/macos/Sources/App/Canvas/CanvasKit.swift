@@ -267,7 +267,7 @@ struct CardNodeData: Equatable {
   var openComments = 0
 
   var isDraft: Bool { kind == .draft }
-  var isRouting: Bool { kind == .fork || kind == .branch || kind == .merge || kind == .collect }
+  var isRouting: Bool { kind == .branch || kind == .merge || kind == .collect }
 
   /// "Invocation #3 · Succeeded" and the like; nil before the first invocation.
   var runText: String? {
@@ -293,14 +293,12 @@ struct CardNodeData: Equatable {
 
 /// Outline of a Card on the canvas.
 enum CardShape {
-  case card, branch, fork, merge, collect, start, toggle
+  case card, branch, merge, collect, start
 
   init(_ kind: CardKind) {
     switch kind {
     case .trigger: self = .start
-    case .switchCard: self = .toggle
     case .branch: self = .branch
-    case .fork: self = .fork
     case .merge: self = .merge
     case .collect: self = .collect
     default: self = .card
@@ -388,28 +386,23 @@ struct CardGeometry {
       // Its ports are at a quarter and three quarters of this.
       if let grid { return CGSize(width: 4 * Self.rowPitch(grid), height: 48) }
       return CGSize(width: 60, height: 48)
-    case .fork: return CGSize(width: fanWidth(outputs.count), height: fanLength(outputs.count))
     case .merge: return CGSize(width: fanWidth(inputs.count), height: fanLength(inputs.count))
     case .collect: return CGSize(width: grid.map { Self.gridLength(atLeast: 64, $0) } ?? 64, height: 44)
     // The start Card: its name and a run button, nothing more.
     case .start:
       guard let grid else { return CGSize(width: 116, height: 34) }
       return CGSize(width: Self.gridLength(near: 116, grid), height: flow == .leftToRight ? 2 * Self.rowPitch(grid) : 34)
-    case .toggle:
-      guard let grid else { return CGSize(width: 112, height: 38) }
-      let height = flow == .leftToRight ? Self.gridLength(atLeast: 38, Self.rowPitch(grid)) : 38
-      return CGSize(width: Self.gridLength(atLeast: 112, grid), height: height)
     case .card: return .zero
     }
   }
 
-  /// The wide edge of a fork or merge: it grows with its ports, so they are never squeezed.
+  /// The wide edge of a Merge: it grows with its ports, so they are never squeezed.
   private func fanWidth(_ count: Int) -> CGFloat {
     guard let grid else { return max(56, CGFloat(count) * 30 + 12) }
     return Self.gridLength(atLeast: max(56, CGFloat(count - 1) * fanPitch(count, grid) + 16), grid)
   }
 
-  /// A fork or merge along the flow: a quarter of its wide edge once that is
+  /// A Merge along the flow: a quarter of its wide edge once that is
   /// past 40, so many ports make a bigger triangle and not a flatter one (its
   /// corners stay at 27 degrees or more). On whole grids, as far as it grows.
   private func fanLength(_ count: Int) -> CGFloat {
@@ -431,7 +424,7 @@ struct CardGeometry {
     grid < portRow ? (portRow / grid).rounded(.up) * grid : grid / (grid / portRow).rounded(.down)
   }
 
-  /// Ports of a fork or merge. Two or four around the middle take twice the
+  /// Ports of a Merge. Two or four around the middle take twice the
   /// pitch to stay on the same lines as a Card's ports across a wire; more
   /// of them would make the mark too wide, and close up onto grid/2 instead.
   private func fanPitch(_ count: Int, _ grid: CGFloat) -> CGFloat {
@@ -478,7 +471,7 @@ struct CardGeometry {
     if shape == .card { return cardWidth / 2 + middle * edgePitch(count, grid) }
     // A triangle's apex is one point: everything on that side is on it.
     let w = routingSize.width
-    return (shape == .fork) == !output ? w / 2 : w / 2 + middle * fanPitch(count, grid)
+    return output ? w / 2 : w / 2 + middle * fanPitch(count, grid)
   }
 
   /// Labels of a routing Card sit outside its outline, in these bands.
@@ -513,7 +506,7 @@ struct CardGeometry {
   var bottomLabels: CGFloat { shape == .card && flow == .topToBottom && showLabels(input: false) ? Self.portRow : 0 }
 
   var size: CGSize {
-    if shape == .start || shape == .toggle { return routingSize }
+    if shape == .start { return routingSize }
     if shape != .card {
       let r = routingSize
       return flow == .topToBottom ? CGSize(width: r.width, height: bandIn + r.height + bandOut)
@@ -532,7 +525,7 @@ struct CardGeometry {
   /// The outline's frame inside the Card's box.
   var outlineRect: CGRect {
     let s = size
-    guard shape != .card, shape != .start, shape != .toggle else { return CGRect(origin: .zero, size: s) }
+    guard shape != .card, shape != .start else { return CGRect(origin: .zero, size: s) }
     if flow == .topToBottom { return CGRect(x: 0, y: bandIn, width: s.width, height: s.height - bandIn - bandOut) }
     return CGRect(x: 30, y: 0, width: s.width - 60, height: s.height)
   }
@@ -544,7 +537,7 @@ struct CardGeometry {
     switch shape {
     case .card:
       return Path(roundedRect: r, cornerRadius: 9 * cornerScale)
-    case .start, .toggle:
+    case .start:
       return Path(roundedRect: r, cornerRadius: r.height / 2)
     case .branch:
       return roundedPolygon([CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
@@ -556,31 +549,24 @@ struct CardGeometry {
       }
       return roundedPolygon([point(0, 0), point(1, 0), point(0.65, 0.57), point(0.65, 1),
                              point(0.35, 1), point(0.35, 0.57)], radius: 3 * cornerScale)
-    case .fork, .merge:
-      // Triangle: apex upstream (fork) or downstream (merge). The apex is listed
+    case .merge:
+      // Triangle: downstream apex. The apex is listed
       // twice so it stays sharp: the ports of that side are on its very tip.
       // Its corners shrink with the zoom, as `r` does.
       let radius = 7 * (flow == .topToBottom ? r.height : r.width) / routingSize.height
-      let pts: [CGPoint]
       if flow == .topToBottom {
-        let apex = CGPoint(x: r.midX, y: shape == .fork ? r.minY : r.maxY)
-        pts = shape == .fork
-          ? [apex, apex, CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex]
-      } else {
-        let apex = CGPoint(x: shape == .fork ? r.minX : r.maxX, y: r.midY)
-        pts = shape == .fork
-          ? [apex, apex, CGPoint(x: r.maxX, y: r.minY), CGPoint(x: r.maxX, y: r.maxY)]
-          : [CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)]
+        let apex = CGPoint(x: r.midX, y: r.maxY)
+        return roundedPolygon([CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY), apex, apex], radius: radius)
       }
-      return roundedPolygon(pts, radius: radius)
+      let apex = CGPoint(x: r.maxX, y: r.midY)
+      return roundedPolygon([CGPoint(x: r.minX, y: r.minY), apex, apex, CGPoint(x: r.minX, y: r.maxY)], radius: radius)
     }
   }
 
   /// Where the icon of a routing Card sits in the outline `r`: on the axis of the
   /// flow, and in a triangle toward the wide edge, where it has room.
   func iconCenter(in r: CGRect) -> CGPoint {
-    let along: CGFloat = shape == .fork ? 0.62 : shape == .merge || shape == .collect ? 0.38 : 0.5
+    let along: CGFloat = shape == .merge || shape == .collect ? 0.38 : 0.5
     return flow == .topToBottom ? CGPoint(x: r.midX, y: r.minY + r.height * along)
                                 : CGPoint(x: r.minX + r.width * along, y: r.midY)
   }
@@ -591,13 +577,12 @@ struct CardGeometry {
   /// range at a fixed y).
   private func edgeSpan(input: Bool) -> (start: CGFloat, width: CGFloat, at: CGFloat) {
     switch shape {
-    case .card, .branch, .start, .toggle:
+    case .card, .branch, .start:
       let s = shape == .card ? CGSize(width: cardWidth, height: collapsed ? Self.header : 0) : routingSize
       return (0, s.width, 0)
-    case .fork, .merge, .collect:
+    case .merge, .collect:
       let w = routingSize.width
-      let narrowSide = (shape == .fork) == input
-      let span = narrowSide ? w * Self.narrow : w
+      let span = input ? w : w * Self.narrow
       return ((w - span) / 2, span, 0)
     }
   }
@@ -623,9 +608,9 @@ struct CardGeometry {
     // Draft attachment points have no labels.
     if draft { return false }
     if shape == .card && collapsed { return false }
-    if shape == .start || shape == .toggle { return false }
+    if shape == .start { return false }
     // Routing marks name their ports on hover; a branch marks only T / F.
-    if shape == .fork || shape == .merge || shape == .collect { return false }
+    if shape == .merge || shape == .collect { return false }
     if shape == .branch { return true }
     return spacing(input: input) >= Self.minLabel
   }
@@ -651,7 +636,7 @@ struct CardGeometry {
     let i = CGFloat(index)
     let n = CGFloat(max(list.count, 1))
     let r = outlineRect
-    if shape == .start || shape == .toggle {
+    if shape == .start {
       // Its one output, in the middle of the downstream edge.
       return flow == .topToBottom ? CGPoint(x: r.midX, y: r.maxY) : CGPoint(x: r.maxX, y: r.midY)
     }
@@ -672,8 +657,7 @@ struct CardGeometry {
     case .leftToRight:
       if shape != .card {
         if let along = alongGrid(index, of: list.count, output: output) { return CGPoint(x: output ? r.maxX : r.minX, y: r.minY + along) }
-        let narrowSide = (shape == .fork) == !output
-        let h = narrowSide ? r.height * Self.narrow : r.height
+        let h = output ? r.height * Self.narrow : r.height
         return CGPoint(x: output ? r.maxX : r.minX, y: r.midY - h / 2 + h * (i + 1) / (n + 1))
       }
       let x = output ? cardWidth : 0
@@ -964,8 +948,6 @@ struct CardNodeView: View {
   var onParamBegin: ((InlineParamEdit, String) -> UInt64)?
   var onParamCommit: ((String, String, InlineParamEdit?, Bool) async -> Bool)?
   var paramsEditable = true
-  @State private var switchEdit = InlineParamEdit()
-  @State private var switchText = ""
   var onPortDrag: ((String, CGPoint) -> Void)?
   var onPortDrop: ((String, CGPoint) -> Void)?
   /// Dragging from an input port (a wire drawn back to an output).
@@ -1000,7 +982,6 @@ struct CardNodeView: View {
       switch g.shape {
       case .card: cardBody(g)
       case .start: startBody(outline: outline)
-      case .toggle: switchBody(outline: outline)
       default: routingBody(g, outline: outline)
       }
       path.stroke(borderColor, style: StrokeStyle(lineWidth: selected ? 2.4 : 1, dash: data.isDraft ? [5 * z, 3 * z] : []))
@@ -1251,31 +1232,7 @@ struct CardNodeView: View {
     .frame(width: outline.width, height: outline.height)
   }
 
-  private func switchBody(outline: CGRect) -> some View {
-    Toggle(isOn: Binding(
-      get: { data.params.first { $0.name == "value" }?.value == "true" },
-      set: { value in
-        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?(switchEdit, "value") ?? 0)
-        switchText = value ? "true" : "false"
-        Task { _ = await onParamCommit?("value", switchText, switchEdit, false) }
-      }
-    )) {
-      Text(verbatim: data.title)
-    }
-    .toggleStyle(CanvasSwitchStyle(size: outline.size, zoom: z))
-    .disabled(!paramsEditable || onParamCommit == nil || switchEdit.revision.applying)
-    .popover(isPresented: Binding(get: { switchEdit.revision.conflictRev != nil || switchEdit.revision.error != nil }, set: { _ in })) {
-      RevisionEditNotice(edit: switchEdit.revision, text: { switchText }, overwrite: {
-        Task { _ = await onParamCommit?("value", switchText, switchEdit, true) }
-      }, reload: {
-        switchEdit.begin(data.params.first { $0.name == "value" }?.value ?? "", rev: onParamBegin?(switchEdit, "value") ?? 0)
-        switchText = ""
-      }).padding().frame(width: 320)
-    }
-    .position(x: outline.midX, y: outline.midY)
-  }
-
-  // MARK: Routing Card (branch, fork, merge)
+  // MARK: Routing Card (branch, merge)
 
   /// Only the kind's icon, coloured by the state; name and details on hover.
   private func routingBody(_ g: CardGeometry, outline: CGRect) -> some View {
@@ -1364,11 +1321,6 @@ struct CardNodeView: View {
       ForEach(data.outputs, id: \.name) { p in
         let pt = g.port(p.name, output: true)
         Circle().fill(Color.accentColor)
-          .overlay {
-            if g.shape == .toggle {
-              Circle().strokeBorder(Color(nsColor: .controlBackgroundColor), lineWidth: s(1))
-            }
-          }
           .frame(width: mark, height: mark)
           .frame(width: hit, height: hit)
           .contentShape(Circle())
@@ -1406,7 +1358,6 @@ struct CardNodeView: View {
       if p.name == "b" { s += String(localized: "（condition が false のとき）") }
     }
     if let t = p.typeName { s += " : \(t)" }
-    if data.kind == .switchCard { s += " { value: bool }" }
     s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
@@ -1416,47 +1367,6 @@ struct CardNodeView: View {
     if selected { return .accentColor }
     if let s = data.state, s != .notStarted { return s.color.opacity(0.7) }
     return .secondary.opacity(data.isDraft ? 0.7 : 0.4)
-  }
-}
-
-/// The Card's entire outline is the control. Its output port remains separate.
-private struct CanvasSwitchStyle: ToggleStyle {
-  let size: CGSize
-  let zoom: CGFloat
-  @Environment(\.accessibilityReduceMotion) private var reduceMotion
-  @Environment(\.isEnabled) private var enabled
-
-  func makeBody(configuration: Configuration) -> some View {
-    let inset = 6 * zoom
-    let knob = 26 * zoom
-    let travel = (size.width - knob) / 2 - inset
-    let on = configuration.isOn
-    Button {
-      configuration.isOn.toggle()
-    } label: {
-      ZStack {
-        Capsule().fill(on ? Color(red: 0.06, green: 0.36, blue: 0.75) : Color(nsColor: .controlBackgroundColor))
-        configuration.label
-          .font(.system(size: max(6, 11 * zoom), weight: .semibold))
-          .lineLimit(1)
-          .foregroundStyle(on ? Color.white : .primary)
-          .frame(width: max(0, size.width - knob - 2 * inset - 4 * zoom))
-          .offset(x: (on ? -1 : 1) * (knob + 4 * zoom) / 2)
-        Circle().fill(.white)
-          .overlay(Circle().strokeBorder(.black.opacity(0.13), lineWidth: 0.75 * zoom))
-          .frame(width: knob, height: knob)
-          .shadow(color: .black.opacity(0.2), radius: 1.5 * zoom, y: zoom)
-          .offset(x: on ? travel : -travel)
-      }
-      .frame(width: size.width, height: size.height)
-      .contentShape(Capsule())
-      .opacity(enabled ? 1 : 0.76)
-      .animation(reduceMotion ? nil : .easeInOut(duration: 0.16), value: on)
-    }
-    .buttonStyle(.plain)
-    .accessibilityRepresentation {
-      Toggle(isOn: configuration.$isOn) { configuration.label }.toggleStyle(.switch)
-    }
   }
 }
 
@@ -1580,7 +1490,7 @@ struct ParamFieldView: View {
     HStack(spacing: 6 * z) {
       Text(param.name).font(.system(size: max(6, 10 * z))).foregroundStyle(.secondary).lineLimit(1)
       if param.type == "bool" {
-        Toggle("", isOn: Binding(get: { param.value == "true" }, set: { value in
+        Toggle(param.name, isOn: Binding(get: { param.value == "true" }, set: { value in
           edit.begin(param.value, rev: revision?(edit) ?? 0)
           text = value ? "true" : "false"
           editing = true
@@ -1798,7 +1708,7 @@ struct WireRouter {
 
   /// How far along the flow a port's wire has to run to get out of a Card's box (0: not in it).
   private func depth(_ o: CGRect, _ p: CGPoint, _ dir: CGFloat) -> CGFloat {
-    // On an edge is not in it: a Card that begins where a fork's box ends is
+    // On an edge is not in it: a Card that begins where another Card's box ends is
     // beside the wire, and the wire would otherwise go on through all of it.
     if p.x <= o.minX || p.x >= o.maxX || p.y <= o.minY || p.y >= o.maxY { return 0 }
     return dir > 0 ? o.maxY - p.y : p.y - o.minY
