@@ -28,10 +28,13 @@ table ProjectPermissionList { projects:[ProjectPermissions]; }
 table ProviderChanged { profile:string (required); }
 
 table Setting { key:string (required); value_json:string (required, trace_secret); }
+// The profile identifies the presentation surface. hostd routes each key to
+// host-wide or surface storage. Revisions are store-bound strings ordered
+// within that store.
 table SettingsGetRequest { profile:string (required); }
 table ExpectedAccount { profile:string (required); client_id:string (required); }
-table SettingsUpdateRequest { profile:string (required); revision:ulong; changes:[Setting]; chatgpt_account:ExpectedAccount; }
-table Settings { revision:ulong; values:[Setting]; }
+table SettingsUpdateRequest { profile:string (required); revision:string (required); changes:[Setting]; chatgpt_account:ExpectedAccount; }
+table Settings { revision:string (required); values:[Setting]; }
 // ephemeral source: env, keychain, or memory (omitted). The host selects env
 // before keychain before memory, then a stored key on Linux only. On macOS
 // persistent API-key writes are refused; clients save through the login Keychain.
@@ -120,7 +123,7 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
 }
 /// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
 table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
-table SettingsChanged { profile:string (required); revision:ulong; }
+table SettingsChanged { revision:string (required); }
 table SignInChanged { profile:string (required); }
 // The durable event and its presentation are read with Agent EventsRequest.
 table ConversationChanged { conversation_id:string; answered_permission:string; }

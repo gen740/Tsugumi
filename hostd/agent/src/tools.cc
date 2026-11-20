@@ -4,7 +4,9 @@
 #include <condition_variable>
 #include <future>
 
+#include "agent/approval.hh"
 #include "agent/context.hh"
+#include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/tool_images.hh"
 #include "agent/turns.hh"
@@ -693,10 +695,78 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
   return json::Encode(envelope);
 }
 
-auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
-                         const std::string& revision,
-                         const std::string& authorization,
-                         const host::SaveBase* inspected)
+auto Tools::ApproveOperation(const std::string& project,
+                             const std::string& conversation,
+                             const ToolCall& call, const std::string& digest,
+                             const json::Members& args, bool wait,
+                             std::stop_token stop,
+                             const std::vector<std::string>& permissions)
+    -> std::vector<std::string> {
+  std::vector<std::string> run_ids;
+  const auto binding =
+      permissions.empty()
+          ? digest
+          : crypto::sha256_hex(digest + "\n" + json::Encode(permissions));
+  auto describe = [&] {
+    if (!permissions.empty())
+      return call.name + "\n" +
+             json::Encode(
+                 json::Members{{"project", json::Quote(project)},
+                               {"arguments_digest", json::Quote(digest)},
+                               {"permissions", json::Encode(permissions)}});
+    return DescribeOperation(
+        call.name, args, project,
+        [&](const std::string& name, const json::Members& query) {
+          const auto reply = json::Object(
+              ProjectCall(project, name, json::Encode(query), stop));
+          if (json::Text(reply, "reply") == "Failure")
+            throw Failure(
+                "approval_unavailable",
+                "Cannot read approval targets: " + json::Encode(reply));
+          return json::Object(json::Get(reply, "value", "{}"));
+        },
+        &run_ids);
+  };
+  std::unique_lock lock(mutex);
+  auto approval = access_service.FindApproval(host::ApprovalKind::Operation,
+                                              conversation, call.id, binding);
+  if (!approval) {
+    lock.unlock();
+    const auto preview = describe();
+    lock.lock();
+    conversations->RememberResource(conversation, project);
+    approval =
+        access_service.RequestApproval(host::ApprovalKind::Operation, project,
+                                       conversation, call.id, binding, preview);
+  }
+  access_service.WaitApproval(lock, approval->id, wait, stop);
+  lock.unlock();
+  const auto current = describe();
+  lock.lock();
+  const bool matches = current == approval->preview;
+  auto consume = db.prepare(
+      "UPDATE permission_requests SET state=? WHERE id=? AND state='allowed'");
+  consume.bind(1, matches ? "consumed" : "stale").bind(2, approval->id).run();
+  if (!db.changes())
+    throw Failure("outcome_unknown", "This approval was already consumed");
+  if (!matches)
+    throw Failure("conflict", "Approval targets changed; propose a new call.");
+  return run_ids;
+}
+
+auto Tools::ToolResources(const std::string& conversation,
+                          const HelperScope* boundary)
+    -> std::vector<std::string> {
+  if (boundary && boundary->authorization())
+    return {boundary->authorization()->project()};
+  return conversations->Resources(conversation);
+}
+
+auto Tools::HelperReader(
+    const std::string& conversation, std::stop_token stop,
+    const std::string& revision,
+    const std::optional<host::TurnAuthorization>& authorization,
+    const host::SaveBase* inspected)
     -> HelperScope::Reader {
   std::string project;
   {
@@ -815,10 +885,8 @@ auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
   return result;
 }
 
-auto Tools::RequireHelperPermission(const std::string& conversation,
-                                    const HelperScope& boundary) -> void {
-  if (!boundary.scoped() &&
-      !host_settings->AllowUnscopedHelpers(providers->Profile(conversation)))
+auto Tools::RequireHelperPermission(const HelperScope& boundary) -> void {
+  if (!boundary.scoped() && !host_settings->AllowUnscopedHelpers())
     throw Failure("permission_denied",
                   "Unscoped helpers are disabled; ask the parent for "
                   "explicit read_cards, write_cards and run_cards");
@@ -892,7 +960,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     for (const auto& message : saved) {
       for (const auto& block : message.content) {
         if (block.type != "tool_result" || block.id != wanted) continue;
-        access_service.AuthorizeContext(conversation, {message});
+        access_service.AuthorizeContext({message});
         const auto offset = json::UInt(json::Get(args, "offset"),
                                        json::UInt(json::Text(args, "offset")));
         if (offset > block.text.size())
@@ -973,11 +1041,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   if (call.name == "delegate") {
     if (c.role == "guide") return {"Guide cannot delegate", true, {}, {}};
-    if (boundary) RequireHelperPermission(conversation, *boundary);
+    if (boundary) RequireHelperPermission(*boundary);
     auto tasks = json::Array(json::Get(args, "tasks", "[]"));
     if (tasks.empty()) return {"Provide at least one task", true, {}, {}};
-    const auto policy =
-        host_settings->AllowUnscopedHelpers(providers->Profile(conversation));
+    const auto policy = host_settings->AllowUnscopedHelpers();
     std::set<std::string> names;
     for (const auto& task : tasks) {
       const auto spec = json::Object(task);
@@ -1039,9 +1106,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
           std::launch::async,
           [this, conversation, id = call.id, i, task = tasks[i], stop,
            authorization =
-               boundary ? boundary->authorization() : std::string{}] {
-            return dependencies.run_helper(conversation, id, i, task, stop,
-                                           authorization);
+               boundary ? boundary->authorization() : std::nullopt] {
+            return Helpers::HelperResult(
+                dependencies.run_helper(conversation, id, i, task, stop,
+                                        authorization),
+                conversation, id, i);
           }));
     }
     std::vector<std::string> results;
@@ -1050,7 +1119,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     return {json::Encode(results),
             false,
             {},
-            conversations->Resources(conversation)};
+            ToolResources(conversation, boundary)};
   }
   const auto* spec = catalog.Find(call.name);
   if (!spec) throw Failure("not_found", "Unknown tool");
@@ -1058,11 +1127,11 @@ auto Tools::ExecuteTool(const std::string& conversation,
     throw Failure("invalid_request",
                   "Select a project before using project tools");
   const auto authorization =
-      boundary ? boundary->authorization() : std::string{};
+      boundary ? boundary->authorization() : std::nullopt;
   access_service.Require(project, conversation, Tsugumi::Service::Access::Read,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
-    RequireHelperPermission(conversation, *boundary);
+    RequireHelperPermission(*boundary);
     std::optional<host::SaveBase> inspected;
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
@@ -1120,7 +1189,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     throw Failure("permission_denied", "The guide cannot change projects");
   if (call.name == "project_shell") {
     const bool english =
-        host_settings->Language(providers->Profile(conversation)) == "en";
+        host_settings->Language() == "en";
     const std::string reason =
         english
             ? "Execute shell commands as the project user in its environment. "
@@ -1134,7 +1203,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
               "添付フォルダと構造文書は読み取り専用です。コマンド: ";
     access_service.Require(project, conversation,
                            Tsugumi::Service::Access::Shell, wait, stop,
-                           reason + json::Text(args, "command"), {});
+                           reason + json::Text(args, "command"));
   }
   std::string folder_resource;
   if (call.name == "attached_folder_read" ||
@@ -1153,7 +1222,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     }
     access_service.Require(folder_resource, conversation,
                            Tsugumi::Service::Access::Read, wait, stop,
-                           "Read the user-selected attached folder", {});
+                           "Read the user-selected attached folder");
   }
   host::StripOwnedFields(call.name, spec->mutating, args);
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
@@ -1177,15 +1246,16 @@ auto Tools::ExecuteTool(const std::string& conversation,
                       "The operation ID was reused for different arguments");
       if (old.text(1) == "completed")
         return ToolOutput(old.text(2), old.i64(3) != 0,
-                          conversations->Resources(conversation));
+                          ToolResources(conversation, boundary));
       op_id = old.text(4);
       interrupted = true;
       if (!spec->approval_required) {
         auto approval = db.prepare(
-            "SELECT a.state,o.request,o.preview FROM operation_approvals o "
-            "JOIN access_requests a ON a.id=o.request "
-            "WHERE o.conversation=? AND o.call=?");
-        approval.bind(1, conversation).bind(2, call.id);
+            "SELECT state,id,reason FROM permission_requests "
+            "WHERE conversation=? AND call=? AND access=?");
+        approval.bind(1, conversation)
+            .bind(2, call.id)
+            .bind(3, static_cast<int>(host::ApprovalKind::Operation));
         if (approval.step()) {
           const auto state = approval.text(0);
           if (state == "pending" && !wait)
@@ -1215,14 +1285,13 @@ auto Tools::ExecuteTool(const std::string& conversation,
     }
   }
   if (spec->approval_required && !interrupted) {
-    const auto run_ids = dependencies.approve_operation(
-        project, conversation, call, digest, args, wait, stop, {});
+    const auto run_ids = ApproveOperation(project, conversation, call, digest,
+                                          args, wait, stop, {});
     if (call.name == "run_history_delete") {
       args["run_ids"] = json::Encode(run_ids);
       args["restrict_to_run_ids"] = "true";
     }
-  }
-  if (spec->approval_required && !interrupted) {
+
     std::lock_guard lock(mutex);
     auto q = conversations->ConversationDatabase(conversation)
                  .prepare("INSERT INTO receipts VALUES(?,?,?,'sent','',0,?,?)");
@@ -1305,7 +1374,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (stop.stop_requested()) throw Cancelled();
     if (call.name == "version_graph")
       args["language"] = json::Quote(
-          host_settings->Language(providers->Profile(conversation)));
+          host_settings->Language());
     if (call.name == "project_copy" || call.name == "project_shell") {
       result = FileOperation(conversation, project, call.name, args, op_id,
                              boundary, stop, file_resources);
@@ -1348,7 +1417,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   if (error) {
     auto failure = json::Object(json::Get(envelope, "value", "{}"));
     if (json::Text(failure, "kind") == "approval_required") {
-      if (!authorization.empty())
+      if (authorization)
         throw Failure(
             "permission_denied",
             "A scoped Skill cannot widen Card permissions at runtime");
@@ -1364,8 +1433,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       if (permissions.empty())
         throw Failure("approval_unavailable",
                       "The project reported no permissions to approve");
-      dependencies.approve_operation(project, conversation, call, digest, args,
-                                     wait, stop, permissions);
+      ApproveOperation(project, conversation, call, digest, args, wait, stop,
+                       permissions);
       args["approved_permissions"] = json::Encode(permissions);
       if (call.name == "project_copy" &&
           (json::Text(args, "source") == "demo" ||
@@ -1435,8 +1504,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   {
     std::lock_guard lock(mutex);
-    conversations->RememberResource(
-        conversation, authorization.empty() ? project : authorization);
+    conversations->RememberResource(conversation, project);
     if (!folder_resource.empty()) {
       conversations->RememberResource(conversation, folder_resource);
     }
@@ -1457,8 +1525,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                                          {"name", json::Quote(call.name)},
                                          {"text", json::Quote(result)},
                                          {"ok", error ? "false" : "true"}}));
-  std::vector<std::string> resources{authorization.empty() ? project
-                                                           : authorization};
+  std::vector<std::string> resources{project};
   if (!folder_resource.empty()) resources.push_back(folder_resource);
   resources.insert(resources.end(), file_resources.begin(),
                    file_resources.end());
@@ -1485,8 +1552,9 @@ auto Tools::Hooks(const std::string& id, bool helper,
   hooks.allocate_call = [this, id, boundary] {
     return AllocateCall(id, boundary ? boundary->identity : "");
   };
-  hooks.authorize_context = [this, id](const auto& messages) {
-    access_service.AuthorizeContext(id, messages);
+  hooks.authorize_context = [this, boundary](const auto& messages) {
+    access_service.AuthorizeContext(
+        messages, boundary ? boundary->authorization() : std::nullopt);
   };
   hooks.checkpoint = [this, id](const auto& messages) {
     std::lock_guard lock(mutex);
@@ -1549,7 +1617,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
                                                        : ModelRole::Main;
     const auto call = catalog.ResolveCall(requested_call, role);
     if (call.name == "delegate") {
-      conversations->AuthorizeHistory(id);
+      if (!boundary || !boundary->authorization())
+        conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
           "SELECT result,state,task FROM helpers WHERE conversation=? "
           "AND parent_call=? ORDER BY task");
@@ -1559,15 +1628,17 @@ auto Tools::Hooks(const std::string& id, bool helper,
       while (helpers.step()) {
         incomplete |= helpers.text(1) != "completed";
         if (!helpers.text(0).empty())
-          results.push_back(dependencies.helper_result(
-              helpers.text(0), id, call.id, helpers.i64(2)));
+          results.push_back(Helpers::HelperResult(helpers.text(0), id, call.id,
+                                                  helpers.i64(2)));
       }
       const auto tasks =
           json::Array(json::Get(json::Object(call.arguments), "tasks", "[]"));
       incomplete |= results.size() != tasks.size();
       if (!incomplete)
-        return ToolResult{
-            json::Encode(results), false, {}, conversations->Resources(id)};
+        return ToolResult{json::Encode(results),
+                          false,
+                          {},
+                          ToolResources(id, boundary.get())};
       return ToolResult{
           "Helpers were interrupted. Their saved messages and operation "
           "receipts remain in the conversation; inspect them before "
@@ -1575,7 +1646,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
               json::Encode(results),
           true,
           {},
-          conversations->Resources(id)};
+          ToolResources(id, boundary.get())};
     }
     auto q = conversations->ConversationDatabase(id).prepare(
         "SELECT state,result,error,project,operation FROM "
@@ -1583,11 +1654,8 @@ auto Tools::Hooks(const std::string& id, bool helper,
     q.bind(1, id).bind(2, call.id);
     if (!q.step()) return std::nullopt;
     if (q.text(0) == "completed")
-      return ToolOutput(
-          q.text(1), q.i64(2) != 0,
-          boundary && !boundary->authorization().empty()
-              ? std::vector<std::string>{boundary->authorization()}
-              : conversations->Resources(id));
+      return ToolOutput(q.text(1), q.i64(2) != 0,
+                        ToolResources(id, boundary.get()));
     return ToolResult{
         "Operation outcome is unknown. Query operation_get with op_id=" +
             q.text(4) + " before continuing.",
@@ -1601,7 +1669,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
         [this, id, boundary, reconcile](
             const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
-        RequireHelperPermission(id, *boundary);
+        RequireHelperPermission(*boundary);
         const auto call = catalog.ResolveCall(
             requested_call,
             boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
@@ -1680,11 +1748,13 @@ auto Tools::Handle(const RequestIn& request, bool human,
           receipts.bind(1, conversation).bind(2, digest);
           while (receipts.step()) {
             auto approval = db.prepare(
-                "SELECT 1 FROM operation_approvals o JOIN access_requests a ON "
-                "a.id=o.request WHERE o.conversation=? AND o.call=? AND "
-                "a.state "
+                "SELECT 1 FROM permission_requests WHERE conversation=? AND "
+                "call=? "
+                "AND access=? AND state "
                 "IN ('pending','allowed')");
-            approval.bind(1, conversation).bind(2, receipts.text(0));
+            approval.bind(1, conversation)
+                .bind(2, receipts.text(0))
+                .bind(3, static_cast<int>(host::ApprovalKind::Operation));
             if (approval.step()) {
               result.id = receipts.text(0);
               break;

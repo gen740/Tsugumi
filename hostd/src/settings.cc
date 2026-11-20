@@ -8,7 +8,6 @@
 #include <openssl/param_build.h>
 #include <poll.h>
 #include <sys/socket.h>
-#include <sys/stat.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -20,7 +19,9 @@
 #include <vector>
 
 #include "agent/wire.hh"
+#include "host/credentials.hh"
 #include "host/models.hh"
+#include "host/skills.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/sqlite.hh"
 
@@ -282,15 +283,10 @@ auto IsSetting(const j::Members& defaults, const std::string& key) -> bool {
 }  // namespace
 struct Settings::State {
   std::filesystem::path directory;
-  sql::Db db;
+  Credentials& credentials;
+  sql::Db& db;
+  std::recursive_mutex& mutex;
   std::unique_ptr<SecretStore> secrets;
-  Import import;
-  Token token;
-  Forget forget;
-  std::recursive_mutex mutex;
-  // Import and sign-out serialize without holding the settings lock while
-  // entering the credential service (whose callbacks take the Agent lock).
-  std::mutex account_operations;
   std::map<std::string, std::string> ephemeral;
   struct Attempt {
     std::string id, profile, state = "pending", message, welcome, issuer,
@@ -305,29 +301,17 @@ struct Settings::State {
   KeyStorage storage;
   Models models;
   std::function<void(std::string)> publish;
-  State(const std::filesystem::path& dir, Import i, Token t, Forget f,
+  State(const std::filesystem::path& dir, Credentials& credential_store,
         std::unique_ptr<SecretStore> store, KeyStorage key_storage,
         Models model_list, std::function<void(std::string)> event_sink)
       : directory(dir),
-        db((dir / "host-settings.sqlite").string()),
+        credentials(credential_store),
+        db(credentials.db),
+        mutex(credentials.gate.mutex),
         secrets(std::move(store)),
-        import(std::move(i)),
-        token(std::move(t)),
-        forget(std::move(f)),
         storage(key_storage),
         models(std::move(model_list)),
         publish(std::move(event_sink)) {
-    ::chmod((dir / "host-settings.sqlite").c_str(), 0600);
-    db.exec(
-        "PRAGMA journal_mode=WAL; CREATE TABLE IF NOT EXISTS settings(profile "
-        "TEXT PRIMARY KEY,revision INTEGER NOT NULL,json TEXT NOT NULL); "
-        "CREATE TABLE IF NOT EXISTS providers(profile TEXT,id TEXT,json TEXT "
-        "NOT NULL,PRIMARY KEY(profile,id)); CREATE TABLE IF NOT EXISTS "
-        "accounts(profile TEXT,id TEXT,json TEXT NOT NULL,PRIMARY "
-        "KEY(profile,id));");
-    db.exec(
-        "CREATE TABLE IF NOT EXISTS oauth_hosts(profile TEXT PRIMARY KEY,id "
-        "TEXT NOT NULL)");
     if (!secrets) secrets = std::make_unique<SqlSecrets>(db);
   }
   ~State() {
@@ -335,23 +319,32 @@ struct Settings::State {
     for (auto& [_, a] : attempts)
       if (a->worker.joinable()) a->worker.join();
   }
-  auto Values(const std::string& profile) -> std::pair<uint64_t, j::Members> {
-    auto values = Defaults();
-    uint64_t revision = 0;
-    auto q = db.prepare("SELECT revision,json FROM settings WHERE profile=?");
-    q.bind(1, profile);
-    if (q.step()) {
-      revision = q.u64(0);
-      const auto defaults = Defaults();
-      for (const auto& [k, v] : j::Object(q.text(1)))
-        if (IsSetting(defaults, k)) values[k] = v;
-    }
-    return {revision, values};
+  auto Revision() -> std::string {
+    auto query = db.prepare(
+        "SELECT store || ':' || printf('%019lld',revision) FROM "
+        "settings_revision");
+    query.step();
+    return query.text(0);
   }
-  auto Get(const std::string& profile) -> H::SettingsT {
-    const auto [rev, values] = Values(profile);
+  auto Values(const std::string& surface = {}) -> j::Members {
+    auto values = Defaults();
+    auto query = db.prepare(
+        "SELECT key,value FROM setting_values WHERE scope IN ('',?)");
+    query.bind(1, surface);
+    const auto defaults = Defaults();
+    while (query.step())
+      if (IsSetting(defaults, query.text(0)))
+        values[query.text(0)] = query.text(1);
+    return values;
+  }
+  auto Get(const std::string& surface) -> H::SettingsT {
+    auto values = Values(surface);
+    std::vector<std::string> roots;
+    for (const auto& path : host::TrustedFolders(db))
+      roots.push_back(j::Quote(path));
+    values["agent.trustedFolders"] = j::Encode(roots);
     H::SettingsT out;
-    out.revision = rev;
+    out.revision = Revision();
     for (const auto& [k, v] : values) {
       auto item = std::make_unique<H::SettingT>();
       item->key = k;
@@ -697,6 +690,7 @@ struct Settings::State {
             (" " + scope + " ").find(" chatgpt.tokens.use.direct ") !=
             std::string::npos;
         j::Members credential = t;
+        credential["scope"] = j::Quote(scope);
         credential["token_endpoint"] =
             j::Quote(a->issuer + "/api/accounts/oauth/token");
         credential["revocation_endpoint"] =
@@ -706,17 +700,12 @@ struct Settings::State {
         // lifetime.
         credential["expires_at_ms"] = std::to_string(
             Now() + j::UInt(j::Get(t, "expires_in"), 3600) * 1000);
-        std::lock_guard operation(account_operations);
-        {
-          std::lock_guard guard(mutex);
-          if (stop.stop_requested())
-            throw std::runtime_error("Sign-in cancelled");
-          // Cancellation can win until credential commit begins. Afterwards
-          // the completed registration is what status and sign-out observe.
-          a->state = "committing";
-        }
-        import(a->client, credential);
+        std::lock_guard operation(credentials.credential_mutex);
         std::lock_guard guard(mutex);
+        if (stop.stop_requested())
+          throw std::runtime_error("Sign-in cancelled");
+        sql::Transaction tx(db);
+        credentials.Save(a->client, credential);
         bool welcomed = false;
         try {
           welcomed =
@@ -732,6 +721,7 @@ struct Settings::State {
                      {"plan_enabled", plan ? "true" : "false"},
                      {"welcomed", welcomed ? "true" : "false"}});
         Choose(a->profile, a->client);
+        tx.commit();
         a->state = "complete";
         a->plan_enabled = plan;
         if (plan && !welcomed) a->welcome = a->client;
@@ -755,13 +745,13 @@ struct Settings::State {
     return out;
   }
 };
-Settings::Settings(const std::filesystem::path& d, Import i, Token t, Forget f,
+Settings::Settings(const std::filesystem::path& d, Credentials& credentials,
                    std::unique_ptr<SecretStore> store, KeyStorage storage,
                    Models models,
                    std::function<void(std::string)> publish)
     : state_(std::make_unique<State>(
-          d, std::move(i), std::move(t), std::move(f), std::move(store),
-          storage, std::move(models), std::move(publish))) {}
+          d, credentials, std::move(store), storage, std::move(models),
+          std::move(publish))) {}
 Settings::~Settings() = default;
 auto Settings::Handles(H::RequestPayload type) -> bool {
   switch (type) {
@@ -797,8 +787,9 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       case H::RequestPayload::SettingsUpdateRequest: {
         const auto& p = *request.value_as_SettingsUpdateRequest();
         sql::Transaction tx(s.db);
-        auto [revision, values] = s.Values(p.profile()->str());
-        if (revision != p.revision()) {
+        const auto surface = p.profile()->str();
+        if (surface.empty()) throw std::runtime_error("Missing settings surface");
+        if (s.Revision() != p.revision()->string_view()) {
           S::FailureT f;
           f.code = "conflict";
           f.message = "Settings changed; read the latest revision";
@@ -819,6 +810,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           }
         }
         const auto defaults = Defaults();
+        auto values = s.Values(surface);
         if (p.changes())
           for (const auto* item : *p.changes()) {
             const auto key = item->key()->str();
@@ -834,37 +826,13 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 j::String(value) != "en")
               throw std::runtime_error("Unknown language");
             if (key == "agent.trustedFolders") {
-              if (p.profile()->str() != "desktop")
-                throw std::runtime_error(
-                    "Trusted folders belong to the host profile");
-              const auto previous = j::Array(j::Get(values, key, "[]"));
               std::vector<std::string> folders;
-              for (const auto& raw : j::Array(value)) {
-                const auto path = std::filesystem::path(j::String(raw));
-                const auto registered = std::any_of(
-                    previous.begin(), previous.end(), [&](const auto& old) {
-                      return j::String(old) == path.string();
-                    });
-                if (!path.is_absolute() ||
-                    (!registered && !std::filesystem::is_directory(path)))
-                  throw std::runtime_error(
-                      "Choose an existing absolute folder");
-                // Preserve existing canonical registrations even if a folder
-                // is missing or replaced by a link while another entry is
-                // edited.
-                const auto canonical =
-                    registered ? path.string()
-                               : std::filesystem::canonical(path).string();
-                const auto encoded = j::Quote(canonical);
-                if (std::find(folders.begin(), folders.end(), encoded) ==
-                    folders.end())
-                  folders.push_back(encoded);
-              }
-              value = j::Encode(folders);
+              for (const auto& raw : j::Array(value))
+                folders.push_back(j::String(raw));
+              host::SetTrustedFolders(s.db, folders);
+              continue;
             }
             if (key.starts_with("vm.")) {
-              if (p.profile()->str() != "desktop")
-                throw std::runtime_error("The VM belongs to the host profile");
               const auto limits = VMResourceLimits();
               const auto [low, high] =
                   key == "vm.cpus"        ? std::pair{1u, limits.cpus}
@@ -909,15 +877,17 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
                 key.find("credential") != key.npos ||
                 key.find("key") != key.npos)
               throw std::runtime_error("Secrets are not settings");
+            auto write = s.db.prepare(
+                "INSERT OR REPLACE INTO setting_values VALUES(?,?,?)");
+            write.bind(1, key == "agent.skillFolders" ? surface : "")
+                .bind(2, key)
+                .bind(3, value)
+                .run();
             values[key] = value;
           }
-        auto q = s.db.prepare("INSERT OR REPLACE INTO settings VALUES(?,?,?)");
-        q.bind(1, p.profile()->str())
-            .bind(2, revision + 1)
-            .bind(3, j::Encode(values))
-            .run();
+        s.db.exec("UPDATE settings_revision SET revision=revision+1");
         tx.commit();
-        return agent::wire::HostReply(id, s.Get(p.profile()->str()));
+        return agent::wire::HostReply(id, s.Get(surface));
       }
       case H::RequestPayload::ProviderSetRequest: {
         const auto& p = *request.value_as_ProviderSetRequest();
@@ -962,7 +932,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
         if (p.remove()) {
           s.secrets->Erase(key);
           auto q =
-              s.db.prepare("DELETE FROM providers WHERE profile=? AND id=?");
+              s.db.prepare("DELETE FROM provider_connections WHERE profile=? AND id=?");
           q.bind(1, profile).bind(2, provider).run();
         } else if (p.provider()) {
           if (s.storage == KeyStorage::Keychain &&
@@ -974,7 +944,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           const auto endpoint = j::Text(value, "baseURL");
           if (endpoint.empty() && j::Text(value, "model").empty()) {
             auto old = s.db.prepare(
-                "SELECT json FROM providers WHERE profile=? AND id=?");
+                "SELECT json FROM provider_connections WHERE profile=? AND id=?");
             old.bind(1, profile).bind(2, provider);
             value = old.step() ? j::Object(old.text(0)) : j::Members{};
           }
@@ -986,7 +956,7 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           value.erase("apiKey");
           value.erase("credential_id");
           auto q =
-              s.db.prepare("INSERT OR REPLACE INTO providers VALUES(?,?,?)");
+              s.db.prepare("INSERT OR REPLACE INTO provider_connections VALUES(?,?,?)");
           q.bind(1, profile).bind(2, provider).bind(3, j::Encode(value)).run();
         }
         const auto after = s.ProviderStatus(profile, provider);
@@ -1034,13 +1004,17 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
             for (auto& [_, pending] : s.attempts)
               if (pending->profile == profile) s.Cancel(*pending);
             lock.unlock();
-            std::lock_guard operation(s.account_operations);
-            revoked = s.forget(client);
+            std::lock_guard operation(s.credentials.credential_mutex);
+            revoked = s.credentials.Revoke(client);
             lock.lock();
             // A registration commit may have completed while we waited.
             value = s.Account(profile, client);
+            sql::Transaction tx(s.db);
+            auto remove = s.db.prepare("DELETE FROM credentials WHERE id=?");
+            remove.bind(1, client).run();
             value["signed_in"] = "false";
             s.SaveAccount(profile, client, value);
+            tx.commit();
           } else
             throw std::runtime_error("Unknown sign-in action");
         }
@@ -1072,25 +1046,17 @@ auto Settings::Redact(std::string text) -> std::string {
         i += 10;
       }
   };
-  auto rows = s.db.prepare("SELECT profile,id FROM providers");
+  auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
   for (const auto& [_, secret] : s.ephemeral) remove(secret);
   return text;
 }
-auto Settings::AllowUnscopedHelpers(const std::string& profile) -> bool {
+auto Settings::AllowUnscopedHelpers() -> bool {
   std::lock_guard lock(state_->mutex);
-  const auto values = state_->Values(profile).second;
+  const auto values = state_->Values();
   return j::Bool(j::Get(values, "agent.allowUnscopedHelpers"));
 }
 
-auto Settings::TrustedFolders() -> std::vector<std::string> {
-  std::lock_guard lock(state_->mutex);
-  const auto [revision, values] = state_->Values("desktop");
-  std::vector<std::string> folders;
-  for (const auto& raw : j::Array(j::Get(values, "agent.trustedFolders", "[]")))
-    folders.push_back(j::String(raw));
-  return folders;
-}
 namespace {
 auto MemoryGiB() -> uint32_t {
   const auto pages = ::sysconf(_SC_PHYS_PAGES);
@@ -1119,7 +1085,7 @@ auto VMResourceLimits() -> H::VMResourcesT {
 }
 auto Settings::VMResources() -> H::VMResourcesT {
   std::lock_guard lock(state_->mutex);
-  const auto values = state_->Values("desktop").second;
+  const auto values = state_->Values();
   auto out = VMDefaultResources();
   const auto pick = [&](const char* key, uint32_t& field) {
     if (const auto n = j::UInt(j::Get(values, key, "0")))
@@ -1130,14 +1096,14 @@ auto Settings::VMResources() -> H::VMResourcesT {
   pick("vm.storeGiB", out.store_gib);
   return out;
 }
-auto Settings::Language(const std::string& profile) -> std::string {
+auto Settings::Language() -> std::string {
   std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(profile).second, "app.language", "ja");
+  return j::Text(state_->Values(), "app.language", "ja");
 }
 
-auto Settings::VersionNoteMode(const std::string& profile) -> std::string {
+auto Settings::VersionNoteMode() -> std::string {
   std::lock_guard lock(state_->mutex);
-  return j::Text(state_->Values(profile).second, "versions.noteMode",
+  return j::Text(state_->Values(), "versions.noteMode",
                  "mechanical");
 }
 
@@ -1148,7 +1114,7 @@ auto Settings::ModelSelection(const std::string& profile,
     throw std::runtime_error("Unknown model purpose");
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
-  const auto values = s.Values(profile).second;
+  const auto values = s.Values();
   S::ProviderSelectionT out;
   out.profile = profile;
   out.purpose = purpose;
@@ -1230,7 +1196,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   std::lock_guard lock(s.mutex);
   auto profile = j::Text(selection, "profile");
   if (profile.empty()) profile = "desktop";
-  const auto values = s.Values(profile).second;
+  const auto values = s.Values();
   auto id = j::Text(selection, "provider_id");
   if (id.empty()) id = j::Text(values, "agent.provider", "anthropic");
   if (id != "anthropic" && id != "openai" && id != "chatgpt" && id != "fixture")
@@ -1259,7 +1225,7 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
         std::to_string(j::UInt(j::Get(values, "agent.fixturePort"), 8765));
     c.model = "fixture";
   }
-  auto q = s.db.prepare("SELECT json FROM providers WHERE profile=? AND id=?");
+  auto q = s.db.prepare("SELECT json FROM provider_connections WHERE profile=? AND id=?");
   q.bind(1, profile).bind(2, id);
   if (q.step()) {
     const auto v = j::Object(q.text(0));
@@ -1321,28 +1287,10 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
     c.base_url = j::Text(s.Account(account_profile, client), "resource",
                          "https://api.openai.com/v1");
     c.access_token = [state = state_.get(), client](std::string_view stale) {
-      try {
-        return state->token(client, stale);
-      } catch (const agent::ProviderError& error) {
-        if (error.sign_in_required || error.code == "chatgpt_plan_disabled") {
-          // Credentials have already been persisted and its refresh lock has
-          // been released. Account presentation belongs to the settings DB.
-          std::lock_guard lock(state->mutex);
-          auto q =
-              state->db.prepare("SELECT profile,json FROM accounts WHERE id=?");
-          q.bind(1, client);
-          std::vector<std::pair<std::string, j::Members>> accounts;
-          while (q.step()) {
-            auto account = j::Object(q.text(1));
-            account[error.sign_in_required ? "signed_in" : "plan_enabled"] =
-                "false";
-            accounts.emplace_back(q.text(0), std::move(account));
-          }
-          for (const auto& [profile, account] : accounts)
-            state->SaveAccount(profile, client, account);
-        }
-        throw;
-      }
+      return state->credentials.AccessToken(
+          client, stale, [state](const std::string& profile) {
+            state->Publish<H::ProviderChangedT>(profile);
+          });
     };
   }
   const auto window = host::Models::ContextWindowTokens(

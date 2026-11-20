@@ -584,7 +584,7 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `AccessRequest` | `project_id: string` (required), `conversation_id: string`, `access: Tsugumi.Service.Access`, `reason: string` |
 | `AccessResolveRequest` | `request_id: string` (required), `allow: bool`, `selected: [Tsugumi.Service.Access]` |
 | `AccessRevokeRequest` | `grant_id: string` (required) |
-| `AccessListRequest` | `conversation_id: string` |
+| `AccessListRequest` | `conversation_id: string`, `request_id: string`, `project_id: string`, `pending_only: bool`, `cursor: long` |
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
@@ -609,7 +609,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRuntimeRequest` | `action: RuntimeAction`, `project_id: string`, `project: string`, `command: string` |
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
-| `SettingsUpdateRequest` | `profile: string` (required), `revision: ulong`, `changes: [Setting]`, `chatgpt_account: ExpectedAccount` |
+| `SettingsUpdateRequest` | `profile: string` (required), `revision: string` (required), `changes: [Setting]`, `chatgpt_account: ExpectedAccount` |
 | `ProviderSetRequest` | `profile: string` (required), `id: string` (required), `provider: ProviderInput`, `remove: bool`, `ephemeral: bool`, `source: string` |
 | `ProviderStatusRequest` | `profile: string` (required), `id: string` (required), `key_profile: string` |
 | `SignInBeginRequest` | `profile: string` (required), `client_id: string`, `consent: bool`, `issuer: string`, `resource: string`, `replace_pending: bool` |

@@ -101,8 +101,8 @@ TEST_F(ConversationStoreFixture,
   const auto local = directory.path / "project/.tsugumi/agent.sqlite";
   const auto host_db = directory.path / "state/host.sqlite";
   for (const auto* table :
-       {"conversations", "turns", "receipts", "events", "model_bindings",
-        "usage", "conversation_resources"}) {
+       {"conversations", "conversation_turns", "receipts", "events",
+        "model_bindings", "usage", "conversation_resources"}) {
     const auto key =
         std::string(table) == "conversations" ? "id" : "conversation";
     const auto sql = "SELECT count(*) FROM " + std::string(table) + " WHERE " +
@@ -110,12 +110,11 @@ TEST_F(ConversationStoreFixture,
     EXPECT_GT(Scalar(local, sql), 0) << table;
     EXPECT_EQ(Scalar(host_db, sql), 0) << table;
   }
-  EXPECT_EQ(
-      Scalar(local,
-             "SELECT count(*) FROM sqlite_master WHERE name IN "
-             "('credentials','providers','grants','access_requests','operation_"
-             "approvals','projects','folders','skill_catalogs')"),
-      0);
+  EXPECT_EQ(Scalar(local,
+                   "SELECT count(*) FROM sqlite_master WHERE name IN "
+                   "('credentials','providers','workspace_grants','permission_"
+                   "requests','projects','folders','skill_catalogs')"),
+            0);
   EXPECT_EQ(Scalar(host_db,
                    "SELECT count(*) FROM conversations WHERE "
                    "id='home-record' AND project=''"),
@@ -132,13 +131,15 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(Get(conversation, true).Code(), "not_found");
   EXPECT_EQ(Search("PROJECT_RECORD").View(), "[]");
   EXPECT_EQ(List(project_id).View(), "[]");
-  for (const auto* table :
-       {"conversations", "turns", "receipts", "events", "model_bindings",
-        "usage", "archives", "conversation_resources", "helpers",
-        "pending_sends"})
+  for (const auto* table : {"conversations", "conversation_turns", "receipts",
+                            "events", "model_bindings", "usage", "archives",
+                            "conversation_resources", "helpers"})
     EXPECT_EQ(Scalar(local, "SELECT count(*) FROM " + std::string(table)), 0)
         << table;
-  EXPECT_EQ(Scalar(host_db, "SELECT count(*) FROM access_prompt_items"), 0);
+  EXPECT_EQ(Scalar(host_db,
+                   "SELECT count(*) FROM permission_requests WHERE "
+                   "conversation='project-record'"),
+            0);
   EXPECT_NE(Get(home).View().find("HOME_RECORD"), std::string::npos);
   EXPECT_EQ(Conversation("project-record"), conversation);
   EXPECT_TRUE(Inspect(conversation).Code().empty());
@@ -394,13 +395,16 @@ TEST_F(ConversationStoreFixture,
   StopAgent();
   project.Stop();
   const auto local = directory.path / "project/.tsugumi/agent.sqlite";
-  EXPECT_EQ(Scalar(local,
-                   "SELECT count(*) FROM pending_sends WHERE "
-                   "conversation='pending-portable'"),
-            1);
-  EXPECT_EQ(Scalar(directory.path / "state/host.sqlite",
-                   "SELECT count(*) FROM pending_sends"),
-            0);
+  EXPECT_EQ(
+      Scalar(
+          local,
+          "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL AND "
+          "conversation='pending-portable'"),
+      1);
+  EXPECT_EQ(
+      Scalar(directory.path / "state/host.sqlite",
+             "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL"),
+      0);
   EXPECT_EQ(Read(local).find("FIXTURE_API_KEY"), std::string::npos);
   const auto copy = directory.path / "pending-copy";
   std::filesystem::copy(directory.path / "project", copy,
@@ -413,9 +417,10 @@ TEST_F(ConversationStoreFixture,
   EXPECT_EQ(JsonString(snapshot, "/interrupted_operation/kind"), "preparing");
   EXPECT_NE(snapshot.find("[redacted]"), std::string::npos);
   EXPECT_TRUE(model.Requests().empty());
-  EXPECT_EQ(Scalar(copy / ".tsugumi/agent.sqlite",
-                   "SELECT count(*) FROM pending_sends"),
-            1);
+  EXPECT_EQ(
+      Scalar(copy / ".tsugumi/agent.sqlite",
+             "SELECT count(*) FROM conversation_turns WHERE frame IS NOT NULL"),
+      1);
 }
 
 TEST_F(ConversationStoreFixture, AConversationCannotBeReboundToAnotherProject) {

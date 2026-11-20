@@ -167,7 +167,7 @@ type VMKey = 'vmCpus' | 'vmMemoryGiB' | 'vmStoreGiB'
 /** The shared VM's size, kept by hostd and used from the VM's next start. */
 function VMResourceSettings() {
   const [runtime, setRuntime] = useState<VMRuntime>()
-  const [settings, setSettings] = useState<Record<VMKey, number> & { revision: Record<string, number> }>()
+  const [settings, setSettings] = useState<Record<VMKey, number> & { revision: string }>()
   const [error, setError] = useState<string>()
   const [saving, setSaving] = useState(false)
   const load = async () => {
@@ -441,9 +441,11 @@ function reloadChats() {
 }
 
 function SkillSettings() {
-  type SkillFolderSettings = { skillFolders: SkillFolder[]; revision: Record<string, number> }
-  const [data, setData] = useState<SkillFolderSettings>()
-  const folders = data?.skillFolders
+  type Snapshot = { skillFolders: SkillFolder[]; revision: string }
+  const [snapshot, setSnapshot] = useState<Snapshot>()
+  const folders = snapshot?.skillFolders
+  const [saveError, setSaveError] = useState<string>()
+  const [saving, setSaving] = useState(false)
   const [exists, setExists] = useState<Record<string, boolean>>({})
   const [query, setQuery] = useState('')
   const [state, setState] = useState<'idle' | 'loading' | 'loaded' | { failed: string }>('idle')
@@ -451,12 +453,12 @@ function SkillSettings() {
   const [picking, setPicking] = useState(false)
 
   /** Reads the folders on the host; a slow or missing folder never blocks the window. */
-  const reload = async (updated?: SkillFolderSettings) => {
+  const reload = async (updated?: Snapshot) => {
     setState('loading')
     try {
-      const snapshot = updated ?? await api<SkillFolderSettings>('/api/settings')
-      const f = snapshot.skillFolders
-      setData(snapshot)
+      const current = updated ?? await api<Snapshot>('/api/settings')
+      setSnapshot(current)
+      const f = current.skillFolders
       const ex = await api<Record<string, boolean>>('/api/settings/skillFolderStatus', { paths: f.map((x) => x.path) })
       setExists(ex)
       setFound(await api<Skill[]>('/api/skills', {}))
@@ -469,12 +471,20 @@ function SkillSettings() {
   }
   useEffect(() => {
     void reload()
+    return onServerEvent(e => { if (e.type === 'reconnected') void reload() })
   }, [])
   const save = async (next: SkillFolder[]) => {
-    if (!data) return
+    if (!snapshot || saving) return
+    setSaving(true)
+    setSaveError(undefined)
     try {
-      await reload(await api<SkillFolderSettings>('/api/settings', { skillFolders: next, revision: data.revision }))
-    } catch (error) { setState({ failed: errorText(error) }) }
+      await reload(await api<Snapshot>('/api/settings', { skillFolders: next, revision: snapshot.revision }))
+    } catch (e) {
+      setSaveError(errorText(e))
+      await reload()
+    } finally {
+      setSaving(false)
+    }
   }
   const q = query.toLowerCase()
   const shown = found.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
@@ -486,15 +496,15 @@ function SkillSettings() {
         {folders && !folders.length && <div className="secondary">{L('フォルダはありません')}</div>}
         {folders?.map((f) => (
           <div key={f.path} className="skill-folder-row">
-            <input type="checkbox" checked={f.enabled} aria-label={L('{0} を使う', f.path)} onChange={(e) => void save(folders.map((x) => (x.path === f.path ? { ...x, enabled: e.target.checked } : x)))} />
+            <input type="checkbox" disabled={saving} checked={f.enabled} aria-label={L('{0} を使う', f.path)} onChange={(e) => void save(folders.map((x) => (x.path === f.path ? { ...x, enabled: e.target.checked } : x)))} />
             <Icon name={exists[f.path] === false ? 'folder.badge.questionmark' : 'folder'} style={{ color: exists[f.path] === false ? 'var(--orange)' : 'var(--secondary)' }} />
             <span className="ellipsis flex1" title={f.path}>{f.path}</span>
-            <Button kind="borderless" iconOnly icon="minus.circle" help={L('一覧から外す')} onClick={() => void save(folders.filter((x) => x.path !== f.path))} />
+            <Button kind="borderless" iconOnly icon="minus.circle" disabled={saving} help={L('一覧から外す')} onClick={() => void save(folders.filter((x) => x.path !== f.path))} />
           </div>
         ))}
         <div className="row gap8">
-          <Button onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
-          <Button disabled={state === 'loading'} onClick={() => void reload()}>{L('再読込')}</Button>
+          <Button disabled={!snapshot || saving} onClick={() => setPicking(true)}>{L('フォルダを追加…')}</Button>
+          <Button disabled={saving || state === 'loading'} onClick={() => { setSaveError(undefined); void reload() }}>{L('再読込')}</Button>
         </div>
       </div>
       <div className="row gap8 center">
@@ -502,6 +512,7 @@ function SkillSettings() {
         {state === 'loading' && <span className="spinner" style={{ width: 14, height: 14 }} />}
       </div>
       <div className="list bordered flex1">
+        {saveError && <div className="list-row error">{saveError}</div>}
         {typeof state === 'object' && <div className="list-row" style={{ color: 'var(--red)' }}><Icon name="exclamationmark.triangle.fill" />{state.failed}</div>}
         {state === 'loading' && !found.length ? <div className="list-row secondary">{L('読み込み中…')}</div>
           : !shown.length ? <div className="list-row secondary">{found.length ? L('一致する Skill はありません') : L('Skill はまだありません')}</div>

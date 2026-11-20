@@ -114,7 +114,7 @@ globalThis.fetch = async (url, init) => {
   calls.push({ path, body })
   if (path === '/api/settings') {
     if (body?.versionNoteMode) mode = body.versionNoteMode
-    return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
+    return new Response(JSON.stringify({ versionNoteMode: mode, revision: 'host:0' }))
   }
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })

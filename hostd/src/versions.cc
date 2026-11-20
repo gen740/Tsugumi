@@ -66,7 +66,7 @@ auto Versions::Note(const RequestIn& request, bool human,
       {{"commit", json::Quote(p->commit()->str())}});
   const auto factual = host::ChangeText(*note->changes, english);
   Tsugumi::Service::TextResultT result;
-  if (host_settings->VersionNoteMode(profile) == "mechanical") {
+  if (host_settings->VersionNoteMode() == "mechanical") {
     result.text = factual;
     return wire::HostReply(request.request_id, std::move(result));
   }
@@ -108,7 +108,7 @@ auto Versions::Note(const RequestIn& request, bool human,
       ContentBlock block;
       block.text = json::Encode(body);
       const auto raw = turns->Summarize(
-          "", config,
+          config,
           std::string(
               "Summarize this version's changes briefly and concretely in ") +
               (english ? "English" : "Japanese") +

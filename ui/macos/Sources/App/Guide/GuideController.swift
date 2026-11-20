@@ -465,9 +465,9 @@ final class GuideController {
     if let agent { return agent }
     let a = Agent(id: "guide", transport: GuideTransport(), provider: AgentSettings.current(), role: .guide)
     Task {
-      await a.setApprover { asked, groups in
+      await a.setApprover { asked, groups, callId in
         guard let session = await GuideController.shared.readSession else { return [] }
-        return await AppModel.shared.chat(for: session).approve(asked, groups: groups)
+        return await AppModel.shared.chat(for: session).approve(asked, groups: groups, callId: callId)
       }
     }
     agent = a

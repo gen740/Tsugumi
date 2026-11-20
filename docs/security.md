@@ -189,9 +189,9 @@ Authenticated clients page through recorded history using an encoded position. C
   - The Web host reads and writes through `/usr/bin/security`. An item saved by the Web UI trusts `security`, so any program running as this user can read it without confirmation with `security find-generic-password`. When using both UIs, registering the key from the app's settings is recommended.
   - The data protection keychain (`kSecUseDataProtectionKeychain`) is not used. It requires an entitlement granted by a provisioning profile, which an ad hoc signed build cannot have (`errSecMissingEntitlement`).
 - Platform adapters hand keys to `tsugumi-hostd` through the human-authenticated `ProviderSetRequest` with `ephemeral: true`. Keychain-backed keys live only in memory in hostd, are never written to its database, and are never returned by an RPC. Model selections contain an opaque memory-profile reference. On macOS, if that profile is missing after a restart, it cannot fall back to a disk-stored key; the platform must provision it again.
-- Outside macOS, hostd stores it in `host-core/host-settings.sqlite` (0600) within its owner-only state directory (0700). Both Mac clients report a Keychain save error. The host rejects persistent API-key writes on macOS, and selects only the memory key provisioned by that client; a missing or refused Keychain read makes the provider unavailable. On Linux, a provisioned environment key takes precedence over the host-stored key. Provider status and credential resolution use the same host policy. Environment keys take precedence for their Web process, use the same memory-only provisioning, and do not overwrite a saved Keychain item or stored provider key.
+- Outside macOS, hostd stores it in `host-core/host.sqlite` (0600) within its owner-only state directory (0700). Both Mac clients report a Keychain save error. The host rejects persistent API-key writes on macOS, and selects only the memory key provisioned by that client; a missing or refused Keychain read makes the provider unavailable. On Linux, a provisioned environment key takes precedence over the host-stored key. Provider status and credential resolution use the same host policy. Environment keys take precedence for their Web process, use the same memory-only provisioning, and do not overwrite a saved Keychain item or stored provider key.
 - When the native model menu refetches a model list, it uses `Keychain.loadWithoutAsking`: a key that would require confirmation is not read, and the saved catalog remains visible. Chat requests and the settings screen's explicit fetch may ask. The Web host caches both successful and refused Keychain reads for the process lifetime, rereading only when the item's attributes change or the user saves or deletes it. Provider availability is decided by the host after provisioning; a Keychain item whose secret cannot be read is unavailable. Reading a stored catalog requires no key; an empty refresh retains it.
-- Settings and provider interpretation belong to hostd. Revisioned updates reject stale edits, and settings contain no credentials. The Mac app and Mac Web host share desktop settings; ChatGPT accounts have separate app and Web profiles. The settings screen registers or deletes a key and cannot display a saved key.
+- Settings and provider interpretation belong to hostd. Revisioned updates reject stale edits, and settings contain no credentials. The app and Web clients on the same host share host-wide settings and a single revision. Skill search folders and ChatGPT accounts are stored by surface. The settings screen registers or deletes a key and cannot display a saved key.
 - libcurl sends model credentials in the HTTPS header (`x-api-key` / `Authorization: Bearer`) without a cookie engine or disk response cache. Keys and OAuth tokens are excluded from settings, conversation replies, events and logs, and are never passed to the project's `tsugumid`, Linux VM or Card workers. Provider errors are scrubbed before crossing that boundary.
 - Skill discovery returns metadata only. After a separate Read grant, hostd reads selected Skill files beneath the registered project or attached-folder root, including files outside the project's document index. Symlinks must resolve within that root and the subsequent bounded read refuses symlink replacement.
 
@@ -202,7 +202,7 @@ Instead of an API key, the Agent can use the user's ChatGPT (Plus, Pro) plan. Th
 - Sign-in happens in the default browser. Tsugumi waits for `/auth/callback` on a free port of `127.0.0.1` and closes it as soon as the result arrives. Each time it uses a new `state`, `nonce` and PKCE (S256), and a response whose `state` does not match is discarded. No client secret and no developer API key are used (the first time, Tsugumi registers itself with `dynamic_agent_client` and uses the issued `client_id` for later sign-ins).
 - The ID token's RS256 signature is checked against OpenAI's JWKS (`https://auth.openai.com/.well-known/jwks.json`), and its issuer, audience (the issued `client_id`), expiry and `nonce` are checked. Signing back in to a previous account, it also checks that it is the same account (`sub`). If permission to use the plan (`chatgpt.tokens.use.direct`) was not granted, the Agent does not use the plan and suggests granting it again or using an API key.
 - The host ID (`ext_agent_host_id`) is a `urn:uuid:` (UUIDv4) made before the first sign-in, containing nothing that identifies the user.
-- hostd stores host IDs, registrations and account metadata in `host-settings.sqlite` and OAuth credentials in `host.sqlite`, both 0600 under the same owner-only state directory. The Mac app's account profile and each Web host's account profile are separate: signing in in the app does not sign in the Web host.
+- hostd stores host IDs, registrations, account metadata and OAuth credentials in `host.sqlite` (0600) under the same owner-only state directory. The Mac app's account profile and each Web host's account profile are separate: signing in in the app does not sign in the Web host.
 - `SignInBeginRequest` returns an attempt ID and a browser URL. An explicit restart from macOS can replace a pending attempt. Both clients read `SignInStatusRequest` when the Host reports a change and follow their sign-in by attempt ID. The result identifies the registration and plan permission from that attempt. The current accounts are returned alongside it. When first-start setup selects the provider, the Host verifies that the expected registration is still active and usable. `SignInActionRequest` cancels, selects an account, records the welcome message or signs out. PKCE, state, nonce, code exchange, JWKS verification and the loopback callback all run in hostd. Responses contain account status and exclude tokens and the PKCE verifier. Sign in with a browser on the server's machine so it can reach `127.0.0.1`. The Web sign-in controls require a loopback hostname. Other pages explain where to open sign-in and still offer API keys.
 - The Agent service serializes refresh and revocation, persists rotated tokens, and refreshes within five minutes of expiry or after a refused stale token. A refresh failure is reported without deleting credentials. Signing out attempts revocation and deletes the local credential even if the remote revocation cannot be confirmed; the UI reports that outcome. Registration metadata and the host ID remain.
 - Access tokens go only in the model request header to the Responses API and model-list endpoint; refresh tokens go only to the issuer's token/revocation endpoints. These operations are absent from model tools and conversation events.
@@ -255,7 +255,7 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
 - **Shell commands need a separate Shell grant.** `project_shell` needs Read, Write, Run and Shell access; its approval says it can change Card sources. The host stages accepted files and selects readable/writable Cards using the helper's exact sets. Core provides mechanisms only: a read-only root, explicit writable subtrees, protected files and folder mounts. No caller identity chooses core restrictions. Only the runtime closure of launcher tools is exposed from the Nix store: build caches contain actual Card source copies, so exposing the whole store would bypass a helper's read set. Host requests credential hiding, direct local RPC blocking and a view that hides the real project and `.tsugumi/`. Card paths remain project-relative; Read-granted folders are read-only at `attached/<SHA-256(folder path)[0:16]>/`, and conversation `scratch/` is writable. Root `tsugumi.json`, `layout.json`, each Card's `_card.json`, `_meta.json`, `_inputs.fbs`, `_outputs.fbs`, `_params.fbs` are protected; the authored output schema also uses `project_save`. Unavailable isolation fails closed. After a zero exit status without cancellation/timeout, host validates paths/scope again and applies byte references through normal `ProjectSaveRequest`, with `origin=agent`, permission comparison, revision/hash checks and external-file conflict detection. Failed commands or saves leave real sources untouched. Commands have a 10-second default and 30-second maximum deadline; durable receipts prevent re-execution. Returned streams are capped at 256 KiB each (head and tail), with total sizes and `full_output_path` for complete `.stdout`/`.stderr` files under `.tsugumi/agent-files/`. Scratch, output and command views remain available to the person through their file tools. The person's terminal uses its own path.
 - **The Agent can write a Card's comments too.** The host prepares Agent saves and records comment authorship (`hostd/src/comments.cc`). The project core carries `_meta.json` as opaque bytes. Saves that follow comments go through the same permission comparison as above.
 - **Project tools use two explicit lists.** hostd reads `requests` (ordinary project tools) and `approvalRequests` (per-call approval tools) in `hostd/agent/Shared/agent.json`. Adding an operation to either catalog class takes one line. Chat and the Claude Code plugin use the same catalog, and model/plugin calls outside both lists are rejected. Every project entry is checked against the RPC schema at startup and in tests; host tools such as `attached_folder_read` are declared separately in `hostTools`, so a stale or duplicate name fails loudly. Internal hostd project RPC is encoded independently of this catalog and is never offered as a tool. View state, connection requests and version-note writes stay outside both lists. When a person selects Agent version notes, hostd reads and stores the generated note through internal RPC; models cannot request a note write.
-- **Each approval authorizes one act with those arguments.** Deleting run history, clearing the project's build cache, deleting selected run scratch, checking out a version, starting versioning, and keeping a named version need a fresh approval each time. Read, Write, Run, Shell and even an existing `CardPermissions` grant cannot authorize them. The Agent can inspect usage and propose a cleanup with its targets and sizes; it cannot decide to delete run data on its own.
+- **Each approval authorizes one act with those arguments.** Deleting run history, clearing the project's build cache, deleting selected run scratch, checking out a version, starting versioning, and keeping a named version need a fresh approval each time. These operations require their own approval in addition to any workspace grants. The Agent can inspect usage and propose a cleanup with its targets and sizes; it cannot decide to delete run data on its own.
   - The Agent service reads the targets through authenticated project RPC: all history pages for the selected finished runs and their count; `ProjectCacheUsageRequest` for the current cache's build bytes and the selected scratch folders' bytes; the inspected project revision and version graph for the working project and selected full commit. Missing measurements are shown explicitly as unknown, never as zero. The history description states that pending remote results are retained. Cache deletion removes build roots and unused builds, not run history or scratch.
   - The existing access request/resolve flow carries the core-generated description, proposed arguments and call ID. These requests use the `CardPermissions` access category but produce no standing grant. The person approves or declines in the Tsugumi page, also for Claude Code. There is no “do not ask again” option for these acts.
   - Approval is durably bound to the conversation, project, call ID and normalized arguments. Before consuming it, the Agent service rereads the targets and rejects changes. History deletion also passes the exact approved run IDs, so a run finishing after that check is excluded. A consumed approval cannot authorize another call; completed calls replay their receipt, and interrupted calls query their operation receipt instead of blindly executing again. The request, answer and execution outcome remain in the conversation. Declining returns an explicit result to the model and changes nothing.
@@ -276,6 +276,8 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - What this boundary protects is **operations through Tsugumi's tools**. Claude Code also has a shell and file operations, so with the same permissions as the user it can rewrite the project's files (`_card.json` and the like) directly and read what the user can read (such as the URL in the log `server.log` of a server Claude Code started). Stopping that is up to Claude Code's own permission settings, not Tsugumi.
 - `attached_folder_read` is a host tool: a registered folder needs its own Read grant, rechecked before releasing results. Components are opened without following links. `pread` reads only the requested page: default 256 KiB, maximum 1 MiB, total size included even for files of hundreds of MB. Directory listings remain limited to 5000 entries. Project file reads have the same page defaults/caps; the UI can fetch all pages. Results suggest `project_copy` or `project_shell`. The host copy tool takes an explicit list of files from attached folders, confirmed Card sources or the caller's private scratch. It checks source read and destination write scope, refuses links/special files/traversal, rechecks grants before save, and uses normal validation, permission-widening approval, conflicts, revisions and Agent origin. Only paths, sizes and SHA-256 hashes reach the model. Copy and shell saves stream file bytes through private durable staging files and the normal journal; file contents do not cross the RPC frame or require a whole-file buffer. There is no separate file-count or total-byte limit on a copy. Document JSON remains limited to 8 MiB and the source manifest to 10,000 entries; there is no separate per-source byte limit. Larger data should stay attached and be read by a Card with approved `hostFolders` at `/host/<name>`. The assumption is the owner's reported real workflow of attaching large CSV/JSON: direct copying prevents the read/retype round trip, paging prevents full-file read results, and output caps prevent printing commands from flooding context. They do not limit the original files or the person's access. Removing an attachment remains separate from revoking Read; changing VM shares restarts the environment.
 
+Approving a scoped Skill grants the helper access to the approved Card scope for that turn. The transcript belongs to the project, so a later ordinary turn needs the project Read grant to use it. Skill trust for individual projects and registered folder trees is stored in one host registry and bound to directory identity.
+
 Helpers have separate scratch and command/output directories, including unscoped helpers. A parent can hand a file to a helper by saving it in a Card included in that helper's `read_cards`; scratch is not shared. Cancelling before the durable save intent discards staged changes; once the journal intent is durable, recovery completes the atomic save.
 
 ## 8. Where data is kept, and how to delete it
@@ -286,12 +288,70 @@ Helpers have separate scratch and command/output directories, including unscoped
 | Primary run history | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete…" under Run History |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete" under Build Cache and "Clean shared store" |
 | Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
-| API keys | macOS login Keychain; hostd's owner-only `host-settings.sqlite` outside macOS; Web environment keys in memory | Settings > API registers or deletes a key |
-| Project Agent conversations, turns, archives, events, tool receipts, helper records, usage and pending messages | The project's `.tsugumi/agent.sqlite` (0600, excluded from git) | Delete a conversation through Agent RPC (including the conversation list); to remove all conversations, stop hostd and remove this file |
+| API keys | macOS login Keychain; hostd's owner-only `host.sqlite` outside macOS; Web environment keys in memory | Settings > API registers or deletes a key |
+| Project Agent conversations, turns, archives, events, tool receipts, helper records, usage and in-progress turns | The project's `.tsugumi/agent.sqlite` (0600, excluded from git) | Delete a conversation through Agent RPC (including the conversation list); to remove all conversations, stop hostd and remove this file |
 | Home Agent conversations; host project/folder registrations, access requests and grants, provider selections and provisioned OAuth credentials | `host-core/host.sqlite` (0600) under the Mac support folder (`Tsugumi/` or `Tsugumi-dev/`), or under the Web data folder on Linux (`TSUGUMI_HOST_STATE` overrides it) | Delete Home conversations through Agent RPC; revoke access or delete credentials in settings; removing the host state does not delete project conversations |
-| ChatGPT account metadata and Skill folder settings | hostd's `host-settings.sqlite`, scoped separately for the app and each Web host | Settings > API / Skills |
+| ChatGPT account metadata and Skill folder settings | hostd's `host.sqlite`, scoped separately for the app and each Web host | Settings > API / Skills |
 
-The host service keeps `host.sqlite`, `host-settings.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
+The host service keeps `host.sqlite` and `execution.sqlite` under `host-core`, with the process lock and log in `host.lock` and `host.log`. There is no separate folder-format marker. Project conversation and run-history databases remain outside this folder.
+
+When updating from a version that used `host-settings.sqlite`, use the old
+version to sign out of every ChatGPT account on the Mac and in each Web host
+profile. If the app cannot confirm server-side revocation, revoke the old
+authorization through the account before relying on local deletion. Stop hostd
+and remove `host-settings.sqlite` and its `-wal`, `-shm` and `-journal`
+sidecars from `host-core/` if present. These files can contain old Linux API
+keys. After updating, sign in and enter the keys again in Settings.
+
+If you already updated without signing out, the old OAuth credentials may
+still be in `host.sqlite`. Keep hostd stopped, open the existing
+`host-core/host.sqlite` with `sqlite3` and run the following with the updated
+schema. It removes credentials that have no account in any profile and keeps
+credentials linked to current accounts. Revoke the old authorization through
+the account as well, since SQL only removes the local copy.
+
+```sql
+PRAGMA secure_delete = ON;
+DELETE FROM credentials
+WHERE NOT EXISTS (SELECT 1 FROM accounts WHERE accounts.id = credentials.id);
+VACUUM;
+PRAGMA wal_checkpoint(TRUNCATE);
+```
+
+When updating from a version with the old permission and turn stores, stop
+hostd and open the existing `host-core/host.sqlite` with `sqlite3`. Run:
+
+```sql
+PRAGMA secure_delete = ON;
+BEGIN IMMEDIATE;
+DROP TABLE IF EXISTS access_prompt_items;
+DROP TABLE IF EXISTS operation_approvals;
+DROP TABLE IF EXISTS access_requests;
+DROP TABLE IF EXISTS pending_sends;
+DROP TABLE IF EXISTS turns;
+COMMIT;
+VACUUM;
+PRAGMA wal_checkpoint(TRUNCATE);
+```
+
+For each existing project `.tsugumi/agent.sqlite`, with hostd still stopped,
+run:
+
+```sql
+PRAGMA secure_delete = ON;
+BEGIN IMMEDIATE;
+DROP TABLE IF EXISTS pending_sends;
+DROP TABLE IF EXISTS turns;
+COMMIT;
+VACUUM;
+```
+
+These tables may contain old approval previews and unprocessed message
+inputs. Pending turns from the old format must be sent again. This procedure
+keeps conversations, their visible messages and events, and all Card run
+history. If a project is offline during the update, apply the project
+procedure when its folder is available. Copies and backups are managed
+separately.
 
 `tsugumi-hostd` writes project conversations through the registered host folder, including on macOS where `tsugumid` runs in the VM. It does not open this database through the VM's shared-folder mount. SQLite uses a rollback journal with full synchronization; a lifetime exclusive lock on `.tsugumi/agent.lock` refuses a second Agent host with `busy` until the first stops. Shared filesystems must honor file locks; independent filesystem copies have separate locks, and file synchronization does not coordinate writers. Registering a second existing folder with the same project identity on one host is refused. Stop the Agent service before copying the project so the database is complete.
 

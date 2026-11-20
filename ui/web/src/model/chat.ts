@@ -129,9 +129,9 @@ export class ChatController extends Observable {
   /** A save of the Agent waiting for the user: what it would give Cards. */
   /** A save waiting for the user's approval: of this chat's Agent, or of
    *  Claude Code (from) working on the project through the plugin. */
-  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }[] = []
+  private permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] = []
   get permission() { return this.permissions?.[0] }
-  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }) {
+  private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }) {
     this.permissions ??= []
     if (!this.permissions.some(x => x.id === p.id)) {
       this.permissionRevision++
@@ -252,7 +252,7 @@ export class ChatController extends Observable {
   private async reread(id: string) {
     const request = ++this.reload, turn = this.turn, revision = this.contentRevision, permissions = this.permissionRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }[] }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string; call_id?: string }[] }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
       // An observation received after the read began is newer than this snapshot.
@@ -648,7 +648,13 @@ export class ChatController extends Observable {
         this.items = e.rows.map(presentedItem)
         break
       case 'permission':
-        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from })
+        // A turn approval's event names only the request; its description is
+        // read with the conversation's pending requests.
+        if (!e.asked?.length) {
+          if (this.currentId) void this.reread(this.currentId)
+          break
+        }
+        this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from, call_id: e.call_id })
         break
       case 'permissionAnswered':
         this.removePermission(e.id)

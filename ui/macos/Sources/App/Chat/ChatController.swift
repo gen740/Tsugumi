@@ -185,10 +185,14 @@ final class ChatController {
     Task {
       do {
         if let resource {
-          let access = try await CoreHostClient.shared.call("AccessListRequest")
-          for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
-            if let id = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": id]) }
-          }
+          var cursor: Int64 = 0
+          repeat {
+            let access = try await CoreHostClient.shared.call("AccessListRequest", ["project_id": session.projectId ?? "", "cursor": cursor])
+            for grant in access["grants"] as? [[String: Any]] ?? [] where grant["project_id"] as? String == resource && grant["active"] as? Bool == true {
+              if let grantID = grant["id"] as? String { _ = try await CoreHostClient.shared.call("AccessRevokeRequest", ["grant_id": grantID]) }
+            }
+            cursor = access["next_cursor"] as? Int64 ?? 0
+          } while cursor != 0
         }
         try await session.environments.removeFolders(session.identity, [path])
       } catch { status = String(describing: error) }
@@ -301,7 +305,7 @@ final class ChatController {
     self.agent = agent
     modelBinding = nil
     // (the approver holds the controller weakly: the Agent outlives no window)
-    let approver: Agent.Approver = { [weak self] asked, groups in await self?.approve(asked, groups: groups) ?? [] }
+    let approver: Agent.Approver = { [weak self] asked, groups, callId in await self?.approve(asked, groups: groups, callId: callId) ?? [] }
     opening = Task {
       await previous?.detach()
       await agent.setApprover(approver)
@@ -550,6 +554,7 @@ final class ChatController {
     let id = UUID()
     let raw: [String]
     var groups: [Tsugumi_Agent_AccessGroupT] = []
+    var callId: String?
     var requests: [CardPermission.Request] { raw.compactMap(CardPermission.Request.init) }
     var operation: String? {
       guard let request = raw.first(where: { $0.hasPrefix("project_access operation_approval\n") }),
@@ -589,9 +594,9 @@ final class ChatController {
 
   /// The widenings the user approves: those of the kinds allowed without
   /// asking at once, the others when asked (nothing when declined).
-  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = []) async -> Set<String> {
+  func approve(_ asked: [String], groups: [Tsugumi_Agent_AccessGroupT] = [], callId: String? = nil) async -> Set<String> {
     return await withCheckedContinuation { continuation in
-      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups) { continuation.resume(returning: $0) })
+      permissionQueue.append(PermissionPrompt(raw: asked, groups: groups, callId: callId) { continuation.resume(returning: $0) })
     }
   }
 

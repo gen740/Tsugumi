@@ -14,9 +14,9 @@ import TsugumiAgentClient
     methods.append(method)
     #expect(fields["profile"] as? String == "desktop")
     if method == "SettingsGetRequest" {
-      return ["revision": 7, "values": [["key": "agent.trustedFolders", "value_json": "[\"/existing\"]"]]]
+      return ["revision": "host:0000000000000000007", "values": [["key": "agent.trustedFolders", "value_json": "[\"/existing\"]"]]]
     }
-    #expect(fields["revision"] as? Int == 7)
+    #expect(fields["revision"] as? String == "host:0000000000000000007")
     let changes = try #require(fields["changes"] as? [[String: String]])
     #expect(changes.count == 1)
     #expect(changes[0]["key"] == "agent.trustedFolders")

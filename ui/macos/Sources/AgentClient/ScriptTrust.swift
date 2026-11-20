@@ -17,7 +17,7 @@ public enum ScriptTrust {
     var folders = (try JSONSerialization.jsonObject(with: Data(raw.utf8))) as? [String] ?? []
     folders.append(folder)
     let value = String(decoding: try JSONSerialization.data(withJSONObject: folders), as: UTF8.self)
-    _ = try await call("SettingsUpdateRequest", ["profile": "desktop", "revision": settings["revision"] ?? 0,
+    _ = try await call("SettingsUpdateRequest", ["profile": "desktop", "revision": settings["revision"] ?? "",
       "changes": [["key": "agent.trustedFolders", "value_json": value]]])
   }
 }

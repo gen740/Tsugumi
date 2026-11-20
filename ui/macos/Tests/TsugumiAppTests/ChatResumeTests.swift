@@ -230,6 +230,49 @@ import TsugumiTestSupport
     chat.items.dropFirst(n).contains { $0.role == "assistant" }
   }
 
+  @Test func hostPreferencesReloadAfterReconnectIncludingAFreshStore() async throws {
+    let shared = CoreHostClient.shared
+    let preferences = CorePreferences.shared
+    func readRevision(_ client: CoreHostClient) async throws -> String {
+      let before = try await client.call("SettingsGetRequest", ["profile": "desktop"])
+      return try #require(before["revision"] as? String)
+    }
+    func setSearch(_ enabled: Bool, on client: CoreHostClient, expected: String? = nil) async throws {
+      let revision: String
+      if let expected { revision = expected } else { revision = try await readRevision(client) }
+      _ = try await client.call("SettingsUpdateRequest", [
+        "profile": "desktop", "revision": revision,
+        "changes": [["key": "agent.webSearch", "value_json": enabled ? "true" : "false"]],
+      ])
+    }
+    try await withFixture { _ in
+      try await setSearch(true, on: shared)
+      try await until("preferences display the edited setting") { preferences.bool(forKey: "agent.webSearch") }
+      await shared.disconnect()
+      let editor = CoreHostClient()
+      try await setSearch(false, on: editor)
+      await editor.disconnect()
+      _ = try await shared.call("SettingsGetRequest", ["profile": "desktop"])
+      try await until("preferences display the edit made while disconnected") { !preferences.bool(forKey: "agent.webSearch") }
+      try await setSearch(true, on: shared)
+      try await until("preferences display the previous host's final revision") { preferences.bool(forKey: "agent.webSearch") }
+      let stale = try await readRevision(shared)
+      try await withFixture { _ in
+        try await until("preferences display the fresh host's lower revision") { !preferences.bool(forKey: "agent.webSearch") }
+        for enabled in [false, true, false] { try await setSearch(enabled, on: shared) }
+        do {
+          try await setSearch(true, on: shared, expected: stale)
+          Issue.record("Accepted an edit from the previous store")
+        } catch let failure as CoreHostFailure {
+          #expect(failure.code == "conflict")
+        }
+        let current = try await shared.call("SettingsGetRequest", ["profile": "desktop"])
+        let values = try #require(current["values"] as? [[String: String]])
+        #expect(values.first { $0["key"] == "agent.webSearch" }?["value_json"] == "false")
+      }
+    }
+  }
+
   @Test func openingAndRefreshingAnInterruptedConversationOnlyObserve() async throws {
     try await withFixture { t in
       try t.holdStream()

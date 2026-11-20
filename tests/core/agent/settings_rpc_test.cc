@@ -37,15 +37,14 @@ TEST_F(AgentFixture, HelperSettingsAreValidatedSharedAndPersisted) {
 TEST_F(AgentFixture, RetiredPermissionSettingCannotBeReadOrWritten) {
   constexpr auto key = "agent.permissions.allowed";
   {
-    sql::Db db((directory.path / "state/host-settings.sqlite").string());
-    db.exec(R"(INSERT INTO settings VALUES
-               ('desktop', 3, '{"agent.permissions.allowed":["network"]}'))");
+    sql::Db db((directory.path / "state/host.sqlite").string());
+    db.exec(R"(INSERT INTO setting_values VALUES
+               ('', 'agent.permissions.allowed', '["network"]'))");
   }
   const auto expect_absent = [&] {
     const auto reply = SettingsGet(*host);
     ASSERT_TRUE(reply.Code().empty());
     const auto* settings = reply.HostValue()->value_as_Settings();
-    EXPECT_EQ(settings->revision(), 3u);
     for (const auto* entry : *settings->values())
       EXPECT_NE(entry->key()->str(), key);
   };
@@ -58,16 +57,18 @@ TEST_F(AgentFixture, RetiredPermissionSettingCannotBeReadOrWritten) {
 TEST_F(AgentFixture,
        ConcurrentSettingsUpdatesRejectStaleRevisionsWithoutLosingFields) {
   const auto before = SettingsGet(*host);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto revision =
+      before.HostValue()->value_as_Settings()->revision()->str();
   auto websocket = ConnectHost(true);
   auto update = [&](client::Connection& c, const std::string& key,
                     const std::string& value) {
     return Call(c, H::RequestPayload::SettingsUpdateRequest, [&](Builder& b) {
       const auto entry =
           H::CreateSetting(b, b.CreateString(key), b.CreateString(value));
-      return H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"),
-                                            revision,
-                                            b.CreateVector(std::vector{entry}))
+      return H::CreateSettingsUpdateRequest(
+                 b,
+                 b.CreateString(key == "agent.model" ? "desktop" : "web:test"),
+                 b.CreateString(revision), b.CreateVector(std::vector{entry}))
           .Union();
     });
   };
@@ -87,8 +88,35 @@ TEST_F(AgentFixture,
           .Code()
           .empty());
   const auto after = SettingsGet(*host);
-  EXPECT_EQ(after.HostValue()->value_as_Settings()->revision(), revision + 2);
+  EXPECT_NE(after.HostValue()->value_as_Settings()->revision()->str(),
+            revision);
   EXPECT_NE(Bytes(after).find("retry after reading"), std::string::npos);
+}
+TEST_F(AgentFixture, MixedSettingsPatchSharesHostValuesAndIsolatesSkillFolders) {
+  constexpr auto folders = R"([{"path":"/skills","enabled":true}])";
+  const auto initial = SettingsGet(*host);
+  const auto patch = SettingsPatch(
+      *host, "web:test", {{"agent.skillFolders", folders},
+                           {"agent.allowUnscopedHelpers", "true"}});
+  ASSERT_TRUE(patch.Code().empty());
+  const auto before =
+      initial.HostValue()->value_as_Settings()->revision()->str();
+  const auto desktop = SettingsGet(*host);
+  const auto web = SettingsGet(*host, "web:test");
+  const auto value = [](const Reply& reply, const std::string& key) {
+    for (const auto* entry : *reply.HostValue()->value_as_Settings()->values())
+      if (entry->key()->str() == key) return entry->value_json()->str();
+    return std::string{};
+  };
+  const auto updated =
+      patch.HostValue()->value_as_Settings()->revision()->str();
+  EXPECT_NE(updated, before);
+  EXPECT_EQ(desktop.HostValue()->value_as_Settings()->revision()->str(),
+            updated);
+  EXPECT_EQ(web.HostValue()->value_as_Settings()->revision()->str(), updated);
+  EXPECT_EQ(value(desktop, "agent.allowUnscopedHelpers"), "true");
+  EXPECT_EQ(value(desktop, "agent.skillFolders"), "[]");
+  EXPECT_EQ(value(web, "agent.skillFolders"), folders);
 }
 TEST_F(AgentFixture,
        ProviderSetAndStatusNeverReturnTheSecretAndFollowPlatformStorage) {
@@ -136,12 +164,13 @@ TEST_F(
   OAuthServer oauth;
   ModelServer model;
   const auto revision =
-      SettingsGet(*host).HostValue()->value_as_Settings()->revision();
+      SettingsGet(*host).HostValue()->value_as_Settings()->revision()->str();
   const auto signed_in = oauth.SignIn(*host, model.URL(), "desktop", 0);
   ASSERT_EQ(signed_in.HostValue()->value_as_SignInStatus()->state()->str(),
             "complete");
-  EXPECT_EQ(SettingsGet(*host).HostValue()->value_as_Settings()->revision(),
-            revision);
+  EXPECT_EQ(
+      SettingsGet(*host).HostValue()->value_as_Settings()->revision()->str(),
+      revision);
   for (const auto* secret :
        {"ACCESS_SENTINEL", "REFRESH_SENTINEL", "CODE_SENTINEL"})
     EXPECT_EQ(Bytes(signed_in).find(secret), std::string::npos);
@@ -343,7 +372,8 @@ TEST_F(AgentFixture, OAuthResultSurvivesAccountChangesAndGuardsSetup) {
   const auto attempt = completed->attempt_id()->str();
   const auto account = completed->client_id()->str();
   const auto before = SettingsGet(*host);
-  const auto revision = before.HostValue()->value_as_Settings()->revision();
+  const auto revision =
+      before.HostValue()->value_as_Settings()->revision()->str();
   const auto select_provider = [&] {
     return Call(*host, H::RequestPayload::SettingsUpdateRequest,
                 [&](Builder& b) {
@@ -353,7 +383,8 @@ TEST_F(AgentFixture, OAuthResultSurvivesAccountChangesAndGuardsSetup) {
                       H::CreateSetting(b, b.CreateString("agent.provider"),
                                        b.CreateString(Quote("chatgpt")));
                   return H::CreateSettingsUpdateRequest(
-                             b, b.CreateString("desktop"), revision,
+                             b, b.CreateString("desktop"),
+                             b.CreateString(revision),
                              b.CreateVector(std::vector{change}), guard)
                       .Union();
                 });
@@ -364,8 +395,9 @@ TEST_F(AgentFixture, OAuthResultSurvivesAccountChangesAndGuardsSetup) {
   ASSERT_EQ(no_plan->state()->str(), "complete");
   EXPECT_FALSE(no_plan->plan_enabled());
   EXPECT_EQ(select_provider().Code(), "chatgpt_account_changed");
-  EXPECT_EQ(SettingsGet(*host).HostValue()->value_as_Settings()->revision(),
-            revision);
+  EXPECT_EQ(
+      SettingsGet(*host).HostValue()->value_as_Settings()->revision()->str(),
+      revision);
 
   const auto action = [&](const char* name, const std::string& client) {
     return Call(*host, H::RequestPayload::SignInActionRequest, [&](Builder& b) {

@@ -395,7 +395,7 @@ for (const beginPending of [false, true]) {
   globalThis.fetch = (async (path: string, init: RequestInit) => {
     const body = JSON.parse(String(init?.body ?? '{}'))
     calls.push({ path, body })
-    const value = path === '/api/settings' ? { revision: { desktop: 1 } }
+    const value = path === '/api/settings' ? { revision: 'host:1' }
       : path === '/api/guide/advance' ? { setupDone: true }
       : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
       : assert.fail(`Unexpected API ${path}`)
@@ -443,7 +443,7 @@ for (const switched of [false, true]) {
       if (!accounts.some(a => a.clientId === body.chatGPTAccount && a.active && a.signedIn && a.planEnabled))
         return { ok: false, json: async () => ({ code: 'chatgpt_account_changed', error: 'Account changed' }) }
     }
-    const value = path === '/api/settings' ? { revision: { desktop: 1 } }
+    const value = path === '/api/settings' ? { revision: 'host:1' }
       : path === '/api/guide/advance' ? { setupDone: true }
       : path === '/api/guide' ? { available: true, setupDone: true, demoAnswered: true }
       : assert.fail(`Unexpected API ${path}`)

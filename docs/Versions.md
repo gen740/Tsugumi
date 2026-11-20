@@ -57,7 +57,7 @@ In the Mac app, open it with "Version History…" (⌥⌘Y) in the Workflow menu
 
 ## Version notes
 
-Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects in the current host settings profile and is stored in `tsugumi-hostd` (`versions.noteMode`). Change record is the default.
+Choose **Change record** or **Agent summary** beside the version history. This setting applies to all projects opened through the same hostd (`versions.noteMode`). Change record is the default.
 
 - **Change record**: the project core compares the full version tree with its first parent, without a model. It lists Cards added or removed and changes to their definitions, source, parameters and wiring, as neutral kinds of change. The host renders these facts in the requesting app's language. Workflow settings are listed separately. The host shows at most six entries and the remaining count; the record keeps all entries. It contains no source text or parameter values. All files under a Card's `src/` count as source inputs, including assets and languages outside the model-diff allowlist. Changes to `layout.json` and files under `data/` are excluded.
 - **Agent summary**: the Agent writes one short sentence from the code and settings diff. The diff goes to the model provider and uses tokens. It can contain mistakes; the diff and run records are the evidence. This is different from the mechanical run summary above.

@@ -5,6 +5,7 @@
 
 #include "project_fixture.hh"
 #include "tsugumi/util/json_object.hh"
+#include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -29,7 +30,10 @@ class SkillsFixture : public AgentProjectFixture {
                                b.CreateString(encoded));
           return H::CreateSettingsUpdateRequest(
                      b, b.CreateString("desktop"),
-                     before.HostValue()->value_as_Settings()->revision(),
+                     b.CreateString(before.HostValue()
+                                        ->value_as_Settings()
+                                        ->revision()
+                                        ->str()),
                      b.CreateVector(std::vector{item}))
               .Union();
         });
@@ -71,6 +75,76 @@ class SkillsFixture : public AgentProjectFixture {
                      b.CreateVector(sources), b.CreateString(conversation))
               .Union();
         });
+  }
+  auto ScopedSend(const std::string& conversation, const std::string& turn,
+                  bool explicit_scope = true) -> Reply {
+    return Call(*human, A::RequestPayload::ConversationSendRequest,
+                [&](Builder& b) {
+                  A::ConversationSendRequestT request;
+                  request.conversation_id = conversation;
+                  request.turn_id = turn;
+                  request.text = "$inspect";
+                  request.selected_cards = {"selected"};
+                  request.skill_names = {"inspect"};
+                  if (explicit_scope) request.scoped_skill = "inspect";
+                  return A::ConversationSendRequest::Pack(b, &request).Union();
+                });
+  }
+  auto AccessList(const std::string& conversation, const std::string& id = {})
+      -> Reply {
+    return Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+      return A::CreateAccessListRequest(b, b.CreateString(conversation),
+                                        id.empty() ? 0 : b.CreateString(id))
+          .Union();
+    });
+  }
+  auto WaitForSkillApproval(const std::string& conversation) -> std::string {
+    // Agent RPC exposes status through snapshot reads.
+    const auto deadline = std::chrono::steady_clock::now() + 8s;
+    do {
+      const auto list = AccessList(conversation);
+      const auto* requests = list.Value()->value_as_AccessList()->requests();
+      if (requests)
+        for (const auto* item : *requests)
+          if (item->access() == Tsugumi::Service::Access::HelperScope &&
+              item->state()->string_view() == "pending")
+            return item->id()->str();
+      std::this_thread::sleep_for(10ms);
+    } while (std::chrono::steady_clock::now() < deadline);
+    throw std::runtime_error("No pending Skill approval");
+  }
+  auto Approve(const std::string& id) -> Reply {
+    return Call(
+        *human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+          return A::CreateAccessResolveRequest(b, b.CreateString(id), true)
+              .Union();
+        });
+  }
+  auto Resume(const std::string& conversation) -> Reply {
+    return Call(*human, A::RequestPayload::ConversationActionRequest,
+                [&](Builder& b) {
+                  return A::CreateConversationActionRequest(
+                             b, b.CreateString(conversation), A::Action::Resume)
+                      .Union();
+                });
+  }
+  auto CancelSkill(const std::string& conversation) -> Reply {
+    return Call(*human, A::RequestPayload::ConversationCancelRequest,
+                [&](Builder& b) {
+                  return A::CreateConversationCancelRequest(
+                             b, b.CreateString(conversation))
+                      .Union();
+                });
+  }
+  auto DirectSkill(ModelServer& model) -> std::string {
+    Configure(model);
+    StartProject();
+    Write(directory.path / "project/skills/inspect.md",
+          "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");
+    const auto conversation = Conversation("direct-skill");
+    if (!List({}, true, false, conversation).Code().empty())
+      throw std::runtime_error("Cannot register the Skill catalog");
+    return conversation;
   }
 };
 TEST_F(SkillsFixture,
@@ -132,6 +206,18 @@ TEST_F(SkillsFixture, ReplacingARegisteredRootWithALinkDoesNotTrustItsTarget) {
   std::filesystem::rename(root, directory.path / "moved");
   std::filesystem::create_directory_symlink(outside, root);
   EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Unknown);
+}
+
+TEST_F(SkillsFixture, ReplacingARegisteredDirectoryRequiresNewTrust) {
+  const auto root = directory.path / "trusted";
+  Write(root / "project/tsugumi.json", "{}");
+  ASSERT_TRUE(Roots({root.string()}).Code().empty());
+  std::filesystem::rename(root, directory.path / "saved");
+  Write(root / "project/tsugumi.json", "{}");
+  EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Unknown);
+  ASSERT_TRUE(Roots({}).Code().empty());
+  ASSERT_TRUE(Roots({root.string()}).Code().empty());
+  EXPECT_EQ(Trust(root / "project"), H::ProjectTrustDecision::Trusted);
 }
 
 TEST_F(SkillsFixture, FolderTrustIsAppliedAndRevokedAtTheModelBoundary) {
@@ -598,53 +684,15 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   model.Queue(AnthropicText(
       "Read only: [source](card:selected?file=src%2Fmain.py&lines=1-2) uses a "
       "clock."));
-  Configure(model);
-  StartProject();
-  Write(directory.path / "project/skills/inspect.md",
-        "---\nname: inspect\nscope: [read]\n---\nINSPECT_SKILL_SENTINEL");
-  const auto conversation = Conversation("direct-skill");
-  ASSERT_TRUE(List({}, true, false, conversation).Code().empty());
-  const auto start =
-      Call(*human, A::RequestPayload::ConversationSendRequest, [&](Builder& b) {
-        A::ConversationSendRequestT request;
-        request.conversation_id = conversation;
-        request.turn_id = "direct-turn";
-        request.text = "$inspect";
-        request.selected_cards = {"selected"};
-        request.skill_names = {"inspect"};
-        request.scoped_skill = "inspect";
-        return A::ConversationSendRequest::Pack(b, &request).Union();
-      });
-  ASSERT_TRUE(start.Code().empty());
-  std::string approval;
-  // Agent exposes these permission transitions through snapshot reads only.
-  const auto deadline = std::chrono::steady_clock::now() + 3s;
-  while (approval.empty() && std::chrono::steady_clock::now() < deadline) {
-    const auto list =
-        Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
-          return A::CreateAccessListRequest(b, b.CreateString(conversation))
-              .Union();
-        });
-    for (const auto* item : *list.Value()->value_as_AccessList()->requests())
-      if (item->access() == Tsugumi::Service::Access::HelperScope) {
-        approval = item->id()->str();
-        EXPECT_EQ(item->state()->str(), "pending");
-      }
-    if (approval.empty()) std::this_thread::sleep_for(10ms);
-  }
-  ASSERT_FALSE(approval.empty());
+  const auto conversation = DirectSkill(model);
+  ASSERT_TRUE(ScopedSend(conversation, "direct-turn").Code().empty());
+  const auto approval = WaitForSkillApproval(conversation);
   EXPECT_TRUE(model.Requests().empty());
-  ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
-                   [&](Builder& b) {
-                     return A::CreateAccessResolveRequest(
-                                b, b.CreateString(approval), true)
-                         .Union();
-                   })
-                  .Code()
-                  .empty());
+  ASSERT_TRUE(Approve(approval).Code().empty());
   ASSERT_TRUE(model.WaitForRequests(2));
   WaitUntilIdle(conversation);
-  const auto snapshot = Get(conversation);
+  EXPECT_EQ(Get(conversation).Code(), "permission_denied");
+  const auto snapshot = Get(conversation, true);
   const auto* helpers = snapshot.Value()
                             ->value_as_ConversationResult()
                             ->conversation()
@@ -656,12 +704,13 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
   ASSERT_EQ(readable.size(), 1u);
   EXPECT_EQ(J::String(readable.front()), "selected");
   EXPECT_TRUE(J::Array(J::Get(scope, "write_cards")).empty());
-  EXPECT_NE(snapshot.View().find("Read only:"), std::string::npos);
+  EXPECT_EQ(helpers->Get(0)->state()->str(), "completed");
+  EXPECT_NE(helpers->Get(0)->result_json(), nullptr);
   EXPECT_EQ(model.Requests().size(),
             2u);  // Only the helper; no parent model turn.
   EXPECT_NE(model.Requests()[0].find("INSPECT_SKILL_SENTINEL"),
             std::string::npos);
-  EXPECT_NE(model.Requests()[1].find("Helper scope denied"), std::string::npos);
+  EXPECT_NE(model.Requests()[1].find(R"("is_error":true)"), std::string::npos);
   const auto access =
       Call(*human, A::RequestPayload::AccessListRequest, [&](Builder& b) {
         return A::CreateAccessListRequest(b, b.CreateString(conversation))
@@ -669,6 +718,202 @@ TEST_F(SkillsFixture, DirectSkillStartsOneHelperAfterOneExactScopePrompt) {
       });
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->grants()), 0u);
   EXPECT_EQ(ListSize(access.Value()->value_as_AccessList()->requests()), 1u);
+  model.Queue(AnthropicText("Second scoped result."));
+  ASSERT_TRUE(ScopedSend(conversation, "second-turn").Code().empty());
+  const auto second = WaitForSkillApproval(conversation);
+  EXPECT_NE(second, approval);
+  ASSERT_TRUE(Approve(second).Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 3u);
+  EXPECT_EQ(model.Requests().back().find("uses a clock"), std::string::npos);
+  EXPECT_EQ(
+      Send(conversation, "Use the previous report.", "normal-turn").Code(),
+      "permission_denied");
+  Grant(conversation);
+  EXPECT_TRUE(Get(conversation).Code().empty());
+}
+TEST_F(SkillsFixture, CancellingBeforeOrAfterApprovalInvalidatesTheSkillTurn) {
+  ModelServer model;
+  const auto conversation = DirectSkill(model);
+  for (const bool approved : {false, true}) {
+    ASSERT_TRUE(ScopedSend(conversation, approved ? "allowed" : "pending")
+                    .Code()
+                    .empty());
+    const auto approval = WaitForSkillApproval(conversation);
+    if (!approved) {
+      EXPECT_EQ(Events(conversation).View().find("INSPECT_SKILL_SENTINEL"),
+                std::string::npos);
+      const auto external_access = Call(
+          *external, A::RequestPayload::AccessListRequest, [&](Builder& b) {
+            return A::CreateAccessListRequest(b, b.CreateString(conversation),
+                                              b.CreateString(approval))
+                .Union();
+          });
+      ASSERT_TRUE(external_access.Code().empty());
+      EXPECT_EQ(
+          ListSize(external_access.Value()->value_as_AccessList()->requests()),
+          0u);
+    }
+    if (approved) {
+      model.Queue(AnthropicText("Cancelled answer."), true);
+      ASSERT_TRUE(Approve(approval).Code().empty());
+      ASSERT_TRUE(model.WaitForRequests(2));
+    }
+    ASSERT_TRUE(CancelSkill(conversation).Code().empty());
+    if (approved) model.Release();
+    const auto idle = WaitUntilIdle(conversation);
+    EXPECT_FALSE(JsonBool(idle, "/resumable"));
+    const auto access = AccessList(conversation, approval);
+    const auto* items = access.Value()->value_as_AccessList()->requests();
+    ASSERT_EQ(ListSize(items), 1u);
+    EXPECT_EQ(items->Get(0)->state()->string_view(), "cancelled");
+    EXPECT_EQ(Approve(approval).Code(), "conflict");
+    EXPECT_EQ(Resume(conversation).Code(), "conflict");
+    if (!approved) {
+      model.Queue(AnthropicText("Ordinary conversation after cancellation."));
+      ASSERT_TRUE(
+          Send(conversation, "An ordinary message", "ordinary").Code().empty());
+      ASSERT_TRUE(model.WaitForRequests(1));
+      WaitUntilIdle(conversation);
+      EXPECT_EQ(Get(conversation).Code(), "");
+    }
+  }
+  EXPECT_EQ(model.Requests().size(), 2u);
+}
+
+TEST_F(SkillsFixture, ResumeRejectsAChangedSkillEvenWithResidentRead) {
+  ModelServer model;
+  const auto conversation = DirectSkill(model);
+  Grant(conversation);
+  ASSERT_TRUE(
+      ScopedSend(conversation, "selected-by-name", false).Code().empty());
+  WaitForSkillApproval(conversation);
+  service.Stop(true);
+  StartHost();
+
+  const auto path = directory.path / "project/skills/inspect.md";
+  Write(path, "---\nname: inspect\n---\nScope removed");
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
+  Write(path, "---\nname: inspect\nscope: [read]\n---\nChanged instructions");
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
+  EXPECT_TRUE(model.Requests().empty());
+  ASSERT_TRUE(CancelSkill(conversation).Code().empty());
+}
+
+TEST_F(SkillsFixture, RetryingFailedAttachmentPreparationRestoresTheSend) {
+  ModelServer model;
+  Configure(model);
+  StartProject();
+  const auto conversation = Conversation("retry-attachment");
+  const std::string resource = "folder:test-attachment";
+  const auto folder = directory.path / "attached-for-retry";
+  Write(folder / "note.txt", "A host attachment");
+  auto set_read = [&] {
+    return Call(
+        *host, H::RequestPayload::ProjectPermissionSetRequest, [&](Builder& b) {
+          return H::CreateProjectPermissionSetRequest(
+                     b, b.CreateString(project_id), b.CreateString(resource),
+                     Tsugumi::Service::Access::Read, true)
+              .Union();
+        });
+  };
+  ASSERT_TRUE(
+      Call(*human, A::RequestPayload::ConversationSendRequest,
+           [&](Builder& b) {
+             A::ConversationSendRequestT request;
+             request.conversation_id = conversation;
+             request.turn_id = "with-attachment";
+             request.text = "Use this attachment";
+             request.attached_resources = {resource};
+             return A::ConversationSendRequest::Pack(b, &request).Union();
+           })
+          .Code()
+          .empty());
+  EXPECT_TRUE(JsonBool(WaitUntilIdle(conversation), "/continuable"));
+  EXPECT_TRUE(model.Requests().empty());
+  ASSERT_TRUE(Call(*host, H::RequestPayload::RegisterFolderRequest,
+                   [&](Builder& b) {
+                     return H::CreateRegisterFolderRequest(
+                                b, b.CreateString(project_id),
+                                b.CreateString(resource),
+                                b.CreateString(folder.string()))
+                         .Union();
+                   })
+                  .Code()
+                  .empty());
+  ASSERT_TRUE(set_read().Code().empty());
+  model.Queue(AnthropicText("Attachment received."));
+  ASSERT_TRUE(Resume(conversation).Code().empty());
+  WaitUntilIdle(conversation);
+  ASSERT_EQ(model.Requests().size(), 1u);
+  EXPECT_NE(model.Requests().front().find(folder.filename().string()),
+            std::string::npos);
+}
+
+TEST_F(SkillsFixture, InterruptedSkillRetainsApprovalAndCommitsItsAnswerOnce) {
+  ModelServer model;
+  const auto conversation = DirectSkill(model);
+  ASSERT_TRUE(ScopedSend(conversation, "recovered").Code().empty());
+  const auto approval = WaitForSkillApproval(conversation);
+  service.Stop(true);
+  const auto path = directory.path / "project/.tsugumi/agent.sqlite";
+  std::string messages_before, pending_frame;
+  uint64_t message_index = 0;
+  {
+    sql::Db db(path.string());
+    auto messages = db.prepare("SELECT messages FROM conversations WHERE id=?");
+    messages.bind(1, conversation);
+    ASSERT_TRUE(messages.step());
+    messages_before = messages.text(0);
+    auto frame = db.prepare(
+        "SELECT frame,message_index FROM conversation_turns WHERE "
+        "conversation=? AND id='recovered'");
+    frame.bind(1, conversation);
+    ASSERT_TRUE(frame.step());
+    pending_frame = frame.blob(0);
+    message_index = frame.u64(1);
+  }
+  StartHost();
+  EXPECT_TRUE(JsonBool(Get(conversation, true).View(), "/resumable"));
+  // Approval can be answered on an interrupted turn before resuming it.
+  ASSERT_TRUE(Approve(approval).Code().empty());
+  model.Queue(AnthropicText("RECOVERED_SKILL_ANSWER"));
+  ASSERT_TRUE(Resume(conversation).Code().empty());
+  const auto idle = WaitUntilIdle(conversation);
+  EXPECT_FALSE(JsonBool(idle, "/resumable"));
+  ASSERT_EQ(model.Requests().size(), 1u);
+
+  // Reconstruct the durable state between the helper commit and the parent
+  // commit. The completed helper and its approval stay in the real stores.
+  service.Stop(true);
+  {
+    sql::Db db(path.string());
+    sql::Transaction tx(db);
+    auto parent = db.prepare("UPDATE conversations SET messages=? WHERE id=?");
+    parent.bind(1, messages_before).bind(2, conversation).run();
+    auto turn = db.prepare(
+        "UPDATE conversation_turns SET state='running',frame=?,message_index=? "
+        "WHERE conversation=? AND id='recovered'");
+    turn.bind_blob(1, pending_frame)
+        .bind(2, message_index)
+        .bind(3, conversation)
+        .run();
+    tx.commit();
+  }
+  StartHost();
+  ASSERT_TRUE(Resume(conversation).Code().empty());
+  WaitUntilIdle(conversation);
+  EXPECT_EQ(Resume(conversation).Code(), "conflict");
+  const auto completed = Get(conversation, true);
+  const auto* messages = completed.Value()
+                             ->value_as_ConversationResult()
+                             ->conversation()
+                             ->messages();
+  ASSERT_EQ(ListSize(messages), 2u);
+  EXPECT_EQ(
+      JsonString(completed.View(), "/conversation/messages/1/content/0/text"),
+      "RECOVERED_SKILL_ANSWER");
+  EXPECT_EQ(model.Requests().size(), 1u);
 }
 }  // namespace
 }  // namespace tsugumi::test

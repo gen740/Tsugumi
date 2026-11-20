@@ -1,9 +1,9 @@
 #pragma once
 
-#include <condition_variable>
 #include <functional>
 #include <map>
 #include <memory>
+#include <optional>
 #include <set>
 #include <stop_token>
 #include <string>
@@ -15,13 +15,12 @@
 #include "agent/runtime.hh"
 #include "agent/store.hh"
 #include "agent/thought_schedule.hh"
+#include "host/authorization.hh"
 #include "host/state_gate.hh"
 #include "tsugumi/rpc/transport.hh"
 
 namespace tsugumi::host {
 class Settings;
-}
-namespace tsugumi::host {
 struct Access;
 }
 namespace tsugumi::agent {
@@ -35,7 +34,7 @@ struct Turns {
     std::function<std::vector<ToolSpec>(bool)> specs;
     std::function<std::string(const std::string&, const std::string&, size_t,
                               const std::string&, std::stop_token,
-                              const std::string&)>
+                              const std::optional<host::TurnAuthorization>&)>
         run_helper;
     std::function<void(const std::string&)> cancel_file_tools;
     std::function<bool(const std::string&, const std::string&, std::stop_token)>
@@ -44,7 +43,7 @@ struct Turns {
   Turns(host::StateGate& gate, sql::Db& db, ConversationStore& conversations,
         Providers& providers, host::Settings& settings,
         std::stop_source& shutdown, bool& stopping,
-        std::condition_variable_any& changed, host::Access& access,
+        host::Access& access,
         Dependencies dependencies);
   static auto System(bool guide = false) -> std::string;
   auto ThoughtsFor(const std::string& id) -> std::shared_ptr<ThoughtSchedule>;
@@ -55,21 +54,23 @@ struct Turns {
                        const std::string& arguments = {}) -> void;
   auto ConversationResult(uint64_t request_id, const Conversation& c)
       -> std::string;
-  auto Summarize(const std::string& id, const ProviderConfig& config,
-                 const std::string& instruction, std::vector<Message> messages)
-      -> std::string;
+  auto Summarize(const ProviderConfig& config, const std::string& instruction,
+                 std::vector<Message> messages) -> std::string;
   auto SkillContent(const std::string& id,
                     const std::vector<std::string>& names, bool automatic,
                     std::stop_token stop,
                     std::string* trusted_project = nullptr) -> ContentBlock;
-  auto RequireSkillTrust(const std::string& path) -> void;
-  auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* p,
-                   std::stop_token stop, std::string& task,
-                   std::string& authorization) -> ContentBlock;
-  auto Start(const std::string& id, const std::string& turn,
+  auto SkillCatalog(const Conversation& conversation)
+      -> std::pair<std::string, Tsugumi::Host::SkillsListT>;
+  auto AutomaticSkills(const std::string& id, std::stop_token stop,
+                       RuntimeHooks& hooks) -> std::string;
+  auto ScopedSkillTask(const Tsugumi::Agent::ConversationSendRequest* request,
+                       const Conversation& conversation) -> std::string;
+  auto PrepareSend(const Tsugumi::Agent::ConversationSendRequest* request,
+                   std::stop_token stop) -> ContentBlock;
+  auto Start(bool human, const std::string& id, const std::string& turn,
              const std::string& text,
              Tsugumi::Agent::Action action = Tsugumi::Agent::Action::Resume,
-             const std::vector<std::string>& resources = {},
              std::string pending_frame = {}, const std::string& display = {})
       -> void;
   auto SummaryReply(uint64_t id, std::string_view raw) -> std::string;
@@ -84,7 +85,6 @@ struct Turns {
   host::Settings* host_settings;
   std::stop_source& shutdown;
   bool& stopping;
-  std::condition_variable_any& changed;
   host::Access& access_service;
   Dependencies dependencies;
   std::map<std::string, std::shared_ptr<std::jthread>> jobs;
