@@ -1724,6 +1724,8 @@
   "進行中の実行（最新の呼び出しを追います）": "Run in progress (following the latest call)",
   "過去の scratch は自動では削除しません。削除するフォルダと容量を確認してください。最新の実行の scratch は再実行のため残します。保持した記録・成果物・最後の入力は別に残ります。": "Past scratch is never deleted automatically. Review the folders and sizes before deleting. The latest run’s scratch stays available for reruns. Kept records, artifacts and last inputs have separate copies.",
   "過去の実行を表示しています。別の実行が進行中です。": "Showing a previous run. Another run is active.",
+  "過去の試行を探しています": "Finding past trials",
+  "過去の試行を探しました": "Found past trials",
   "適用": "Apply",
   "適用しました。": "Applied.",
   "適用しました（revision {0}）。": {"text": "Applied (revision {0}).", "mac": ["llu"]},

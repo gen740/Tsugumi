@@ -69,6 +69,16 @@ To learn what a change did in more detail, ask the Agent. It reads the version's
 git log --notes=tsugumi-record
 ```
 
+### Finding a past trial
+
+A person may remember a trial but not its run: "the run where I changed the background correction and the peak disappeared". The Agent's `version_find` (the `versions` family's `find`) narrows the recorded history to candidates. It reads no new data and stores nothing; it composes the reads the Agent could make one at a time:
+
+1. `version_graph`: the versions (newest first, up to 500) whose changed Cards include the named Card or a Card inside it, and the runs recorded for each.
+2. The change record above: how the Card changed (`source`, `parameters`, `definition`, `wiring`, `added`, `removed`); `kinds` narrows to some of them.
+3. `run_record` (latest invocation) of the observed Card, by default the changed Card, in each run of a candidate and in the newest run of the nearest earlier version that recorded it.
+
+Each output port is reported as `same`, `changed` or `unknown` against that earlier run, by kind, type and recorded content hash (a File's or Directory's own content hash). A missing hash, a deleted run, a Card that did not run, or no earlier run gives `unknown` or an `unverified` note, never `same`. The result carries `card:`, `run:<id>` and `run:<id>/<card>#<invocation>` links for the Agent to cite. A different hash says only that the content differs: whether "the peak disappeared" is read from the values (`run_record`, `run_value_read`). Candidates default to 10 versions (at most 30), and one call reads at most 40 records; the rest are left for `run_record`.
+
 ## Comments
 
 A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-agent)) are in `definitions/<id>/_meta.json`, so they are committed like the other settings. The details of a version in the version history show how the comments changed since the previous version (`VersionCommit.comments`).

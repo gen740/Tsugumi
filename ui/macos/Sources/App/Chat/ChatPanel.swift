@@ -696,6 +696,7 @@ struct ToolStep {
     if n == "card_s_d_k_prepare" { return (String(localized: "Card SDK を準備しています"), String(localized: "Card SDK を準備")) }
     if n == "layout_arrange" || n == "layout_untangle" { return (String(localized: "配置を整えています"), String(localized: "配置を整理")) }
     if n == "project_cache_clear" { return (String(localized: "ビルドキャッシュを削除しています"), String(localized: "ビルドキャッシュを削除")) }
+    if n == "version_find" { return (String(localized: "過去の試行を探しています"), String(localized: "過去の試行を探しました")) }
     if n == "version_checkout" { return (String(localized: "版を切り替えています"), String(localized: "版を切替")) }
     if n == "version_init" || n == "version_mark" { return (String(localized: "版を記録しています"), String(localized: "版を記録")) }
     if n == "card_id" { return (String(localized: "Card の識別子を予約しています"), String(localized: "Card の識別子を予約")) }

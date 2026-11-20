@@ -9,6 +9,7 @@
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/tool_images.hh"
+#include "agent/version_find.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
 #include "host/access.hh"
@@ -1395,6 +1396,22 @@ auto Tools::ExecuteTool(const std::string& conversation,
               {"commit", json::Quote(json::Text(args, "commit"))},
               {"from_commit", json::Quote(json::Text(args, "from_commit"))}}),
           stop);
+    } else if (call.name == "version_find") {
+      // Composes the same reads the Agent could make one by one, each with
+      // its own exclusion checks.
+      result = json::Encode(json::Members{
+          {"reply", json::Quote("VersionFind")},
+          {"value",
+           FindVersions(args, [&](const std::string& name,
+                                  const json::Members& query) {
+             const auto reply = json::Object(
+                 ProjectCall(project, name, json::Encode(query), stop));
+             const auto value = json::Object(json::Get(reply, "value", "{}"));
+             if (json::Text(reply, "reply") == "Failure")
+               throw Failure(json::Text(value, "kind"),
+                             json::Text(value, "diagnostic"));
+             return value;
+           })}});
     } else if (spec->host) {
       const auto bytes = catalog.HostRequest(call.name, json::Encode(args), 1);
       try {
