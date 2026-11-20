@@ -31,7 +31,7 @@ run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DCURL_LIBRARY="$sdk_path/usr/lib/libcurl.tbd" -DCURL_LIBRARY_RELEASE="$sdk_path/usr/lib/libcurl.tbd" \
   -DCURL_LIBRARY_DEBUG="$sdk_path/usr/lib/libcurl.tbd" -DCURL_INCLUDE_DIR="$sdk_path/usr/include" \
   -DTSUGUMI_HOST_SQLITE_LIBRARY="$sdk_path/usr/lib/libsqlite3.tbd"
-run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd
+run "$cmake_path" --build "$repo/build-host" --target tsugumi-hostd tsugumi
 
 # Copy pinned native formatter binaries and their dylibs, with no Nix paths at runtime.
 # Apple's tools from Xcode: the shell's older SDK strip rejects these dylibs.
@@ -51,15 +51,17 @@ cp -L "$crypto_library" "$frameworks/libcrypto.3.dylib"
 chmod u+w "$frameworks/"*.dylib
 /usr/bin/install_name_tool -id @rpath/libssl.3.dylib -change "$crypto_id" @loader_path/libcrypto.3.dylib "$frameworks/libssl.3.dylib"
 /usr/bin/install_name_tool -id @rpath/libcrypto.3.dylib "$frameworks/libcrypto.3.dylib"
-/usr/bin/install_name_tool -change "$ssl_id" @executable_path/../Frameworks/libssl.3.dylib \
-  -change "$crypto_id" @executable_path/../Frameworks/libcrypto.3.dylib "$repo/build-host/hostd/tsugumi-hostd"
+for executable in "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi"; do
+  /usr/bin/install_name_tool -change "$ssl_id" @executable_path/../Frameworks/libssl.3.dylib \
+    -change "$crypto_id" @executable_path/../Frameworks/libcrypto.3.dylib "$executable"
+done
 # install_name_tool invalidates the linker-created ad-hoc signature. The app
 # build signs these again with the selected development identity.
-for binary in "$frameworks/"*.dylib "$repo/build-host/hostd/tsugumi-hostd"; do
+for binary in "$frameworks/"*.dylib "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi"; do
   /usr/bin/codesign --force --sign - "$binary"
 done
 
-for binary in "$repo/build-host/hostd/tsugumi-hostd" "$frameworks/"*.dylib; do
+for binary in "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi" "$frameworks/"*.dylib; do
   if /usr/bin/otool -L "$binary" | /usr/bin/grep -q '/nix/store/'; then
     echo "The distributable binary still depends on the Nix store: $binary" >&2
     exit 1

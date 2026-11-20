@@ -74,6 +74,7 @@ runCommand "tsugumi-ci-runtime"
       --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
       --set TSUGUMI_WORKERD ${core}/bin/tsugumi-workerd \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
+      --set TSUGUMI_CLI ${core}/bin/tsugumi \
       --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \
       --set TSUGUMI_AGENT_SCHEMA ${core}/share/tsugumi/protocol/agent.bfbs \
       --set TSUGUMI_PROJECT_SCHEMA ${core}/share/tsugumi/protocol/tsugumi.bfbs \

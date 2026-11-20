@@ -64,8 +64,7 @@ TEST(HostComponents, RetiringTheSettingsDatabaseLeavesOnlyNewKeysUsable) {
   host::HostStore store(directory.path);
   host::StateGate gate;
   host::Credentials credentials(gate, store.db, {});
-  host::Settings settings(directory.path, credentials, nullptr,
-                          host::Settings::KeyStorage::Host);
+  host::Settings settings(directory.path, credentials, nullptr);
   const auto resolve = [&] {
     return settings.Resolve({{"provider_id", Quote("anthropic")}});
   };
@@ -236,8 +235,7 @@ class CredentialRefreshTest : public testing::Test {
   host::StateGate gate;
   ModelServer endpoint;
   host::Credentials credentials{gate, store.db, {}};
-  host::Settings settings{directory.path, credentials, nullptr,
-                          host::Settings::KeyStorage::Host};
+  host::Settings settings{directory.path, credentials, nullptr};
   std::function<std::string(std::string_view)> access_token;
 
   CredentialRefreshTest() {
@@ -433,8 +431,7 @@ TEST(HostComponents, ProvidersKeepConversationSelectionsAndHelperProfiles) {
   host::HostStore store(directory.path);
   host::StateGate gate;
   host::Credentials credentials{gate, store.db, {}};
-  host::Settings settings(directory.path, credentials, nullptr,
-                          host::Settings::KeyStorage::Host);
+  host::Settings settings(directory.path, credentials, nullptr);
   agent::Providers providers(gate, store.db, settings);
   std::lock_guard lock(gate.mutex);
   EXPECT_TRUE(providers.Selection("absent").empty());

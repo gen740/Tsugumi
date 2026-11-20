@@ -28,7 +28,7 @@ off, so closing all windows keeps the app and VM alive.
 If a Web UI is open when the Mac app quits, its existing reconnect starts the host again.
 That is treated as the Web UI using the host; reconnect behaviour is unchanged.
 
-There is no idle self-exit. Without the Mac app, the CLI/Web server starts or
+There is no idle self-exit. Without the Mac app, `tsugumi web` starts or
 reuses the resident host on demand. Ending that client only disconnects; the
 host stays until explicitly stopped (TERM/INT/HUP, or the existing update path).
 A pending CLI/plug-in call loses its service connection when the Mac app quits;

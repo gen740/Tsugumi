@@ -83,14 +83,11 @@ enum ServiceWire {
         v.id = fields["id"] as? String ?? ""
         v.provider = fields["provider"] as? Tsugumi_Host_ProviderInputT
         v.remove = fields["remove"] as? Bool ?? false
-        v.ephemeral = fields["ephemeral"] as? Bool ?? false
-        v.source = fields["source"] as? String
         return (Tsugumi_Host_RequestPayload.providersetrequest.rawValue, v)
       case "ProviderStatusRequest":
         let v = Tsugumi_Host_ProviderStatusRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
         v.id = fields["id"] as? String ?? ""
-        v.keyProfile = fields["key_profile"] as? String
         return (Tsugumi_Host_RequestPayload.providerstatusrequest.rawValue, v)
       case "SignInBeginRequest":
         let v = Tsugumi_Host_SignInBeginRequestT()
@@ -407,6 +404,7 @@ enum ServiceWire {
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "revision": changed.revision]
+    case let show as Tsugumi_Host_PageShowT: return ["type": "PageShow", "project": show.project, "card": show.card ?? "", "page": show.page ?? ""]
     default: throw RPCError.disconnected
     }
   }
@@ -644,7 +642,6 @@ enum ServiceWire {
       out["id"] = v.id
       out["configured"] = v.configured
       out["source"] = v.source
-      out["storage"] = v.storage
       out["message"] = v.message
       out["endpoint"] = v.endpoint
       return out

@@ -2,7 +2,6 @@ import { Builder, ByteBuffer } from 'flatbuffers'
 import * as H from '../../shared/gen/tsugumi/host'
 import { HelloRequestT } from '../../shared/gen/tsugumi/service/hello-request'
 import { Client } from '../../shared/gen/tsugumi/trace/client'
-import { api } from '../api'
 import { modelErrorMessage } from '../i18n'
 import { RPCError, s, webSocketTransport, type Transport } from './rpc'
 
@@ -34,7 +33,11 @@ export class HostConnection {
 }
 
 export async function openPageRpc(service: 'host' | 'agent') {
-  const { token } = await api<{ token: string }>('/api/host/connect', {})
+  // hostd's origin answers this with the page cookie the key URL set.
+  const r = await fetch('/api/host/connect', { method: 'POST', headers: { 'x-tsugumi': '1' } })
+  const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
+  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
+  const { token } = v as { token: string }
   const transport = await webSocketTransport(`ws://${location.host}/rpc/${service}`, undefined, service === 'host' ? 2 : 1)
   return { token, transport }
 }

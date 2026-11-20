@@ -29,7 +29,6 @@ From "Browse Demos" on the home screen, choose "Open a Copy" on the demo you wan
 Use **Check for Updates…** in the application menu or **General → Updates** in Settings to check GitHub and download a newer release. Its checksum, signature, bundle ID and version are verified. Choose **Restart to Update** to install it after orderly runtime shutdown. Checks and installation do not run automatically.
 
 - The folder the app is in (usually `/Applications`) must be writable. An app opened with the quarantine attribute still on (running from elsewhere through App Translocation) cannot update; move it to `/Applications` and remove the quarantine attribute.
-- The ad hoc signature changes with each version, so the first time an updated version uses an API key, macOS asks once for access to the keychain (choose "Always Allow" and that version will not ask again).
 - During 0.x, project documents and settings may change without migration ([compatibility policy](../AGENTS.md#compatibility)).
 
 ### Using it in the browser (the `tsugumi` command)
@@ -48,24 +47,24 @@ Windows (PowerShell):
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
-This installs `~/.local/bin/tsugumi`. Run it to start the server and open the browser:
+This installs `~/.local/bin/tsugumi`, a command that talks to `tsugumi-hostd`: `tsugumi` alone lists what it does, including the Agent tools it offers as subcommands ([From a shell](claude-code.md#from-a-shell)). Open the Web UI in the browser:
 
 ```bash
-tsugumi
+tsugumi web
 ```
 
-Stop it with Ctrl-C. If the same build is already running, it opens a new page on that host. `tsugumi <project folder>` opens that project on either a new or an existing host. Starts, including starts from the Claude Code plugin, share one lock per data folder, so concurrent commands use one host. A running host from a different build is refused with a message identifying its PID and URL; stop that host before starting the new build.
+It starts the host when none runs, has it show a page and prints the page's URL, then returns; the host keeps running, like the desktop app's. `tsugumi web <project folder>` shows that project: a page already open on Home takes it, else the browser opens one. `--no-browser` only prints the URL (for a browser on another machine), and `--port` asks for a port. Starts, including starts from the Claude Code plugin, share one lock per host state folder, so concurrent commands use one host.
 
-When a new version comes out, replace it with this command (if it is already the latest, it says so and does nothing). A running `tsugumi` opens with the new version after you stop and start it again.
+When a new version comes out, replace it with this command (if it is already the latest, it says so and does nothing). A host that runs keeps its version until it stops.
 
 ```bash
 tsugumi update
 ```
 
 - **What is installed**: only the command (`~/.local/bin/tsugumi`) and what it runs (`~/.local/share/tsugumi/<version>.<generation>/`). If `~/.local/bin` is not on `PATH`, it says so; it does not change your shell's settings. `tsugumi update` or installing again replaces it with a new version (it does not update itself). To remove it, see [Uninstalling](#uninstalling).
-- **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes Node.js and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The release-built image starts the bundled Tsugumi runtime; first boot initializes its persistent disks. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](WebUI.md#the-tsugumi-command).
+- **Mac (Apple silicon, macOS 26 or later)**: fetches `tsugumi-macos-arm64.tar.gz`, which includes the command, `tsugumi-hostd`, the built Web UI and the VM's boot disk. Cards run in the same shared Linux VM as the desktop app, so Nix need not be installed separately. The release-built image starts the bundled Tsugumi runtime; first boot initializes its persistent disks. The settings shared with the desktop app, and when the two cannot be used at once, are in [Web UI](WebUI.md#the-tsugumi-command).
 - **Linux (x86_64 / aarch64)**: needs [Nix](https://nixos.org/download). It fetches the source, `tsugumi-linux.tar.gz`, and builds it with Nix (the first time takes a few minutes; how it works is in [Web UI](WebUI.md#the-tsugumi-command)).
-- **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
+- **Windows**: needs WSL2 and [Nix](https://nixos.org/download) installed in its Linux. `install.ps1` runs `install.sh` in the default WSL Linux and creates `%USERPROFILE%\.local\bin\tsugumi.cmd` (it does not change `PATH`). `tsugumi web` runs inside WSL just as on Linux, and the page opens in the Windows browser. Keep projects on the WSL file system and pass folders as absolute paths as WSL sees them. It can also be installed from a shell in the WSL Linux with the same `curl … | sh` as on Linux (no `tsugumi.cmd` is made, but the page still opens in the Windows browser).
 - Each installation, including the same version again, gets a separate runtime directory. The installer checks the checksum (`.sha256`), builds or unpacks there, and runs `tsugumi --version` before atomically switching `current`. A failed build or version check leaves the current command usable. Old runtimes stay available because a running host can still read their assets; stop hosts and use `tsugumi uninstall --yes` to remove installer-marked generations. Foreign directories under the install root are preserved. To choose a version, use the environment variable `TSUGUMI_VERSION`.
 
 ## Building from source
@@ -143,7 +142,7 @@ The test suites and commands are in [Repository tests](../tests/README.md).
 
 ## Uninstalling
 
-Quit Tsugumi and stop any running `tsugumi` server first. Preview what the command-line installer will remove, then apply it:
+Quit Tsugumi and stop the running `tsugumi-hostd` first. Preview what the command-line installer will remove, then apply it:
 
 ```sh
 tsugumi uninstall

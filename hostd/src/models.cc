@@ -34,13 +34,12 @@ auto Models::StoredChatGPTModels(const std::filesystem::path& state_dir)
 
 auto Models::CatalogConnection(std::string_view provider,
                                std::string_view profile,
-                               std::string_view account_profile,
-                               std::string_view key_profile) -> std::string {
+                               std::string_view account_profile) -> std::string {
   if (profile.empty()) profile = "desktop";
-  auto credentials = provider == "chatgpt" ? account_profile : key_profile;
+  auto credentials = provider == "chatgpt" ? account_profile : profile;
   if (credentials.empty()) credentials = profile;
-  // The profile owns the endpoint; credentials may come from a separate
-  // account/key profile. Do not share reported windows across connections.
+  // The profile owns the endpoint and keys; a ChatGPT plan's account may be
+  // another profile's. Do not share reported windows across connections.
   return json::Encode(
       std::vector<std::string>{json::Quote(profile), json::Quote(credentials)});
 }
@@ -49,15 +48,13 @@ auto Models::ContextWindowTokens(const std::filesystem::path& state_dir,
                                  std::string_view provider,
                                  std::string_view model,
                                  std::string_view profile,
-                                 std::string_view account_profile,
-                                 std::string_view key_profile) -> uint32_t {
+                                 std::string_view account_profile) -> uint32_t {
   if (std::filesystem::exists(state_dir / "host.sqlite")) {
     sql::Db catalog((state_dir / "host.sqlite").string(), true);
     auto q = catalog.prepare(
         "SELECT models FROM model_lists WHERE id=? AND connection=?");
     q.bind(1, std::string(provider))
-        .bind(2, CatalogConnection(provider, profile, account_profile,
-                                   key_profile));
+        .bind(2, CatalogConnection(provider, profile, account_profile));
     if (q.step())
       for (const auto& row : json::Array(q.text(0))) {
         const auto value = json::Object(row);
@@ -97,14 +94,12 @@ auto Models::Handle(const RequestIn& request, bool human,
   if (key.empty())
     throw Failure("invalid_request", "A model catalog needs a provider ID");
   const auto connection =
-      CatalogConnection(key, Text(p->profile()), Text(p->account_profile()),
-                        Text(p->key_profile()));
+      CatalogConnection(key, Text(p->profile()), Text(p->account_profile()));
   if (p->refresh()) {
     auto config = host_settings->Resolve(
         {{"profile", json::Quote(Text(p->profile()))},
          {"provider_id", json::Quote(key)},
-         {"account_profile", json::Quote(Text(p->account_profile()))},
-         {"key_profile", json::Quote(Text(p->key_profile()))}});
+         {"account_profile", json::Quote(Text(p->account_profile()))}});
     lock.unlock();
     const auto fresh = agent::ListModels(config, stop);
     lock.lock();
