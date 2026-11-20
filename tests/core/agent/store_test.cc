@@ -217,8 +217,9 @@ TEST_F(ConversationStoreTest,
   EXPECT_FALSE(fs::FileLock::try_acquire(root / ".tsugumi/agent.lock"));
   for (auto* db : {&home.db, &project})
     db->exec(
-        "INSERT INTO conversation_turns "
-        "VALUES('fixture','turn','digest','running',0,'{}',NULL,NULL)");
+        "INSERT INTO "
+        "conversation_turns(conversation,id,digest,state,action,operation) "
+        "VALUES('fixture','turn','digest','running',0,'{}')");
   store.reset();
   {
     auto released = fs::FileLock::try_acquire(root / ".tsugumi/agent.lock");
@@ -446,8 +447,9 @@ TEST_F(ConversationStoreTest,
   auto& broken = store->ConversationDatabase("foreign");
   broken.exec(
       "UPDATE conversations SET project='old-identity';"
-      "INSERT INTO conversation_turns "
-      "VALUES('foreign','turn','digest','running',0,'{}',NULL,NULL)");
+      "INSERT INTO "
+      "conversation_turns(conversation,id,digest,state,action,operation) "
+      "VALUES('foreign','turn','digest','running',0,'{}')");
   store.reset();
   Open();
   // A scoped creation must not even try to open the broken database.
