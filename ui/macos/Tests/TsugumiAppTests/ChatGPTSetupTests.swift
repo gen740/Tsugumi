@@ -213,8 +213,7 @@ import Testing
       await reopened.welcomed()
       await CorePreferences.shared.reload()
       #expect(CorePreferences.shared.string(forKey: "agent.provider") == "chatgpt")
-      #expect(guide.setupDone)
-      try await fixtures.until("ChatGPT connects the guide") { guide.connected }
+      try await fixtures.until("ChatGPT finishes setup and connects the guide") { guide.setupDone && guide.connected }
       #expect(model.active?.email == "fixture@example.com")
       let id = try #require(model.active?.clientId)
       let settings = ChatGPTSignInModel(authenticate: authenticate)
