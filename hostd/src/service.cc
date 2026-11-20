@@ -499,9 +499,15 @@ struct Service::State {
     const auto reply = host_projects.Handle(
         *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 0);
     const auto* out = H::GetMessage(reply.data())->payload_as_Reply();
+    if (!out) throw Failure("invalid_request", "No project reply");
+    if (const auto* failure = out->value_as_Failure())
+      throw host::ProjectFailure(failure->code()->str(),
+                                 failure->message()->str());
     if (const auto* recent = out->value_as_RecentProject())
       return recent->path()->str();
-    return out->value_as_ProjectLocation()->path()->str();
+    if (const auto* location = out->value_as_ProjectLocation())
+      return location->path()->str();
+    throw Failure("invalid_request", "Unexpected project reply");
   }
   auto OpenProject(const RequestIn& request, const A::ProjectOpenRequest& p,
                    std::unique_lock<std::recursive_mutex>& lock)
