@@ -1082,7 +1082,9 @@ rec {
   #            run.worker names the worker built for it) or a bash script (string;
   #            inputs as $JSON_<PORT> files and $FILE_<PORT> / $DIR_<PORT>
   #            paths, outputs as JSON written to $TSUGUMI_OUTPUT), or an ordered
-  #            list of those implementations
+  #            list of those implementations; a list entry may be
+  #            { label = "..."; run = ...; } to name it in history and
+  #            comparison
   #   preRun   bash before the body, every invocation (also with a resident
   #            worker); no Card inputs; its environment and `cd` carry over
   #            to source loading in the first invocation and to every call
@@ -1121,7 +1123,28 @@ rec {
             throw "each run implementation must be a package (derivation) or a bash script (string)"
         )
         // lib.optionalAttrs remote { worker = "${worker}/bin/tsugumi-worker"; };
-      runs = if builtins.isList card.run then { runs = map body card.run; } else { run = body card.run; };
+      # A run list entry may name its implementation: { label = "..."; run = ...; }.
+      # The label is read with the execution plan and is not part of the build.
+      entry =
+        run:
+        if builtins.isAttrs run && !(lib.isDerivation run) then
+          assert lib.assertMsg (
+            builtins.attrNames run == [
+              "label"
+              "run"
+            ]
+            && builtins.isString run.label
+          ) "a labeled run list entry is { label = \"...\"; run = <package or bash script>; }";
+          body run.run
+        else
+          body run;
+      runs =
+        if builtins.isList card.run then
+          { runs = map entry card.run; }
+        else if builtins.isAttrs card.run && !(lib.isDerivation card.run) then
+          throw "a label names one entry of a run list; write run = [ { label = \"...\"; run = ...; } ]"
+        else
+          { run = body card.run; };
     in
     assert lib.assertMsg (
       unknown == [ ]

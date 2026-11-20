@@ -68,6 +68,9 @@ struct ParamDef {
   Opt<"name", v::String> name;
   Opt<"type", v::String> type;
   Opt<"data", Json> data;
+  // An Input Card's direct value sweep: one invocation per value, instead of
+  // data. A list-typed param sweeps lists; its data stays one vector value.
+  Opt<"sweep", v::Array<Json>> sweep;
   Opt<"nix", v::Bool> nix;
 };
 

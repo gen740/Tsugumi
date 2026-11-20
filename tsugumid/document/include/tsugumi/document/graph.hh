@@ -52,6 +52,9 @@ struct ParamDef {
   ParamType type = ParamType::String;
   std::optional<hosq::json::GenericDom<>>
       data;  // effective value (validated against type)
+  // An Input Card's value sweep (exclusive with data): one execution batch
+  // member per value, in order, and the Cartesian product across swept params.
+  std::optional<std::vector<hosq::json::GenericDom<>>> sweep;
   bool nix = false;
 };
 
@@ -90,6 +93,17 @@ struct InputDef {
   std::string name;
   bool optional = false;
 };
+
+// An Input Card's value sweep. Members follow the param order, with the last
+// swept param varying fastest; a Card without a sweep has one member.
+inline constexpr uint64_t kMaxValueSweepSize = 256;
+bool has_value_sweep(const Settings& settings);
+uint64_t value_sweep_size(const Settings& settings);
+struct ValueSweepMember {
+  std::vector<ParamDef> params;  // every param, with this member's data
+  std::string label;  // "name=value, ..." of the swept params; "" without
+};
+ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index);
 
 struct NixSourceRef {
   std::string name, type, ref;
