@@ -860,6 +860,7 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 | `trigger` | out `out` | Where a whole run starts |
 | `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
+| `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
 | `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
 
@@ -941,7 +942,7 @@ Add a built-in `collect` after `score` to send one ordinary port value with an
 Directory. The ordered `items` records contain each original name and a path
 relative to the Directory root.
 
-Refer to Nix exports as `inputs.<destination-port>`. Collect, Branch's
+Refer to Nix exports as `inputs.<destination-port>`. Collect, Fork, Branch's
 `value` input and Workflow boundaries preserve a unique Code producer. Use a
 direct connection to that Code Card if the producer would otherwise be
 ambiguous. The `score` Card also exports `thresholdCount`, which `summary` reads through

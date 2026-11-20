@@ -171,7 +171,8 @@ and its sources in src/. You can use input_types to read the resolved input defi
   Use project:<path> for a file relative to the Card's own project root (also inside an external project).
   When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
   the same names as the fields of its output table (demos/en/report/definitions/settings). Other built-ins:
-  branch, merge.
+  branch, merge, and fork ({"template": "fork", "outputs": [{"name": "a"}, {"name": "b"}]}: its value input goes
+  out unchanged on every output, so each one always runs downstream).
 * Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
   "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
   "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a
