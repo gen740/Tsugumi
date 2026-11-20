@@ -83,6 +83,9 @@ struct Settings {
   std::optional<ExecutionResources> execution_resources;
   std::string system;  // "" = the execution service's native system
   std::vector<HostFolder> host_folders;
+  // Card secret names, in declaration order: [a-z][a-z0-9_]{0,63}, each the
+  // name of the environment variable that carries its value.
+  std::vector<std::string> secrets;
   std::vector<ParamDef> params;  // with their values in data
 };
 

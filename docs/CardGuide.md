@@ -919,6 +919,23 @@ With `sandbox: true`, network access is disabled unless `_card.json` explicitly 
 
 Omit `executionService` for local execution, or select a host-registered service ID. `executionResources: {"cpuMillis": 1000, "memoryBytes": 4294967296}` caps CPU and memory when the service advertises limits, including its build. Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state and run hooks follow the [worker state rules](#worker-state).
 
+### Card secrets
+
+A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value under **Settings > Card secrets** in the Mac app or the Web UI; it is kept by this host's hostd and is never shown again. At each invocation the Card's process receives it as an environment variable of the same name, the same way in every language:
+
+```python
+import os
+password = os.environ["database_password"]
+```
+
+```bash
+PGPASSWORD="$database_password" psql -h db.example -U reader catalog -c 'select 1'
+```
+
+The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. A Card with secrets cannot use `reuseWorker`, and runs only on the local execution service for now.
+
+What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (above, only `psql` receives it, in its environment rather than its command line), and never write it to a report or an output. See [Card secrets](security.md#card-secrets).
+
 ### Run lists and connected Nix exports
 
 Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Card uses a Nix

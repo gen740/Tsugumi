@@ -6,7 +6,7 @@ import TsugumiLauncher
 /// App-wide settings; the category on the left switches the content.
 struct ApplicationSettings: View {
   enum Category: String, CaseIterable, Identifiable {
-    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches, executionServices
+    case general, appearance, editor, shortcuts, skills, api, cardSecrets, connections, binaryCaches, executionServices
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -16,6 +16,7 @@ struct ApplicationSettings: View {
       case .shortcuts: return String(localized: "ショートカット")
       case .skills: return "Skills"
       case .api: return "API"
+      case .cardSecrets: return String(localized: "Card シークレット")
       case .connections: return String(localized: "外部接続")
       case .binaryCaches: return String(localized: "バイナリキャッシュ")
       case .executionServices: return String(localized: "実行サービス")
@@ -29,6 +30,7 @@ struct ApplicationSettings: View {
       case .shortcuts: return "keyboard"
       case .skills: return "wand.and.stars"
       case .api: return "key"
+      case .cardSecrets: return "key.horizontal"
       case .connections: return "network"
       case .binaryCaches: return "shippingbox"
       case .executionServices: return "network"
@@ -39,6 +41,7 @@ struct ApplicationSettings: View {
       switch self {
       case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
       case .api: return String(localized: "このホスト（設定と API キーは hostd）")
+      case .cardSecrets: return String(localized: "このホストの hostd（値は表示されません）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -116,6 +119,7 @@ struct ApplicationSettings: View {
             case .shortcuts: ShortcutSettings()
             case .skills: SkillSettings()
             case .api: APISettings()
+            case .cardSecrets: CardSecretsSettings()
             case .connections: ConnectionSettings()
             case .binaryCaches: BinaryCacheSettings()
             case .executionServices: ExecutionServicesSettings()

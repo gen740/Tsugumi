@@ -34,7 +34,7 @@ the person's decision.
 - How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
   large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
   (en/report/definitions/generate/src/main.py); demo_list lists each demo's path, name and one line.
-- What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
+- What a Card may do beyond computing (network, sandbox, hostFolders, secrets, executionService, and nixSources in
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"external": "<name>"}: the project externals/<name>/ with its own

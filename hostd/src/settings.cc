@@ -253,6 +253,14 @@ class SqlSecrets final : public SecretStore {
     auto q = db_.prepare("DELETE FROM secrets WHERE id=?");
     q.bind(1, key).run();
   }
+  auto Keys(const std::string& prefix) -> std::vector<std::string> override {
+    auto q = db_.prepare(
+        "SELECT id FROM secrets WHERE substr(id,1,length(?1))=?1 ORDER BY id");
+    q.bind(1, prefix);
+    std::vector<std::string> keys;
+    while (q.step()) keys.push_back(q.text(0));
+    return keys;
+  }
 
  private:
   sql::Db& db_;
@@ -276,6 +284,14 @@ auto Defaults() -> j::Members {
           {"vm.memoryGiB", "0"},
           {"vm.storeGiB", "0"},
           {"app.language", j::Quote("ja")}};
+}
+constexpr std::string_view kCardSecret = "card-secret/";
+// The same rule as a Card's `secrets` entries: [a-z][a-z0-9_]{0,63}.
+auto ValidCardSecretName(std::string_view name) -> bool {
+  return !name.empty() && name.size() <= 64 && name[0] >= 'a' &&
+         name[0] <= 'z' && std::ranges::all_of(name, [](char c) {
+           return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+         });
 }
 auto IsSetting(const j::Members& defaults, const std::string& key) -> bool {
   return defaults.contains(key) || key == "agent.drawThoughts" ||
@@ -412,6 +428,12 @@ struct Settings::State {
     if (out.configured) out.source = "hostd";
     if (id == "fixture") out.configured = true;
     if (!out.configured) out.message = "No API key configured";
+    return out;
+  }
+  auto CardSecretList() -> H::CardSecretListT {
+    H::CardSecretListT out;
+    for (const auto& key : secrets->Keys(std::string(kCardSecret)))
+      out.names.push_back(key.substr(kCardSecret.size()));
     return out;
   }
   auto Status(const std::string& profile, const std::string& attempt)
@@ -741,6 +763,8 @@ auto Settings::Handles(H::RequestPayload type) -> bool {
     case H::RequestPayload::SignInBeginRequest:
     case H::RequestPayload::SignInActionRequest:
     case H::RequestPayload::SignInStatusRequest:
+    case H::RequestPayload::CardSecretListRequest:
+    case H::RequestPayload::CardSecretSetRequest:
       return true;
     default:
       return false;
@@ -926,6 +950,24 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
           s.Publish<H::ProviderChangedT>(profile);
         return agent::wire::HostReply(id, after);
       }
+      case H::RequestPayload::CardSecretSetRequest: {
+        const auto& p = *request.value_as_CardSecretSetRequest();
+        const auto name = p.name()->str();
+        if (!ValidCardSecretName(name))
+          throw std::runtime_error("Invalid Card secret name");
+        if (p.remove()) {
+          s.secrets->Erase(std::string(kCardSecret) + name);
+        } else {
+          const auto value = Text(p.value());
+          if (value.empty() || value.size() > 65536 ||
+              value.find('\0') != value.npos)
+            throw std::runtime_error("Invalid Card secret value");
+          s.secrets->Put(std::string(kCardSecret) + name, value);
+        }
+        return agent::wire::HostReply(id, s.CardSecretList());
+      }
+      case H::RequestPayload::CardSecretListRequest:
+        return agent::wire::HostReply(id, s.CardSecretList());
       case H::RequestPayload::ProviderStatusRequest: {
         const auto& p = *request.value_as_ProviderStatusRequest();
         return agent::wire::HostReply(
@@ -1008,6 +1050,18 @@ auto Settings::Redact(std::string text) -> std::string {
   auto rows = s.db.prepare("SELECT profile,id FROM provider_connections");
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
   return text;
+}
+auto Settings::CardSecretValues(const std::vector<std::string>& names)
+    -> std::vector<std::pair<std::string, std::string>> {
+  auto& s = *state_;
+  std::lock_guard lock(s.mutex);
+  std::vector<std::pair<std::string, std::string>> out;
+  for (const auto& name : names) {
+    if (!ValidCardSecretName(name)) continue;
+    auto value = s.secrets->Get(std::string(kCardSecret) + name);
+    if (!value.empty()) out.emplace_back(name, std::move(value));
+  }
+  return out;
 }
 auto Settings::AllowUnscopedHelpers() -> bool {
   std::lock_guard lock(state_->mutex);

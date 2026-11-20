@@ -103,6 +103,8 @@ struct InvocationSummaryData {
   std::optional<RemoteExecutionState> execution_state;
   std::optional<uint64_t> batch_activation;
   std::optional<uint32_t> batch_index, batch_size, implementation_index;
+  // Card secret names handed to the Card's process; never their values.
+  std::vector<std::string> secrets;
 };
 
 struct RunBatchOutputData {

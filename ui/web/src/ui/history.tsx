@@ -213,6 +213,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                             {summary.executionResources?.memoryBytes != null && <Value label={L('メモリ上限（バイト）')} value={String(summary.executionResources.memoryBytes)} />}
                             {/* A Card built for another system (its `system` setting): what ran it. */}
                             {summary.emulator && <Value label={L('エミュレーター')} value={s(summary.emulator)} />}
+                            {summary.secrets.length > 0 && <Value label={L('渡したシークレット')} value={summary.secrets.map((n) => s(n)).join(', ')} />}
                             {summary.waitingInputs.length > 0 && <Value label={L('待っていた入力')} value={summary.waitingInputs.map((w) => s(w.port)).join(', ')} />}
                           </>
                         )}

@@ -206,6 +206,12 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
           : Off<R::ExecutionResources>();
   auto transfer_name = b.CreateString(s.transfer_name);
   auto transfer_direction = b.CreateString(s.transfer_direction);
+  std::vector<Off<flatbuffers::String>> secret_names;
+  for (const auto& name : s.secrets)
+    secret_names.push_back(b.CreateString(name));
+  auto secrets = s.secrets.empty()
+                     ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
+                     : b.CreateVector(secret_names);
   R::InvocationSummaryBuilder ib(b);
   ib.add_transfer_name(transfer_name);
   ib.add_transfer_direction(transfer_direction);
@@ -240,6 +246,7 @@ Off<R::InvocationSummary> invocation(FBB& b, const InvocationSummaryData& s) {
   if (s.batch_size) ib.add_batch_size(*s.batch_size);
   if (s.implementation_index)
     ib.add_implementation_index(*s.implementation_index);
+  if (!secrets.IsNull()) ib.add_secrets(secrets);
   return ib.Finish();
 }
 

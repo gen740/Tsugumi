@@ -1054,6 +1054,9 @@ table InvocationSummary {
   transfer_total:uint64 (id: 29);
   /// The invocation omitted log output at this combined limit, in bytes.
   log_truncated_at_bytes:uint64 = null (id: 30);
+  /// Names of the Card secrets handed to this invocation's process (never
+  /// their values), in the order the Card declares them.
+  secrets:[string] (id: 31);
 }
 
 table StageTime {

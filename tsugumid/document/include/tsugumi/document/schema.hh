@@ -129,6 +129,9 @@ struct CardDefinition {
   // Carried opaquely; only clients interpret it.
   Opt<"displayMode", Json> display_mode;
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
+  // Names of the Card secrets the Card's process receives as environment
+  // variables of the same name. Values live only in hostd's secret store.
+  Opt<"secrets", v::Array<v::String>> secrets;
 };
 
 }  // namespace tsugumi::schema

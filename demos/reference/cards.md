@@ -297,6 +297,10 @@ and its sources in src/. You can use input_types to read the resolved input defi
   state across invocations and runs. To reset that state at the start of each run, use `auto onRunStart(const Card::Inputs& inputs) -> void`
   (Python: on_run_start(inputs, report, run)). Input types come from the connected outputs (there is no _inputs.fbs).
   Optional preRun / postRun are bash without the Card inputs.
+* A credential is a Card secret: `"secrets": ["database_password"]` in _card.json names it
+  ([a-z][a-z0-9_]{0,63}); the person sets its value in Settings > Card secrets, and the Card's process reads it as the
+  environment variable of the same name (os.environ["database_password"], $database_password). Values are not
+  readable through any tool, and the run history records only the names provided. Such a Card has no reuseWorker.
 
 ## Additional tools
 

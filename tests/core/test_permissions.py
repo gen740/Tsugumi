@@ -57,6 +57,24 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     save(c, [put("src", wide)], origin="external", check=False)
 
 
+def test_a_new_card_secret_name_needs_approval(tmp_path, core_factory):
+    """Declaring a secret name gives the Card hostd's value, so each new name is a widening."""
+    root = tmp_path / "p"
+    builtin_project(root)
+    c = core_factory(project_root=root).connect()
+    body = card_json(c, "src")
+    one = dict(body, secrets=["database_password"])
+    with pytest.raises(RpcFailure) as rejected:
+        save(c, [put("src", one)], origin="agent", check=True)
+    assert permissions(rejected.value) == ["secret src database_password"]
+    save(c, [put("src", one)], approved=["secret src database_password"], origin="agent", check=True)
+    two = dict(one, secrets=["database_password", "catalog_token"])
+    with pytest.raises(RpcFailure) as rejected:
+        save(c, [put("src", two)], origin="agent", check=True)
+    assert permissions(rejected.value) == ["secret src catalog_token"]
+    save(c, [put("src", body)], origin="agent", check=True)
+
+
 def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     """External edits cannot bypass approval, including nested Cards and UI reloads."""
     root = tmp_path / "project"

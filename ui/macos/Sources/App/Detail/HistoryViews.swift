@@ -280,6 +280,9 @@ struct CardExecutionView: View {
         if let memory = s.executionResources?.memoryBytes { LabeledContent("メモリ上限（バイト）", value: String(memory)) }
         // A Card built for another system (its `system` setting): what ran it.
         if let e = s.emulator, !e.isEmpty { LabeledContent("エミュレーター", value: e).textSelection(.enabled) }
+        // Card secret names handed to the process; their values are never recorded.
+        let secrets = s.secrets.compactMap { $0 }
+        if !secrets.isEmpty { LabeledContent("渡したシークレット", value: secrets.joined(separator: ", ")).textSelection(.enabled) }
         if !s.waitingInputs.isEmpty {
           LabeledContent("待っていた入力", value: s.waitingInputs.compactMap { $0?.port }.joined(separator: ", "))
         }

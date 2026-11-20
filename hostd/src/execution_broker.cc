@@ -232,12 +232,14 @@ struct ExecutionBroker::State {
   bool stopping = false;
   Socket listener, cancel_listener, wake_reader, wake_writer;
   std::vector<std::jthread> receivers;
+  CardSecrets card_secrets;
 
-  State(std::filesystem::path dir, std::string path)
+  State(std::filesystem::path dir, std::string path, CardSecrets secrets)
       : state(std::move(dir)),
         socket(std::move(path)),
         db((state / "execution.sqlite").string()),
-        identity(state / "execution-identity.pem") {
+        identity(state / "execution-identity.pem"),
+        card_secrets(std::move(secrets)) {
     ::chmod((state / "execution.sqlite").c_str(), 0600);
     db.exec(
         "PRAGMA journal_mode=WAL; PRAGMA synchronous=FULL;"
@@ -435,6 +437,7 @@ struct ExecutionBroker::State {
               "Wrong execution broker endpoint for this request");
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
+      std::optional<std::vector<std::string>> secret_names;
       {
         std::lock_guard lock(mutex);
         auto q = db.prepare("SELECT scope,id FROM projects WHERE capability=?");
@@ -444,7 +447,11 @@ struct ExecutionBroker::State {
                          "Project is not authorized to use this broker");
         request->project_scope = q.text(0);
         auto entries = Entries();
-        if (request->body.AsCatalogRequest()) {
+        if (auto* asked = request->body.AsCardSecretsRequest()) {
+          Require(card_secrets != nullptr, "Card secrets are unavailable");
+          Require(asked->names.size() <= 256, "Too many Card secret names");
+          secret_names = std::move(asked->names);
+        } else if (request->body.AsCatalogRequest()) {
           R::CatalogT catalog;
           for (const auto& e : entries) {
             auto target = std::make_unique<R::TargetT>();
@@ -490,6 +497,18 @@ struct ExecutionBroker::State {
       }
       if (catalog_reply) {
         Write(fd, W::reply(std::move(*catalog_reply)));
+        return;
+      }
+      // Read outside the broker lock: the store has its own.
+      if (secret_names) {
+        R::CardSecretsT secrets;
+        for (auto& [name, value] : card_secrets(*secret_names)) {
+          auto secret = std::make_unique<R::CardSecretT>();
+          secret->name = std::move(name);
+          secret->value = std::move(value);
+          secrets.secrets.push_back(std::move(secret));
+        }
+        Write(fd, W::reply(std::move(secrets)));
         return;
       }
       forwarding = true;
@@ -543,8 +562,9 @@ struct ExecutionBroker::State {
 };
 
 ExecutionBroker::ExecutionBroker(std::filesystem::path state,
-                                 std::string socket)
-    : state_(std::make_unique<State>(std::move(state), std::move(socket))) {}
+                                 std::string socket, CardSecrets card_secrets)
+    : state_(std::make_unique<State>(std::move(state), std::move(socket),
+                                     std::move(card_secrets))) {}
 ExecutionBroker::~ExecutionBroker() { Stop(); }
 auto ExecutionBroker::Stop() -> void { state_->Stop(); }
 auto ExecutionBroker::socket_path() const -> const std::string& {

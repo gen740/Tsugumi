@@ -640,6 +640,72 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
   EXPECT_TRUE(worker->WaitForHeldStatus(pending.size() + 1));
 }
 
+TEST_F(BrokerFixture, CardSecretsAreWriteOnlyAndReachOnlyAuthorizedCores) {
+  const std::string sentinel = "CARD_SECRET_SENTINEL_5b1e9c";
+  const auto set = [&](const std::string& name, const std::string& value,
+                       bool remove) {
+    return Call(
+        *host, H::RequestPayload::CardSecretSetRequest, [&](Builder& b) {
+          const auto v = value.empty()
+                             ? flatbuffers::Offset<flatbuffers::String>()
+                             : b.CreateString(value);
+          return H::CreateCardSecretSetRequest(b, b.CreateString(name), v,
+                                               remove)
+              .Union();
+        });
+  };
+  const auto names = [](const Reply& reply) {
+    std::vector<std::string> out;
+    const auto* list = reply.HostValue()->value_as_CardSecretList();
+    if (list && list->names())
+      for (const auto* name : *list->names()) out.push_back(name->str());
+    return out;
+  };
+  const auto saved = set("database_password", sentinel, false);
+  ASSERT_TRUE(saved.Code().empty()) << saved.View();
+  EXPECT_EQ(names(saved), std::vector<std::string>{"database_password"});
+  EXPECT_EQ(std::string(saved.bytes.begin(), saved.bytes.end()).find(sentinel),
+            std::string::npos);
+  const auto listed = Call(
+      *host, H::RequestPayload::CardSecretListRequest,
+      [](Builder& b) { return H::CreateCardSecretListRequest(b).Union(); });
+  EXPECT_EQ(names(listed), std::vector<std::string>{"database_password"});
+  EXPECT_EQ(
+      std::string(listed.bytes.begin(), listed.bytes.end()).find(sentinel),
+      std::string::npos);
+  // Names follow the Card definition's rule; a value is required.
+  EXPECT_FALSE(set("Database", "x", false).Code().empty());
+  EXPECT_FALSE(set("anthropic:key", "x", false).Code().empty());
+  EXPECT_FALSE(set("token", "", false).Code().empty());
+
+  const auto capability = Authorize("project");
+  R::CardSecretsRequestT ask;
+  ask.names = {"database_password", "not_set"};
+  const auto values = Broker(ask, capability);
+  const auto* secrets = values->payload.AsReply()->body.AsCardSecrets();
+  ASSERT_NE(secrets, nullptr);
+  ASSERT_EQ(secrets->secrets.size(), 1u);
+  EXPECT_EQ(secrets->secrets[0]->name, "database_password");
+  EXPECT_EQ(secrets->secrets[0]->value, sentinel);
+  // Provider keys share the store but are not Card secrets.
+  R::CardSecretsRequestT provider;
+  provider.names = {"desktop:fixture"};
+  EXPECT_TRUE(Broker(provider, capability)
+                  ->payload.AsReply()
+                  ->body.AsCardSecrets()
+                  ->secrets.empty());
+  const auto denied = Broker(ask, "not-a-capability");
+  const auto* failure = denied->payload.AsReply()->body.AsFailure();
+  ASSERT_NE(failure, nullptr);
+  EXPECT_EQ(failure->code, R::ErrorCode::Unauthorized);
+
+  EXPECT_TRUE(set("database_password", "", true).Code().empty());
+  EXPECT_TRUE(Broker(ask, capability)
+                  ->payload.AsReply()
+                  ->body.AsCardSecrets()
+                  ->secrets.empty());
+}
+
 TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {
   ASSERT_TRUE(Put().Code().empty());
   const auto capability = Authorize("project");

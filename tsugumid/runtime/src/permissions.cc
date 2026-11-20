@@ -1,5 +1,6 @@
 #include "permissions.hh"
 
+#include <algorithm>
 #include <set>
 
 #include "tsugumi/document/document.hh"
@@ -31,6 +32,10 @@ std::vector<std::string> widenings(const Resolution* before,
       out.push_back("network " + key);
     if (!s.sandbox && (!b || b->settings.sandbox))
       out.push_back("sandbox_off " + key);
+    for (const auto& name : s.secrets)
+      if (!b || std::ranges::find(b->settings.secrets, name) ==
+                    b->settings.secrets.end())
+        out.push_back("secret " + key + " " + name);
     for (const auto& f : s.host_folders) {
       const HostFolder* had = nullptr;
       if (b)

@@ -192,7 +192,10 @@ struct Service::State {
         });
     if (!options.broker_socket.empty())
       execution_broker = std::make_unique<host::ExecutionBroker>(
-          options.state_dir, options.broker_socket);
+          options.state_dir, options.broker_socket,
+          [this](const std::vector<std::string>& names) {
+            return host_settings->CardSecretValues(names);
+          });
     if (!options.vm.binary.empty()) {
       options.vm.broker_socket = execution_broker->socket_path();
       options.vm.resources = [this] { return host_settings->VMResources(); };

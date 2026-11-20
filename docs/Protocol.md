@@ -579,8 +579,9 @@ Separate listener: `TSA1`, WebSocket subprotocol `tsugumi.agent.v1`; authenticat
 | `ConversationSummarizeRequest` | `conversation_id: string` (required), `provider: Tsugumi.Service.ProviderSelection` |
 | `ToolCallCancelRequest` | `request_id: ulong` |
 | `CallIdRequest` | `conversation_id: string` (required), `name: string`, `arguments_json: string` |
+| `ShowRequest` | `path: string`, `card: string`, `create: bool`, `browser: bool` |
 
-Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`.
+Reply variants: `HelloResult`, `Acknowledgement`, `ConversationResult`, `ConversationList`, `SearchResult`, `EventsPage`, `ToolCatalog`, `ToolResult`, `AccessResult`, `AccessList`, `TextResult`, `Failure`, `CallId`, `Shown`.
 
 ### Host service
 
@@ -601,8 +602,8 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostTerminalRequest` | `project: string`, `action: TerminalAction`, `session: ulong`, `rows: uint`, `cols: uint`, `data: [ubyte]` |
 | `SettingsGetRequest` | `profile: string` (required) |
 | `SettingsUpdateRequest` | `profile: string` (required), `revision: string` (required), `changes: [Setting]`, `chatgpt_account: ExpectedAccount` |
-| `ProviderSetRequest` | `profile: string` (required), `id: string` (required), `provider: ProviderInput`, `remove: bool`, `ephemeral: bool`, `source: string` |
-| `ProviderStatusRequest` | `profile: string` (required), `id: string` (required), `key_profile: string` |
+| `ProviderSetRequest` | `profile: string` (required), `id: string` (required), `provider: ProviderInput`, `remove: bool` |
+| `ProviderStatusRequest` | `profile: string` (required), `id: string` (required) |
 | `SignInBeginRequest` | `profile: string` (required), `client_id: string`, `consent: bool`, `issuer: string`, `resource: string`, `replace_pending: bool` |
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
@@ -616,7 +617,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `AttachFoldersRequest` | `project: string` (required), `folders: [string]` |
 | `SkillsListRequest` | `project_path: string`, `folders: [string]`, `conversation_id: string` |
 | `ProjectTrustRequest` | `path: string` (required), `decision: ProjectTrustDecision` |
-| `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string`, `key_profile: string` |
+| `ModelsListRequest` | `provider_id: string` (required), `refresh: bool`, `profile: string`, `account_profile: string` |
 | `HostProjectDefaultsRequest` | None |
 | `HostProjectInfoRequest` | `path: string` (required) |
 | `HostProjectCreateRequest` | `parent: string` (required), `name: string` (required), `flow: string` |
@@ -644,5 +645,12 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostActivityRequest` | None |
 | `EnvironmentListRequest` | None |
 | `HostTraceRequest` | `mode: ubyte`, `source: string`, `after: ulong`, `generation: ulong` |
+| `HostPageRequest` | `project: string`, `detached: bool`, `page: string`, `closed: bool` |
+| `HostHomeRequest` | None |
+| `HostRevealRequest` | `path: string` (required) |
+| `HostFolderListRequest` | `path: string` |
+| `HostFolderCreateRequest` | `parent: string` (required), `name: string` (required) |
+| `CardSecretListRequest` | None |
+| `CardSecretSetRequest` | `name: string` (required), `value: string`, `remove: bool` |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`.

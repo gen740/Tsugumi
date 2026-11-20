@@ -66,6 +66,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
 
+  // Card secrets come from hostd for this invocation only and stay in memory:
+  // the worker sets them in the Card's process environment. A missing one
+  // fails here, before anything of the Card can run.
+  auto secrets = service_.card_secrets(node, request.stop);
+  s.secrets.clear();
+  for (const auto& secret : secrets) s.secrets.push_back(secret.first);
+
   s.build_cached = build.cached;
   s.emulator = build.emulator;
   s.execution_service = kLocalExecutionService;
@@ -164,6 +171,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
                                          NixRunner::params_json(node, false)};
   };
   invocation.path = build.path;
+  invocation.environment = std::move(secrets);
   invocation.worker_binary = sp.worker_binary;
   invocation.output_directory = request.directory / "out";
   if (::geteuid() == 0 && worker_uid_on_host())

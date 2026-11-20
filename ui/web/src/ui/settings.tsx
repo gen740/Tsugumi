@@ -26,8 +26,9 @@ import { adoptLanguage, L, language, type Language } from '../i18n'
 import { ChatGPTSettings } from './chatgpt'
 import { TrustedFoldersSettings } from './trustedFolders'
 import { ExecutionServicesSettings } from './executionServices'
+import { CardSecretsSettings } from './cardSecrets'
 
-type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'connections' | 'executionServices'
+type Category = 'general' | 'appearance' | 'editor' | 'shortcuts' | 'skills' | 'api' | 'cardSecrets' | 'connections' | 'executionServices'
 const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'general', title: L('一般'), icon: 'gearshape', storage: L('このブラウザ（localStorage）') },
   { id: 'appearance', title: L('外観'), icon: 'paintpalette', storage: L('このブラウザの外観設定と、このホストの hostd の Agent 表示設定') },
@@ -35,6 +36,7 @@ const CATS: { id: Category; title: string; icon: string; storage: string }[] = [
   { id: 'shortcuts', title: L('ショートカット'), icon: 'keyboard', storage: L('このブラウザ（localStorage）') },
   { id: 'skills', title: 'Skills', icon: 'wand.and.stars', storage: L('このホスト（Tsugumi web サーバーの設定）') },
   { id: 'api', title: 'API', icon: 'key', storage: L('このホスト（設定と API キーは hostd）') },
+  { id: 'cardSecrets', title: L('Card シークレット'), icon: 'key', storage: L('このホストの hostd（値は表示されません）') },
   { id: 'connections', title: L('外部接続'), icon: 'network', storage: L('表示のみ（開いているプロジェクトの接続先）') },
   { id: 'executionServices', title: L('実行サービス'), icon: 'network', storage: L('このホスト（Tsugumi web サーバーの設定）') },
 ]
@@ -121,6 +123,7 @@ export function ApplicationSettings() {
               {category.id === 'shortcuts' && <ShortcutSettings />}
               {category.id === 'skills' && <SkillSettings />}
               {category.id === 'api' && <APISettings />}
+              {category.id === 'cardSecrets' && <CardSecretsSettings />}
               {category.id === 'connections' && <ConnectionSettings />}
               {category.id === 'executionServices' && <ExecutionServicesSettings changed={() => {
                 void Promise.allSettled(projects.map((p) => p.refreshExecutionServices()))

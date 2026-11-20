@@ -409,4 +409,20 @@ auto RemoteJobClient::release(std::string_view service,
   body.fingerprint = fingerprint;
   require_ack(request(command(std::move(body), service, instance, job)));
 }
+auto RemoteJobClient::card_secrets(const std::vector<std::string>& names,
+                                   std::stop_token stop) const
+    -> std::vector<std::pair<std::string, std::string>> {
+  if (!enabled())
+    throw BrokerDisconnected("this project has no connection to hostd");
+  R::CardSecretsRequestT body;
+  body.names = names;
+  auto reply = request(command(std::move(body)), stop);
+  auto* secrets = reply.body.AsCardSecrets();
+  if (!secrets) throw BrokerDisconnected("expected Card secrets");
+  std::vector<std::pair<std::string, std::string>> out;
+  for (auto& secret : secrets->secrets)
+    if (std::ranges::find(names, secret->name) != names.end())
+      out.emplace_back(std::move(secret->name), std::move(secret->value));
+  return out;
+}
 }  // namespace tsugumi
