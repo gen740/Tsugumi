@@ -125,12 +125,9 @@ struct RunLogView: View {
           let source = source, size = reader.size
           Task { do { try await exportLog(session, source, size: size) } catch { exportError = "\(error)" } }
         }
-        .disabled(!reader.hasText)
+        .disabled(!reader.hasBytes)
       }
       .padding(.horizontal, 6)
-      if reader.clipped {
-        Text("ログの末尾を表示しています").font(.caption).foregroundStyle(.secondary).padding(.horizontal, 6)
-      }
       LogTextView(reader: reader, placeholder: emptyReason)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if let limit = reader.truncatedAt {
@@ -146,6 +143,7 @@ struct RunLogView: View {
       if resolved == nil { resolved = try? await session.rpc?.record(runId: runId, card: card).selectedInvocation }
     }
     .onChange(of: source, initial: true) { reader.show(source, session: session) }
+    .onChange(of: session.connected) { reader.update() }
   }
 
   /// Why nothing is shown, so an empty pane is never ambiguous.

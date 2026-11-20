@@ -156,10 +156,18 @@ export class RPCClient {
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
-    const reply = wire.valueType() === R.ReplyPayload.RecordResult
-      ? new ReplyT(R.ReplyPayload.RecordResult, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
-      : wire.unpack()
-    return reply
+    const type = wire.valueType()
+    if (type === R.ReplyPayload.RecordResult)
+      return new ReplyT(type, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
+    if (type === R.ReplyPayload.LogSlice) {
+      const slice = wire.value(new R.LogSlice()) as R.LogSlice
+      return new ReplyT(type, new R.LogSliceT(
+        slice.text(Encoding.UTF8_BYTES), slice.offset(), slice.nextOffset(), slice.sizeBytes(),
+        slice.exists(), slice.truncated(), slice.logTruncatedAtBytes(), slice.lineNumber(), slice.startsLine(),
+        slice.rawSizeBytes(), slice.reset(),
+      ))
+    }
+    return wire.unpack()
   }
 
   /** Sends one request and waits for its reply. Failure replies throw RPCFailure. */
@@ -261,11 +269,11 @@ export class RPCClient {
       Object.assign(new R.RunRecordRequestT(), { runId, card: cardPath(card), invocation, followLatest }),
     )
   }
-  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536) {
+  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536, before: bigint | null = null, terminal = false, terminalSince: bigint | null = null) {
     return this.call<R.LogSliceT>(
       RequestPayload.LogRangeRequest,
       Object.assign(new R.LogRangeRequestT(), {
-        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail ? null : offset, tail, limitBytes: limit,
+        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail || before !== null ? null : offset, tail, limitBytes: limit, before, terminal, terminalSince,
       }),
     )
   }

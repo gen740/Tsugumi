@@ -390,8 +390,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), line, run, ends](sql::Db& db) {
-          *ends = h.append_run_journal(db, run, line);
+        [line, run, ends](sql::Db& db) {
+          *ends = History::append_log(db, run, {}, 0, LogStream::journal, line);
         },
         [self = shared_from_this(), ends](bool ok) {
           if (!ok) self->persistence_lost("journal");
@@ -406,9 +406,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto ends = std::make_shared<std::vector<LogEnd>>();
     std::string run = run_id_;
     svc_.history().submit(
-        [&h = svc_.history(), card, inv, stream, text = std::move(text), run,
-         ends](sql::Db& db) {
-          *ends = h.append_log(db, run, card, inv, stream, text);
+        [card, inv, stream, text = std::move(text), run, ends](sql::Db& db) {
+          *ends = History::append_log(db, run, card, inv, stream, text);
         },
         [self = shared_from_this(), ends](bool ok) {
           if (!ok) self->persistence_lost("log");
@@ -1448,7 +1447,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             History::put_artifact(db, *remote_artifact);
           for (const auto& [stream, text] : out.remote_logs)
             remote_log_ends[stream] =
-                h.append_log(db, s.run_id, s.card, s.invocation, stream, text);
+                History::append_log(db, s.run_id, s.card, s.invocation, stream, text);
           h.complete_invocation(db, rec);
         });
         for (const auto& [_, ends] : remote_log_ends)

@@ -456,7 +456,12 @@ export class ProjectSession extends Observable {
   timeline: TimelineEntry[] = []
   /** Browser clock minus core clock (ms): the smallest difference seen. */
   coreClockOffset?: number
-  logRevision = 0 // bumps when new log bytes are available
+  private readonly logListeners = new Set<(notice?: R.LogAvailableT) => void>()
+
+  subscribeLogs(listener: (notice?: R.LogAvailableT) => void) {
+    this.logListeners.add(listener)
+    return () => { this.logListeners.delete(listener) }
+  }
 
   /** How many notifications the UI has taken in, and in how many batches. */
   notificationCount = 0
@@ -829,7 +834,7 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.LogAvailable:
-        this.logRevision++
+        for (const listener of this.logListeners) listener(e.value as R.LogAvailableT)
         break
     }
   }
@@ -973,7 +978,7 @@ export class ProjectSession extends Observable {
         }
         if (inv.executionState !== D.RemoteExecutionState.unspecified) {
           this.remoteHistoryRevision++
-          this.logRevision++
+          for (const listener of this.logListeners) listener()
           // Recovery also publishes events for runs already in history.
           if (s(e.runId) !== this.currentRunId) break
         }

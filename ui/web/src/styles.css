@@ -339,8 +339,13 @@ body.resizing-h, body.resizing-h * { cursor: col-resize !important; }
 .vsplit-handle { position: absolute; top: -3px; left: 0; right: 0; height: 6px; cursor: row-resize; z-index: 5; }
 .panel-bar { display: flex; align-items: center; gap: 10px; padding: 5px 6px; flex: none; }
 .log-view { flex: 1; display: flex; flex-direction: column; min-height: 0; }
-.log-text { flex: 1; overflow: auto; padding: 6px; background: var(--text-bg); margin: 0 6px 6px; border-radius: 6px; border: 0.5px solid var(--separator); }
-.log-text pre { white-space: pre; }
+.log-pane { position: relative; display: flex; flex: 1; min-height: 0; min-width: 0; }
+.log-text { position: relative; flex: 1; min-width: 0; overflow: hidden auto; overflow-anchor: none; background: var(--text-bg); margin: 0 6px 6px; border-radius: 6px; border: 0.5px solid var(--separator); font-family: var(--mono); }
+.log-row { display: grid; grid-template-columns: 10ch minmax(0, 1fr); padding: 0 6px; }
+.log-number { color: var(--secondary); text-align: right; padding-right: 1ch; user-select: none; }
+.log-line { white-space: pre-wrap; overflow-wrap: anywhere; user-select: text; }
+.log-placeholder { padding: 6px; }
+.log-waiting { position: absolute; bottom: 14px; right: 16px; }
 .timeline { flex: 1; overflow: auto; padding: 8px; display: flex; flex-direction: column; gap: 3px; }
 .timeline-row { display: flex; align-items: center; gap: 6px; }
 .timeline-name { width: 180px; flex: none; }
