@@ -1,5 +1,4 @@
 import { layoutHost } from '../src/wire/hostLayout'
-layoutHost.validate = async (json) => json
 // UI-only tests replace the read-only host boundary, as they replace the core.
 // Real placement and transaction behavior run against hostd in test_card_placement.py.
 layoutHost.complete = async (_project, layout) => layout
@@ -8,6 +7,7 @@ layoutHost.complete = async (_project, layout) => layout
 
 await import("./clientViewState")
 await import("./serviceProtocol")
+await import("./rpcProxy")
 await import("./agentRequests")
 await import('./chatModelRefresh')
 await import('./chatFailure')
@@ -19,7 +19,7 @@ await import("./hostReadiness")
 await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
-await import("./switchCard")
+await import("./booleanInput")
 await import("./reports")
 
 await import("./table")

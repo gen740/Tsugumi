@@ -23,7 +23,7 @@ def test_cpp_roles_and_hook_against_the_card_abi(tmp_path, arity):
     schemas = {
         "_inputs": "namespace inputs.number.sample; table Number { value:ulong; } namespace inputs; table Inputs { number:inputs.number.sample.Number (required); } root_type Inputs;",
         "_outputs": "namespace outputs.result.sample; table Number { value:ulong; } namespace outputs; table Outputs { result:outputs.result.sample.Number; } root_type Outputs;",
-        "_params": "namespace params; table Params { factor:ulong = null; } root_type Params;",
+        "_params": "namespace parameters; table Params { factor:ulong = null; } root_type Params;",
     }
     for name, schema in schemas.items():
         path = tmp_path / (name + ".fbs")
@@ -39,7 +39,7 @@ def test_cpp_roles_and_hook_against_the_card_abi(tmp_path, arity):
 #include <card.hh>
 #include <cassert>
 #include <type_traits>
-extern "C" int tsugumi_card_invoke(const tsugumi_call*, tsugumi_buffer*);
+extern "C" int tsugumi_card_invoke(const tsugumi_call*);
 static int hooks = 0, reports = 0;
 auto onRunStart(ARGS) -> void { assert(inputs.number.value == 21); ++hooks; EXTRA }
 auto run(ARGS) -> Card::Output {
@@ -51,26 +51,41 @@ auto run(ARGS) -> Card::Output {
 }
 int main() {
   flatbuffers::FlatBufferBuilder input, params;
-  input.Finish(inputs::CreateInputs(input, inputs::number::sample::CreateNumber(input, 21)));
-  params.Finish(params::CreateParams(params, 2));
+  input.Finish(inputs::number::sample::CreateNumber(input, 21));
+  params.Finish(parameters::CreateParams(params, 2));
   tsugumi_call call{};
   call.abi_version = TSUGUMI_ABI_VERSION;
   call.run_id = "test"; call.card = "step"; call.invocation = 7;
   call.working_directory = "."; call.temporary_directory = "."; call.output_directory = ".";
-  call.inputs = input.GetBufferPointer(); call.inputs_size = input.GetSize();
+  call.host = &input;
   call.params = params.GetBufferPointer(); call.params_size = params.GetSize();
   tsugumi_host effects{};
+  effects.input = [](void* host, const char* port, size_t* size) -> const uint8_t* {
+    assert(std::string_view(port) == "number");
+    auto& input = *static_cast<flatbuffers::FlatBufferBuilder*>(host);
+    *size = input.GetSize();
+    return input.GetBufferPointer();
+  };
+  static int sent = 0;
+  effects.output = [](void*, const char* port, const uint8_t* bytes, size_t) {
+    assert(std::string_view(port) == "result");
+    assert(flatbuffers::GetRoot<outputs::result::sample::Number>(bytes)->value() == 42);
+    ++sent;
+    return 0;
+  };
   effects.cancelled = [](void*) { return 0; };
-  effects.display_text = [](void*, const char*) { ++reports; return 0; };
+  effects.display = [](void*, uint32_t kind, const void* payload) {
+    assert(kind == TSUGUMI_DISPLAY_TEXT);
+    assert(std::string_view(static_cast<const char*>(payload)) == "reported");
+    ++reports;
+    return 0;
+  };
   effects.fail = [](void*, const char*, const char*) { assert(false); };
   call.effects = &effects;
-  tsugumi_buffer result{};
   call.phase = TSUGUMI_RUN_START;
-  assert(tsugumi_card_invoke(&call, &result) == 0 && !result.data);
+  assert(tsugumi_card_invoke(&call) == 0 && sent == 0);
   call.phase = TSUGUMI_RUN;
-  assert(tsugumi_card_invoke(&call, &result) == 0);
-  assert(outputs::GetOutputs(result.data)->result()->value() == 42);
-  free(result.data);
+  assert(tsugumi_card_invoke(&call) == 0 && sent == 1);
   assert(reports == REPORTS);
 }
 '''.replace("ARGS", ", ".join(args)).replace("EXTRA", extra).replace("REPORTS", str(2 if arity >= 2 else 0))

@@ -352,7 +352,7 @@ struct Service::State {
   bool stopping = false;
   Lane requests;
   Lane trace_requests;
-  DebugTrace debug_trace;
+  DebugTrace debug_trace{trace_requests};
   Lane tool_requests;
   Lane wait_requests;
   std::map<ConnId, std::stop_source> connection_stops;
@@ -390,15 +390,16 @@ struct Service::State {
   }
 
   auto TraceProjectsChanged() -> void {
-    if (trace::CurrentMode() == trace::Mode::Off) return;
+    if (!trace::LaunchEnabled()) return;
     trace_requests.submit([this] {
       DebugTrace::Targets targets;
       {
         std::lock_guard lock(mutex);
-        if (stopping || trace::CurrentMode() == trace::Mode::Off) return;
+        if (stopping) return;
         targets = TraceTargets();
       }
       debug_trace.Reconcile(std::move(targets));
+      debug_trace.CatalogChanged();
     });
   }
 
@@ -561,10 +562,13 @@ struct Service::State {
     std::unique_lock lock(mutex);
     if (stopping) throw Failure("unavailable", "Host service is stopping");
     if (const auto* debug = r->value_as_HostTraceRequest()) {
+      if (!trace::LaunchEnabled())
+        throw Failure("permission_denied",
+                      "Host was started without RPC tracing");
       if (request.websocket)
         throw Failure("permission_denied", "RPC capture requires local host access");
       lock.unlock();
-      auto result = debug_trace.Handle(*debug, [this] {
+      auto result = debug_trace.Handle(request.conn, *debug, [this] {
         std::lock_guard lock(mutex);
         return TraceTargets();
       });
@@ -831,6 +835,7 @@ auto Service::Attach(TransportServer* server, TransportServer* host_server)
     -> void {
   state_->server = server;
   state_->events->host_server = host_server;
+  state_->debug_trace.Attach(*host_server);
 }
 auto Service::Shutdown() -> void {
   if (!state_) return;
@@ -850,6 +855,7 @@ auto Service::Shutdown() -> void {
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
   state_->trace_requests.stop();
+  state_->debug_trace.Stop();
   trace::SetMode(trace::Mode::Off);
   state_->tool_requests.stop();
   state_->wait_requests.stop();
@@ -881,9 +887,10 @@ auto Service::hello(const RequestIn& request) -> std::pair<std::string, bool> {
         false};
   {
     std::lock_guard lock(state_->mutex);
-    if (host)
-      state_->events->host_connections.insert(request.conn);
-    else {
+    if (host) {
+      if (p->client() != Tsugumi::Trace::Client::Trace)
+        state_->events->host_connections.insert(request.conn);
+    } else {
       state_->events->principals[request.conn] = human;
       state_->connection_stops.try_emplace(request.conn);
     }
@@ -1002,6 +1009,9 @@ auto Service::disconnected(ConnId connection) -> void {
 }
 auto Service::host_disconnected(ConnId connection) -> void {
   state_->events->HostDisconnected(connection);
+  if (trace::LaunchEnabled())
+    state_->trace_requests.submit(
+        [this, connection] { state_->debug_trace.Disconnect(connection); });
 }
 
 }  // namespace tsugumi::host

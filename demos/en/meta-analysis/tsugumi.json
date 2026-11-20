@@ -10,9 +10,6 @@
         "id": "trials"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "pool"
       },
       {
@@ -42,24 +39,14 @@
           "port": "trials"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "pool"
-        },
-        "to": {
           "card": "pool",
           "port": "trials"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "funnel"
+          "card": "trials",
+          "port": "trials"
         },
         "to": {
           "card": "funnel",
@@ -68,8 +55,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "moderator"
+          "card": "trials",
+          "port": "trials"
         },
         "to": {
           "card": "moderator",
@@ -78,8 +65,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "sensitivity"
+          "card": "trials",
+          "port": "trials"
         },
         "to": {
           "card": "sensitivity",

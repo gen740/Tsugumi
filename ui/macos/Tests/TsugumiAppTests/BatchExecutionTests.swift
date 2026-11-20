@@ -4,6 +4,47 @@ import Testing
 @testable import TsugumiLauncher
 @testable import TsugumiRPC
 
+@MainActor @Test func emptyBatchKeepsEarlierInvocationInTimeline() throws {
+  let directory = try SyncTests.project()
+  defer { try? FileManager.default.removeItem(at: directory) }
+  let session = ProjectSession(identity: try ProjectIdentity(url: directory), environments: EnvironmentManager(image: nil))
+  let runId = "run"
+  let card = cardPath(["a"])
+  let status = Tsugumi_RPC_RunStatusT()
+  status.runId = runId
+  status.executionRev = session.executionRev
+  let accepted = Tsugumi_RPC_RunAcceptedEventT()
+  accepted.status = status
+  let event = Tsugumi_RPC_RunEventT()
+  event.runId = runId
+  event.value = Tsugumi_RPC_RunEventValueUnion(accepted, type: .runacceptedevent)
+  session.applyRunEvent(event)
+
+  let invocation = Tsugumi_RPC_InvocationSummaryT()
+  invocation.card = card
+  invocation.invocation = 1
+  invocation.batchActivation = 1
+  invocation.state = .succeeded
+  let changed = Tsugumi_RPC_RunCardChangedT()
+  changed.invocation = invocation
+  event.value = Tsugumi_RPC_RunEventValueUnion(changed, type: .runcardchanged)
+  session.applyRunEvent(event)
+
+  let batch = Tsugumi_RPC_RunBatchT()
+  batch.card = card
+  batch.activation = 2
+  batch.executionList = true
+  batch.complete = true
+  let empty = Tsugumi_RPC_RunBatchChangedT()
+  empty.batch = batch
+  event.value = Tsugumi_RPC_RunEventValueUnion(empty, type: .runbatchchanged)
+  session.applyRunEvent(event)
+
+  #expect(session.executionBatch("a")?.invocationCount == 0)
+  #expect(session.canvasCardState("a") == .succeeded)
+  #expect(session.timeline.map(\.invocation) == [1])
+}
+
 @MainActor @Test(.hostService, arguments: [0, 1, 2])
 func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) async throws {
   let directory = try SyncTests.project()

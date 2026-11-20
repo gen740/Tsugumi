@@ -7,7 +7,7 @@
     "id": "sub",
     "reply": {
       "externalJson": "{\"boundary\":{\"inputs\":{\"plan_\":{\n          \"card\": \"plan\",\n          \"port\": \"\"\n        }},\"outputs\":{\"plan_\":{\n          \"card\": \"plan\",\n          \"port\": \"\"\n        }}},\"canvas\":{\"cards\":[{\n        \"id\": \"plan\"\n      }],\"connections\":[]},\"name\":\"sub\"}",
-      "linkJson": "{\"external\":\"sub\"}",
+      "cardJson": "{\"external\":\"sub\"}",
       "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"start\"\n      },{\n        \"id\": \"log\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\n          \"card\": \"start\",\n          \"port\": \"out\"\n        },\"to\":{\"card\":\"sub\",\"port\":\"plan_\"}},{\"from\":{\"card\":\"sub\",\"port\":\"plan_\"},\"to\":{\n          \"card\": \"log\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}"
     }
   },
@@ -19,7 +19,7 @@
     "id": "sub",
     "reply": {
       "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{\"source_a\":{\n          \"card\": \"source\",\n          \"port\": \"a\"\n        },\"source_b\":{\n          \"card\": \"source\",\n          \"port\": \"b\"\n        }}},\"canvas\":{\"cards\":[{\n        \"id\": \"source\"\n      }],\"connections\":[]},\"name\":\"sub\"}",
-      "linkJson": "{\"external\":\"sub\"}",
+      "cardJson": "{\"external\":\"sub\"}",
       "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"left\"\n      },{\n        \"id\": \"right\"\n      },{\"id\":\"sub\"}],\"connections\":[{\"from\":{\"card\":\"sub\",\"port\":\"source_a\"},\"to\":{\n          \"card\": \"right\",\n          \"port\": \"\"\n        }},{\"from\":{\"card\":\"sub\",\"port\":\"source_b\"},\"to\":{\n          \"card\": \"left\",\n          \"port\": \"in\"\n        }}]},\"name\":\"t\"}"
     }
   },
@@ -33,7 +33,7 @@
     "reply": {
       "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      },{\n        \"id\": \"b\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
       "projectJson": "{\"canvas\":{\"cards\":[{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
-      "linkJson": "{\"external\":\"sub\"}"
+      "cardJson": "{\"external\":\"sub\"}"
     }
   },
   {
@@ -45,7 +45,7 @@
     "reply": {
       "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
       "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"b\"\n      },{\n        \"id\": \"a-2\"\n      },{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
-      "linkJson": "{\"external\":\"sub\"}"
+      "cardJson": "{\"external\":\"sub\"}"
     }
   }
 ]

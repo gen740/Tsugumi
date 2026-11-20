@@ -13,9 +13,6 @@
         "id": "market"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "schedule"
       },
       {
@@ -55,24 +52,14 @@
           "port": "scenario"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "schedule"
-        },
-        "to": {
           "card": "schedule",
           "port": "scenario"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "capacities"
+          "card": "market",
+          "port": "scenario"
         },
         "to": {
           "card": "capacities",
@@ -81,8 +68,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "tariffs"
+          "card": "market",
+          "port": "scenario"
         },
         "to": {
           "card": "tariffs",
@@ -91,8 +78,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "check"
+          "card": "market",
+          "port": "scenario"
         },
         "to": {
           "card": "check",

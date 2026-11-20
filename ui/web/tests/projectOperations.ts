@@ -5,7 +5,7 @@ import * as H from '../shared/gen/tsugumi/host'
 import { R } from '../src/wire/rpc'
 import { parse, get, str, serialize } from '../shared/json'
 import { DocumentRevisions } from '../src/model/documentRevisions'
-import { encodeRequest, decodeReply } from '../server/serviceWire'
+import { HostConnection } from '../src/wire/host'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -36,7 +36,7 @@ function result(d: R.DocumentDeltaT) {
 for (const echoFirst of [false, true]) {
   const s = new ProjectSession('/test', 'test', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
   }))
@@ -83,21 +83,23 @@ for (const echoFirst of [false, true]) {
   assert.deepEqual(seen, [5n, 6n])
 }
 
-// HTTP and Host adapters carry typed bytes, including binary inverse payloads
-// and revisions greater than JavaScript's exact integer range.
+// The browser's Host RPC carries inverse bytes and exact 64-bit revisions.
 {
   const input = new H.ProjectOperateRequestT('p', 'an-operation-id', H.ProjectOperationBody.ProjectLayout,
     new H.ProjectLayoutT('', H.ProjectLayoutAction.Untangle))
-  const packed = new Builder(); packed.finish(input.pack(packed))
-  const wire = encodeRequest('ProjectOperateRequest', { bytes: Array.from(packed.asUint8Array()) }, 7n, true)
-  const request = H.Message.getRootAsMessage(new ByteBuffer(wire)).unpack().payload as H.RequestT
-  assert.deepEqual(request.value, input)
   const saved = result(delta(1n << 60n, 'mine', 'new'))
-  const envelope = new H.MessageT(7n, H.Payload.Reply,
-    new H.ReplyT(H.ReplyPayload.ProjectOperationResult, new H.ProjectOperationResultT(new R.ReplyT(R.ReplyPayload.SaveResult, saved))))
-  const builder = new Builder(); H.Message.finishMessageBuffer(builder, envelope.pack(builder))
-  const dto = decodeReply(builder.asUint8Array(), true).value
-  const restored = H.ProjectOperationResult.getRootAsProjectOperationResult(new ByteBuffer(new Uint8Array(dto.bytes))).unpack()
+  const connection = new HostConnection({
+    async call(frame) {
+      const request = H.Message.getRootAsMessage(new ByteBuffer(frame)).unpack()
+      assert.deepEqual((request.payload as H.RequestT).value, input)
+      const envelope = new H.MessageT(request.requestId, H.Payload.Reply,
+        new H.ReplyT(H.ReplyPayload.ProjectOperationResult, new H.ProjectOperationResultT(new R.ReplyT(R.ReplyPayload.SaveResult, saved))))
+      const builder = new Builder(); H.Message.finishMessageBuffer(builder, envelope.pack(builder))
+      return builder.asUint8Array()
+    },
+    close() {},
+  })
+  const restored = await connection.call<H.ProjectOperationResultT>(H.RequestPayload.ProjectOperateRequest, input, H.ReplyPayload.ProjectOperationResult)
   assert.equal((restored.reply!.value as R.SaveResultT).rev, saved.rev)
   assert.deepEqual((restored.reply!.value as R.SaveResultT).operationData, saved.operationData)
 }
@@ -107,7 +109,7 @@ for (const echoFirst of [false, true]) {
 {
   const s = new ProjectSession('/test', 'queued-settings', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{"flow":"topToBottom"}',
   }))
@@ -141,7 +143,7 @@ for (const echoFirst of [false, true]) {
 for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'] as const) {
   const s = new ProjectSession('/test', 'intent-' + action, 'test') as any
   s.projectId = 'p'; s.client = { readFile: () => { throw new Error('client source read') } }; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.cardIdProvider = async () => 'new-card'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
@@ -169,11 +171,42 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   assert.equal(s.dirty, false)
 }
 
+// Reveal and open the inline editor only with the new Draft's placement.
+{
+  const { CanvasController } = await import('../src/model/canvas')
+  const { WorkflowTab } = await import('../src/model/workspace')
+  const s = new ProjectSession('/test', 'draft-placement', 'test')
+  const fake = s as any
+  s.projectId = 'p'; fake.client = {}; s.connected = true
+  fake.refreshExternals = () => {}
+  s.saveViewSoon = () => {}
+  fake.cardIdProvider = async () => 'draft'
+  const placement = deferred<string>()
+  s.layoutHost = { ...s.layoutHost, complete: () => placement.promise }
+  fake.operateProject = async (request: H.ProjectOperateRequestT) => {
+    const d = delta(0n, String(request.opId), 'draft')
+    d.projectJson = '{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}'
+    return result(d)
+  }
+  const canvas = new CanvasController(s, new WorkflowTab([]))
+  canvas.size = { width: 800, height: 600 }
+  const draft = await canvas.addDraft()
+  assert.ok(draft)
+  const writing = canvas.writeDraft(draft)
+  assert.equal(Boolean(s.inlineDraft), false)
+  placement.resolve('{"cards":{"draft":{"x":4000,"y":4000}}}')
+  await writing
+  const rect = canvas.scene().cardRect(draft)
+  const a = canvas.screen(rect), b = canvas.screen({ x: rect.x + rect.width, y: rect.y + rect.height })
+  assert.ok(a.x >= 0 && a.y >= 0 && b.x <= canvas.size.width && b.y <= canvas.size.height)
+  assert.equal(s.inlineDraft?.card, draft)
+}
+
 // Undo requested before an action's reply reverses that action once applied.
 {
   const s = new ProjectSession('/test', 'pending-undo', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
   }))
@@ -205,7 +238,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   const { RevisionEdit } = await import('../src/ui/revisionEdit')
   const s = new ProjectSession('/test', 'cutover', 'test') as any
   s.projectId = 'p'; s.client = {}; s.connected = true
-  s.refreshExternals = () => {}; s.refreshDerivedLayout = () => {}
+  s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
     definitions: [new R.DefinitionT('a', '{"template":"draft"}', '{"description":"old"}')],

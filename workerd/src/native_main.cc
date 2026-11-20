@@ -53,6 +53,7 @@
 #include "tsugumi/message_json.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/sdk/abi.h"
+#include "tsugumi/util/flatbuffer_schema.hh"
 #include "tsugumi/util/json.hh"
 #include "tsugumi/workerd/display.hh"
 #include "tsugumi/workerd/frame.hh"
@@ -174,7 +175,8 @@ struct Call {
   std::optional<Failure> failure;
   std::string card;
   std::string run_id;
-  const uint8_t* inputs = nullptr;
+  size_t output_bytes = 0;
+  uint32_t phase = TSUGUMI_PREPARE;
   std::optional<std::string> inputs_json;
   std::optional<std::string> params_json;
   std::string display_error;
@@ -214,9 +216,16 @@ auto result_frame(const Call& call) -> flatbuffers::FlatBufferBuilder {
 }
 
 auto append_output(std::string_view port, const uint8_t* data, size_t size)
-    -> void {
+    -> int {
+  if (size > kMaxFrame - g_call->output_bytes) {
+    record_failure(D::FailureKind::output_invalid,
+                   "combined outputs exceed the 16 MiB result frame limit");
+    return 1;
+  }
+  g_call->output_bytes += size;
   g_call->outputs.emplace_back(
       port, std::string(reinterpret_cast<const char*>(data), size));
+  return 0;
 }
 
 void validate_required_outputs(Call& call) {
@@ -286,28 +295,17 @@ int send_display(
   return 0;
 }
 
-int display_text_impl(void*, const char* text) {
+auto display_text_impl(const char* text, bool markdown) -> int {
   if (!text || std::strlen(text) > (1u << 20))
     return invalid_display("display text exceeds 1 MiB or is missing");
-  std::string t = text;
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    return std::make_pair(D::DisplayValue::DisplayText,
-                          D::CreateDisplayText(b, b.CreateString(t)).Union());
-  });
-}
-
-int display_markdown_impl(void*, const char* text) {
-  if (!text || std::strlen(text) > (1u << 20))
-    return invalid_display("display text exceeds 1 MiB or is missing");
-  std::string t = text;
   return send_display([&](flatbuffers::FlatBufferBuilder& b) {
     return std::make_pair(
         D::DisplayValue::DisplayText,
-        D::CreateDisplayText(b, b.CreateString(t), true).Union());
+        D::CreateDisplayText(b, b.CreateString(text), markdown).Union());
   });
 }
 
-int display_scalar_impl(void*, double value, const char* label) {
+int display_scalar_impl(double value, const char* label) {
   if (!label) return invalid_display("display scalar needs a label");
   std::string l = label;
   return send_display([&](flatbuffers::FlatBufferBuilder& b) {
@@ -334,13 +332,13 @@ struct ChartConfig {
 // starts.
 std::string g_views;
 
-auto display_module_impl(void*, const char*, const char*, const tsugumi_blob*,
-                         size_t) -> int;
+auto display_module_impl(const char*, const char*, const tsugumi_blob*, size_t)
+    -> int;
 
 // All language SDKs keep their line-chart API. Only the common worker encodes
 // its immutable view identity and run data; coordinates never pass through
 // JSON.
-auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count)
+auto display_line_chart_impl(const tsugumi_series* series, size_t count)
     -> int {
   const auto invalid = [](const char* message) {
     if (g_call) g_call->display_error = message;
@@ -377,13 +375,12 @@ auto display_line_chart_impl(void*, const tsugumi_series* series, size_t count)
   const tsugumi_blob blobs[] = {
       {"x", reinterpret_cast<const uint8_t*>(x.data()), x.size()},
       {"y", reinterpret_cast<const uint8_t*>(y.data()), y.size()}};
-  const auto status =
-      display_module_impl(nullptr, "line-chart", json.c_str(), blobs, 2);
+  const auto status = display_module_impl("line-chart", json.c_str(), blobs, 2);
   return status == 0 ? 0
                      : invalid("the built-in line-chart module is unavailable");
 }
 
-int display_table_impl(void*, const char* const* columns, size_t column_count,
+int display_table_impl(const char* const* columns, size_t column_count,
                        const char* const* cells, size_t row_count) {
   if (column_count == 0 || column_count > 64 || row_count > 10000 || !columns ||
       (row_count && !cells))
@@ -420,8 +417,8 @@ int display_table_impl(void*, const char* const* columns, size_t column_count,
   });
 }
 
-int display_image_impl(void*, const char* media_type, const uint8_t* data,
-                       size_t size, const char* alt) {
+int display_image_impl(const char* media_type, const uint8_t* data, size_t size,
+                       const char* alt) {
   if (!media_type || !data || size > (8u << 20))
     return invalid_display("an image exceeds 8 MiB or is missing");
   return send_display([&](flatbuffers::FlatBufferBuilder& b) {
@@ -433,7 +430,7 @@ int display_image_impl(void*, const char* media_type, const uint8_t* data,
   });
 }
 
-int display_points_impl(void*, const float* x, const float* y, const float* z,
+int display_points_impl(const float* x, const float* y, const float* z,
                         const uint32_t* colors, size_t count) {
   if (count > 1000000 || (count && (!x || !y || !z)))
     return invalid_display(
@@ -449,7 +446,7 @@ int display_points_impl(void*, const float* x, const float* y, const float* z,
   });
 }
 
-auto display_module_impl(void*, const char* name, const char* config_json,
+auto display_module_impl(const char* name, const char* config_json,
                          const tsugumi_blob* blobs, size_t count) -> int {
   if (!name || !config_json || std::strlen(config_json) > (1u << 20) ||
       count > 64 || (count && !blobs))
@@ -609,6 +606,8 @@ flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs,
   if (!p->Deserialize(bfbs->data(), bfbs->size()) ||
       !p->SetRootType(root.c_str()))
     return nullptr;
+  tsugumi::flatbuffer_schema::restore_reflection_fields(
+      *p, *reflection::GetSchema(bfbs->data()), /*restore_deprecated=*/false);
   return (cache[key] = std::move(p)).get();
 }
 
@@ -625,251 +624,102 @@ auto params_json_impl(void*) -> const char* {
   return g_call->params_json.emplace(std::move(json)).c_str();
 }
 
-// These schemas also generate the language bindings. A resident worker only
-// parses them once, independently of the set of ports present in a call.
-auto catalog_for(const flatbuffers::String* text) -> flatbuffers::Parser* {
-  if (!text) return nullptr;
-  static std::map<std::string, std::unique_ptr<flatbuffers::Parser>> cache;
-  if (auto it = cache.find(text->str()); it != cache.end())
-    return it->second.get();
-  flatbuffers::IDLOptions options;
-  options.strict_json = true;
-  options.natural_utf8 = true;
-  options.output_default_scalars_in_json = true;
-  auto parser = std::make_unique<flatbuffers::Parser>(options);
-  parser->known_attributes_["tsugumi"] = true;
-  if (!parser->Parse(text->c_str())) return nullptr;
-  return (cache[text->str()] = std::move(parser)).get();
+auto input_port(const char* name) -> const W::WorkerInput* {
+  for (const auto* port : *g_call->msg->inputs())
+    if (port->name()->string_view() == name) return port;
+  return nullptr;
+}
+
+auto input_impl(void*, const char* name, size_t* size) -> const uint8_t* {
+  const auto* port = input_port(name);
+  *size = port ? port->value()->bytes()->size() : 0;
+  return port ? port->value()->bytes()->data() : nullptr;
+}
+
+auto input_kind_impl(void*, const char* name) -> uint32_t {
+  const auto* port = input_port(name);
+  return port ? static_cast<uint32_t>(port->kind()) : 0;
 }
 
 auto inputs_json_impl(void*) -> const char* {
   if (g_call->inputs_json) return g_call->inputs_json->c_str();
-  auto* parser = catalog_for(g_call->msg->input_schema());
-  std::string json;
-  if (!parser || tsugumi::message_json::gen_language_text(
-                     *parser, g_call->inputs, &json)) {
-    record_failure(D::FailureKind::worker_failed, "cannot decode inputs");
-    return nullptr;
+  std::string json = "{";
+  for (const auto* port : *g_call->msg->inputs()) {
+    const auto* value = port->value();
+    auto* parser = parser_for(value->schema_bfbs(), value->root_type()->str());
+    std::string text;
+    if (!parser || tsugumi::message_json::gen_language_text(
+                       *parser, value->bytes()->data(), &text)) {
+      record_failure(D::FailureKind::worker_failed,
+                     "cannot decode input " + port->name()->str());
+      return nullptr;
+    }
+    if (json.size() > 1) json += ',';
+    json += tsugumi::schema::text(
+        tsugumi::schema::string_value(port->name()->str()));
+    json += ':';
+    json += text;
   }
+  json += '}';
   return g_call->inputs_json.emplace(std::move(json)).c_str();
 }
 
-auto input_kind_impl(void*, const char* name) -> uint32_t {
-  for (const auto* port : *g_call->msg->inputs())
-    if (port->name()->string_view() == name)
-      return static_cast<uint32_t>(port->kind());
-  return 0;
+auto writable_output(std::string_view name) -> const D::Port* {
+  if (g_call->failure) return nullptr;
+  if (g_call->phase != TSUGUMI_RUN) {
+    record_failure(D::FailureKind::output_invalid,
+                   "outputs may only be sent during run");
+    return nullptr;
+  }
+  for (const auto* port : *g_call->msg->outputs()) {
+    if (port->name()->string_view() != name) continue;
+    if (std::ranges::none_of(g_call->outputs, [&](const auto& output) {
+          return output.first == name;
+        }))
+      return port;
+    record_failure(D::FailureKind::output_invalid,
+                   "output " + std::string(name) + " emitted twice");
+    return nullptr;
+  }
+  record_failure(D::FailureKind::output_invalid,
+                 "unknown output port " + std::string(name));
+  return nullptr;
 }
 
-auto outputs_json_impl(void*, const char* json, tsugumi_buffer* outputs) -> int {
-  auto* parser = catalog_for(g_call->msg->output_schema());
+auto output_impl(void*, const char* name, const uint8_t* data, size_t size)
+    -> int {
+  const auto* port = writable_output(name);
+  if (!port) return 1;
+  const auto* schema = reflection::GetSchema(port->schema_bfbs()->data());
+  if (!data || size > kMaxFrame ||
+      !flatbuffers::Verify(*schema, *schema->root_table(), data, size)) {
+    record_failure(D::FailureKind::output_invalid,
+                   "output " + std::string(name) + " does not match its type");
+    return 1;
+  }
+  return append_output(name, data, size);
+}
+
+auto output_json(std::string_view name, std::string_view json) -> int {
+  const auto* port = writable_output(name);
+  if (!port) return 1;
+  auto* parser = parser_for(port->schema_bfbs(), port->root_type()->str());
   if (!parser || !tsugumi::message_json::parse_json(*parser, json)) {
     record_failure(D::FailureKind::output_invalid,
-                   "outputs do not match the Card contract" +
+                   "output " + std::string(name) +
+                       " JSON does not match its type" +
                        (parser ? ": " + parser->error_ : ""));
     return 1;
   }
-  return tsugumi_copy_outputs(outputs, parser->builder_.GetBufferPointer(),
-                              parser->builder_.GetSize());
+  return append_output(name, parser->builder_.GetBufferPointer(),
+                       parser->builder_.GetSize());
 }
 
-// Put each intact input message into the aggregate buffer. Its internal
-// offsets stay relative to their original locations, including those of
-// shared tables, strings, and union members.
-auto pack_inputs(const W::WorkerCall& call) -> flatbuffers::FlatBufferBuilder {
-  namespace fb = flatbuffers;
-  fb::FlatBufferBuilder b;
-  const auto* parser = catalog_for(call.input_schema());
-  if (!parser) {
-    record_failure(D::FailureKind::worker_failed, "cannot load input catalog");
-    return b;
-  }
-  std::vector<std::pair<fb::voffset_t, fb::Offset<fb::Table>>> fields;
-  for (const auto* in : *call.inputs()) {
-    const auto* field = parser->root_struct_def_->fields.Lookup(in->name()->str());
-    if (!field) {
-      record_failure(D::FailureKind::worker_failed,
-                     "input is absent from the Card contract: " + in->name()->str());
-      return b;
-    }
-    const auto* bytes = in->value()->bytes();
-    if (bytes->size() < sizeof(fb::uoffset_t)) {
-      record_failure(D::FailureKind::type_mismatch, "invalid input buffer");
-      return b;
-    }
-    const auto root = fb::ReadScalar<fb::uoffset_t>(bytes->data());
-    if (root >= bytes->size()) {
-      record_failure(D::FailureKind::type_mismatch, "invalid input root");
-      return b;
-    }
-    b.PreAlign(bytes->size(), FLATBUFFERS_MAX_ALIGNMENT);
-    b.PushBytes(bytes->data(), bytes->size());
-    fields.emplace_back(field->value.offset,
-                        fb::Offset<fb::Table>(b.GetSize() - root));
-  }
-  const auto start = b.StartTable();
-  for (const auto& [field, value] : fields) b.AddOffset(field, value);
-  b.Finish(fb::Offset<fb::Table>(b.EndTable(start)));
-  const auto& inputs = *fb::GetAnyRoot(b.GetBufferPointer());
-  for (const auto* field : parser->root_struct_def_->fields.vec) {
-    if (field->IsRequired() && !inputs.CheckField(field->value.offset)) {
-      record_failure(D::FailureKind::input_missing, field->name);
-      break;
-    }
-  }
-  return b;
+auto output_json_impl(void*, const char* name, const char* json) -> int {
+  return output_json(name, json);
 }
 
-// Copy a verified port table out of the aggregate. Keep inline data and
-// union discriminators byte-for-byte, including optional scalars and -0.0.
-namespace fb = flatbuffers;
-
-auto copy_table(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
-                const reflection::Object& type, const fb::Table& table)
-    -> fb::Offset<void>;
-
-auto copy_object(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
-                 const reflection::Object& type, const uint8_t* data)
-    -> fb::Offset<void> {
-  if (!type.is_struct())
-    return copy_table(b, schema, type,
-                      *reinterpret_cast<const fb::Table*>(data));
-  b.StartStruct(type.minalign());
-  b.PushBytes(data, type.bytesize());
-  return fb::Offset<void>(b.EndStruct());
-}
-
-auto copy_union(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
-                const reflection::Field& field, uint8_t tag,
-                const uint8_t* data) -> fb::Offset<void> {
-  if (!tag) return {};
-  const auto* member =
-      schema.enums()->Get(field.type()->index())->values()->Get(tag)->union_type();
-  if (member->base_type() == reflection::String)
-    return b.CreateString(reinterpret_cast<const fb::String*>(data)).Union();
-  return copy_object(b, schema, *schema.objects()->Get(member->index()), data);
-}
-
-auto copy_vector(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
-                 const reflection::Field& field, const fb::Table& table)
-    -> fb::Offset<void> {
-  const auto* vector = fb::GetFieldAnyV(table, field);
-  const auto element = field.type()->element();
-  const auto* object = element == reflection::Obj
-                           ? schema.objects()->Get(field.type()->index())
-                           : nullptr;
-  if (fb::IsScalar(element) || (object && object->is_struct())) {
-    const size_t size = object ? object->bytesize() : fb::GetTypeSize(element);
-    const size_t align = object ? object->minalign() : size;
-    b.StartVector(vector->size(), size, align);
-    b.PushBytes(vector->Data(), vector->size() * size);
-    return fb::Offset<void>(b.EndVector(vector->size()));
-  }
-  const auto* offsets =
-      reinterpret_cast<const fb::Vector<fb::Offset<uint8_t>>*>(vector);
-  const auto* tags = element == reflection::Union
-                         ? table.GetPointer<const fb::Vector<uint8_t>*>(
-                               field.offset() - sizeof(fb::voffset_t))
-                         : nullptr;
-  std::vector<fb::Offset<void>> values;
-  for (fb::uoffset_t i = 0; i < offsets->size(); ++i) {
-    const auto* data = offsets->Get(i);
-    if (element == reflection::String)
-      values.push_back(
-          b.CreateString(reinterpret_cast<const fb::String*>(data)).Union());
-    else if (object)
-      values.push_back(copy_object(b, schema, *object, data));
-    else
-      values.push_back(copy_union(b, schema, field, tags->Get(i), data));
-  }
-  b.StartVector<fb::Offset<void>>(values.size());
-  for (auto it = values.rbegin(); it != values.rend(); ++it) {
-    if (it->IsNull())
-      b.PushElement(fb::uoffset_t{0});
-    else
-      b.PushElement(*it);
-  }
-  return fb::Offset<void>(b.EndVector(values.size()));
-}
-
-auto copy_table(fb::FlatBufferBuilder& b, const reflection::Schema& schema,
-                const reflection::Object& type, const fb::Table& table)
-    -> fb::Offset<void> {
-  struct Inline {
-    fb::voffset_t field;
-    const uint8_t* data;
-    size_t size;
-    size_t alignment;
-  };
-  std::vector<Inline> inline_fields;
-  std::vector<std::pair<fb::voffset_t, fb::Offset<void>>> offsets;
-  for (const auto* field : *type.fields()) {
-    const auto id = field->offset();
-    const auto* data = table.GetAddressOf(id);
-    if (!data) continue;
-    const auto base = field->type()->base_type();
-    if (fb::IsScalar(base)) {
-      const auto size = fb::GetTypeSize(base);
-      inline_fields.push_back({id, data, size, size});
-    } else if (base == reflection::Obj) {
-      const auto& object = *schema.objects()->Get(field->type()->index());
-      if (object.is_struct()) {
-        inline_fields.push_back({id, data, static_cast<size_t>(object.bytesize()),
-                                 static_cast<size_t>(object.minalign())});
-      } else {
-        offsets.emplace_back(
-            id, copy_object(b, schema, object, table.GetPointer<const uint8_t*>(id)));
-      }
-    } else if (base == reflection::String) {
-      offsets.emplace_back(id, b.CreateString(fb::GetFieldS(table, *field)).Union());
-    } else if (base == reflection::Vector) {
-      offsets.emplace_back(id, copy_vector(b, schema, *field, table));
-    } else if (base == reflection::Union) {
-      offsets.emplace_back(
-          id, copy_union(b, schema, *field,
-                         table.GetField<uint8_t>(id - sizeof(fb::voffset_t), 0),
-                         table.GetPointer<const uint8_t*>(id)));
-    }
-  }
-  const auto start = b.StartTable();
-  for (const auto& [id, offset] : offsets) b.AddOffset(id, offset);
-  for (const auto& field : inline_fields) {
-    b.Align(field.alignment);
-    b.PushBytes(field.data, field.size);
-    b.TrackField(field.field, b.GetSize());
-  }
-  return fb::Offset<void>(b.EndTable(start));
-}
-
-auto receive_outputs(const tsugumi_buffer& outputs) -> void {
-  namespace fb = flatbuffers;
-  auto* parser = catalog_for(g_call->msg->output_schema());
-  if (!parser || !outputs.data || outputs.size > kMaxFrame) {
-    record_failure(D::FailureKind::output_invalid,
-                   "missing or oversized Outputs buffer");
-    return;
-  }
-  // Use the same resolved catalog to verify the buffer and extract its ports.
-  parser->Serialize();
-  const auto* schema = reflection::GetSchema(parser->builder_.GetBufferPointer());
-  if (!fb::Verify(*schema, *schema->root_table(), outputs.data, outputs.size)) {
-    record_failure(D::FailureKind::output_invalid,
-                   "Outputs does not match the Card contract");
-    return;
-  }
-  const auto& root = *fb::GetAnyRoot(outputs.data);
-  for (const auto* field : *schema->root_table()->fields()) {
-    const auto* table = fb::GetFieldT(root, *field);
-    if (!table) continue;
-    const auto* type = schema->objects()->Get(field->type()->index());
-    fb::FlatBufferBuilder b;
-    b.Finish(copy_table(b, *schema, *type, *table));
-    append_output(field->name()->string_view(), b.GetBufferPointer(),
-                  b.GetSize());
-  }
-}
-
-auto display_json_impl(void*, const char* json) -> int;
+auto display_impl(void*, uint32_t kind, const void* payload) -> int;
 
 // Package libraries and language state are initialized during the first call.
 void* g_lib = nullptr;
@@ -935,29 +785,23 @@ void open_package(const std::string& lib) {
 }
 
 constexpr tsugumi_host kEffects{
-    .display_text = display_text_impl,
-    .display_scalar = display_scalar_impl,
-    .display_line_chart = display_line_chart_impl,
+    .display = display_impl,
     .log = log_impl,
     .cancelled = cancelled_impl,
     .remaining_ms = remaining_ms_impl,
     .fail = fail_impl,
-    .display_table = display_table_impl,
-    .display_image = display_image_impl,
-    .display_points = display_points_impl,
-    .display_module = display_module_impl,
-    .display_markdown = display_markdown_impl,
+    .input = input_impl,
+    .output = output_impl,
     .inputs_json = inputs_json_impl,
     .params_json = params_json_impl,
     .input_kind = input_kind_impl,
-    .outputs_json = outputs_json_impl,
-    .display_json = display_json_impl,
+    .output_json = output_json_impl,
     .fail_at = fail_at_impl,
 };
 
-auto make_call(const Call& call, const flatbuffers::FlatBufferBuilder& inputs,
-               const std::string& work, const std::string& tmp,
-               const std::string& out_dir) -> tsugumi_call {
+auto make_call(const Call& call, const std::string& work,
+               const std::string& tmp, const std::string& out_dir)
+    -> tsugumi_call {
   const auto* m = call.msg;
   return {
       .abi_version = TSUGUMI_ABI_VERSION,
@@ -965,8 +809,6 @@ auto make_call(const Call& call, const flatbuffers::FlatBufferBuilder& inputs,
       .run_id = call.run_id.c_str(),
       .card = call.card.c_str(),
       .invocation = m->invocation().value_or(0),
-      .inputs = inputs.GetBufferPointer(),
-      .inputs_size = inputs.GetSize(),
       .params = m->params()->bytes()->data(),
       .params_size = m->params()->bytes()->size(),
       .working_directory = work.c_str(),
@@ -979,16 +821,14 @@ auto make_call(const Call& call, const flatbuffers::FlatBufferBuilder& inputs,
 
 auto invoke(tsugumi_call& call, tsugumi_phase phase, const char* name) -> bool {
   call.phase = phase;
-  tsugumi_buffer outputs{};
-  const int rc = g_main(&call, &outputs);
-  std::unique_ptr<uint8_t, decltype(&std::free)> owned(outputs.data, std::free);
+  g_call->phase = phase;
+  const int rc = g_main(&call);
   if (rc != 0) {
     record_failure(g_cancel.load() ? D::FailureKind::cancelled
                                    : D::FailureKind::worker_failed,
                    std::string(name) + " returned " + std::to_string(rc));
     return false;
   }
-  if (!g_call->failure && phase == TSUGUMI_RUN) receive_outputs(outputs);
   return !g_call->failure;
 }
 
@@ -1069,7 +909,7 @@ void bash_inputs(const W::WorkerCall* m, const std::string& tmp,
 
 // {"port": {...message JSON...}, ...} written by a bash body -> one FlatBuffer
 // per port.
-void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
+void bash_outputs(const std::string& out_json) {
   namespace sc = tsugumi::schema;
   if (::access(out_json.c_str(), R_OK) != 0) return;
   sc::v::Mapping<sc::v::String, sc::Json> doc;
@@ -1079,32 +919,8 @@ void bash_outputs(const W::WorkerCall* m, const std::string& out_json) {
         "$TSUGUMI_OUTPUT is not a JSON object of ports: " + err->message);
     return;
   }
-  for (const auto& [name, value] : doc.value().entries()) {
-    const D::Port* port = nullptr;
-    for (const auto* p : *m->outputs())
-      if (p->name()->str() == name) port = p;
-    if (!port) {
-      record_failure(D::FailureKind::output_invalid,
-                     "unknown output port " + name + " in $TSUGUMI_OUTPUT");
-      return;
-    }
-    auto* p = parser_for(port->schema_bfbs(), port->root_type()->str());
-    std::string obj = sc::text(value);
-    if (!p || !tsugumi::message_json::parse_json(*p, obj)) {
-      record_failure(D::FailureKind::output_invalid,
-                     "output " + name + " JSON does not match its type" +
-                         (p ? ": " + p->error_ : ""));
-      return;
-    }
-    if (std::ranges::any_of(g_call->outputs, [&](const auto& output) {
-          return output.first == name;
-        })) {
-      record_failure(D::FailureKind::output_invalid,
-                     "output " + name + " emitted twice");
-      return;
-    }
-    append_output(name, p->builder_.GetBufferPointer(), p->builder_.GetSize());
-  }
+  for (const auto& [name, value] : doc.value().entries())
+    if (output_json(name, sc::text(value))) return;
 }
 
 // A display object from bash or an in-memory language adapter. A relative image
@@ -1148,9 +964,9 @@ auto json_display(const std::string& json, const std::string& cwd) -> int {
   BashDisplay d;
   if (auto err = sc::decode(json, d)) return invalid(err->message);
   if (const auto* t = sc::get(d.text)) {
-    return display_text_impl(nullptr, t->c_str());
+    return display_text_impl(t->c_str(), false);
   } else if (const auto* m = sc::get(d.markdown)) {
-    return display_markdown_impl(nullptr, m->c_str());
+    return display_text_impl(m->c_str(), true);
   } else if (const auto* table = sc::get(d.table)) {
     const auto* columns = sc::get(table->columns);
     if (!columns) return invalid("a table needs columns");
@@ -1165,7 +981,7 @@ auto json_display(const std::string& json, const std::string& cwd) -> int {
         for (const auto& c : row) cells.push_back(c.c_str());
         ++row_count;
       }
-    return display_table_impl(nullptr, names.data(), names.size(), cells.data(),
+    return display_table_impl(names.data(), names.size(), cells.data(),
                               row_count);
   } else if (const auto* image = sc::get(d.image)) {
     const auto* file = sc::get(image->path);
@@ -1179,7 +995,7 @@ auto json_display(const std::string& json, const std::string& cwd) -> int {
                                                         : nullptr;
     if (!media) return invalid(*file + " is neither PNG nor JPEG");
     const auto* alt = sc::get(image->alt);
-    return display_image_impl(nullptr, media,
+    return display_image_impl(media,
                               reinterpret_cast<const uint8_t*>(bytes.data()),
                               bytes.size(), alt ? alt->c_str() : "");
   } else if (const auto* module = sc::get(d.module)) {
@@ -1199,7 +1015,7 @@ auto json_display(const std::string& json, const std::string& cwd) -> int {
       blobs.push_back({key.c_str(),
                        reinterpret_cast<const uint8_t*>(bytes.data()),
                        bytes.size()});
-    if (display_module_impl(nullptr, name->c_str(), sc::text(*data).c_str(),
+    if (display_module_impl(name->c_str(), sc::text(*data).c_str(),
                             blobs.data(), blobs.size()))
       return invalid("unknown view module; declare it in views");
   } else {
@@ -1214,12 +1030,51 @@ auto bash_display(const std::string& path, const std::string& cwd) -> void {
                    "$TSUGUMI_REPORT: " + g_call->display_error);
 }
 
-auto display_json_impl(void*, const char* json) -> int {
-  if (!g_call) return 1;
-  char* cwd = ::getcwd(nullptr, 0);
-  const int status = json_display(json, cwd ? cwd : ".");
-  std::free(cwd);
-  return status;
+auto display_impl(void*, uint32_t kind, const void* payload) -> int {
+  if (!payload) return invalid_display("display payload is missing");
+  switch (kind) {
+    case TSUGUMI_DISPLAY_TEXT:
+    case TSUGUMI_DISPLAY_MARKDOWN:
+      return display_text_impl(static_cast<const char*>(payload),
+                               kind == TSUGUMI_DISPLAY_MARKDOWN);
+    case TSUGUMI_DISPLAY_SCALAR: {
+      const auto& data = *static_cast<const tsugumi_scalar*>(payload);
+      return display_scalar_impl(data.value, data.label);
+    }
+    case TSUGUMI_DISPLAY_LINE_CHART: {
+      const auto& data = *static_cast<const tsugumi_chart*>(payload);
+      return display_line_chart_impl(data.series, data.count);
+    }
+    case TSUGUMI_DISPLAY_TABLE: {
+      const auto& data = *static_cast<const tsugumi_table*>(payload);
+      return display_table_impl(data.columns, data.column_count, data.cells,
+                                data.row_count);
+    }
+    case TSUGUMI_DISPLAY_IMAGE: {
+      const auto& data = *static_cast<const tsugumi_image*>(payload);
+      return display_image_impl(data.media_type, data.data, data.size,
+                                data.alt);
+    }
+    case TSUGUMI_DISPLAY_POINTS: {
+      const auto& data = *static_cast<const tsugumi_points*>(payload);
+      return display_points_impl(data.x, data.y, data.z, data.colors,
+                                 data.count);
+    }
+    case TSUGUMI_DISPLAY_MODULE: {
+      const auto& data = *static_cast<const tsugumi_module*>(payload);
+      return display_module_impl(data.name, data.config_json, data.blobs,
+                                 data.count);
+    }
+    case TSUGUMI_DISPLAY_JSON: {
+      char* cwd = ::getcwd(nullptr, 0);
+      const int status =
+          json_display(static_cast<const char*>(payload), cwd ? cwd : ".");
+      std::free(cwd);
+      return status;
+    }
+    default:
+      return invalid_display("unknown display kind");
+  }
 }
 
 auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
@@ -1235,6 +1090,24 @@ auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
 void execute(const Options& opt, Call& call,
              flatbuffers::FlatBufferBuilder& result) {
   const auto* m = call.msg;
+  // The outer WorkerMessage verifier only sees the message as bytes.
+  for (const auto* input : *m->inputs()) {
+    const auto* value = input->value();
+    const auto* bfbs = value->schema_bfbs();
+    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
+    if (reflection::VerifySchemaBuffer(verifier)) {
+      const auto& schema = *reflection::GetSchema(bfbs->data());
+      const auto* root =
+          schema.objects()->LookupByKey(value->root_type()->c_str());
+      const auto* bytes = value->bytes();
+      if (root && !root->is_struct() &&
+          flatbuffers::Verify(schema, *root, bytes->data(), bytes->size()))
+        continue;
+    }
+    record_failure(D::FailureKind::type_mismatch,
+                   "input " + input->name()->str() + " does not match its type");
+    return;
+  }
   std::string work = m->working_directory()->str();
   std::string tmp = m->temporary_directory()->str();
   std::string out_dir =
@@ -1300,14 +1173,12 @@ void execute(const Options& opt, Call& call,
     }
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
-    auto inputs = pack_inputs(*m);
     apply_env(body_env(call_env, env));
     if (::chdir(cwd.c_str()) != 0)
       record_failure(D::FailureKind::worker_failed,
                      "cannot enter working directory " + cwd);
     if (!call.failure) {
-      call.inputs = inputs.GetBufferPointer();
-      auto c = make_call(call, inputs, work, tmp, out_dir);
+      auto c = make_call(call, work, tmp, out_dir);
       if (!g_card_loaded && g_load_error.empty() && may_start("source loading")) {
         // Keep lifetime HOME for interpreter caches. Card source code gets
         // this invocation's HOME, just like the run-start hook and run.
@@ -1347,6 +1218,7 @@ void execute(const Options& opt, Call& call,
     }
   }
   if (!call.failure && !opt.run.empty() && may_start("run")) {
+    call.phase = TSUGUMI_RUN;
     auto run_env = env;
     bash_inputs(m, tmp, run_env);
     std::string out_json = tmp + "/output.json";
@@ -1361,7 +1233,7 @@ void execute(const Options& opt, Call& call,
         step_failed("run", st);
       } else {
         bash_display(display_json, cwd);
-        if (!call.failure) bash_outputs(m, out_json);
+        if (!call.failure) bash_outputs(out_json);
       }
     }
   }
