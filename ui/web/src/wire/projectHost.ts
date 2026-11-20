@@ -12,12 +12,12 @@ export const projectHost = {
     hostCall<R.VersionGraphT>(H.RequestPayload.HostVersionGraphRequest,
       new H.HostVersionGraphRequestT(project, language()), H.ReplyPayload.VersionGraph),
   async diff(project: string, commit: string, from?: string) {
-    const result = await hostCall<H.VersionDiffT>(H.RequestPayload.HostVersionDiffRequest,
+    const result = await hostCall<R.VersionDiffT>(H.RequestPayload.HostVersionDiffRequest,
       new H.HostVersionDiffRequestT(project, commit, from ?? null), H.ReplyPayload.VersionDiff)
     return { text: s(result.text), truncated: result.truncated }
   },
   async comments(project: string, commit: string) {
-    const result = await hostCall<H.VersionCommentsT>(H.RequestPayload.VersionCommentsRequest,
+    const result = await hostCall<R.VersionCommentsT>(H.RequestPayload.VersionCommentsRequest,
       new H.VersionCommentsRequestT(project, commit), H.ReplyPayload.VersionComments)
     return result.comments
   },
