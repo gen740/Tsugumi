@@ -509,49 +509,54 @@ struct Service::State {
       return location->path()->str();
     throw Failure("invalid_request", "Unexpected project reply");
   }
-  auto OpenProject(const RequestIn& request, const A::ProjectOpenRequest& p,
-                   std::unique_lock<std::recursive_mutex>& lock)
-      -> std::string {
-    const std::filesystem::path folder = p.path()->str();
-    if (!folder.is_absolute())
-      throw Failure("invalid_request", "The project folder must be absolute");
-    std::string path;
-    H::HostRecentRememberRequestT remember;
-    remember.path = folder.string();
-    try {
-      path = ProjectPath(remember);
-    } catch (const host::ProjectFailure& e) {
-      if (e.code != "invalid_project" || !p.create()) throw;
-      H::HostProjectCreateRequestT create;
-      create.parent = folder.parent_path().string();
-      create.name = folder.filename().string();
-      remember.path = ProjectPath(std::move(create));
-      path = ProjectPath(remember);
+  auto Show(const RequestIn& request, const A::ShowRequest& p, bool human,
+            std::unique_lock<std::recursive_mutex>& lock) -> std::string {
+    A::ShownT result;
+    const auto card = p.card() ? p.card()->str() : "";
+    if (p.path() && p.path()->size()) {
+      const std::filesystem::path folder = p.path()->str();
+      if (!folder.is_absolute())
+        throw Failure("invalid_request", "The project folder must be absolute");
+      H::HostRecentRememberRequestT remember;
+      remember.path = folder.string();
+      try {
+        result.path = ProjectPath(remember);
+      } catch (const host::ProjectFailure& e) {
+        if (e.code != "invalid_project" || !p.create()) throw;
+        H::HostProjectCreateRequestT create;
+        create.parent = folder.parent_path().string();
+        create.name = folder.filename().string();
+        remember.path = ProjectPath(std::move(create));
+        result.path = ProjectPath(remember);
+      }
+    } else if (!card.empty()) {
+      throw Failure("invalid_request", "A Card is shown in a project");
     }
     lock.unlock();
-    if (!environments)
-      throw Failure("unavailable", "Environment service is not running");
-    // The page's origin may connect to the project core.
     const auto url = web->Url();
-    H::EnvironmentRequestT start;
-    start.project = path;
-    start.action = H::EnvironmentAction::Start;
-    if (!url.empty()) {
-      const auto origin = url.substr(0, url.size() - 1);
-      start.origins = {origin, "http://localhost" + origin.substr(origin.rfind(':'))};
+    if (!result.path.empty()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
+      // The page's origin may connect to the project core.
+      H::EnvironmentRequestT start;
+      start.project = result.path;
+      start.action = H::EnvironmentAction::Start;
+      if (!url.empty()) {
+        const auto origin = url.substr(0, url.size() - 1);
+        start.origins = {origin, "http://localhost" + origin.substr(origin.rfind(':'))};
+      }
+      const auto state = environments->Handle(start);
+      if (state.phase != H::EnvironmentPhase::Ready || state.project_id.empty())
+        throw Failure("unavailable", state.message.empty()
+                                         ? "Project core is not ready"
+                                         : state.message);
+      result.project_id = state.project_id;
     }
-    const auto state = environments->Handle(start);
-    if (state.phase != H::EnvironmentPhase::Ready || state.project_id.empty())
-      throw Failure("unavailable", state.message.empty()
-                                       ? "Project core is not ready"
-                                       : state.message);
-    const auto shown = web->Show(path, p.browser());
-    A::ProjectOpenedT result;
-    result.path = path;
-    result.project_id = state.project_id;
+    const auto shown = web->Show(result.path, card, p.browser());
     result.shown = shown.shown;
     result.opened = shown.opened;
-    result.url = url;
+    // The page key answers approvals: only the user gets a URL carrying it.
+    result.url = human ? web->PageUrl(result.path) : url;
     return wire::AgentReply(request.request_id, std::move(result));
   }
   auto Handle(const RequestIn& request, bool human) -> std::string {
@@ -625,8 +630,8 @@ struct Service::State {
       case A::RequestPayload::ToolCatalogRequest:
       case A::RequestPayload::ToolCallRequest:
         return tools->Handle(request, human, lock);
-      case A::RequestPayload::ProjectOpenRequest:
-        return OpenProject(request, *r->value_as_ProjectOpenRequest(), lock);
+      case A::RequestPayload::ShowRequest:
+        return Show(request, *r->value_as_ShowRequest(), human, lock);
       case A::RequestPayload::AccessRequest:
       case A::RequestPayload::AccessResolveRequest:
       case A::RequestPayload::AccessRevokeRequest:

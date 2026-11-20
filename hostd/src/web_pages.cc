@@ -71,7 +71,7 @@ WebPages::WebPages(TransportServer* host, TransportServer* agent, std::string us
 WebPages::~WebPages() { Stop(); }
 
 auto WebPages::Handles(H::RequestPayload type) -> bool {
-  return type == H::RequestPayload::HostWebRequest || type == H::RequestPayload::HostPageRequest ||
+  return type == H::RequestPayload::HostPageRequest ||
          type == H::RequestPayload::HostHomeRequest || type == H::RequestPayload::HostRevealRequest ||
          type == H::RequestPayload::HostFolderListRequest || type == H::RequestPayload::HostFolderCreateRequest;
 }
@@ -127,21 +127,37 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
   return true;
 }
 
-auto WebPages::Show(const std::string& project, bool browser) -> Shown {
+auto WebPages::Show(const std::string& project, const std::string& card, bool browser) -> Shown {
   {
     std::lock_guard lock(mutex_);
-    for (const auto& [_, page] : pages_)
-      if (page.project == project) return {true, false};
+    // Home: any page will do.
+    if (project.empty() && !pages_.empty()) return {true, false};
+    for (const auto& [connection, page] : pages_)
+      if (!project.empty() && page.project == project) {
+        if (!card.empty()) {
+          H::PageShowT show;
+          show.project = project;
+          show.card = card;
+          host_->reply(connection, wire::HostEvent(std::move(show)));
+        }
+        return {true, false};
+      }
     for (auto& [connection, page] : pages_) {
-      if (!page.project.empty() || page.detached) continue;
+      if (project.empty() || !page.project.empty() || page.detached) continue;
       page.project = project;
       H::PageShowT show;
       show.project = project;
+      show.card = card;
       host_->reply(connection, wire::HostEvent(std::move(show)));
       return {true, false};
     }
   }
   return {false, browser && OpenBrowser(project)};
+}
+
+auto WebPages::PageUrl(const std::string& project) -> std::string {
+  std::lock_guard lock(mutex_);
+  return edge_ ? edge_->page_url(project) : "";
 }
 
 auto WebPages::Disconnected(ConnId connection) -> void {
@@ -203,23 +219,6 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
     if (!f::create_directory(dir, error))
       throw Failure("invalid_request", "Cannot create " + dir.string() + (error ? ": " + error.message() : ": it exists"));
     return wire::HostReply(request.request_id, Listing(dir));
-  }
-  if (const auto* web = r.value_as_HostWebRequest()) {
-    // The page cannot choose what this origin serves or open more pages.
-    if (request.websocket)
-      throw Failure("permission_denied", "The Web UI is started by a local client");
-    if (web->root() && web->root()->size())
-      Serve(web->root()->str(), web->port() ? static_cast<int>(web->port()) : 8780, web->port() != 0);
-    H::HostWebT result;
-    result.url = Url();
-    if (result.url.empty()) throw Failure("unavailable", "The Web UI is not being served");
-    const auto project = web->project() ? web->project()->str() : "";
-    {
-      std::lock_guard lock(mutex_);
-      if (edge_) result.page_url = edge_->page_url(project);
-    }
-    if (web->open()) OpenBrowser(project);
-    return wire::HostReply(request.request_id, std::move(result));
   }
   const auto* report = r.value_as_HostPageRequest();
   const auto project = report->project() ? report->project()->str() : "";

@@ -193,12 +193,8 @@ class Server {
     }
     // A new host (after a restart) or a closed socket: connect again.
     auto ready = EnsureHost(launch_);
-    // A host started now also serves the page; one that ran already is
-    // asked to (the desktop app's host serves no page until then).
-    auto host = ConnectHost(ready);
-    ServeWeb(*host, launch_, false, {});
     auto stale = std::make_shared<std::atomic<bool>>(false);
-    auto agent = std::shared_ptr<C::Connection>(ConnectAgent(ready));
+    auto agent = std::shared_ptr<C::Connection>(ConnectAgent(ready, false));
     agent->OnClosed([stale](C::Error) { *stale = true; });
     std::lock_guard lock(mutex_);
     agent_ = agent;
@@ -230,13 +226,13 @@ class Server {
     const auto dir = (std::filesystem::path(base ? base : std::filesystem::current_path().string()) / folder)
                          .lexically_normal();
     const bool create = json::Bool(json::Get(a, "create"));
-    A::ProjectOpenRequestT request;
+    A::ShowRequestT request;
     request.path = dir.string();
     request.create = create;
     request.browser = json::Bool(json::Get(a, "browser"), true);
-    std::optional<cli::Reply<A::ProjectOpened>> opened;
+    std::optional<cli::Reply<A::Shown>> opened;
     try {
-      opened = AgentCall<A::ProjectOpened>(*Agent(), std::move(request));
+      opened = AgentCall<A::Shown>(*Agent(), std::move(request));
     } catch (const RpcFailure& e) {
       if (e.code == "invalid_project" && !create)
         return {std::string(e.what()) + " Pass create: true to make a new project there.", true, {}};

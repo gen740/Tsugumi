@@ -34,16 +34,8 @@ auto LaunchFromEnvironment(const std::filesystem::path& executable) -> Launch;
 /** Starts hostd detached when none runs, else reads the running one. */
 auto EnsureHost(const Launch& launch) -> Ready;
 
-/** A connection after a successful Hello. */
-auto ConnectHost(const Ready& ready) -> std::unique_ptr<client::Connection>;
-auto ConnectAgent(const Ready& ready) -> std::unique_ptr<client::Connection>;
-
-struct Web {
-  std::string url;       // the origin
-  std::string page_url;  // carries the page key
-};
-/** Serves the Web UI (when it does not yet) and optionally opens a page. */
-auto ServeWeb(client::Connection& host, const Launch& launch, bool open,
-              const std::string& project) -> Web;
+/** The Agent socket after a successful Hello: as the user (the command's own
+ *  requests) or as the external principal (the Claude Code plugin). */
+auto ConnectAgent(const Ready& ready, bool user) -> std::unique_ptr<client::Connection>;
 
 }  // namespace tsugumi::cli

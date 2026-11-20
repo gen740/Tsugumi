@@ -99,8 +99,6 @@ auto RunHost(int argc, char** argv) -> int {
       else
         throw std::runtime_error("unknown option " + arg);
     }
-    if (web_port_chosen && web_root.empty())
-      throw std::runtime_error("--web-port requires --web-root");
     if (options.state_dir.empty())
       throw std::runtime_error("--state-dir is required");
     std::filesystem::create_directories(options.state_dir);
@@ -176,7 +174,14 @@ auto RunHost(int argc, char** argv) -> int {
     host.Attach(&server, &host_server);
     server.start();
     host_server.start();
-    if (!web_root.empty()) host.web().Serve(web_root, web_port, web_port_chosen);
+    // The Web UI is served whenever its built page is in place: the one given,
+    // else an installation's share/tsugumi/ui/web/dist/public.
+    if (web_root.empty())
+      web_root = binary_dir.parent_path() / "share/tsugumi/ui/web/dist/public";
+    if (std::filesystem::exists(web_root / "index.html"))
+      host.web().Serve(web_root, web_port, web_port_chosen);
+    else
+      log::info("No Web UI at " + web_root.string() + "; not serving it");
     const auto endpoint = listener.tcp_port < 0
                               ? ""
                               : "ws://" + listener.tcp_host + ":" +

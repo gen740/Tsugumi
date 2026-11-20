@@ -168,39 +168,16 @@ auto EnsureHost(const Launch& launch) -> Ready {
   return ready;
 }
 
-auto ConnectHost(const Ready& ready) -> std::unique_ptr<client::Connection> {
-  namespace H = Tsugumi::Host;
-  client::Options options;
-  options.protocol = client::Protocol::Host;
-  options.endpoint = "unix:" + ready.host_socket;
-  auto connection = std::make_unique<client::Connection>(options);
-  if (auto error = connection->Start().get()) throw std::runtime_error(error.message);
-  Tsugumi::Service::HelloRequestT hello;
-  hello.token = ready.user_token;
-  HostCall<Tsugumi::Service::HelloResult>(*connection, std::move(hello));
-  return connection;
-}
-
-auto ConnectAgent(const Ready& ready) -> std::unique_ptr<client::Connection> {
+auto ConnectAgent(const Ready& ready, bool user) -> std::unique_ptr<client::Connection> {
   client::Options options;
   options.protocol = client::Protocol::Agent;
   options.endpoint = "unix:" + ready.unix_socket;
   auto connection = std::make_unique<client::Connection>(options);
   if (auto error = connection->Start().get()) throw std::runtime_error(error.message);
   Tsugumi::Service::HelloRequestT hello;
-  hello.token = ready.external_token;
+  hello.token = user ? ready.user_token : ready.external_token;
   AgentCall<Tsugumi::Service::HelloResult>(*connection, std::move(hello));
   return connection;
-}
-
-auto ServeWeb(client::Connection& host, const Launch& launch, bool open, const std::string& project) -> Web {
-  Tsugumi::Host::HostWebRequestT request;
-  request.root = launch.web_root.string();
-  request.port = static_cast<uint32_t>(launch.web_port);
-  request.open = open;
-  request.project = project;
-  const auto reply = HostCall<Tsugumi::Host::HostWeb>(host, std::move(request));
-  return {reply.view->url()->str(), reply.view->page_url() ? reply.view->page_url()->str() : ""};
 }
 
 }  // namespace tsugumi::cli

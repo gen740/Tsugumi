@@ -1,7 +1,8 @@
-// The tsugumi command: opens the Web UI, which hostd serves. The host keeps
+// The tsugumi command: a local client of hostd's RPC. A host it starts keeps
 // running after the command ends, like the desktop app's.
 //
-//   tsugumi [--port N] [--no-browser] [project folder]
+//   tsugumi web [--port N] [--no-browser] [project folder]
+//                                has hostd serve the Web UI and opens a page
 //   tsugumi mcp                  the Claude Code plugin's MCP server (stdio)
 //   tsugumi update               puts the latest release in place
 //   tsugumi uninstall [--yes]    previews removal; --yes removes the command
@@ -16,6 +17,7 @@
 #include <vector>
 
 #include "launch.hh"
+#include "rpc.hh"
 #include "maintenance.hh"
 #include "mcp.hh"
 
@@ -36,8 +38,9 @@ auto Executable(const char* argv0) -> f::path {
 }
 
 auto Usage() -> void {
-  std::cout << "Usage: tsugumi [--port N] [--no-browser] [project folder]\n"
-               "       tsugumi mcp | update | uninstall [--yes] | --version\n";
+  std::cout << "Usage: tsugumi web [--port N] [--no-browser] [project folder]\n"
+               "       tsugumi mcp\n"
+               "       tsugumi update | uninstall [--yes] | --version\n";
 }
 
 auto Open(const f::path& executable, const std::vector<std::string>& args) -> int {
@@ -60,11 +63,18 @@ auto Open(const f::path& executable, const std::vector<std::string>& args) -> in
   if (!f::exists(launch.web_root / "index.html"))
     throw std::runtime_error("the Web UI is not built: " + launch.web_root.string());
   const auto ready = EnsureHost(launch);
-  auto host = ConnectHost(ready);
-  const auto web = ServeWeb(*host, launch, browser, project);
-  std::cout << "Tsugumi web UI: " << web.page_url << '\n';
-  std::cout << "  host:  " << launch.state.string() << " (PID " << ready.pid << ")\n";
-  if (browser) std::cout << "The page opens in the default browser. The host keeps running after this command.\n";
+  auto agent = ConnectAgent(ready, true);
+  Tsugumi::Agent::ShowRequestT request;
+  request.path = project;
+  request.browser = browser;
+  const auto shown = AgentCall<Tsugumi::Agent::Shown>(*agent, std::move(request));
+  if (!shown.view->url() || !shown.view->url()->size())
+    throw std::runtime_error("the host does not serve the Web UI");
+  std::cout << "Tsugumi web UI: " << shown.view->url()->str() << '\n';
+  if (shown.view->shown())
+    std::cout << "A Tsugumi page shows it.\n";
+  else if (shown.view->opened())
+    std::cout << "The page opens in the default browser.\n";
   return 0;
 }
 
@@ -80,14 +90,16 @@ auto main(int argc, char** argv) -> int {
       std::cout << version.rdbuf();
       return 0;
     }
-    if (command == "-h" || command == "--help") {
+    if (command.empty() || command == "-h" || command == "--help") {
       Usage();
       return 0;
     }
     if (command == "mcp") return RunMcp(executable);
     if (command == "update") return Update(LaunchFromEnvironment(executable).root);
     if (command == "uninstall") return Uninstall({args.begin() + 1, args.end()});
-    return Open(executable, args);
+    if (command == "web") return Open(executable, {args.begin() + 1, args.end()});
+    Usage();
+    return 64;
   } catch (const std::exception& error) {
     std::cerr << "tsugumi: " << error.what() << '\n';
     return 1;

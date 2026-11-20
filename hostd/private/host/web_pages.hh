@@ -1,6 +1,6 @@
-// The Web UI: its origin (WebEdge) and the open pages. Pages are Host
-// connections that reported what they show; other Host clients (the Mac app,
-// the CLI) are not pages.
+// The Web UI: its origin (WebEdge, served whenever hostd runs with a built
+// page) and the attached UIs, Host connections that reported what they show.
+// Other Host clients are not pages.
 #pragma once
 
 #include <functional>
@@ -47,10 +47,12 @@ class WebPages {
     bool shown = false;   // a page shows it now
     bool opened = false;  // a browser window was asked to open it
   };
-  /** Shows a project without taking another page's away: a page that shows
-   *  it already, or one on Home is told to; else a browser window opens it
-   *  when browser is set. */
-  auto Show(const std::string& project, bool browser) -> Shown;
+  /** Shows a project (empty: Home) without taking another page's away: a
+   *  page that shows it already, or one on Home is told to; else a browser
+   *  window opens it when browser is set. */
+  auto Show(const std::string& project, const std::string& card, bool browser) -> Shown;
+  /** The URL that opens a page with the key: for the user alone. */
+  auto PageUrl(const std::string& project = {}) -> std::string;
 
  private:
   struct Page {
