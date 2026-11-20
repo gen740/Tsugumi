@@ -526,6 +526,17 @@ interface APIState {
   allowedPermissions: string[]
   allowUnscopedHelpers: boolean
   webSearch: boolean
+  webSearchAllowedDomains: string[]
+  webSearchBlockedDomains: string[]
+}
+
+/** A list of domains typed as text, separated by commas or spaces; saved when the field is left. */
+function DomainList({ value, onChange }: { value: string[]; onChange: (v: string[]) => void }) {
+  const joined = value.join(', ')
+  const [text, setText] = useState(joined)
+  useEffect(() => setText(joined), [joined])
+  return <TextField mono value={text} onChange={setText} placeholder="example.org, arxiv.org" style={{ flex: 1 }}
+    onCommit={(v) => { const next = v.split(/[\s,]+/).filter(Boolean); if (next.join(', ') !== joined) onChange(next) }} />
 }
 
 /** Re-reads the connection of every open chat (after it changed here);
@@ -596,6 +607,9 @@ function APISettings() {
           ? L('ローカル fixture には検索がないため、オンでも使えません。')
           : L('オンにすると、検索語が接続先のプロバイダを通して検索サービスへ送られます。Agent は未公開のデータを検索語に入れないよう指示されていますが、確実に防げるものではありません。検索語と出典はチャットに残ります。検索には利用料がかかることがあります。')}>
         <Row label={L('Agent が自分の判断で Web を検索する')}><Toggle checked={s.webSearch} onChange={(v) => update({ webSearch: v })} /></Row>
+        <Row label={L('検索してよいドメイン')}><DomainList value={s.webSearchAllowedDomains ?? []} onChange={(v) => update({ webSearchAllowedDomains: v })} /></Row>
+        <Row label={L('検索しないドメイン')}><DomainList value={s.webSearchBlockedDomains ?? []} onChange={(v) => update({ webSearchBlockedDomains: v })} /></Row>
+        <Row><span className="caption">{L('空欄なら制限しません。両方にあるドメインは検索しません。OpenAI と ChatGPT は検索しないドメインだけの指定に対応していないため、その場合は検索を使いません。')}</span></Row>
       </Section>
       <GuideSettings />
     </Form>

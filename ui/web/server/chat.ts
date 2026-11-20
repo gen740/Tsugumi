@@ -58,6 +58,9 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
+  /** Domains web search is limited to, and domains it may not use (hostd passes them to the provider). */
+  webSearchAllowedDomains: string[]
+  webSearchBlockedDomains: string[]
   /** Hostd chooses how to produce version notes. */
   versionNoteMode: 'mechanical' | 'agent'
   allowUnscopedHelpers: boolean
@@ -76,7 +79,8 @@ const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
-  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch',
+  webSearchAllowedDomains: 'agent.webSearch.allowedDomains', webSearchBlockedDomains: 'agent.webSearch.blockedDomains', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
 const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }

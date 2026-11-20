@@ -12,6 +12,7 @@
 #include <unistd.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <map>
 #include <mutex>
@@ -262,6 +263,8 @@ auto Defaults() -> j::Members {
           {"agent.effort", j::Quote("")},
           {"agent.fastModel", j::Quote("")},
           {"agent.webSearch", "false"},
+          {"agent.webSearch.allowedDomains", "[]"},
+          {"agent.webSearch.blockedDomains", "[]"},
           {"agent.animateWork", "true"},
           {"agent.allowUnscopedHelpers", "false"},
           {"agent.permissions.allowed", "[]"},
@@ -840,6 +843,22 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
               for (const auto& kind : j::Array(value))
                 if (j::String(kind).empty())
                   throw std::runtime_error("Invalid permission kind");
+            if (key == "agent.webSearch.allowedDomains" ||
+                key == "agent.webSearch.blockedDomains") {
+              std::vector<std::string> domains;
+              for (const auto& raw : j::Array(value)) {
+                auto domain = j::String(raw);
+                std::ranges::transform(domain, domain.begin(), [](char c) {
+                  return static_cast<char>(
+                      std::tolower(static_cast<unsigned char>(c)));
+                });
+                if (domain.empty() ||
+                    domain.find_first_of(" \t\r\n/:") != domain.npos)
+                  throw std::runtime_error("Invalid web search domain");
+                domains.push_back(j::Quote(domain));
+              }
+              value = j::Encode(domains);
+            }
             if (key == "versions.noteMode" &&
                 j::String(value) != "mechanical" && j::String(value) != "agent")
               throw std::runtime_error("Unknown version note mode");
@@ -1234,6 +1253,12 @@ auto Settings::Resolve(const j::Members& selection) -> agent::ProviderConfig {
   if (!j::Text(selection, "model").empty())
     c.model = j::Text(selection, "model");
   c.web_search = j::Bool(j::Get(values, "agent.webSearch"));
+  for (const auto& domain :
+       j::Array(j::Get(values, "agent.webSearch.allowedDomains", "[]")))
+    c.search_allowed_domains.push_back(j::String(domain));
+  for (const auto& domain :
+       j::Array(j::Get(values, "agent.webSearch.blockedDomains", "[]")))
+    c.search_blocked_domains.push_back(j::String(domain));
   if (j::Bool(j::Get(selection, "use_choices"))) {
     const auto table = j::Object(
         std::string_view(reinterpret_cast<const char*>(tsugumi_agent_settings),

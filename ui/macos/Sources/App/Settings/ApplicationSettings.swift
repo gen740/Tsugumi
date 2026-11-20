@@ -557,6 +557,28 @@ private struct SkillSettings: View {
 
 /// Model connections. API keys go to the host-side Agent service (one per
 /// provider); they are never written to project files, settings or logs.
+/// Domains typed as text, separated by commas or spaces; saved on Return or when the field is left.
+private struct DomainListField: View {
+  let title: LocalizedStringKey
+  @Binding var domains: [String]
+  @State private var text = ""
+  @FocusState private var focused: Bool
+
+  var body: some View {
+    TextField(title, text: $text, prompt: Text(verbatim: "example.org, arxiv.org"))
+      .font(.body.monospaced())
+      .focused($focused)
+      .onAppear { text = domains.joined(separator: ", ") }
+      .onSubmit(save)
+      .onChange(of: focused) { _, now in if !now { save() } }
+  }
+
+  private func save() {
+    let next = text.split(whereSeparator: { $0 == "," || $0.isWhitespace }).map(String.init)
+    if next != domains { domains = next }
+  }
+}
+
 private struct APISettings: View {
   @Environment(AppPreferences.self) private var prefs
   @HostStorage("agent.provider") private var provider = "anthropic"
@@ -564,6 +586,8 @@ private struct APISettings: View {
   @HostStorage("agent.model.openai") private var openAIModel = ProviderConfig.openAI.model
   @HostStorage("agent.fixturePort") private var port = 8765
   @HostStorage(AgentSettings.webSearchKey) private var webSearch = false
+  @HostStorage("agent.webSearch.allowedDomains") private var searchAllowedDomains: [String] = []
+  @HostStorage("agent.webSearch.blockedDomains") private var searchBlockedDomains: [String] = []
   @HostStorage("agent.allowUnscopedHelpers") private var allowUnscopedHelpers = false
 
   var body: some View {
@@ -605,6 +629,10 @@ private struct APISettings: View {
       }
       Section {
         Toggle("Agent が自分の判断で Web を検索する", isOn: $webSearch)
+        DomainListField(title: "検索してよいドメイン", domains: $searchAllowedDomains)
+        DomainListField(title: "検索しないドメイン", domains: $searchBlockedDomains)
+        Text("空欄なら制限しません。両方にあるドメインは検索しません。OpenAI と ChatGPT は検索しないドメインだけの指定に対応していないため、その場合は検索を使いません。")
+          .font(.caption).foregroundStyle(.secondary)
       } header: {
         InfoHeader("Web 検索", info: provider == "fixture"
              ? Text("ローカル fixture には検索がないため、オンでも使えません。")
