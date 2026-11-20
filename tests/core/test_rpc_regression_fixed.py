@@ -16,28 +16,27 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
-def file_fork_project(root: Path) -> None:
+def file_fanout_project(root: Path) -> None:
     write(root,
           defs={"trigger": {"template": "trigger"},
                 "doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
                         "_outputs": FILE_FBS},
-                "fork": {"template": "fork"},
                 "sink": dict(SINK, recordIO=True)},
-          cards=[card("src", "doc"), card("split", "fork"), card("a", "sink"), card("b", "sink")],
-          conns=[conn("src", "doc", "split", "in"), conn("split", "out1", "a", "in"), conn("split", "out2", "b", "in")],
+          cards=[card("src", "doc"), card("a", "sink"), card("b", "sink")],
+          conns=[conn("src", "doc", "a", "in"), conn("src", "doc", "b", "in")],
           files={"definitions/doc/data/report.txt": "quarterly numbers\n"})
 
 
 def test_history_write_failure_fails_the_run(tmp_path, core_factory):
     """A run cannot succeed when its invocation record could not be saved."""
     root = tmp_path / "p"
-    file_fork_project(root)
+    file_fanout_project(root)
     d = core_factory(project_root=root, fault="invocation_record")
     c = d.connect()
     _, st = run_and_wait(c, "src")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.persistence_failed
-    for k in ("src", "split", "a", "b"):
+    for k in ("src", "a", "b"):
         try:
             page = c.call("RunInvocationsRequest", runId=text(st.runId), card=path(k))
         except RpcFailure as e:
@@ -49,10 +48,10 @@ def test_history_write_failure_fails_the_run(tmp_path, core_factory):
 def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factory):
     """Partial runs reuse saved file inputs after cache clearing and restart."""
     root = tmp_path / "p"
-    file_fork_project(root)
+    file_fanout_project(root)
     d = core_factory(project_root=root)
     c = d.connect()
-    _, missing = run_and_wait(c, "split", propagate=False)
+    _, missing = run_and_wait(c, "b", propagate=False)
     assert missing.failure.kind == FailureKind.input_missing
     first, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
@@ -61,13 +60,13 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
         assert Path(recorded["value"]).read_text() == "quarterly numbers\n"
 
     c.call("ProjectCacheClearRequest", opId=new_id())
-    _, st2 = run_and_wait(c, "split", propagate=False)
+    _, st2 = run_and_wait(c, "b", propagate=False)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
     c.call("RunScratchDeleteRequest", opId=new_id(), paths=[f"runs/{first}"])
     d.stop()
     d.start()
     c = d.connect()
-    _, st3 = run_and_wait(c, "split", propagate=False)
+    _, st3 = run_and_wait(c, "b", propagate=False)
     assert st3.state == RunState.succeeded, st3.failure and text(st3.failure.diagnostic)
     # The downstream Card also kept its own saved input.
     _, st4 = run_and_wait(c, "a", propagate=False)
@@ -101,7 +100,7 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
 
 
 
-def test_fork_preserves_precise_numbers(tmp_path, core_factory):
+def test_direct_fanout_preserves_precise_numbers(tmp_path, core_factory):
     """Both branches retain small and precise typed floating-point values."""
     root = tmp_path / "p"
     write(root,
@@ -115,11 +114,9 @@ table Reading { rate:double; tiny:double; }
 table Outputs { reading:Reading (required); }
 root_type Outputs;
 """},
-                "fork": {"template": "fork"},
                 "sink": dict(SINK, recordIO=True)},
-          cards=[card("src", "reading"), card("split", "fork"), card("a", "sink"), card("b", "sink")],
-          conns=[conn("src", "reading", "split", "in"), conn("split", "out1", "a", "in"),
-                 conn("split", "out2", "b", "in")])
+          cards=[card("src", "reading"), card("a", "sink"), card("b", "sink")],
+          conns=[conn("src", "reading", "a", "in"), conn("src", "reading", "b", "in")])
     d = core_factory(project_root=root)
     c = d.connect()
     run_id, st = run_and_wait(c, "src")

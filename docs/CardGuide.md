@@ -229,11 +229,11 @@ Python returns generated output `TableT` objects directly: `return {"result": re
 
 C++, Go and Rust return a generated `Output` object. Set a field for each produced port. Go waits for managed tasks to finish before packing the result.
 
-R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts the complete returned mapping to the Card's FlatBuffers type. C# returns an `Outputs` object with one generated property per port. The adapter packs it after awaiting `RunAsync`.
+R returns a named list, Julia returns a Dict and Ruby returns a Hash. The worker converts each returned port value from JSON to that port's FlatBuffer. R's `NULL` and Julia's `nothing` omit the port. C# returns an `Outputs` object with one generated property per port. The adapter packs each returned port after awaiting `RunAsync`.
 
 Numeric messages retain IEEE NaN, positive and negative infinity, and signed zero across SDKs; these values never become an absent optional scalar. The worker uses `NaN`, `Infinity` and `-Infinity` in its JSON conversion. R's `NA` is rejected: use `NaN` for a numeric NaN or `NULL` for an absent optional scalar.
 
-The worker validates the returned Outputs buffer, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
+The worker validates each emitted output against its port type, checks that all required ports are present, and applies the 16 MiB result-frame limit before `postRun`. A missing required port fails the invocation with `output_invalid`. Report calls validate each display immediately and can publish any number of displays during the invocation.
 
 File and Directory outputs use the same result forms as other messages. Their `value` / `Value` field is an absolute path beneath `run.output_directory` (Go `run.OutputDirectory()`, C# `run.OutputDirectory`, Bash `$TSUGUMI_OUTPUT_DIR`). Write the files there, then return the path message. A Directory result includes its files and nested directories; [Run history](RunHistory.md#keep-and-open-artifacts) describes retention. The run object also exposes working and temporary directories, run and Card IDs, invocation number, cancellation and remaining time. Python, R and Julia cancellation/deadline callbacks expire with their invocation; retaining a Run does not give it access to a later invocation.
 
@@ -471,10 +471,11 @@ See the [Ruby API](#ruby-api) for files, reports, lifecycle and dependency locks
 ### Native Card ABI
 
 Every package provides `lib/main.so` with one exported entry, `tsugumi_main`.
-ABI 7 passes the generated `_inputs.fbs` and `_params.fbs` FlatBuffers to that
-entry. File and Directory inputs carry paths. The run phase returns one
-`_outputs.fbs` FlatBuffer. The worker's separate function table provides
-presentation, logging, cancellation, deadlines, structured failures and typed
+ABI 8 exposes each input and output as a separate FlatBuffer through
+the function table. Each buffer uses that port's message type. File and
+Directory messages carry paths. Parameters arrive as a `parameters.Params`
+FlatBuffer from `_params.fbs`. The function table also provides one display
+callback, logging, cancellation, deadlines, structured failures and typed
 JSON conversion. The same entry handles interpreter preparation, source
 loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
 
@@ -858,7 +859,6 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 | --- | --- | --- |
 | `trigger` | out `out` | Where a whole run starts |
 | `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
-| `fork` | in `in`, outs `out1`, `out2` (param `branches`: string[] for other names) | Sends one value to several Cards (an output has one wire: this is how a value reaches several inputs) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
 | `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
@@ -938,7 +938,7 @@ Add a built-in `collect` after `score` to send one ordinary port value with an
 Directory. The ordered `items` records contain each original name and a path
 relative to the Directory root.
 
-Refer to Nix exports as `inputs.<destination-port>`. Fork, Collect, Branch's
+Refer to Nix exports as `inputs.<destination-port>`. Collect, Branch's
 `value` input and Workflow boundaries preserve a unique Code producer. Use a
 direct connection to that Code Card if the producer would otherwise be
 ambiguous. The `score` Card also exports `thresholdCount`, which `summary` reads through

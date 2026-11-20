@@ -17,10 +17,11 @@ public actor EnvironmentManager {
   private var pendingOutput: [UInt64: [String: Any]] = [:]
   private var openingTerminals = 0
 
-  public init(support: URL? = nil, image: VMImage? = VMImage.find()) {
+  public init(support: URL? = nil, image: VMImage? = VMImage.find(),
+              client: CoreHostClient? = nil) {
     let support = support ?? AppChannel.current.supportDirectory
     self.support = support
-    client = CoreHostClient(support: support)
+    self.client = client ?? CoreHostClient(support: support)
     runtimeArguments = HostRuntimeConfiguration.arguments(support: support, image: image)
     vm = HostRuntimeSnapshot(directory: support.appendingPathComponent("vm"))
   }

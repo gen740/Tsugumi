@@ -78,12 +78,13 @@ struct TransportServer::Conn {
   struct Out {
     std::string raw;
     std::optional<PendingMessage> note;
+    bool trace = true;
   };
   std::deque<Out> outq;
   size_t out_bytes = 0;
   std::string wbuf;
   size_t wpos = 0;
-  std::set<uint64_t> inflight;
+  std::map<uint64_t, bool> inflight;
   const char* peer;
   trace::Link trace_link;
 };
@@ -248,12 +249,17 @@ void TransportServer::apply(Command& cmd) {
     drop(*it->second, "closed by server");
 }
 
-void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply) {
+void TransportServer::enqueue_raw(Conn& c, std::string bytes, bool is_reply,
+                                  bool trace) {
   if (c.closing) return;
-  if (is_reply) c.inflight.erase(opts_.codec.completed(bytes));
+  if (is_reply) {
+    auto request = c.inflight.extract(opts_.codec.completed(bytes));
+    if (!request.empty()) trace = request.mapped();
+  }
   c.out_bytes += bytes.size();
   Conn::Out o;
   o.raw = std::move(bytes);
+  o.trace = trace;
   c.outq.push_back(std::move(o));
 }
 
@@ -293,7 +299,7 @@ bool TransportServer::fill_write(Conn& c) {
     body = std::move(o.raw);
   }
   trace::Observe(c.trace_link, opts_.trace_endpoint, c.peer, true, body,
-                 opts_.trace_codec);
+                 opts_.trace_codec, o.trace);
   if (c.websocket) {
     std::string h;
     h += static_cast<char>(0x82);  // FIN + binary
@@ -562,26 +568,26 @@ void TransportServer::handle_frame(Conn& c, std::string frame) {
   const auto rid = info->request_id;
   if (c.inflight.count(rid)) return drop(c, "duplicate in-flight request_id");
   const auto fail = [&](AdmissionFailure reason) {
-    enqueue_raw(c, opts_.codec.failure(rid, reason), false);
+    enqueue_raw(c, opts_.codec.failure(rid, reason), false, info->trace);
   };
   RequestIn in{c.id, rid, std::make_shared<const std::string>(std::move(frame)),
                c.websocket};
   if (info->hello) {
     if (!c.hello_seen && info->peer) c.peer = info->peer;
-    trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false,
-                   *in.frame, opts_.trace_codec);
+    trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false, *in.frame,
+                   opts_.trace_codec, info->trace);
     if (c.hello_seen) return fail(AdmissionFailure::AlreadyHello);
     c.hello_seen = true;
     auto [bytes, ok] = sink_->hello(in);
     c.authenticated = ok;
-    enqueue_raw(c, std::move(bytes), false);
+    enqueue_raw(c, std::move(bytes), false, info->trace);
     if (!ok) c.close_after_flush = true;
     return;
   }
   trace::Observe(c.trace_link, c.peer, opts_.trace_endpoint, false, *in.frame,
-                 opts_.trace_codec);
+                 opts_.trace_codec, info->trace);
   if (!c.authenticated) return fail(AdmissionFailure::Unauthenticated);
-  c.inflight.insert(rid);
+  c.inflight.emplace(rid, info->trace);
   sink_->dispatch(std::move(in));
 }
 

@@ -10,13 +10,7 @@
         "id": "load"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "cohort"
-      },
-      {
-        "id": "split"
       },
       {
         "id": "km"
@@ -48,24 +42,14 @@
           "port": "lung"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "cohort"
-        },
-        "to": {
           "card": "cohort",
           "port": "lung"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "specs"
+          "card": "load",
+          "port": "lung"
         },
         "to": {
           "card": "specs",
@@ -78,24 +62,14 @@
           "port": "cohort"
         },
         "to": {
-          "card": "split",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "split",
-          "port": "km"
-        },
-        "to": {
           "card": "km",
           "port": "cohort"
         }
       },
       {
         "from": {
-          "card": "split",
-          "port": "cox"
+          "card": "cohort",
+          "port": "cohort"
         },
         "to": {
           "card": "cox",

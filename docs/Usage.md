@@ -41,7 +41,7 @@ Choose **New Project** on Home and select a destination. A new folder is created
 
 ## Canvas tools
 
-Right-click the Canvas to add a Code Card, a Switch, a Fork, a Branch, a Merge or a Collect Card. A Switch can feed the `condition` input of a Branch so you can try both paths without editing code. Connect a value to the Branch's other input, then run once with the Switch on and once with it off. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
+Right-click the Canvas to add a Code Card, a Switch, a Branch, a Merge or a Collect Card. A Switch can feed the `condition` input of a Branch so you can try both paths without editing code. Connect a value to the Branch's other input, then run once with the Switch on and once with it off. The timeline shows which branch ran. [Card types and execution](features.md#2-cards-and-workflows)
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 

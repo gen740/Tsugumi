@@ -3,6 +3,7 @@
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <set>
 
 #include "module_source.hh"
 #include "nix.hh"
@@ -105,14 +106,8 @@ void Service::run(RequestIn& req) {
     if (store_->halted())
       throw Failed(FailureKind::persistence_failed,
                    "changes are halted after a persistence failure");
-    // The version it runs: what is saved, committed when it changed. A git
-    // problem never stops a run (it then records no version).
-    try {
-      p.commit = versions_->commit_all(
-          version_record::commit("run", path_key(p.card)));
-    } catch (const std::exception& e) {
-      log::warn(std::string("versions: no commit for this run: ") + e.what());
-    }
+    p.commit = versions_->commit_all(
+        version_record::commit("run", path_key(p.card)), doc.get());
     std::string receipt = scheduler_->accept(doc, p);
     reply(req, receipt_reply(req.request_id, receipt, false));
     finish_op(op_id, receipt);
@@ -332,6 +327,32 @@ void Service::run_latest_invocations(RequestIn& req) {
   auto off = pb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InvocationPage,
                          off.Union()));
+}
+
+void Service::run_definition_paths(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_RunDefinitionPathsRequest();
+  require_run_id(*r->run_id(), "run_id");
+  const auto card = r->card() ? path_key(wire::card_arg(r->card())) : "";
+  const auto paths = history_->read([&](sql::Db& db) {
+    auto find =
+        db.prepare("SELECT card,path FROM run_definition_paths WHERE run_id=?");
+    find.bind(1, r->run_id()->str());
+    std::set<std::string> paths;
+    bool found = false;
+    while (find.step()) {
+      const auto logical = find.text(0);
+      if (logical == card || card.empty()) found = true;
+      if (card.empty() || logical == card || card.starts_with(logical + '/'))
+        paths.insert(find.text(1));
+    }
+    if (!found)
+      throw Failed(FailureKind::not_found, "No recorded Card definition");
+    return std::vector(paths.begin(), paths.end());
+  });
+  FBB b;
+  auto result = R::CreateRunDefinitionPaths(b, b.CreateVectorOfStrings(paths));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::RunDefinitionPaths,
+                         result.Union()));
 }
 
 void Service::run_invocations(RequestIn& req) {

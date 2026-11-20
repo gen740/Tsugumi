@@ -6,9 +6,10 @@ import UniformTypeIdentifiers
 
 private struct TraceRow: Identifiable {
   let source: String
+  let generation: UInt64
   let entry: Tsugumi_Trace_EntryT
 
-  var id: String { "\(source):\(entry.sequence)" }
+  var id: String { "\(source):\(generation):\(entry.sequence)" }
   var pair: String { "\(entry.from) → \(entry.to)" }
   var date: Date { Date(timeIntervalSince1970: Double(entry.unixMicros) / 1_000_000) }
   var direction: String {
@@ -56,9 +57,21 @@ private struct TraceExport: FileDocument {
 struct RPCTraceView: View {
   @State private var mode: Tsugumi_Trace_Mode = .off
   @State private var rows: [TraceRow] = []
-  @State private var unavailable: [String] = []
+  private enum Update: Sendable {
+    case changed(String?)
+    case mode(Tsugumi_Trace_Mode)
+  }
+
+  @State private var hostSession: UUID?
+  @State private var activeSession: UUID?
+  @State private var cursors: [String: (generation: UInt64, sequence: UInt64)] = [:]
+  @State private var updates: AsyncStream<Update>.Continuation?
+  @State private var projects: Set<String> = []
+  @State private var unavailable: Set<String> = []
   @State private var error: String?
-  @State private var updating = false
+  @State private var pendingMode: Tsugumi_Trace_Mode?
+
+  private var updating: Bool { pendingMode != nil }
   @State private var pair = ""
   @State private var type = ""
   @State private var failuresOnly = false
@@ -78,7 +91,12 @@ struct RPCTraceView: View {
     VStack(alignment: .leading, spacing: 10) {
       HStack {
         Picker("記録モード", selection: Binding(get: { mode }, set: { requested in
-          Task { await refresh(mode: requested) }
+          if requested != .capture {
+            clearContent()
+            export = nil
+          }
+          pendingMode = requested
+          updates?.yield(.mode(requested))
         })) {
           Text("オフ").tag(Tsugumi_Trace_Mode.off)
           Text("トレース").tag(Tsugumi_Trace_Mode.trace)
@@ -86,7 +104,7 @@ struct RPCTraceView: View {
         }
         .pickerStyle(.segmented)
         .fixedSize()
-        Button("更新") { Task { await refresh() } }
+        .disabled(updates == nil)
         Spacer()
         if updating { ProgressView().controlSize(.small) }
         Button("表示中の記録をエクスポート…", action: prepareExport)
@@ -99,7 +117,7 @@ struct RPCTraceView: View {
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
       if !unavailable.isEmpty {
-        Text("取得できないプロジェクト: \(unavailable.joined(separator: ", "))")
+        Text("取得できないプロジェクト: \(unavailable.sorted().joined(separator: ", "))")
           .font(.caption).foregroundStyle(.secondary)
       }
       filters
@@ -128,7 +146,14 @@ struct RPCTraceView: View {
       }
     }
     .padding()
-    .task { await refresh() }
+    .task {
+      for await session in await CoreHostClient.shared.hostConnectionChanges() {
+        hostSession = session
+      }
+    }
+    .task(id: hostSession) {
+      if let hostSession { await watch(hostSession) }
+    }
     .fileExporter(isPresented: $exporting, document: export, contentType: .json,
                   defaultFilename: "rpc-trace.json") { result in
       export = nil
@@ -208,49 +233,130 @@ struct RPCTraceView: View {
     } catch { self.error = error.localizedDescription }
   }
 
-  private func query(mode: Tsugumi_Trace_Mode? = nil, source: String? = nil) async throws -> Tsugumi_Trace_HostTraceT {
-    let request = Tsugumi_Trace_HostTraceRequestT()
-    request.mode = mode?.rawValue
-    request.source = source
-    return try await CoreHostClient.shared.hostCall(.hosttracerequest, request, existingOnly: true)
+  private func reset() {
+    updates = nil
+    pendingMode = nil
+    rows = []
+    cursors = [:]
+    projects = []
+    unavailable = []
+    mode = .off
+    export = nil
+    selection = nil
   }
 
-  private func refresh(mode requested: Tsugumi_Trace_Mode? = nil) async {
-    guard !updating else { return }
-    updating = true
-    defer { updating = false }
+  private func watch(_ session: UUID) async {
+    guard !Task.isCancelled else { return }
+    activeSession = session
+    reset()
     error = nil
-    // Drop displayed content before waiting for the daemons to clear theirs.
-    if requested != .capture { clearContent() }
-    do {
-      let catalog = try await query(mode: requested)
-      mode = catalog.snapshot.mode
-      var missing: [String] = []
-      var fetched: [TraceRow] = []
-      let recorders = [("", true)] + catalog.recorders.compactMap { recorder in
-        recorder.map { ($0.id, $0.available) }
-      }
-      for (source, available) in recorders {
-        do {
-          guard available else { missing.append(source); continue }
-          let response = try await query(source: source)
-          fetched += response.snapshot.entries.compactMap { entry in
-            entry.map { TraceRow(source: source, entry: $0) }
-          }
-        } catch {
-          if source.isEmpty { throw error }
-          missing.append(source)
-        }
-      }
-      rows = fetched.sorted { ($0.entry.unixMicros, $0.source, $0.entry.sequence) >
-                              ($1.entry.unixMicros, $1.source, $1.entry.sequence) }
-      unavailable = missing
-      if mode != .capture { clearContent() }
-      if !rows.contains(where: { $0.pair == pair }) { pair = "" }
-      if !rows.contains(where: { $0.entry.messageType == type }) { type = "" }
-    } catch {
-      self.error = error.localizedDescription
+    let updates = AsyncStream<Update>.makeStream()
+    defer {
+      updates.continuation.finish()
+      if activeSession == session { reset() }
     }
+    do {
+      let connection = try await CoreHostClient.shared.traceConnection()
+      defer { connection.close() }
+      try await withTaskCancellationHandler {
+        try await connection.connect(changed: { updates.continuation.yield(.changed($0)) },
+                                     closed: { updates.continuation.finish() })
+        try await loadCatalog(connection)
+        try Task.checkCancellation()
+        self.updates = updates.continuation
+        for await update in updates.stream {
+          try Task.checkCancellation()
+          switch update {
+          case .changed(let source):
+            if let source {
+              guard source.isEmpty || projects.contains(source) else { continue }
+              try await read(source, connection: connection)
+            } else {
+              try await loadCatalog(connection)
+            }
+          case .mode(let requested):
+            error = nil
+            try await loadCatalog(connection, mode: requested)
+            pendingMode = nil
+          }
+        }
+        try Task.checkCancellation()
+        throw RPCError.disconnected
+      } onCancel: {
+        connection.close()
+      }
+    } catch {
+      if !Task.isCancelled { self.error = error.localizedDescription }
+    }
+  }
+
+  private func loadCatalog(_ connection: HostTraceConnection, mode requested: Tsugumi_Trace_Mode? = nil) async throws {
+    let catalog = try await connection.query(mode: requested)
+    try Task.checkCancellation()
+    mode = catalog.snapshot.mode
+    let recorders = catalog.recorders.compactMap { $0 }
+    projects = Set(recorders.map(\.id))
+    unavailable = Set(recorders.filter { !$0.available }.map(\.id))
+    let available = Set(recorders.filter(\.available).map(\.id)).union([""])
+    cursors = cursors.filter { available.contains($0.key) }
+    rows.removeAll { !available.contains($0.source) }
+    try await read("", connection: connection)
+    for recorder in recorders where recorder.available {
+      try await read(recorder.id, connection: connection)
+    }
+  }
+
+  private func read(_ source: String, connection: HostTraceConnection) async throws {
+    let cursor = cursors[source] ?? (generation: 0, sequence: 0)
+    do {
+      let value = try await connection.query(source: source, generation: cursor.generation, after: cursor.sequence)
+      try Task.checkCancellation()
+      unavailable.remove(source)
+      apply(value.snapshot, source: source, previous: cursor)
+    } catch let failure as CoreHostFailure where !source.isEmpty && failure.code == "unavailable" {
+      try Task.checkCancellation()
+      unavailable.insert(source)
+      cursors.removeValue(forKey: source)
+      rows.removeAll { $0.source == source }
+    }
+  }
+
+  private func apply(_ snapshot: Tsugumi_Trace_SnapshotT, source: String,
+                     previous: (generation: UInt64, sequence: UInt64)) {
+    let reset = snapshot.generation != previous.generation
+    let entries = snapshot.entries.compactMap { $0 }
+    cursors[source] = (snapshot.generation, entries.last?.sequence ?? (reset ? 0 : previous.sequence))
+    rows.removeAll { $0.source == source && (reset || $0.entry.sequence < snapshot.firstSequence) }
+    for row in rows where row.source == source {
+      let entry = row.entry
+      if entry.sequence <= snapshot.clearedThrough {
+        entry.contentJson = nil
+        entry.contentOmission = nil
+      } else if entry.sequence <= snapshot.evictedThrough && entry.contentJson != nil {
+        entry.contentJson = nil
+        entry.contentOmission = "evicted"
+      }
+    }
+    let additions = entries
+      .map { TraceRow(source: source, generation: snapshot.generation, entry: $0) }
+      .sorted(by: newer)
+    if !additions.isEmpty {
+      // Merge only the new entries into the already ordered display.
+      var remaining = rows[...]
+      rows = additions.flatMap { row in
+        let prefix = remaining.prefix { newer($0, row) }
+        remaining = remaining.dropFirst(prefix.count)
+        return Array(prefix) + [row]
+      } + remaining
+    }
+    if mode != .capture || (pendingMode != nil && pendingMode != .capture) { clearContent() }
+    if !rows.contains(where: { $0.pair == pair }) { pair = "" }
+    if !rows.contains(where: { $0.entry.messageType == type }) { type = "" }
+  }
+
+  private func newer(_ lhs: TraceRow, _ rhs: TraceRow) -> Bool {
+    (lhs.entry.unixMicros, lhs.source, lhs.entry.sequence) >
+      (rhs.entry.unixMicros, rhs.source, rhs.entry.sequence)
   }
 
   private func clearContent() {
@@ -258,6 +364,5 @@ struct RPCTraceView: View {
       row.entry.contentJson = nil
       row.entry.contentOmission = nil
     }
-    export = nil
   }
 }

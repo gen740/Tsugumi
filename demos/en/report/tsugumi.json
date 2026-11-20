@@ -10,9 +10,6 @@
         "id": "settings"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "generate"
       },
       {
@@ -72,24 +69,14 @@
           "port": "config"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "generate"
-        },
-        "to": {
           "card": "generate",
           "port": "config"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "render"
+          "card": "settings",
+          "port": "config"
         },
         "to": {
           "card": "render",

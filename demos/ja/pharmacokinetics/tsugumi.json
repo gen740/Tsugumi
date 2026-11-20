@@ -13,9 +13,6 @@
         "id": "simulate"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "check"
       },
       {
@@ -52,24 +49,14 @@
           "port": "curves"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "check"
-        },
-        "to": {
           "card": "check",
           "port": "curves"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "window"
+          "card": "simulate",
+          "port": "curves"
         },
         "to": {
           "card": "window",
@@ -78,8 +65,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "missed"
+          "card": "simulate",
+          "port": "curves"
         },
         "to": {
           "card": "missed",

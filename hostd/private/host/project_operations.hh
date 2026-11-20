@@ -18,7 +18,6 @@ struct OperationContext {
   std::string origin;
   std::function<void(const std::string&, const SaveBase&)> authorize_file;
   std::function<void(::tsugumi::json::Members&, const SaveBase&)> authorize;
-  std::function<LayoutWrite(const SaveBase&)> layout_scope;
   std::function<std::filesystem::path(const std::string&)> demo = {};
 };
 class ProjectOperations {

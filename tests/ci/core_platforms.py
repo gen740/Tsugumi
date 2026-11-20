@@ -7,7 +7,7 @@ from pathlib import PurePosixPath
 # process signals and cleanup, native worker loading, or machine capabilities.
 NATIVE_CORE_FILES = {
     "test_frame_fuzz.py", "test_input_file_paths.py", "test_local_workerd.py",
-    "test_project_shell.py", "test_rpc_smoke.py", "test_source_transfers.py",
+    "test_project_shell.py", "test_rpc_smoke.py", "test_rpc_trace.py", "test_source_transfers.py",
     "test_system.py", "test_test_isolation.py", "test_transport.py",
     "test_untrusted_project.py", "test_worker_loading.py",
 }

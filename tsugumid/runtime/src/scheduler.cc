@@ -253,7 +253,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       interrupted_ = interrupted;
       for (auto& node : nodes_)
         if (node.cancellation) node.cancellation->stop.store(true);
-      for (const auto& early : early_started_) early->cancel.store(true);
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
@@ -326,49 +325,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<DisplayData> display;
     std::optional<FailureData> preparation_failure;
   };
-  // A Card's evaluation and build, started with the run rather than with the
-  // Card's first activation (see start_early_builds). Until an activation
-  // takes it over, it keeps what Nix printed and the phases it entered.
-  struct EarlyBuild {
-    ExecutionTarget target;
-    std::atomic<bool> cancel{false};
-    std::mutex mu;
-    std::condition_variable cv;
-    bool done = false;
-    std::optional<CardBuildPlan> plan;
-    std::exception_ptr error;
-    std::vector<std::string> lines;
-    uint64_t line_bytes = 0;
-    std::vector<std::pair<Phase, int64_t>> phases;
-    std::function<void(const std::string&)> log;
-    std::function<void(Phase, int64_t)> on_phase;
-
-    auto print(const std::string& line) -> void {
-      std::lock_guard l(mu);
-      if (log) return log(line);
-      // The taking invocation's log budget keeps no more than this, and
-      // notes the omission once it has seen more.
-      if (line_bytes > kInvocationLogLimitBytes) return;
-      line_bytes += line.size();
-      lines.push_back(line);
-    }
-    auto enter(Phase phase) -> void {
-      std::lock_guard l(mu);
-      if (on_phase) return on_phase(phase, now_ms());
-      phases.emplace_back(phase, now_ms());
-    }
-    auto finish(std::optional<CardBuildPlan> result, std::exception_ptr e)
-        -> void {
-      {
-        std::lock_guard l(mu);
-        plan = std::move(result);
-        error = std::move(e);
-        done = true;
-      }
-      cv.notify_all();
-    }
-  };
-
   // ---- persistence helpers -------------------------------------------------
 
   // A history, log or artifact write that did not commit: the run cannot
@@ -695,7 +651,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     {
       std::lock_guard lock(mu_);
       prepare_graph();
-      start_early_builds();
     }
     set_state(RunState::preparing);
     journal("run", "started", std::nullopt, std::nullopt, "run started");
@@ -748,7 +703,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (auto& t : pool_) t.join();
     worker_cv_.notify_all();
     for (auto& t : workers_) t.join();
-    stop_early_builds();
     // Workers stay in the project's pool (resident across runs).
     finalize();
   }
@@ -860,63 +814,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }));
   }
 
-  // A Card's build is fixed by its definition, not by its inputs, so every
-  // Card of the run is evaluated and built as the run starts: Nix evaluates
-  // them in turn on its one evaluator, and nix-daemon decides how many build
-  // at once. Only Cards whose preferred worker is the local one start here; a
-  // remote worker builds with the invocation it receives.
-  void start_early_builds() {
-    early_.resize(nodes_.size());
-    for (auto& rt : nodes_) {
-      const Node& node = *rt.node;
-      if (!rt.in_targets || rt.halted || node.is_virtual ||
-          node.kind != Template::Code)
-        continue;
-      BuildRequest request;
-      request.node = &node;
-      request.doc = doc_;
-      request.jobs = p_.nix_jobs;
-      request.cores = p_.nix_cores;
-      request.timeout_seconds = node.settings.build_timeout_seconds;
-      if (!svc_.prepare_early_build(node, request)) continue;
-      auto early = std::make_shared<EarlyBuild>();
-      early->target = request.target;
-      request.cancel = &early->cancel;
-      request.log = [e = early.get()](const std::string& line) {
-        e->print(line);
-      };
-      request.on_phase = [e = early.get()](Phase phase) { e->enter(phase); };
-      early_[rt.idx] = early;
-      early_started_.push_back(early);
-      early_threads_.emplace_back([this, early, request] {
-        try {
-          early->finish(svc_.nix().build(request), nullptr);
-        } catch (...) {
-          early->finish(std::nullopt, std::current_exception());
-        }
-      });
-    }
-  }
-
-  // The Card's early build, when it was made for the target this activation
-  // chose. An activation takes it once; later ones reuse the result as usual.
-  auto take_early_build(const NodeRt& rt, const ExecutionTarget& target)
-      -> std::shared_ptr<EarlyBuild> {
-    std::lock_guard lock(mu_);
-    if (rt.idx >= early_.size()) return nullptr;
-    auto& early = early_[rt.idx];
-    if (!early || early->target.kind != target.kind ||
-        early->target.system != target.system)
-      return nullptr;
-    return std::move(early);
-  }
-
-  // The run is over: builds nothing took over are not needed.
-  void stop_early_builds() {
-    for (const auto& early : early_started_) early->cancel.store(true);
-    for (auto& thread : early_threads_) thread.join();
-  }
-
   auto prepare_code(NodeRt& rt, Work& work, uint32_t max_implementations,
                     uint32_t lane, std::unique_ptr<PreparedExecution>& prepared)
       -> const CardBuildPlan& {
@@ -934,72 +831,88 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Resolve worker kind and system before any Card or source evaluation.
     prepared = svc_.prepare_execution(
         node, invocation_dir(node, work.invocation), request);
-    const auto check_reused_plan = [&](const CardBuildPlan& plan) {
-      try {
-        enforce_implementation_limit(plan.implementations.size(),
-                                     max_implementations);
-      } catch (const NixImplementationLimit& error) {
-        throw batch_limit(node, error.what());
-      }
-    };
     const bool reuses_builds = request.target.kind == WorkerKind::native;
     if (rt.build && reuses_builds && rt.build_target &&
         rt.build_target->kind == request.target.kind &&
         rt.build_target->system == request.target.system) {
       stage_begin(s, Phase::evaluate, StageOutcome::reused);
       stage_begin(s, Phase::build, StageOutcome::reused);
-      check_reused_plan(*rt.build);
+      try {
+        enforce_implementation_limit(rt.build->implementations.size(),
+                                     max_implementations);
+      } catch (const NixImplementationLimit& error) {
+        throw batch_limit(node, error.what());
+      }
+      if (!rt.build->implementations.empty()) {
+        card_status(s, true);
+        journal("prepare", "started", node.path, s.invocation,
+                "invocation started");
+      }
       return *rt.build;
     }
-    request.log = [&](const std::string& line) {
-      card_log(node.path, s.invocation, LogStream::build, line);
+    // Until evaluation identifies a member, keep its diagnostics off the
+    // invocation history. Use the same budget as the rest of its log.
+    workerd::InvocationLog pending_budget(kInvocationLogLimitBytes);
+    std::vector<std::string> pending_logs;
+    bool published = false;
+    const auto flush_evaluation_log = [&] {
+      std::lock_guard lock(log_policy_mu_);
+      auto& budget = log_budget(node.path, s.invocation);
+      budget = std::move(pending_budget);
+      for (const auto& line : pending_logs)
+        record_card_log(node.path, s.invocation, LogStream::build, line);
+      if (budget.truncated()) mark_card_log_truncated(node.path, s.invocation);
+      pending_logs.clear();
     };
-    auto started = now_ms();
-    const auto trace_phase = [&](int64_t at) {
+    const auto trace_phase = [&](const StageTimeData& stage, int64_t end) {
       svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
-                                             *s.phase, lane, started, at));
+                                             stage.phase, lane, stage.start, end));
     };
-    // A phase entered at `at`, or when this invocation took the build over
-    // if that was earlier: its stages stay in order.
-    const auto enter = [&](Phase phase, int64_t at) {
-      at = std::max(at, s.stages.empty() ? at : s.stages.back().start);
-      trace_phase(at);
-      started = at;
-      stage_begin(s, phase, StageOutcome::running, at);
-      card_status(s);
+    request.log = [&](const std::string& line) {
+      if (published)
+        card_log(node.path, s.invocation, LogStream::build, line);
+      else if (pending_budget.append(LogStream::build, line))
+        pending_logs.push_back(line);
     };
-    request.on_phase = [&](Phase phase) { enter(phase, now_ms()); };
+    request.on_phase = [&](Phase phase) {
+      if (s.phase == phase) return;
+      const auto now = now_ms();
+      if (published) trace_phase(s.stages.back(), now);
+      stage_begin(s, phase, StageOutcome::running, now);
+      if (published) card_status(s);
+    };
+    request.on_plan = [&](uint32_t implementations) {
+      if (implementations == 0) return;
+      published = true;
+      card_status(s, true);
+      flush_evaluation_log();
+      journal("prepare", "started", node.path, s.invocation,
+              "invocation started");
+      for (const auto& stage : s.stages)
+        if (stage.end) trace_phase(stage, *stage.end);
+    };
     set_state(RunState::preparing);
-    if (auto early = take_early_build(rt, request.target)) {
-      std::unique_lock l(early->mu);
-      for (const auto& [phase, at] : early->phases) enter(phase, at);
-      for (const auto& line : early->lines) request.log(line);
-      early->phases.clear();
-      early->lines.clear();
-      early->log = request.log;
-      early->on_phase = enter;
-      // A stopped batch cancels the build as it would its own; the build
-      // then ends with that cancellation.
-      while (!early->done) {
-        if (work.cancellation->stop.load()) early->cancel.store(true);
-        early->cv.wait_for(l, std::chrono::milliseconds(100));
-      }
-      early->log = nullptr;
-      early->on_phase = nullptr;
-      if (early->error) std::rethrow_exception(early->error);
-      check_reused_plan(*early->plan);
-      rt.build = std::move(early->plan);
-    } else {
+    try {
       rt.build = svc_.nix().build(request);
+    } catch (...) {
+      if (!published) flush_evaluation_log();
+      throw;
     }
     rt.build_target = request.target;
-    trace_phase(now_ms());
-    if (reuses_builds) {
-      journal("build", "output", node.path, s.invocation,
-              rt.build->common.cached
-                  ? "evaluated; the store already had the result"
-                  : "built");
-      if (rt.build->common.cached)
+    if (rt.build->implementations.empty()) {
+      if (!pending_logs.empty() || pending_budget.truncated()) {
+        std::string diagnostics;
+        for (const auto& line : pending_logs) diagnostics += line;
+        if (pending_budget.truncated())
+          diagnostics += "\nEvaluation log truncated at " +
+                         std::to_string(kInvocationLogLimitBytes) + " bytes";
+        journal("evaluate", "empty_batch", std::nullopt, std::nullopt,
+                path_key(node.path) + " activation " +
+                    std::to_string(work.activation) + "\n" + diagnostics);
+      }
+    } else {
+      trace_phase(s.stages.back(), now_ms());
+      if (reuses_builds && rt.build->common.cached)
         stage_begin(s, Phase::build, StageOutcome::cached);
     }
     return *rt.build;
@@ -1139,9 +1052,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         auto& s = *work.prepared;
         s.state = CardState::running;
         stage_begin(s, Phase::prepare);
-        card_status(s, true);
-        journal("prepare", "started", node.path, s.invocation,
-                "invocation started");
         const auto& plan = prepare_code(
             rt, work, kMaxExecutionBatchSize / count, lane, prepared);
         batch.execution_list |= plan.execution_list;
@@ -1171,7 +1081,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::mutex outcome_mu;
     size_t bytes = 0;
     auto execute = [&](uint32_t index, uint32_t worker_lane) {
-      // The provisional preparation record belongs to the first member.
+      // The first member carries the batch's preparation stages.
       if (index != 0 && work.cancellation->stop.load()) return;
       started.fetch_add(1);
       Work member;
@@ -1225,32 +1135,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       invoke(work, lane);
       ++rt.invocations;
       ++rt.recorded_invocations;
-    } else if (count == 0) {
-      if (work.prepared) {
-        // Build logs for an empty plan keep their own ID.
-        ++rt.invocations;
-        const auto& s = *work.prepared;
-        svc_.history().clear_live(s);
-        try {
-          svc_.history().write_sync([&](sql::Db& db) {
-            db.prepare(
-                  "DELETE FROM statuses WHERE run_id=? AND card=? AND "
-                  "invocation=?")
-                .bind(1, s.run_id)
-                .bind(2, path_key(s.card))
-                .bind(3, s.invocation)
-                .run();
-          });
-        } catch (const Failed&) {
-          persistence_lost("clearing preparation of " + path_key(node.path));
-        }
-      }
     } else if (!code) {
       for (uint32_t index = 0; index < count && !work.cancellation->stop.load();
            ++index)
         execute(index, lane);
       rt.invocations += started.load();
-    } else {
+    } else if (count != 0) {
       std::vector<std::future<void>> pending;
       {
         std::lock_guard lock(mu_);
@@ -1691,7 +1581,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       const std::vector<Value>& inputs,
       const std::optional<std::pair<std::string, std::string>>& out_alias)
       -> void {
-    // Files received as inputs may be passed on unchanged (fork, branch, a
+    // Files received as inputs may be passed on unchanged (branch, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
     std::set<std::string> forwarded;
@@ -1920,13 +1810,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           p.outputs.push_back(
               {port.name, port.kind, port.type, std::move(bytes), {}});
         }
-        break;
-      }
-      case Template::Fork: {
-        const Value* v = input(in, "in");
-        if (!v) throw Failed(FailureKind::input_missing, "fork input missing");
-        for (const auto& port : node.outputs)
-          p.outputs.push_back({port.name, v->kind, v->type, v->bytes, {}});
         break;
       }
       case Template::Branch: {
@@ -2259,10 +2142,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
-  // By node index; an activation takes its Card's build. Under mu_.
-  std::vector<std::shared_ptr<EarlyBuild>> early_;
-  std::vector<std::shared_ptr<EarlyBuild>> early_started_;
-  std::vector<std::thread> early_threads_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> explicit_cancel_{false};
   std::atomic<bool> detaching_{false};
@@ -2588,6 +2467,22 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     receipt.assign(reinterpret_cast<const char*>(b.GetBufferPointer()),
                    b.GetSize());
     History::insert_run(db, s, p.op_id);
+    std::set<CardPath> cards;
+    const auto include = [&](CardPath path) {
+      while (!path.empty() && cards.insert(path).second) path.pop_back();
+    };
+    include(p.card);
+    for (const auto& target : plan.targets) include(target);
+    auto write = db.prepare(
+        "INSERT INTO run_definition_paths (run_id,card,path) VALUES(?,?,?)");
+    for (const auto& card : cards) {
+      const auto& definition = doc->resolution->find(card)->def_dir;
+      write.reset();
+      write.bind(1, *s.status.run_id)
+          .bind(2, path_key(card))
+          .bind(3, definition + "_card.json")
+          .run();
+    }
     if (svc_.options().fault == "run_acceptance")
       throw sql::Error("injected: run acceptance write failed");
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
