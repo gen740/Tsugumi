@@ -1,11 +1,10 @@
 # Assemble independently cached native and Web artifacts without rebuilding
-# either. The Web server resolves runtime assets relative to its own output.
+# either: the C++ tsugumi command and hostd from the core, the built page
+# (hostd serves it) and demos from the Web output.
 {
   lib,
   runCommand,
   makeWrapper,
-  coreutils,
-  nodejs,
   tsugumid,
   web,
 }:
@@ -13,23 +12,16 @@ runCommand "tsugumi-${lib.fileContents ../VERSION}"
   {
     nativeBuildInputs = [ makeWrapper ];
     meta = {
-      description = "Tsugumi: the Web UI and its host server";
+      description = "Tsugumi: the tsugumi command and the host that serves the Web UI";
       mainProgram = "tsugumi";
       platforms = lib.platforms.linux;
     };
   }
   ''
-    mkdir -p $out/bin $out/share/licenses/node
+    mkdir -p $out/bin $out/share/licenses
     cp -R ${../third-party}/. $out/share/licenses/
-    cp ${../cli/third-party/node-linux/LICENSE} $out/share/licenses/node/LICENSE
     ln -s ${web}/share/tsugumi $out/share/tsugumi
-    makeWrapper ${nodejs}/bin/node $out/bin/tsugumi \
-      --add-flags "${web}/share/tsugumi/ui/web/dist/server.js --open --reuse" \
-      --prefix PATH : ${
-        lib.makeBinPath [
-          coreutils
-        ]
-      } \
+    makeWrapper ${tsugumid}/bin/tsugumi $out/bin/tsugumi \
       --set-default TSUGUMI_REPO ${web}/share/tsugumi \
       --set-default TSUGUMID ${tsugumid}/bin/tsugumid \
       --set-default TSUGUMI_HOSTD ${tsugumid}/bin/tsugumi-hostd \

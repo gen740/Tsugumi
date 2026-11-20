@@ -9,45 +9,43 @@ Card names appear throughout the UI; exact identifiers remain in tool arguments 
 
 ## The tsugumi command
 
-Install the command using the [installation guide](INSTALL.md#using-it-in-the-browser-the-tsugumi-command). Run `tsugumi` to start the Web host and open a browser, or `tsugumi <project folder>` to open that project. Ctrl-C stops the Web host; project environments and core conversations remain resident. Stop a project's environment explicitly when its execution should end.
+Install the command using the [installation guide](INSTALL.md#using-it-in-the-browser-the-tsugumi-command). `tsugumi-hostd` serves the Web UI whenever it runs with a built page: run `tsugumi web` to start the host when none runs and open a page, or `tsugumi web <project folder>` to show that project. The command prints the page's URL and returns; hostd, project environments and core conversations remain resident. Stop a project's environment explicitly when its execution should end.
 
-If a server is running with the same data folder, the command asks it to open a page and exits. The default port is 8780; an occupied port is replaced by a free one. Use `tsugumi update` to install the latest stable distribution, then restart the Web host to load its new files. This does not restart resident Agent or project services.
+Showing is one hostd request (`ShowRequest` in `protocol/agent.fbs`) for the user and for Agents alike: a page that shows the project (a browser tab or a window of the Mac app, which then comes forward), or one on Home, is told to; when no page is free, hostd opens the Web UI with the system's opener (`open`, `xdg-open`, or the Windows browser in WSL). It never launches the desktop app: the app's windows are pages only while you have it open. The app carries the built page, so a hostd it starts serves the Web UI too. The default port is 8780; an occupied port is replaced by a free one. Use `tsugumi update` to install the latest stable distribution; a running host keeps its version until it stops.
 
 Register a Linux worker under **Settings → Execution service** to run individual Code Cards remotely. [Remote execution](RemoteExecution.md)
 
-**On a Mac**, the Web host and native app ask host-side `tsugumi-hostd` to manage project environments. Only hostd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](features.md#1-architecture)
+**On a Mac**, the Web UI and the native app ask host-side `tsugumi-hostd` to manage project environments. Only hostd connects to the signed `tsugumi-vmhost` helper, through `protocol/vm_host.fbs`. [Environment ownership](features.md#1-architecture)
 
 ```text
 Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid (one per project in the VM)
-   └─ HTTP /api ── Web host ── Host / Agent RPC ── tsugumi-hostd
-                                                   └─ private VM RPC ── tsugumi-vmhost
+   └─ page and WebSocket /rpc/host, /rpc/agent ── tsugumi-hostd
+                                                    └─ private VM RPC ── tsugumi-vmhost
 ```
 
-The Web host supplies its page origins in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
+The page supplies its origin in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
 
 The installed Mac command uses the release app's support directory by default:
 
 | Data | Location and sharing |
 | --- | --- |
-| API keys | The same login Keychain items as the app; hostd keeps provisioned keys in memory. Web Keychain-save failures use hostd's private store. [Credential handling](security.md#7-the-models-api-keys-agent) |
+| API keys | Stored by the shared hostd, the same keys as the app. [Credential handling](security.md#7-the-models-api-keys-agent) |
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under hostd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
-| Language, model choices, web search, VM resources, and version notes | Host-wide settings shared by the app and Web clients on the same host |
-| Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in hostd |
-| Scripted guide progress | Separate desktop and Web sessions in hostd; shared across that client's windows or tabs |
+| Settings, Skill folders, ChatGPT accounts and scripted guide progress | hostd's one `desktop` profile per host, shared by the app and every page |
 
-The helper holds `vm/vm.lock`. The VM remains resident when the Web host or app disconnects. Explicit Host runtime shutdown stops it. Use matching app and CLI versions with a shared support directory.
+The helper holds `vm/vm.lock`. The VM remains resident when pages or the app disconnect. Explicit Host runtime shutdown stops it. Use matching app and CLI versions with a shared support directory.
 
-**On Linux**, hostd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). Web data defaults to `~/.local/share/tsugumi-web`; settings and saved provider keys are in hostd's owner-only store. The terminal uses a host shell through hostd's HostTerminal RPC; hostd owns its PTY and forwards input, resize and output.
+**On Linux**, hostd starts a native `tsugumid` per project; Cards use bubblewrap (`nix/cli.nix`). hostd's state defaults to `~/.local/share/tsugumi-web/host-core`; settings and saved provider keys are in hostd's owner-only store. The terminal uses a host shell through hostd's HostTerminal RPC; hostd owns its PTY and forwards input, resize and output.
 
-**On Windows**, `tsugumi.cmd` runs the Linux distribution inside WSL2 (`cli/install.ps1`). The server detects `WSL_DISTRO_NAME` and opens the Windows browser. WSL localhost forwarding exposes the Web host and project ports to that browser.
+**On Windows**, `tsugumi.cmd` runs the Linux distribution inside WSL2 (`cli/install.ps1`). hostd detects `WSL_DISTRO_NAME` and opens the Windows browser. WSL localhost forwarding exposes the Web UI and project ports to that browser.
 
 ### Running it on another machine, over SSH
 
-You can run `tsugumi` on a Linux machine and use it from the browser at hand through SSH port forwarding.
+You can run `tsugumi web --no-browser` on a Linux machine and use it from the browser at hand through SSH port forwarding.
 
-Besides the server (port 8780), the page connects directly by WebSocket to the `tsugumid` of the open project. `tsugumid` listens on a free port of that machine's `127.0.0.1`, and the port is assigned when the environment starts and remains with its resident daemon. Forwarding only 8780 is therefore not enough to connect to a project: also forward the project's port shown on screen.
+Besides hostd's Web UI (port 8780), the page connects directly by WebSocket to the `tsugumid` of the open project. `tsugumid` listens on a free port of that machine's `127.0.0.1`, and the port is assigned when the environment starts and remains with its resident daemon. Forwarding only 8780 is therefore not enough to connect to a project: also forward the project's port shown on screen.
 
 ```bash
 ssh -L 8780:127.0.0.1:8780 -L <port shown>:127.0.0.1:<port shown> <machine>
@@ -57,10 +55,10 @@ ssh -L 8780:127.0.0.1:8780 -L <port shown>:127.0.0.1:<port shown> <machine>
 
 How to run it from the repository (using hostd and this host's `tsugumid`).
 
-Prerequisites: Nix (with flakes enabled), Node.js 22 or later, and a browser with WebGPU (Chrome / Edge / Safari 26 or later).
+Prerequisites: Nix (with flakes enabled), Node.js 22 or later to build the page, and a browser with WebGPU (Chrome / Edge / Safari 26 or later). Node is a build tool only; nothing runs on it.
 
 ```bash
-nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker tsugumi-hostd'
+nix develop --command bash -c 'cmake -S . -B build -G Ninja && ninja -C build tsugumid tsugumi-worker tsugumi-hostd tsugumi'
 ```
 
 ```bash
@@ -69,27 +67,22 @@ nix develop --command npm --prefix ui/web run gen
 npm --prefix ui/web run build
 ```
 
-Terminals on both platforms use the HostTerminal RPC. The Web host only forwards input and output; no native Node addon is needed.
-
 ```bash
-node ui/web/dist/server.js --open
+build/cli/tsugumi web
 ```
 
-Open the `http://127.0.0.1:8780/?key=…` shown at startup (`--open` opens it automatically). `--port` sets the port, and a project folder as an argument opens that project at once. Build all three native targets above before starting the host.
+The command finds `tsugumi-hostd`, `tsugumid`, the worker, the SDK and the page (`ui/web/dist/public`) in the checkout and starts hostd with them; `--port` asks for a port and a project folder shows that project at once. Open the `http://127.0.0.1:8780/?key=…` it prints when the browser does not open.
 
-`key` is a key made at each start. It is replaced by a cookie only this page sends (HttpOnly, SameSite=Strict) and disappears from the address bar. Browser requests to `/api/` (GET and event subscriptions included) require this cookie. Selected external-agent routes also accept the separate key described below. Calls that change something require a dedicated header as well. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`.
-
-The command and the [Claude Code plugin](claude-code.md) discover the host through `server.json` in the data folder. It contains the port, PID, build fingerprint and agent key (how far that key reaches: [Security §7](security.md#the-agents-permission-boundary)). The fingerprint covers the server bundle, its runtime location and native executables, including builds sharing a release version. Discovery and publication use one startup lock, so concurrent starts reuse the same host. An existing host from a different build is refused; stop it before starting the new build. A project argument is forwarded to the existing host when one is reused. A `server.json` without the current fields is rejected; there is no older-format fallback.
+`key` is a key made at each hostd start. hostd replaces it with a cookie only this page sends (HttpOnly, SameSite=Strict) and removes it from the address bar. The page's Host token (`POST /api/host/connect`, which also needs a dedicated header) and its `/rpc/host` and `/rpc/agent` WebSockets require this cookie and the page's own Origin; hostd then authenticates the binary Hello. Responses carry a CSP (`frame-ancestors 'none'`) and `nosniff`. Only the user's principal gets a URL with the key; the Claude Code plugin works as the external principal ([Security §7](security.md#the-agents-permission-boundary)).
 
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` / `TSUGUMI_SDK_DIR` | Project daemon, worker and SDK locations (defaults under `build/` and `sdk/`) |
-| `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` / `TSUGUMI_AGENT_SCHEMA` | Host service binary, state directory and generated `agent.bfbs` schema; defaults are selected by `ui/web/server/coreHost.ts` |
+| `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` | Host service binary and its state folder (defaults chosen by `cli/src/launch.cc`) |
+| `TSUGUMI_WEB_ROOT` / `TSUGUMI_WEB_PORT` | The built page hostd serves and the port it asks for |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |
 | `TSUGUMI_VMHOST` / `TSUGUMI_VM_IMAGE` / `TSUGUMI_SUPPORT_DIR` | `tsugumi-vmhost`, the guest archive directory and the support folder when using the Mac's shared VM (set by `cli/tsugumi-macos`) |
-| `TSUGUMI_WEB_DATA` | Web host data folder and profile identity (default on macOS: `~/Library/Application Support/Tsugumi/web`) |
-| `ANTHROPIC_API_KEY` / `OPENAI_API_KEY` | Web-process API keys provisioned to hostd in memory; take precedence over saved keys |
-| `TSUGUMI_CHATGPT_ISSUER` / `TSUGUMI_CHATGPT_API` | Where ChatGPT sign-in and plan requests go (for tests; by default `https://auth.openai.com` and `https://api.openai.com`) |
+| `TSUGUMI_WEB_DATA` | Linux: the folder holding hostd's state and native environments (default `~/.local/share/tsugumi-web`) |
 
 The TypeScript bindings and `tsugumi.bfbs` are generated into `ui/web/shared/gen` by `npm run gen` (using `flatc` from the development shell) and are not in Git.
 
@@ -101,7 +94,7 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
 
-hostd manages one `tsugumid` per project. The Web host knows which tab shows which project (`POST /api/page`), so a project Claude Code opened is shown in a tab showing it or in a Home tab, and a tab showing another project is not switched.
+hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`; the Mac app's main windows share one connection and each names its page), so a project the user or Claude Code shows goes to a tab or window showing it or to one on Home, and one showing another project is not switched.
 
 ## Shortcuts
 

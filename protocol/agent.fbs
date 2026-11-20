@@ -51,11 +51,21 @@ table AccessListRequest {
   conversation_id:string; request_id:string; project_id:string; pending_only:bool; cursor:long;
 }
 
+// Shows a project (and a Card in it) in a UI attached to this host, for the
+// user or an Agent. hostd validates and remembers the folder (create: a new
+// empty project when it does not exist yet), starts its environment and
+// tells a page that shows it or is on Home (PageShow). With no UI free, it
+// opens the Web UI with the system's opener when browser is set. Without a
+// path it shows Home. url is the Web UI; only the user's principal gets one
+// that carries the page key. Showing grants no access to the contents.
+table ShowRequest { path:string; card:string; create:bool; browser:bool = true; }
+table Shown { path:string; project_id:string; shown:bool; opened:bool; url:string; }
+
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ShowRequest
 }
 table Request { value:RequestPayload; }
 
@@ -112,7 +122,7 @@ union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   ConversationResult, ConversationList, SearchResult, EventsPage, ToolCatalog,
   ToolResult, AccessResult, AccessList, TextResult:Tsugumi.Service.TextResult,
-  Failure:Tsugumi.Service.Failure, CallId
+  Failure:Tsugumi.Service.Failure, CallId, Shown
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply }

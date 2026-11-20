@@ -30,15 +30,8 @@ auto VMResourceLimits() -> Tsugumi::Host::VMResourcesT;
 class Settings {
  public:
   using Models = std::function<std::vector<std::string>()>;
-  enum class KeyStorage { Host, Keychain };
-#ifdef __APPLE__
-  static constexpr auto kKeyStorage = KeyStorage::Keychain;
-#else
-  static constexpr auto kKeyStorage = KeyStorage::Host;
-#endif
   Settings(const std::filesystem::path& directory, Credentials& credentials,
-           std::unique_ptr<SecretStore> secrets = {},
-           KeyStorage storage = kKeyStorage, Models models = {},
+           std::unique_ptr<SecretStore> secrets = {}, Models models = {},
            std::function<void(std::string)> publish = {});
   ~Settings();
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;

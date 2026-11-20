@@ -39,6 +39,7 @@
 #include "host/store.hh"
 #include "host/templates.hh"
 #include "host/versions.hh"
+#include "host/web_pages.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/crypto.hh"
@@ -103,7 +104,7 @@ struct Service::State {
         environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
         options.state_dir, credentials,
-        nullptr, host::Settings::kKeyStorage,
+        nullptr,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](std::string event) {
           requests.submit([this, event = std::move(event)]() {
@@ -317,6 +318,7 @@ struct Service::State {
   std::unique_ptr<host::Models> models;
   std::unique_ptr<host::Versions> versions;
   std::unique_ptr<host::HostEvents> events;
+  std::unique_ptr<host::WebPages> web;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
   TransportServer* server = nullptr;
@@ -450,6 +452,78 @@ struct Service::State {
     events->Publish(wire::HostEvent(std::move(notification)));
   }
 
+  // Runs a Host project request in process, under the request mutex.
+  template <class T>
+  auto ProjectPath(T value) -> std::string {
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    H::MessageT message;
+    message.payload.Set(std::move(request));
+    flatbuffers::FlatBufferBuilder b;
+    H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
+    const auto reply = host_projects.Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 0);
+    const auto* out = H::GetMessage(reply.data())->payload_as_Reply();
+    if (!out) throw Failure("invalid_request", "No project reply");
+    if (const auto* failure = out->value_as_Failure())
+      throw host::ProjectFailure(failure->code()->str(),
+                                 failure->message()->str());
+    if (const auto* recent = out->value_as_RecentProject())
+      return recent->path()->str();
+    if (const auto* location = out->value_as_ProjectLocation())
+      return location->path()->str();
+    throw Failure("invalid_request", "Unexpected project reply");
+  }
+  auto Show(const RequestIn& request, const A::ShowRequest& p, bool human,
+            std::unique_lock<std::recursive_mutex>& lock) -> std::string {
+    A::ShownT result;
+    const auto card = p.card() ? p.card()->str() : "";
+    if (p.path() && p.path()->size()) {
+      const std::filesystem::path folder = p.path()->str();
+      if (!folder.is_absolute())
+        throw Failure("invalid_request", "The project folder must be absolute");
+      H::HostRecentRememberRequestT remember;
+      remember.path = folder.string();
+      try {
+        result.path = ProjectPath(remember);
+      } catch (const host::ProjectFailure& e) {
+        if (e.code != "invalid_project" || !p.create()) throw;
+        H::HostProjectCreateRequestT create;
+        create.parent = folder.parent_path().string();
+        create.name = folder.filename().string();
+        remember.path = ProjectPath(std::move(create));
+        result.path = ProjectPath(remember);
+      }
+    } else if (!card.empty()) {
+      throw Failure("invalid_request", "A Card is shown in a project");
+    }
+    lock.unlock();
+    const auto url = web->Url();
+    if (!result.path.empty()) {
+      if (!environments)
+        throw Failure("unavailable", "Environment service is not running");
+      // The page's origin may connect to the project core.
+      H::EnvironmentRequestT start;
+      start.project = result.path;
+      start.action = H::EnvironmentAction::Start;
+      if (!url.empty()) {
+        const auto origin = url.substr(0, url.size() - 1);
+        start.origins = {origin, "http://localhost" + origin.substr(origin.rfind(':'))};
+      }
+      const auto state = environments->Handle(start);
+      if (state.phase != H::EnvironmentPhase::Ready || state.project_id.empty())
+        throw Failure("unavailable", state.message.empty()
+                                         ? "Project core is not ready"
+                                         : state.message);
+      result.project_id = state.project_id;
+    }
+    const auto shown = web->Show(result.path, card, p.browser());
+    result.shown = shown.shown;
+    result.opened = shown.opened;
+    // The page key answers approvals: only the user gets a URL carrying it.
+    result.url = human ? web->PageUrl(result.path) : url;
+    return wire::AgentReply(request.request_id, std::move(result));
+  }
   auto Handle(const RequestIn& request, bool human) -> std::string {
     const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
@@ -521,6 +595,8 @@ struct Service::State {
       case A::RequestPayload::ToolCatalogRequest:
       case A::RequestPayload::ToolCallRequest:
         return tools->Handle(request, human, lock);
+      case A::RequestPayload::ShowRequest:
+        return Show(request, *r->value_as_ShowRequest(), human, lock);
       case A::RequestPayload::AccessRequest:
       case A::RequestPayload::AccessResolveRequest:
       case A::RequestPayload::AccessRevokeRequest:
@@ -550,6 +626,10 @@ struct Service::State {
         return TraceTargets();
       });
       return wire::HostReply(request.request_id, std::move(result));
+    }
+    if (host::WebPages::Handles(r->value_type())) {
+      lock.unlock();
+      return web->Handle(request, *r);
     }
     if (r->value_as_HostActivityRequest()) {
       H::HostActivityT activity;
@@ -824,7 +904,18 @@ auto Service::Attach(TransportServer* server, TransportServer* host_server)
   state_->server = server;
   state_->events->host_server = host_server;
   state_->debug_trace.Attach(*host_server);
+  state_->web = std::make_unique<host::WebPages>(
+      host_server, server, state_->options.user_token,
+      [state = state_.get()](const std::string& bytes) {
+        std::lock_guard lock(state->mutex);
+        state->events->Publish(bytes);
+      },
+      host::WebHome{state_->options.environment.tsugumid,
+                    state_->options.environment.worker,
+                    state_->options.environment.sdk, state_->options.demos_dir,
+                    !state_->options.vm.binary.empty()});
 }
+auto Service::web() -> host::WebPages& { return *state_->web; }
 auto Service::Shutdown() -> void {
   if (!state_) return;
   std::vector<std::shared_ptr<std::jthread>> jobs;
@@ -839,6 +930,7 @@ auto Service::Shutdown() -> void {
     }
   }
   state_->access->changed.notify_all();
+  if (state_->web) state_->web->Stop();
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
@@ -997,6 +1089,7 @@ auto Service::disconnected(ConnId connection) -> void {
 }
 auto Service::host_disconnected(ConnId connection) -> void {
   state_->events->HostDisconnected(connection);
+  if (state_->web) state_->web->Disconnected(connection);
   if (trace::LaunchEnabled())
     state_->trace_requests.submit(
         [this, connection] { state_->debug_trace.Disconnect(connection); });

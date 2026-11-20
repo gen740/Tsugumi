@@ -10,6 +10,7 @@
 #include "tsugumi/rpc/transport.hh"
 
 namespace tsugumi::host {
+class WebPages;
 struct HostOptions {
   std::filesystem::path state_dir;
   std::filesystem::path demos_dir;
@@ -33,6 +34,8 @@ class Service final : public RequestSink {
   auto dispatch(RequestIn request) -> void override;
   auto disconnected(ConnId connection) -> void override;
   auto host_disconnected(ConnId connection) -> void;
+  /** The Web UI's origin and pages (after Attach). */
+  auto web() -> WebPages&;
 
  private:
   struct State;

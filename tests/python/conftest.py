@@ -23,6 +23,10 @@ TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
 SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "ui/web" / "dist"))
+# The tsugumi command (cli/), and the built page hostd serves.
+CLI = Path(os.environ.get("TSUGUMI_CLI", BUILD / "cli" / "tsugumi"))
+HOSTD = Path(os.environ.get("TSUGUMI_HOSTD", BUILD / "hostd" / "tsugumi-hostd"))
+WEB_ROOT = WEB_DIST / "public"
 
 EMPTY_PROJECT = {
     "name": "test",

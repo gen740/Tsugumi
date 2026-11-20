@@ -368,6 +368,29 @@ void TransportServer::accept_on(int lfd, bool websocket) {
   }
 }
 
+void TransportServer::adopt(int fd, std::string head) {
+  Command c(Command::Kind::Action);
+  c.action = [this, fd, head = std::move(head)]() mutable {
+    set_nonblock(fd);
+#ifdef SO_NOSIGPIPE
+    int one = 1;
+    ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
+#endif
+    int nodelay = 1;
+    ::setsockopt(fd, IPPROTO_TCP, TCP_NODELAY, &nodelay, sizeof nodelay);
+    auto conn = std::make_unique<Conn>();
+    conn->id = next_id_++;
+    conn->fd = fd;
+    conn->websocket = true;
+    conn->peer = "WebSocket client";
+    conn->rbuf = std::move(head);
+    auto& c = *conn;
+    conns_[c.id] = std::move(conn);
+    if (handle_ws_handshake(c)) parse_ws(c);
+  };
+  post(std::move(c));
+}
+
 bool TransportServer::handle_ws_handshake(Conn& c) {
   auto end = c.rbuf.find("\r\n\r\n");
   if (end == std::string::npos) {
