@@ -50,6 +50,7 @@ struct CardBuild {
       0;                // evaluation/build time, excluding closure transport
   bool cached = false;  // the store already had the result: nothing was built
   uint32_t implementation_index = 1;
+  std::string implementation_label;  // "" when its run list entry has none
 };
 
 struct CardBuildPlan {
@@ -58,6 +59,7 @@ struct CardBuildPlan {
   // prepared ahead of their runs.
   std::string evaluation_key;
   std::vector<schema::ManifestRun> implementations;
+  std::vector<std::string> implementation_labels;  // one per implementation
   bool execution_list = false;
   auto implementation(size_t index) const -> CardBuild;
 };
@@ -105,6 +107,8 @@ class NixRunner {
   static std::map<std::string, std::string> generate(const Node& node);
   // Builds JSON for all params (worker) and for nix:true params (Nix).
   static std::string params_json(const Node& node, bool nix_only);
+  static std::string params_json(const std::vector<ParamDef>& params,
+                                 bool nix_only);
   // FlatBuffer of all effective params (table Params).
   static std::string params_buffer(const Node& node);
   static types::TypeRef params_type(const Node& node);

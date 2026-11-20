@@ -1808,5 +1808,13 @@
   "（省略可）": " (optional)",
   "（経過時間は Run の受付から、実行環境の時計で計ります）": "(the elapsed time counts from the Run's acceptance, by the environment's clock)",
   "：": ": ",
-  "：失敗": ": failed"
+  "：失敗": ": failed",
+  "実装 {0}": {"text": "implementation {0}", "mac": ["u"]},
+  "比較する呼び出し": "Invocation to compare",
+  "{0}（片方の実行のみ）": {"text": "{0} (one run only)", "mac": ["@"]},
+  "値ごとに呼び出す": "One invocation per value",
+  "並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。": "Hands on each listed value in its own invocation (an execution list).",
+  "{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。": {"text": "Hands on {0} values, one invocation each (an execution list).", "mac": ["lld"]},
+  "値を JSON の配列で書いてください。例: [8, 12, 16]": "Write the values as a JSON array, for example [8, 12, 16].",
+  "リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。": "For a list parameter, each element of the array is one list."
 }

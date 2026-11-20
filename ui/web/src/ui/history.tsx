@@ -31,6 +31,8 @@ export function invocationLabel(i: R.InvocationSummaryT): string {
   return L('{0} 回目', String(i.invocation ?? 0n)) + ` · ${cardState(i.state).label}` +
     // A call of an execution list says which element it took.
     (i.batchIndex != null && i.batchSize != null && i.batchSize > 1 ? ' · ' + L('実行リスト {0}/{1}', i.batchIndex, i.batchSize) : '') +
+    // A named implementation (run list label or swept values) says which one it ran.
+    (sOpt(i.implementationLabel) ? ` · ${sOpt(i.implementationLabel)}` : '') +
     (i.durationMs !== null ? ` · ${formatDuration(Number(i.durationMs) / 1000)}` : '')
 }
 

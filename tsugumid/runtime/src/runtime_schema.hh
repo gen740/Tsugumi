@@ -62,6 +62,7 @@ struct InvocationDetailJson {
   Opt<"batch_index", v::Uint64> batch_index;
   Opt<"batch_size", v::Uint64> batch_size;
   Opt<"implementation_index", v::Uint64> implementation_index;
+  Opt<"implementation_label", v::String> implementation_label;
 };
 
 struct InputSourceJson {
@@ -145,6 +146,7 @@ struct PreparedCard {
   Opt<"system", v::String> system;
   Opt<"execution_list", v::Bool> execution_list;
   Opt<"implementations", v::Uint64> implementations;
+  Opt<"implementation_labels", v::Array<v::String>> implementation_labels;
   Opt<"closure", v::Array<v::String>> closure;
 };
 

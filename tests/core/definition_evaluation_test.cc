@@ -71,6 +71,7 @@ class DefinitionEvaluation : public ::testing::Test {
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
         "pkgs: args: { executionList = false; implementationCount = 1; "
+        "implementationLabels = builtins.toJSON [ \"\" ]; "
         "manifest = pkgs.writeText \"evaluation-test\" (" +
             body + "); }",
         std::vector<std::string>{root.string()});

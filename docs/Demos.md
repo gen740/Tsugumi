@@ -77,15 +77,21 @@ The iteration itself is drawn with the Cards' wires, so the behaviour of branche
 ### Signal detection sweep (`signal-sweep`)
 
 Run **start** to compare three signal strengths (8, 12, 16) with two detection
-thresholds (10, 14). **samples** emits the three signals. **score** reads the
-thresholds from `inputs.signal.thresholds` in its Nix definition and makes six
-comparisons. Open its batch history to see which signal and threshold each
-invocation used.
+thresholds (10, 14). **samples** is an Input Card whose `value` parameter is a
+value sweep: it hands on each signal in its own invocation, named `value=8`,
+`value=12` and `value=16`. **score** has a run list of two implementations named
+`threshold=10` and `threshold=14`, and makes six comparisons. Open its batch
+history to see which signal and threshold each invocation used.
 
 **collect** turns the six results into one typed vector. **summary** reads the
-vector and shows three detections out of six comparisons. Edit the thresholds
-in `samples/default.nix` and run from **start** again to see which detections
-change. [Run lists and Collect](features.md#run-lists-and-collect)
+vector and shows three detections out of six comparisons.
+
+**Try**
+- In the settings of **samples**, add a value to the sweep, for example `[8, 12, 16, 20]`, and run from **start** again.
+- Add a threshold such as `12` in `score/default.nix`, run again and compare the two runs. Each comparison pairs members by name, so `threshold=14` is still compared with `threshold=14`.
+- Turn off **One invocation per value**: the Card hands on one value and **score** runs twice.
+
+[Run lists and Collect](features.md#run-lists-and-collect)
 
 ### Live Stream (`live-stream`)
 

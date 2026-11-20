@@ -80,6 +80,9 @@ struct BatchInvocationsBadge: View {
                         Text(verbatim: (row.batchActivation.map { "#\($0) · " } ?? "") + "\(i)/\(size)")
                           .font(.caption).foregroundStyle(.secondary)
                       }
+                      if let label = row.implementationLabel, !label.isEmpty {
+                        Text(verbatim: label).lineLimit(1).truncationMode(.tail).help(label)
+                      }
                       Spacer()
                       Text(row.state.label)
                     }.contentShape(Rectangle())

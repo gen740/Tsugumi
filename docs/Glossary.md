@@ -23,7 +23,9 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Run** | One execution of a Workflow. Records the version (commit) at its start |
 | **Invocation** | One execution of a Card within a Run. In a loop, the same Card is invoked many times |
-| **Batch** | An ordered set of values sent together on one wire. A run list or batch input can produce several invocations for one trigger |
+| **Batch** | An ordered set of values sent together on one wire. A run list, a value sweep or a batch input can produce several invocations for one trigger. An ordinary FlatBuffers vector is one value, not a batch |
+| **Value sweep** | An Input Card parameter written as `"sweep": [...]` instead of `"data"`: each value is handed on in its own invocation ([Run lists and Collect](features.md#run-lists-and-collect)) |
+| **Implementation label** | The name of one implementation: a run list entry's `label`, or a value sweep's `name=value`. Shown in the history and used to pair members when comparing runs |
 | **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
 | **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card, or missing required inputs. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |

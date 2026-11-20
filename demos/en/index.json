@@ -46,11 +46,12 @@
       "id": "signal-sweep",
       "title": "Signal detection sweep",
       "field": "Learn the basics",
-      "description": "Compare three signal strengths against two detection thresholds, inspect all six runs, and collect them into one result.",
+      "description": "Sweep three signal strengths from an Input Card against two named detection thresholds, inspect and compare all six runs, and collect them into one result.",
       "path": "signal-sweep",
       "tags": [
         "Bash",
         "Run lists",
+        "Value sweep",
         "Collect"
       ]
     },

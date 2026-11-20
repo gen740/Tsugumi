@@ -3,15 +3,18 @@
 // Nix client so each connection has its own build options.
 #pragma once
 
+#include <algorithm>
 #include <chrono>
 #include <filesystem>
 #include <functional>
 #include <map>
 #include <memory>
 #include <optional>
+#include <set>
 #include <stdexcept>
 #include <stop_token>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -61,6 +64,8 @@ struct NixCall {
 struct NixResult : WorkerStoreResult {
   bool execution_list = false;
   uint32_t implementation_count = 1;
+  // One per implementation, in run list order; "" for an unlabeled one.
+  std::vector<std::string> implementation_labels;
   uint64_t evaluation_epoch = 0;
 };
 
@@ -121,6 +126,31 @@ struct NixInterrupted : std::runtime_error {
 struct NixImplementationLimit : std::runtime_error {
   using std::runtime_error::runtime_error;
 };
+
+inline constexpr size_t kMaxImplementationLabelBytes = 200;
+
+// Labels name implementations in history and comparison: each is optional,
+// but a given label names one implementation only.
+inline auto check_implementation_labels(const std::vector<std::string>& labels,
+                                        uint64_t count) -> void {
+  if (labels.size() != count)
+    throw std::runtime_error(
+        "the Card plan has a different number of implementation labels");
+  std::set<std::string_view> seen;
+  for (const auto& label : labels) {
+    if (label.empty()) continue;
+    if (label.size() > kMaxImplementationLabelBytes)
+      throw std::runtime_error("run list label \"" + label.substr(0, 40) +
+                               "...\" is longer than 200 bytes");
+    if (std::ranges::any_of(
+            label, [](unsigned char c) { return c < 0x20 || c == 0x7f; }))
+      throw std::runtime_error("run list label \"" + label +
+                               "\" contains a control character");
+    if (!seen.insert(label).second)
+      throw std::runtime_error("run list label \"" + label +
+                               "\" names more than one implementation");
+  }
+}
 
 inline auto enforce_implementation_limit(uint64_t count, uint32_t limit)
     -> void {

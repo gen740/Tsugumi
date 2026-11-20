@@ -922,15 +922,22 @@ Omit `executionService` for local execution, or select a host-registered service
 
 ### Run lists and connected Nix exports
 
-Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Card uses a Nix
-function to make three Bash implementations and declares shared
-`exports.thresholds = [ 10 14 ];`. The `score` Card receives `samples.out` on its
-`signal` port. Its `default.nix` reads `inputs.signal.thresholds` and uses
-`run = map compare thresholds;` to make two implementations. Each implementation
-reads the runtime signal from `$JSON_SIGNAL`. Nix exports hold build-time values,
-functions or derivations. The port message carries the runtime value.
+Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
+sweeps its `value` parameter: `"sweep": [8, 12, 16]` in place of `"data"` hands
+on each signal in its own invocation, labeled `value=8` and so on. The `score`
+Card receives `samples.out` on its `signal` port and uses
+`run = map compare thresholds;` to make two implementations. Each entry is
+`{ label = "threshold=10"; run = ''...''; }`: the label names the implementation
+in the history and when comparing runs. Labels are optional and unique within a
+list. Each implementation reads the runtime signal from `$JSON_SIGNAL`.
 
-The three input items and two implementations produce six invocations, in input
+A list-typed parameter (`"type": "uint64[]"`) with `data` is one ordinary
+vector value. Only `sweep` makes a batch, also for a single value
+(`"sweep": [5]` is ×1); each element of a list-typed sweep is one vector.
+Several swept parameters run their Cartesian product, the last one varying
+fastest. Code Cards use run lists instead of `sweep`.
+
+The three swept values and two implementations produce six invocations, in input
 item order with implementation order varying fastest. Every batch input is an
 independent axis. `maxRuns` counts triggers, and a failed member cancels the
 rest of the batch. Inspect each member's history for its inputs and result.
