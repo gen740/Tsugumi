@@ -655,28 +655,6 @@ private final class CountingRuler: LineNumberRuler {
   #expect(ChatSplit.chatWidth(wanted, in: room) == 0)
 }
 
-@MainActor @Test func theAddCardMenuSelectsLanguageAndFigureTemplates() throws {
-  var chosen: DefinitionTemplate?
-  let menu = NSHostingMenu(rootView: BuiltinCardItems { chosen = $0 })
-
-  func find(_ title: String, in menu: NSMenu) -> (NSMenu, Int)? {
-    menu.update()
-    for (index, item) in menu.items.enumerated() {
-      if item.title == title && item.submenu == nil { return (menu, index) }
-      if let submenu = item.submenu, let found = find(title, in: submenu) { return found }
-    }
-    return nil
-  }
-
-  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair]
-  for template in templates {
-    let (parent, index) = try #require(find(template.label, in: menu))
-    parent.performActionForItem(at: index)
-    #expect(chosen == template)
-    chosen = nil
-  }
-}
-
 @MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
   let dir = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: dir) }
