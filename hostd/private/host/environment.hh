@@ -73,7 +73,10 @@ class EnvironmentProcess {
   virtual auto Poll(int64_t pid, bool child) -> std::optional<int> = 0;
   virtual auto Signal(int64_t pid, int signal) -> void = 0;
   virtual auto WaitForExit(int64_t pid, bool child) -> void;
-  virtual auto WaitForReady(const std::filesystem::path& file, int64_t pid,
+  virtual auto Observe(std::stop_token stop, const std::function<void()>& check)
+      -> void;
+  virtual auto WaitForReady(const std::filesystem::path& file,
+                            const std::string& key, int64_t pid,
                             std::stop_token stop,
                             const std::function<bool()>& done) -> void;
   virtual auto Verify(const Tsugumi::Host::EnvironmentStateT& ready)

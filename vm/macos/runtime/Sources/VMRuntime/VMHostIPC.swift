@@ -69,7 +69,7 @@ public enum VMHostIPC {
     try writeAll(fd, bytes)
   }
 
-  public static func read(_ fd: Int32) throws -> Data? {
+  public static func read(_ fd: Int32, maxSize: Int = Int(UInt32.max)) throws -> Data? {
     func exact(_ size: Int) throws -> Data? {
       var result = Data(count: size)
       return try result.withUnsafeMutableBytes { buffer in
@@ -86,6 +86,7 @@ public enum VMHostIPC {
     }
     guard let prefix = try exact(4) else { return nil }
     let size = prefix.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
+    guard size > 0, size <= maxSize else { throw LauncherError.notReady("invalid VM frame size") }
     guard let data = try exact(Int(size)) else { throw LauncherError.notReady("Truncated VM host frame") }
     return data
   }

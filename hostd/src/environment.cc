@@ -7,6 +7,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <cstdio>
 #include <cstdlib>
 #include <map>
 #include <mutex>
@@ -75,7 +76,7 @@ struct Environments::Impl {
     PrivateDirectory(options.directory);
     PrivateDirectory(options.socket_directory);
     observer = std::jthread([this](std::stop_token stop) {
-      while (!stop.stop_requested()) {
+      options.process->Observe(stop, [&] {
         std::vector<std::shared_ptr<Entry>> snapshot;
         {
           std::lock_guard lock(mutex);
@@ -83,26 +84,26 @@ struct Environments::Impl {
         }
         for (const auto& entry : snapshot) {
           std::unique_lock lock(entry->mutex, std::try_to_lock);
+          if (options.process->Guest() && !lock.owns_lock()) lock.lock();
           if (lock.owns_lock() &&
               entry->state.phase == H::EnvironmentPhase::Ready) {
             try {
               CheckDeath(*entry);
-            } catch (const std::exception&) {
-              // A later request retries revocation/notification after an I/O
-              // failure.
+            } catch (const std::exception& error) {
+              std::fprintf(stderr, "Cannot observe environment %s: %s\n",
+                           entry->state.key.c_str(), error.what());
             }
           }
         }
-        std::this_thread::sleep_for(options.process->Guest() ? 1000ms : 100ms);
-      }
+      });
     });
   }
   ~Impl() { Shutdown(); }
   auto Shutdown() -> void {
     if (!shutdown.request_stop()) return;
     observer.request_stop();
-    // Close adapter calls before joining the observer: a guest status request
-    // may be stuck while shutdown/maintenance owns the guest control path.
+    // Close adapter calls before joining the observer, which can be waiting
+    // for a project operation to release its entry lock.
     options.process->Shutdown();
     if (observer.joinable()) observer.join();
     if (!options.process->Guest()) {
@@ -492,7 +493,8 @@ struct Environments::Impl {
       bool ready = false;
       if (entry.pid)
         options.process->WaitForReady(
-            entry.state.ready_file, entry.pid, start_stop.get_token(), [&] {
+            entry.state.ready_file, entry.state.key, entry.pid,
+            start_stop.get_token(), [&] {
               if (CheckDeath(entry)) return ready = true;
               if (!ReadReady(entry)) return false;
               if (options.process->Guest()) {
@@ -524,17 +526,13 @@ struct Environments::Impl {
   // so that the caller can judge its mounts and stop it.
   auto Rediscover(Entry& entry) -> void {
     if (entry.pid || !options.process->Guest()) return;
-    while (!shutdown.stop_requested() && !ReadReady(entry)) {
-      try {
-        options.process->GuardStart(entry.state.key);
-        return;
-      } catch (const EnvironmentFailure&) {
-        // GuardStart reports an earlier launch whose ready file is still
-        // pending.
-      }
-      std::this_thread::sleep_for(50ms);
-    }
+    options.process->WaitForReady(entry.state.ready_file, entry.state.key, 0,
+                                  shutdown.get_token(), [&] {
+                                    ReadReady(entry);
+                                    return true;
+                                  });
   }
+
   auto Stop(Entry& entry) -> void {
     // State/Stop can be the first operation after an hostd restart.
     if (!entry.pid) ReadReady(entry);
@@ -592,12 +590,21 @@ auto EnvironmentProcess::Runtime(const H::HostRuntimeRequestT& request)
   runtime.store_exists = std::filesystem::is_directory(runtime.store_path);
   return runtime;
 }
-auto EnvironmentProcess::WaitForReady(const std::filesystem::path&, int64_t,
+auto EnvironmentProcess::Observe(std::stop_token stop,
+                                 const std::function<void()>& check) -> void {
+  // Native process observation retains its existing cadence.
+  while (!stop.stop_requested()) {
+    check();
+    std::this_thread::sleep_for(100ms);
+  }
+}
+
+auto EnvironmentProcess::WaitForReady(const std::filesystem::path&,
+                                      const std::string&, int64_t,
                                       std::stop_token stop,
                                       const std::function<bool()>& done)
     -> void {
-  // The guest's virtiofs share does not notify the host of guest-side writes.
-  while (!stop.stop_requested() && !done()) std::this_thread::sleep_for(50ms);
+  if (!stop.stop_requested()) done();
 }
 
 auto EnvironmentProcess::WaitForExit(int64_t pid, bool child) -> void {

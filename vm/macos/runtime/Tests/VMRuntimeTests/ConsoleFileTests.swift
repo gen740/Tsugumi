@@ -7,17 +7,20 @@ final class ConsoleFileTests: XCTestCase {
     let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     try Data("early ".utf8).write(to: url)
     defer { try? FileManager.default.removeItem(at: url) }
+    let initial = expectation(description: "read existing bytes")
     let complete = expectation(description: "read both parts of the line")
     let log = ConsoleLog()
     let reader = try ConsoleFile(url, queue: DispatchQueue(label: "console test")) { result in
       switch result {
       case .success(let bytes):
+        if bytes == Data("early ".utf8) { initial.fulfill() }
         if !log.feed(bytes).isEmpty { complete.fulfill() }
       case .failure(let error):
         XCTFail("\(error)")
       }
     }
     defer { reader.cancel() }
+    wait(for: [initial], timeout: 5)
     let writer = try FileHandle(forWritingTo: url)
     defer { try? writer.close() }
     try writer.seekToEnd()

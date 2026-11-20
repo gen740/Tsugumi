@@ -9,17 +9,18 @@ table Clock { unix_ms:long; }
 table Resize { session:ulong; rows:ushort; cols:ushort; }
 enum MaintenanceAction:ubyte { SnapshotCacheUsage, CollectStore, VerifyStore, Shutdown }
 table Maintenance { action:MaintenanceAction; }
+table ReadMemory {}
 
 // Terminal vsock 1026 starts with one framed request and reply, then raw PTY bytes.
 table OpenTerminal { key:string (required); rows:ushort; cols:ushort; }
-union Command { Start, Stop, Forget, Clock, Resize, Maintenance, OpenTerminal }
+union Command { Start, Stop, Forget, Clock, Resize, Maintenance, OpenTerminal, ReadMemory }
 table Request { command:Command (required); }
-table Reply { error:string; message:string; pid:long; session:ulong; }
+table Memory { total_kib:ulong; available_kib:ulong; cached_kib:ulong; }
+table Reply { error:string; message:string; pid:long; session:ulong; memory:Memory; }
 
 table Ready {}
 enum ProjectPhase:ubyte { Starting, Ready, Exited }
 table ProjectStatus { key:string (required); pid:long; phase:ProjectPhase; exit_status:int = -1; }
-table Memory { total_kib:ulong; available_kib:ulong; cached_kib:ulong; }
 table ConsoleLine { text:string (required); }
 union Payload { Request, Reply, Ready, ProjectStatus, Memory, ConsoleLine }
 table Message { request_id:ulong; payload:Payload (required); }
