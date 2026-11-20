@@ -13,9 +13,6 @@
         "id": "roots"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "orbits"
       },
       {
@@ -55,16 +52,6 @@
           "port": "problem"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "orbits"
-        },
-        "to": {
           "card": "orbits",
           "port": "problem"
         }
@@ -81,8 +68,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "basins"
+          "card": "roots",
+          "port": "problem"
         },
         "to": {
           "card": "basins",
@@ -91,8 +78,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "trouble"
+          "card": "roots",
+          "port": "problem"
         },
         "to": {
           "card": "trouble",

@@ -203,7 +203,7 @@ auto card_of(const std::string& path, const Files& files)
     auto id = external;
     for (const auto& [link, text] : files) {
       if (!link.starts_with(directory + "definitions/") ||
-          !link.ends_with("/_link.json"))
+          !link.ends_with("/_card.json"))
         continue;
       auto local = link.substr(directory.size());
       if (local.find('/', 12) != local.size() - 11) continue;
@@ -279,7 +279,7 @@ auto version(const std::filesystem::path& root, const std::string& id)
           auto& w = *static_cast<Walk*>(payload);
           std::string path = std::string(prefix) + git_tree_entry_name(entry);
           if ((!path.ends_with("/_meta.json") &&
-               !path.ends_with("/_link.json")) ||
+               !path.ends_with("/_card.json")) ||
               !card_of(path) || git_tree_entry_type(entry) != GIT_OBJECT_BLOB)
             return 0;
           git_blob* blob = nullptr;

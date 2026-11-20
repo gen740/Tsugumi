@@ -24,6 +24,7 @@
 #include "host/vm_process.hh"
 #include "tsugumi/client/client.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
+#include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -65,6 +66,8 @@ class NativeProcess final : public EnvironmentProcess {
          {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
       if (const auto* value = std::getenv(name))
         environment.push_back(std::string(name) + "=" + value);
+    if (trace::LaunchEnabled())
+      environment.push_back(std::string(trace::kLaunchVariable) + "=1");
     if (launch.vm_helper) {
       for (const auto* name :
            {"TSUGUMI_VM_X86", "TSUGUMI_VM_CMDLINE", "TSUGUMI_PY_BINDINGS",

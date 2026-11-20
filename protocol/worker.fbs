@@ -35,10 +35,6 @@ table WorkerCall {
   environment:[EnvVar] (id: 9, required);
   // Remaining time in milliseconds. Omitted means no deadline.
   deadline_ms:uint64 = null (id: 10);
-  // The exact Card catalogs used to generate its bindings. Inputs may omit
-  // optional ports; their positions still come from the complete catalog.
-  input_schema:string (id: 11);
-  output_schema:string (id: 12);
 }
 
 table WorkerOutput {

@@ -131,7 +131,7 @@ function Definitions({ session, tab }: { session: ProjectSession; tab: WorkflowT
                 {ids.map((id) => {
                   const d = e?.definitions.get(id)
                   return (
-                    <DefinitionRow key={id} session={session} icon={d?.link !== undefined ? KIND_ICON.subgraph : kindIcon(definitionKind(d?.card))} title={str(get(d?.meta, 'name')) ?? id}
+                    <DefinitionRow key={id} session={session} icon={kindIcon(definitionKind(d?.card))} title={str(get(d?.meta, 'name')) ?? id}
                       drag={EXTERNAL_DEFINITION_DRAG + prefix + '\n' + id} help={L('定義をこのプロジェクトの definitions にコピーして Card を置きます')}
                       onAdd={() => void placeCopy(prefix, id)} />
                   )

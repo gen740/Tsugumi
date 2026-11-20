@@ -30,15 +30,14 @@ auto Report::log(const std::string& message) const -> void {
 }
 
 auto Report::text(const std::string& text) const -> void {
-  check(current().effects->display_text(current().host, text.c_str()), "text display");
+  check(tsugumi_display_text(&current(), text.c_str(), 0), "text display");
 }
 auto Report::markdown(const std::string& text) const -> void {
-  check(current().effects->display_markdown(current().host, text.c_str()),
-        "markdown display");
+  check(tsugumi_display_text(&current(), text.c_str(), 1), "markdown display");
 }
 
 auto Report::scalar(double value, const std::string& label) const -> void {
-  check(current().effects->display_scalar(current().host, value, label.c_str()),
+  check(tsugumi_display_scalar(&current(), value, label.c_str()),
         "scalar display");
 }
 
@@ -50,8 +49,7 @@ auto Report::line_chart(const std::vector<Series>& series) const -> void {
     s.push_back(
         {x.id.c_str(), x.label.c_str(), x.x.data(), x.y.data(), x.x.size()});
   }
-  check(current().effects->display_line_chart(current().host, s.data(), s.size()),
-        "line chart");
+  check(tsugumi_display_chart(&current(), s.data(), s.size()), "line chart");
 }
 
 auto Report::table(const std::vector<std::string>& columns,
@@ -65,16 +63,16 @@ auto Report::table(const std::vector<std::string>& columns,
       throw Failure("output_invalid", "table rows need one cell per column");
     for (const auto& c : r) cells.push_back(c.c_str());
   }
-  check(current().effects->display_table(current().host, cols.data(), cols.size(),
-                                cells.data(), rows.size()),
+  check(tsugumi_display_table(&current(), cols.data(), cols.size(),
+                              cells.data(), rows.size()),
         "table");
 }
 
 auto Report::image(const std::string& media_type, const std::string& bytes,
                    const std::string& alt) const -> void {
-  check(current().effects->display_image(current().host, media_type.c_str(),
-                                reinterpret_cast<const uint8_t*>(bytes.data()),
-                                bytes.size(), alt.c_str()),
+  check(tsugumi_display_image(&current(), media_type.c_str(),
+                              reinterpret_cast<const uint8_t*>(bytes.data()),
+                              bytes.size(), alt.c_str()),
         "image");
 }
 
@@ -85,18 +83,17 @@ auto Report::points(const std::vector<float>& x, const std::vector<float>& y,
     throw Failure("output_invalid", "x, y and z differ in length");
   if (!colors.empty() && colors.size() != x.size())
     throw Failure("output_invalid", "colors must be empty or match x length");
-  check(current().effects->display_points(current().host, x.data(), y.data(), z.data(),
-                                 colors.empty() ? nullptr : colors.data(),
-                                 x.size()),
+  check(tsugumi_display_points(&current(), x.data(), y.data(), z.data(),
+                               colors.empty() ? nullptr : colors.data(),
+                               x.size()),
         "point cloud");
 }
 
 auto Report::module(const std::string& name, const std::string& config_json,
                     const std::vector<tsugumi_blob>& blobs) const -> void {
-  check(
-      current().effects->display_module(current().host, name.c_str(),
-                               config_json.c_str(), blobs.data(), blobs.size()),
-      "module display");
+  check(tsugumi_display_module(&current(), name.c_str(), config_json.c_str(),
+                               blobs.data(), blobs.size()),
+        "module display");
 }
 
 namespace card {

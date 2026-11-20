@@ -27,6 +27,7 @@ struct BuildPlan {
   schema::Opt<"manifest", schema::Json> manifest;
   schema::Opt<"gate", schema::v::String> gate;
   schema::Opt<"error", schema::v::String> error;
+  schema::Opt<"log", schema::v::String> log;
   schema::Opt<"cached", schema::v::Bool> cached;
   schema::Opt<"closure", schema::v::Array<schema::v::String>> closure;
 };
@@ -138,6 +139,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (!schema::get(plan.error) && manifest.empty())
     throw std::runtime_error("mock-build.json needs manifest or error");
   if (call.on_phase) call.on_phase(false);
+  if (const auto* line = schema::get(plan.log); line && call.log)
+    call.log(*line + "\n");
   if (const auto* gate = schema::get(plan.gate)) {
     if (!valid_gate(*gate))
       throw std::runtime_error(

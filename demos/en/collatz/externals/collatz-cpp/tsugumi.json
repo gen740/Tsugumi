@@ -21,9 +21,6 @@
         "id": "loop"
       },
       {
-        "id": "split"
-      },
-      {
         "id": "check"
       },
       {
@@ -46,24 +43,14 @@
           "port": "out"
         },
         "to": {
-          "card": "split",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "split",
-          "port": "check"
-        },
-        "to": {
           "card": "check",
           "port": "arrival"
         }
       },
       {
         "from": {
-          "card": "split",
-          "port": "collect"
+          "card": "loop",
+          "port": "out"
         },
         "to": {
           "card": "collect",

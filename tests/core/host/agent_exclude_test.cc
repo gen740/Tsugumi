@@ -56,11 +56,15 @@ TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
   EXPECT_TRUE(absolute.Contains(outside / "new/file"));
 }
 TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
-  Write(root / "definitions/group/_link.json",
-        R"({"external":"different-folder"})");
+  Write(root / "definitions/group/_card.json",
+        R"({"external":"unaccepted-folder"})");
   AgentExclude policy(
       root,
-      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})");
+      R"({"agentExclude":["externals/different-folder/definitions/leaf"]})",
+      {{"definitions/group/_card.json", R"({"external":"different-folder"})"}});
+  Refused([&] {
+    policy.CheckContent(R"({"targets":[{"segments":["group","leaf"]}]})");
+  });
   Refused([&] {
     policy.CheckRequest("run_record",
                         {{"card", R"({"segments":["group","leaf"]})"}});
@@ -86,6 +90,18 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
     policy.CheckRequest("run_record", {{"card", R"({"segments":["hidden"]})"}});
   });
 }
+TEST_F(AgentExcludeTest, NestedDocumentTextRequiresTheScopedFileRead) {
+  AgentExclude policy(root, "{}");
+  const auto filtered = j::Object(policy.Filter(
+      R"({"sources":[{"path":"externals/sub/tsugumi.json","hash":"h","document_json":"{\"name\":\"Private workflow\"}"}]})"));
+  const auto sources = j::Array(filtered.at("sources"));
+  ASSERT_EQ(sources.size(), 1u);
+  const auto source = j::Object(sources.front());
+  EXPECT_EQ(j::Text(source, "path"), "externals/sub/tsugumi.json");
+  EXPECT_EQ(j::Text(source, "hash"), "h");
+  EXPECT_FALSE(source.contains("document_json"));
+}
+
 TEST_F(AgentExcludeTest, AttachmentsAndDemoToolsShareTheRealPathBoundary) {
   Write(root / "visible.txt", "VISIBLE");
   Write(root / "hidden/secret.txt", "SECRET");
@@ -250,7 +266,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
       root,
       R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
   SaveBase base;
-  base.files["definitions/group/_link.json"] = R"({"external":"original"})";
+  base.files["definitions/group/_card.json"] = R"({"external":"original"})";
   Refused([&] {
     policy.CheckSave(
         j::Object(
@@ -260,18 +276,18 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
   Refused([&] {
     policy.CheckSave(
         j::Object(
-            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"elsewhere\"}"}}]})"),
+            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"external\":\"elsewhere\"}"}}]})"),
         base);
   });
   Refused([&] {
     policy.CheckSave(
         j::Object(
-            R"({"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/group/_link.json"}}]})"),
+            R"({"changes":[{"value_type":"RemoveSource","value":{"path":"definitions/group/_card.json"}}]})"),
         base);
   });
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","link_json":"{\"external\":\"original\"}"}}]})"),
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"external\":\"original\"}"}}]})"),
       base));
 }
 TEST_F(AgentExcludeTest,
@@ -314,7 +330,7 @@ TEST_F(AgentExcludeTest,
        DemoCardCopyIncludesSourcesAndNestedDefinitionClosure) {
   const auto demo = temporary.path / "demo";
   Write(demo / "tsugumi.json", initial_project_json("Demo"));
-  Write(demo / "definitions/group/_link.json", R"({"external":"nested"})");
+  Write(demo / "definitions/group/_card.json", R"({"external":"nested"})");
   Write(demo / "definitions/group/_meta.json", R"({"name":"Group"})");
   Write(demo / "externals/nested/tsugumi.json", initial_project_json("Nested"));
   Write(demo / "externals/nested/definitions/leaf/_card.json",

@@ -17,7 +17,7 @@ import { ToolCatalog, type ProviderConfig, type AgentEvent, type Conversation } 
 import { BFBS } from '../shared/bfbs'
 
 interface Ready {
-  endpoint: string
+  host_endpoint: string
   unix_socket: string
   host_socket: string
   user_token: string

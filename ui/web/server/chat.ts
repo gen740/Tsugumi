@@ -450,6 +450,8 @@ async function turnAgent(b: any) {
 }
 
 // The same authenticated host connection also serves Home's project requests.
+export function hostReady() { return core.ready() }
+
 export function observeHost(handler: (event: import('./environment').HostEvent) => void) {
   return core.observeHost(handler)
 }
