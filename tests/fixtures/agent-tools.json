@@ -372,7 +372,7 @@
   {
     "name": "log_range",
     "payloadType": 27,
-    "description": "-> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. Agent pages default to 2048 bytes; continue with next_offset.",
+    "description": " -> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0. Agent pages default to 2048 bytes; continue with next_offset.",
     "inputSchema": {
       "type": "object",
       "properties": {
@@ -396,8 +396,7 @@
         },
         "invocation": {
           "type": "string",
-          "pattern": "^-?[0-9]+$",
-          "description": "64 bit integer as a decimal string"
+          "pattern": "^-?[0-9]+$"
         },
         "stream": {
           "type": "string",
@@ -411,13 +410,12 @@
         },
         "offset": {
           "type": "string",
-          "pattern": "^-?[0-9]+$",
-          "description": "64 bit integer as a decimal string"
+          "pattern": "^-?[0-9]+$"
         },
         "before": {
           "type": "string",
           "pattern": "^-?[0-9]+$",
-          "description": "Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset."
+          "description": " Read up to limit_bytes immediately before this exclusive byte offset.  Cannot be combined with tail or a nonzero offset."
         },
         "tail": {
           "type": "boolean"
@@ -426,7 +424,7 @@
           "type": "integer",
           "minimum": 4,
           "maximum": 1048576,
-          "description": "Maximum number of bytes to read. Accepted range is 4 to 1048576 bytes."
+          "description": " Maximum number of bytes to read. Accepted range is 4 to 1048576 bytes."
         }
       },
       "additionalProperties": false,
