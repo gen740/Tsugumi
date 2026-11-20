@@ -1,6 +1,4 @@
 import { Access } from '../shared/gen/tsugumi/service/access'
-import { PermissionKindT } from '../shared/gen/tsugumi/service/permission-kind'
-import { PermissionKindsT } from '../shared/gen/tsugumi/host/permission-kinds'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -72,7 +70,7 @@ try {
       }] } as T
       throw new Error(`Unexpected call: ${method}`)
     }
-    return { revision: 'host:1', values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
+    return { revision: 1, values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
       'agent.effort': '', 'agent.fastModel': '', 'agent.skillFolders': [], 'app.language': 'en' })
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
@@ -80,9 +78,11 @@ try {
     broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
-  host!.event({ type: 'SettingsChanged', value: { revision: 'host:2' } })
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 2 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
+  host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
+  assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
   const oauth = async (route: string, fields?: object) =>
     routes[fields ? `POST /api/chatgpt/${route}` : 'GET /api/chatgpt'](fields, new URL(`http://fixture/${route}`)) as Promise<any>
   const begin = await oauth('signin', {})
@@ -123,12 +123,12 @@ try {
   assert.deepEqual(b.permissions, [])
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
-  host!.event({ type: 'SettingsChanged', value: { revision: 'host:3' } })
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 3 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, model)
   busy = true
   model = 'gpt-6.1-sol'
-  host!.event({ type: 'SettingsChanged', value: { revision: 'host:4' } })
+  host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 4 } })
   await new Promise(resolve => setImmediate(resolve))
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
@@ -145,7 +145,7 @@ const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], l
   return { request, operation: fields.access, neededNow: fields.needed_now }
 }) }]
 const selections: string[] = []
-const originalFetch = globalThis.fetch
+const originalRead = permissionCatalog.read
 const sandboxRequest = 'sandbox_off Collatz'
 const sandboxLabel = 'Run outside the sandbox'
 try {
@@ -154,7 +154,7 @@ try {
   let requested = false
   permissionCatalog.read = async () => {
     requested = true
-    return new PermissionKindsT([new PermissionKindT('sandbox_off', sandboxLabel, 'hand.raised')])
+    return [{ kind: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }]
   }
   const props = { asked: [sandboxRequest], selected: [], onSelect() {} }
   const refreshed = Promise.withResolvers<void>()
@@ -166,7 +166,7 @@ try {
     await refreshed.promise
     assert.ok(prompt.root.findByType('input').props['aria-label'].includes(sandboxLabel))
   } finally { unsubscribe(); prompt.unmount() }
-} finally { globalThis.fetch = originalFetch }
+} finally { permissionCatalog.read = originalRead }
 const view = create(createElement(PermissionRequests, {
   asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
 }))

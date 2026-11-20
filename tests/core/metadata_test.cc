@@ -53,9 +53,7 @@ TEST_F(OpaqueMetadata, ExecutionFingerprintKeepsCanonicalBytes) {
   Document document;
   document.project_json =
       R"( { "name": "presentation", "value": {"z": [1, 1.0, -0, 2e+1], "\u0061": "\u0062\n"}, "agentExclude": [] } )";
-  EXPECT_EQ(execution_fingerprint(document, [](const std::string&) {
-              return std::nullopt;
-            }),
+  EXPECT_EQ(execution_fingerprint(document),
             crypto::sha256_hex(
                 R"({"value":{"a":"b\n","z":[1,1.0,-0,2e+1]}})"));
 }
