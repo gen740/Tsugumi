@@ -12,6 +12,7 @@
 #include <mutex>
 #include <thread>
 
+#include "host/projects.hh"
 #include "host/vm_process.hh"
 #include "tsugumi/document/host_requirements.hh"
 #include "tsugumi/util/crypto.hh"
@@ -759,6 +760,24 @@ auto Environments::Attach(
     throw std::runtime_error(message);
   }
 }
+auto Environments::List() -> H::EnvironmentListT {
+  std::vector<std::shared_ptr<Impl::Entry>> entries;
+  {
+    std::lock_guard lock(impl_->mutex);
+    for (const auto& [_, entry] : impl_->entries) entries.push_back(entry);
+  }
+  H::EnvironmentListT result;
+  for (const auto& entry : entries) {
+    std::lock_guard lock(entry->mutex);
+    if (entry->state.phase == H::EnvironmentPhase::Stopped) continue;
+    auto item = std::make_unique<H::EnvironmentEntryT>();
+    item->name = ProjectDisplayName(entry->state.project);
+    item->state = std::make_unique<State>(entry->state);
+    result.environments.push_back(std::move(item));
+  }
+  return result;
+}
+
 auto Environments::Handle(const H::EnvironmentRequestT& request) -> State {
   if (impl_->shutdown.stop_requested())
     throw std::runtime_error("Host service is stopping");

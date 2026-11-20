@@ -3,7 +3,6 @@
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
-import { api, type EnvPublicState } from '../api'
 import { openHost, type HostConnection } from '../wire/host'
 import * as H from '../../shared/gen/tsugumi/host'
 import { useObserve } from '../model/observable'
@@ -92,7 +91,7 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   seen.observe(el)
   void (async () => {
     try {
-      const ready = await api<EnvPublicState>('/api/env/start', { path: session.dir })
+      const ready = await session.environmentHost.start(session.dir)
       if (closed) return
       if (ready.state !== 'ready') throw new Error(ready.message || L('実行環境が起動していません'))
       client = await openHost()

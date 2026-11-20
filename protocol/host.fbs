@@ -85,6 +85,9 @@ table EnvironmentState {
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }
+table EnvironmentListRequest {}
+table EnvironmentEntry { state:EnvironmentState (required); name:string (required); }
+table EnvironmentList { environments:[EnvironmentEntry]; }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
@@ -503,7 +506,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest,
 }
 table Request { value:RequestPayload; }
@@ -517,7 +520,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
-  HostTrace:Tsugumi.Trace.HostTrace,
+  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

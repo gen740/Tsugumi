@@ -11,7 +11,9 @@ import { registerModuleClient, ModuleBlobs } from './moduleSources'
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
 // the draft holds only what is on its way to the core, or what could not be
 // saved (a run in progress, a lost connection).
-import { api, EnvPublicState, onServerEvent } from '../api'
+import { api, onServerEvent } from '../api'
+import { onHostEvent } from '../wire/host'
+import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
 import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
@@ -365,6 +367,8 @@ export class ProjectSession extends Observable {
   readonly origin: string
 
   // Connection
+  environmentHost = environmentHost
+  private environmentKey?: string
   environment: EnvironmentState = { state: 'stopped' }
   connected = false
   connectionMessage?: string
@@ -458,6 +462,7 @@ export class ProjectSession extends Observable {
   private inbox: Notification[] = []
   private inboxScheduled = false
   private offEvents: () => void
+  private offHost: () => void
 
   constructor(readonly dir: string, readonly key: string, readonly folderName: string) {
     super()
@@ -477,20 +482,20 @@ export class ProjectSession extends Observable {
     this.origin = `ui:${v}`
     this.offEvents = onServerEvent((e) => {
       if (e.type === 'settingsChanged') void this.refreshProjectTrust().catch(() => {})
-      if (e.type === 'reconnected' && !this.connected) {
-        // The environment's progress may have been missed while the stream was down.
-        void api<{ key: string; state: EnvPublicState }[]>('/api/env/list').then((list) => {
-          const mine = list.find((x) => x.key === this.key)
-          if (mine && !this.connected) {
-            this.environment = mine.state
-            this.changed()
-          }
-        }).catch(() => {})
-      }
-      if (e.type === 'env' && e.key === this.key && !this.connected) {
-        this.environment = e.state
-        this.changed()
-      }
+    })
+    this.offHost = onHostEvent((event) => {
+      if (this.closed || this.connected) return
+      if (event.valueType === H.EventPayload.EnvironmentState) {
+        const state = event.value as H.EnvironmentStateT
+        if (s(state.project) !== this.dir) return
+        this.environmentKey = s(state.key)
+        this.environment = environmentState(state)
+      } else if (event.valueType === H.EventPayload.EnvironmentProgress) {
+        const progress = event.value as H.EnvironmentProgressT
+        if (s(progress.project) !== this.dir && s(progress.key) !== this.environmentKey) return
+        this.environment = environmentProgress(progress)
+      } else return
+      this.changed()
     })
   }
 
@@ -588,7 +593,8 @@ export class ProjectSession extends Observable {
     this.changed()
     try {
       await this.refreshProjectTrust()
-      const env = await api<EnvPublicState>('/api/env/start', { path: this.dir }, connection.signal)
+      connection.signal.throwIfAborted()
+      const env = await this.environmentHost.start(this.dir)
       if (epoch !== this.connectionEpoch || this.closed) return
       this.environment = env
       this.changed()
@@ -705,6 +711,7 @@ export class ProjectSession extends Observable {
     this.closed = true
     this.connecting?.abort()
     this.offEvents?.()
+    this.offHost?.()
     clearTimeout(this.viewSaveTimer)
     const c = this.client
     this.client = undefined
@@ -720,13 +727,14 @@ export class ProjectSession extends Observable {
     c?.close()
     this.connected = false
     this.changed()
-    await api('/api/env/stop', { path: this.dir }).catch(() => {})
-    this.environment = { state: 'stopped' }
+    try { this.environment = await this.environmentHost.stop(this.dir) }
+    catch (error) { this.connectionMessage = errorText(error) }
     this.changed()
   }
 
   dispose() {
     this.offEvents()
+    this.offHost()
     this.client?.close()
   }
 
