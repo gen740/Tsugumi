@@ -52,7 +52,8 @@ the person's decision.
   its Skills, while access and permission grants still apply.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
   SDK preparation, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
-  and version changes wait for the person's approval of each call.
+  and version changes wait for the person's approval of each call. For a trial the person describes without its run,
+  versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns the types a Card receives, rendered for its language.
 )TSUGUMI";
