@@ -53,7 +53,7 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
     kind = "subgraph";
   } else {
     const std::set<std::string> builtins{"trigger", "input", "branch", "merge",
-                                         "collect", "draft", "switch"};
+                                         "collect", "draft"};
     if (!builtins.contains(kind)) kind = "code";
   }
   std::string out = id + " is a " + kind + " Card; it has ";
