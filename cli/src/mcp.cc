@@ -121,6 +121,15 @@ class Server {
   auto Handle(json::Members m) -> void {
     const auto id = json::Get(m, "id");
     const bool request = id != "null";
+    try {
+      Dispatch(m, id, request);
+    } catch (const std::exception& e) {
+      // Malformed params: an error for a request, nothing for a notification.
+      if (request) Reply(id, {}, Failure(-32602, std::string("invalid params: ") + e.what()));
+    }
+  }
+
+  auto Dispatch(const json::Members& m, const std::string& id, bool request) -> void {
     const auto method = json::Text(m, "method");
     const auto params = json::Get(m, "params", "{}");
     if (method == "notifications/cancelled") {
@@ -142,11 +151,15 @@ class Server {
     }
     if (method == "ping") return Reply(id, "{}");
     if (method == "tools/list") {
-      try {
-        return Reply(id, json::Encode(json::Members{{"tools", Tools()}}));
-      } catch (const std::exception& e) {
-        return Reply(id, {}, Failure(-32603, e.what()));
-      }
+      // Listing may start the host; the stdin loop keeps reading meanwhile.
+      std::thread([this, id] {
+        try {
+          Reply(id, json::Encode(json::Members{{"tools", Tools()}}));
+        } catch (const std::exception& e) {
+          Reply(id, {}, Failure(-32603, e.what()));
+        }
+      }).detach();
+      return;
     }
     if (method == "tools/call") {
       // Each call runs on its own; a run that waits must not hold the others.
@@ -170,21 +183,27 @@ class Server {
     if (request) Reply(id, {}, Failure(-32601, "method not found: " + method));
   }
 
-  /** The host's Agent socket, starting the host when none runs. */
+  /** The host's Agent socket, starting the host when none runs. Starting
+   *  waits on connect_ alone: cancellations and pings keep being answered. */
   auto Agent() -> std::shared_ptr<C::Connection> {
-    std::lock_guard lock(mutex_);
-    if (!agent_ || stale_->load()) {
-      // A new host (after a restart) or a closed socket: connect again.
-      stale_ = std::make_shared<std::atomic<bool>>(false);
-      auto ready = EnsureHost(launch_);
-      // A host started now also serves the page; one that ran already is
-      // asked to (the desktop app's host serves no page until then).
-      auto host = ConnectHost(ready);
-      ServeWeb(*host, launch_, false, {});
-      agent_ = std::shared_ptr<C::Connection>(ConnectAgent(ready));
-      agent_->OnClosed([stale = stale_](C::Error) { *stale = true; });
+    std::lock_guard connecting(connect_);
+    {
+      std::lock_guard lock(mutex_);
+      if (agent_ && !stale_->load()) return agent_;
     }
-    return agent_;
+    // A new host (after a restart) or a closed socket: connect again.
+    auto ready = EnsureHost(launch_);
+    // A host started now also serves the page; one that ran already is
+    // asked to (the desktop app's host serves no page until then).
+    auto host = ConnectHost(ready);
+    ServeWeb(*host, launch_, false, {});
+    auto stale = std::make_shared<std::atomic<bool>>(false);
+    auto agent = std::shared_ptr<C::Connection>(ConnectAgent(ready));
+    agent->OnClosed([stale](C::Error) { *stale = true; });
+    std::lock_guard lock(mutex_);
+    agent_ = agent;
+    stale_ = stale;
+    return agent;
   }
 
   auto Tools() -> std::string {
@@ -364,6 +383,7 @@ class Server {
 
   Launch launch_;
   std::mutex mutex_;
+  std::mutex connect_;
   std::mutex output_;
   std::mutex codec_;
   flatbuffers::Parser encoder_;
