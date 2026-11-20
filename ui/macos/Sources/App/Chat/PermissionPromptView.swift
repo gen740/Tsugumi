@@ -114,6 +114,5 @@ struct PermissionPromptView: View {
     .padding(20)
     .frame(width: 440)
     .interactiveDismissDisabled()
-    .task { await PermissionCatalog.shared.load() }
   }
 }

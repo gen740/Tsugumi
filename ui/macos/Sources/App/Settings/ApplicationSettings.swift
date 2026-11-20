@@ -615,7 +615,6 @@ private struct APISettings: View {
       }
     }
     .formStyle(.grouped)
-    .task { await PermissionCatalog.shared.load() }
     .onAppear { GuideController.shared.refreshAvailability() }
     .onChange(of: provider) { GuideController.shared.refreshAvailability() }
   }
