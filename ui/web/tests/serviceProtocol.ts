@@ -115,7 +115,7 @@ console.log('Host list readers: omitted vectors are empty')
 
 for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   const b = new fb.Builder()
-  const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
+  const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, b.createString('host:0'), 0)
     : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0, false)
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))

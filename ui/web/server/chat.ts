@@ -409,6 +409,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   ctx = c
   // The language for the server's own messages, from the start (the app's, once read).
   core = new CoreHost(c.support, c.here, c.envs)
+  revision = ''
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (['SignInChanged', 'ProviderChanged'].includes(event.type) && event.value.profile === localProfile())

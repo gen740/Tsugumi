@@ -1,4 +1,6 @@
 import { Access } from '../shared/gen/tsugumi/service/access'
+import { PermissionKindT } from '../shared/gen/tsugumi/service/permission-kind'
+import { PermissionKindsT } from '../shared/gen/tsugumi/host/permission-kinds'
 import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
@@ -147,13 +149,12 @@ const originalFetch = globalThis.fetch
 const sandboxRequest = 'sandbox_off Collatz'
 const sandboxLabel = 'Run outside the sandbox'
 try {
-  globalThis.fetch = async () => { throw new Error('Host unavailable at startup') }
+  permissionCatalog.read = async () => { throw new Error('Host unavailable at startup') }
   await permissionCatalog.load()
   let requested = false
-  globalThis.fetch = async (url) => {
-    assert.equal(url, '/api/permission-kinds')
+  permissionCatalog.read = async () => {
     requested = true
-    return Response.json({ kinds: [{ id: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }] })
+    return new PermissionKindsT([new PermissionKindT('sandbox_off', sandboxLabel, 'hand.raised')])
   }
   const props = { asked: [sandboxRequest], selected: [], onSelect() {} }
   const refreshed = Promise.withResolvers<void>()

@@ -36,7 +36,9 @@ try {
     }
     const routes = chatRoutes({ support: '/settings-test', here: '/fixture', desktop,
       envs: {} as never, projectDir: String, broadcast: (event: any) => {
-        if (event.type === 'reconnected') reconnected()
+        // The page's own reconnect notice comes from main.ts; chat routes
+        // report the settings they read again.
+        if (event.type === 'settingsChanged') reconnected()
       }, httpError: (_status, message) => new Error(message),
     } as ChatContext)
     const url = new URL('http://fixture')
@@ -85,6 +87,7 @@ console.log('Host settings: combined patches and stale revisions passed')
 
 // An editor may carry an older list than another settings panel. Preserve its
 // explicit revision so hostd can reject it instead of resurrecting removed roots.
+// A single-value write without one is checked against the host's current revision.
 {
   const { api } = await import('../src/api')
   const originalFetch = globalThis.fetch
@@ -102,7 +105,7 @@ console.log('Host settings: combined patches and stale revisions passed')
     await api('/api/settings', { trustedFolders: ['/stale'], revision: 'host:3' })
     await api('/api/settings', { skillFolders: [], revision: 'host:2' })
     assert.equal(reads, 1)
-    assert.equal(requests[0].revision, 'host:0')
+    assert.equal(requests[0].revision, undefined)
     assert.equal(requests[1].revision, 'host:3')
     assert.equal(requests[2].revision, 'host:2')
   } finally { globalThis.fetch = originalFetch }
