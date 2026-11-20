@@ -15,7 +15,7 @@ function accepted(headers = {}, pageCookie = true, url = request.url) {
 }
 assert.equal(accepted(), true)
 assert.equal(accepted({ host: '127.0.0.1:8780', origin: 'http://127.0.0.1:8780' }), true)
-assert.equal(accepted({ 'x-tsugumi-agent-key': 'mcp-key' }, false), false)
+assert.equal(accepted({ 'x-tsugumi-agent': 'mcp-key' }, false), false)
 assert.equal(accepted({ origin: undefined }), false)
 assert.equal(accepted({ origin: 'null' }), false)
 assert.equal(accepted({ origin: 'http://127.0.0.1:8780' }), false)
