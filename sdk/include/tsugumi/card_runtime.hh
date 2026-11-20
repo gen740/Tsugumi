@@ -89,7 +89,19 @@ class Call {
  public:
   explicit Call(const tsugumi_call* call) : c_(call) {}
 
-  auto inputs() const -> const uint8_t* { return c_->inputs; }
+  template <class Table>
+  auto input(const char* port) const -> const Table* {
+    size_t size;
+    const auto* bytes = c_->effects->input(c_->host, port, &size);
+    return bytes ? flatbuffers::GetRoot<Table>(bytes) : nullptr;
+  }
+
+  auto output(const char* port,
+              const flatbuffers::FlatBufferBuilder& buffer) const -> void {
+    if (c_->effects->output(c_->host, port, buffer.GetBufferPointer(),
+                            buffer.GetSize()))
+      throw Failure("output_invalid", port);
+  }
 
   template <class Table, class T>
   void unpack_params(T& out) const {

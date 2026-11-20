@@ -6,7 +6,7 @@ import { clone, get, parse, serialize } from '../shared/json'
 
 const { ProjectSession } = await import('../src/model/session')
 const requests: { name: string; prefix: string }[] = []
-const ids = ['aggregate-7k2q', 'aggregate-9m3r', 'inside-8p4s', 'child-6t5v']
+const ids = ['aggregate-7k2q', 'aggregate-9m3r', 'inside-8p4s']
 const allocator = new RPCClient({ close() {}, async call(frame) {
   const message = R.Message.getRootAsMessage(new ByteBuffer(frame)).unpack()
   const request = message.payload as R.RequestT
@@ -59,8 +59,8 @@ session.project = parse(JSON.stringify(projectValue))
 session.externals.set('externals/nested/', { project: parse('{"name":"nested","canvas":{"cards":[],"connections":[]}}'), layout: parse('{}'), definitions: new Map() })
 const inner = await session.addCard('draft', ['outer'], { x: 0, y: 0 }, 'Inside')
 await new Promise<void>(resolve => setImmediate(resolve)) // Read the external documents from the confirmed delta.
-assert.equal(inner, `outer/${ids[3]}`)
-assert.deepEqual(requests[3], { name: 'inside', prefix: 'externals/nested/' })
-assert.equal(session.displayPath(['outer', ids[3]]), 'Outer/Inside')
+assert.equal(inner, `outer/${ids[2]}`)
+assert.deepEqual(requests[2], { name: 'inside', prefix: 'externals/nested/' })
+assert.equal(session.displayPath(['outer', ids[2]]), 'Outer/Inside')
 assert.equal(get(session.cardMeta(inner), 'name'), 'Inside')
 console.log('Card identity: core ids, duplicate names, name-only edits, exact wires and nested scopes passed')

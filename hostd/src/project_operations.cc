@@ -460,41 +460,18 @@ auto Prepare(
     }
   } else if (const auto* connect = body.AsProjectConnect()) {
     json::Members definitions;
-    for (const auto& raw : json::Array(
-             json::Get(json::Object(json::Get(
-                           json::Object(project, prefix + "tsugumi.json"),
-                           "canvas", "{}")),
-                       "cards", "[]"))) {
-      const auto id = json::Text(json::Object(raw), "id");
-      json::Members parts;
-      for (const auto& [part, name] :
-           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}}) {
-        const auto path = prefix + "definitions/" + id + '/' + name;
-        // Only definitions that influence this connection need a helper read
-        // grant.
-        if (base.files.contains(path)) parts[part] = base.files.at(path);
-      }
-      definitions[id] = json::Encode(parts);
+    for (const auto& id : {connect->from_card, connect->to_card}) {
+      const auto path = prefix + "definitions/" + id + "/_card.json";
+      if (base.files.contains(path))
+        definitions[id] =
+            json::Encode(json::Members{{"card", base.files.at(path)}});
     }
     const auto connected = ConnectDocuments(
         json::Encode(json::Members{{"project", project},
                                    {"definitions", json::Encode(definitions)}}),
         connect->from_card, connect->from_port, connect->to_card,
-        connect->to_port, connect->fork_id);
-    if (connected.needs_fork)
-      throw Failure("invalid_request",
-                    "Reserve a fork Card id and supply fork_id");
-    const auto state = json::Object(connected.state_json);
-    put(prefix + "tsugumi.json", state.at("project"));
-    for (const auto& [id, raw] : json::Object(state.at("definitions"))) {
-      const auto parts = json::Object(raw);
-      for (const auto& [part, name] :
-           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
-        if (parts.contains(part) && (!definitions.contains(id) ||
-                                     json::Get(json::Object(definitions.at(id)),
-                                               part) != parts.at(part)))
-          put(prefix + "definitions/" + id + '/' + name, parts.at(part));
-    }
+        connect->to_port);
+    put(prefix + "tsugumi.json", json::Object(connected).at("project"));
   } else if (const auto* create = body.AsProjectCreateCard()) {
     empty(prefix + "definitions/" + create->id + '/');
     const auto prepared = WriteTemplate(create->template_, create->id);

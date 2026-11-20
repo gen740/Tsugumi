@@ -4,7 +4,6 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "settings": "Sends the settings: seed 42, 500 rows and a heading.",
-      "share": "Hands the same settings to generate and render.",
       "generate": "Writes 500 rows of region, product, quantity and unit price as CSV, with random numbers from the seed. The same seed gives the same CSV.",
       "aggregate": "Totals sales and quantity per region.",
       "render": "Writes the aggregate to report.md and summary.json and shows the report.",
@@ -17,7 +16,6 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "initial": "Sends the starting value 27.",
-      "both": "Hands the same value to the four sides: C++, Python, Julia and R.",
       "collatz-cpp": "The Workflow inside runs the iteration on its wires, halving even numbers and tripling odd ones plus 1, until it reaches 1.",
       "collatz-py": "On the Python side, a Workflow of the same shape runs the same iteration.",
       "collatz-jl": "The Julia side has the same shape. It runs in a separate process per invocation, so it carries the sequence so far in the message.",
@@ -44,7 +42,6 @@
       "start": "The run begins at the start Card.",
       "settings": "Sends the seed, the number of walkers and the number of steps.",
       "simulate": "Makes ±1 random walks with numpy.",
-      "share": "Hands the same walks to the four figures.",
       "summary": "Four Cards draw figures from the same walks. Report publishes the Matplotlib animation, Plotly figure and Altair chart through explicit report.figure calls.",
       "diffusion": "Draws with FuncAnimation how the distribution spreads as √t.",
       "explore": "Makes a Plotly scatter plot of each walker's final position and farthest distance.",
@@ -56,11 +53,9 @@
     "intro": "A demo that pins an X-ray observation of the supernova remnant Cassiopeia A and the analysis tool CIAO with Nix, and splits the photons into three energy bands for an RGB image.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "begin": "Starts preparing the analysis tool and the observation at the same time.",
       "ciao": "Builds the analysis tool CIAO with Nix, pinned by the hash of its source. The build happens only the first time.",
       "load": "Uses the observation file pinned by hash. The download happens only the first time; no network while running.",
       "bands": "With CIAO's dmcopy, splits the photons into three energy bands and counts them on a grid centred on Cas A.",
-      "share": "Hands the bands' directory to rgb and spectrum.",
       "rgb": "rgb assigns the three bands to R, G and B for an image, and spectrum draws the energy spectrum of the same photons.",
       "spectrum": "The spectrum shows which element's lines fell in which colour."
     },
@@ -130,7 +125,6 @@
       "start": "The run begins at the start Card.",
       "load": "Reads the MNIST files pinned by their Nix hash. No network while running.",
       "prepare": "Takes a subset keeping the share of each digit, and scales the pixels.",
-      "share": "Hands the same data to the seven classifiers and the comparison Card.",
       "knn": "The seven branches run at the same time. k-nearest neighbours shows the digits it got wrong and their neighbours.",
       "logistic": "Logistic regression. Shows each digit's weights as an image.",
       "svm": "An SVM with an RBF kernel. Shows the number of support vectors.",
@@ -139,7 +133,6 @@
       "mlp": "A fully connected network (torch). Shows how the loss went.",
       "cnn": "A small convolutional network (torch). Shows what the first layer picks out.",
       "compare": "Waits for every branch, recomputes the accuracies from the predictions to cross-check, and makes a ranking.",
-      "views": "Hands the comparison's result to three figures.",
       "tradeoff": "Plots accuracy against time with Plotly.",
       "recall": "Tables recall by model and digit.",
       "hard": "Lays out the images many models got wrong."
@@ -152,7 +145,6 @@
       "start": "The run begins at the start Card.",
       "settings": "Sends the polynomial's coefficients and the damping factor.",
       "roots": "Finds the roots and their multiplicities from eigenvalues, without Newton's method.",
-      "share": "Hands the problem to three Cards.",
       "orbits": "Draws how the error falls for each starting point.",
       "order": "Estimates the order of convergence from the errors and sets it next to the theory.",
       "basins": "Starts from every point of a grid and maps which root each reaches.",
@@ -166,7 +158,6 @@
       "start": "The run begins at the start Card.",
       "settings": "Sends the dosing plans to compare and the made-up drug's values.",
       "simulate": "Solves the differential equation and draws the concentration over time.",
-      "share": "Hands the results to three Cards.",
       "check": "Checks the numerical solution against closed forms. Fails if they differ much.",
       "window": "Overlays the concentration in the last dosing interval and compares peaks and troughs.",
       "missed": "Draws the concentration when doses are missed partway."
@@ -181,7 +172,6 @@
       "network": "Makes a directed graph with capacities.",
       "flow": "Finds the maximum flow and draws each edge's flow.",
       "cut": "Finds the minimum cut. Fails unless it equals the maximum flow.",
-      "share": "Hands the results to three Cards.",
       "verify": "Checks that another solver and brute force give the same value.",
       "whatif": "Raises capacities on and off the cut and compares the maximum flow.",
       "sweep": "For every edge, lays out the gain from raising its capacity."
@@ -193,7 +183,6 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "generate": "Makes a synthetic plate with noise on the true curves.",
-      "share": "Hands the plate to three Cards.",
       "fit": "Fits the four parameters and draws the data and the curves.",
       "bootstrap": "Finds intervals by bootstrap and checks whether they contain the true values.",
       "compare": "Shows the ratio of the two compounds' potencies and its interval.",
@@ -207,7 +196,6 @@
       "start": "The run begins at the start Card.",
       "paste": "Sends the SMILES of a molecule to try.",
       "properties": "Tables molecular weight, logP and more. A SMILES that cannot be read is skipped, with the reason.",
-      "share": "Hands the properties to three Cards.",
       "structures": "Draws the structural formulas side by side.",
       "lipinski": "Checks Lipinski's Rule of Five.",
       "chemspace": "Draws a map of molecular weight and logP with Plotly.",
@@ -219,9 +207,7 @@
     "intro": "A demo that scores ways of counting cells on synthetic images with known answers, and applies the same procedure to a real image of nuclei.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "begin": "Hands the run to both the synthetic and the real image.",
       "generate": "Makes a synthetic image of cells with known centres.",
-      "share": "Hands the image and the answers to three Cards.",
       "preprocess": "Subtracts the background and blurs.",
       "segment": "Separates regions with a threshold and watershed.",
       "score": "Matches them with the answers and scores both methods.",
@@ -236,9 +222,7 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "load": "Adds columns to the data and tables a summary of the variables.",
-      "share": "Hands the data to two branches.",
       "cohort": "Chooses subjects by age and the like.",
-      "split": "Hands the people chosen to two Cards.",
       "km": "Kaplan–Meier curves and the log-rank test.",
       "cox": "Finds hazard ratios with a Cox model.",
       "zph": "Checks the proportional hazards assumption.",
@@ -251,7 +235,6 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "trials": "Finds each trial's effect size and variance.",
-      "share": "Hands the same effect sizes to four analyses.",
       "pool": "Pools with fixed and random effects and draws a forest plot.",
       "funnel": "Looks for publication bias with a funnel plot.",
       "moderator": "Runs a meta-regression on latitude.",
@@ -265,11 +248,9 @@
       "start": "The run begins at the start Card.",
       "load": "Reads the count matrix and gene names.",
       "filter": "Removes genes with few reads.",
-      "share": "Hands the counts to four Cards.",
       "normalize": "Normalises by size factors and compares before and after.",
       "pca": "Looks at treatment and cell line by principal component analysis.",
       "deseq": "Tests with DESeq2.",
-      "fan": "Hands the results on.",
       "volcano": "Counts at the thresholds and draws a volcano plot.",
       "thresholds": "Tables the number of genes for each combination of thresholds.",
       "top": "Looks at the top genes and the ranks of known responsive genes.",
@@ -283,9 +264,7 @@
     "intro": "An R demo that checks, on two real datasets, examples where the overall trend and the trend within strata point in opposite directions.",
     "cards": {
       "start": "The run begins at the start Card.",
-      "branches": "Hands the run to two branches.",
       "penguins": "Reads the penguins' bill data.",
-      "share": "Hands the data to two Cards.",
       "correlate": "Splits into strata and finds the correlations.",
       "figure": "Overlays the overall line and the lines for each stratum.",
       "survey": "Lays out, for each way of splitting, where it reverses.",
@@ -300,7 +279,6 @@
       "start": "The run begins at the start Card.",
       "settings": "Sends conditions such as capacity and efficiency.",
       "market": "Makes consumption, solar and prices. All of it is made-up data.",
-      "share": "Hands the conditions and data to four Cards.",
       "schedule": "Finds the charging and discharging with the lowest bill.",
       "capacities": "Compares the saving at other capacities.",
       "tariffs": "Runs the same battery under each contract and compares.",
@@ -313,7 +291,6 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "settings": "Sends the reaction rates and the number of runs.",
-      "share": "Hands the conditions to four Cards.",
       "trajectories": "Overlays trajectories, their mean and the solution of the rate equation.",
       "stationary": "Compares the distribution of end points with the theoretical Poisson distribution.",
       "scaling": "Changes the volume and compares the size of fluctuations with theory.",
@@ -328,7 +305,6 @@
       "start": "The run begins at the start Card.",
       "settings": "Sends the grid, the measurement time and the noise.",
       "forward": "Makes the temperature at time T from a made-up initial temperature, with noise added.",
-      "share": "Hands the measurements to six Cards.",
       "spectrum": "Shows which components sink into the noise.",
       "naive": "Shows that solving backwards as it is diverges.",
       "tikhonov": "Compares strengths of regularisation.",
@@ -343,10 +319,8 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "load": "Reads the fur records of 1900–1920.",
-      "share": "Hands the records to two Cards.",
       "fit": "Fits three models and overlays them on the records.",
       "forecast": "Fits up to a year partway and predicts the rest.",
-      "fits-share": "Hands the fitted results to three Cards.",
       "scores": "Tables errors and AICc to compare.",
       "phase": "Extends the solutions ahead and compares them in phase diagrams.",
       "check": "Checks with the conserved quantity and an existing case study."

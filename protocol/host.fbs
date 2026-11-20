@@ -200,7 +200,6 @@ table ProjectConnect {
   project_path:string;
   from_card:string (required); from_port:string (required);
   to_card:string (required); to_port:string (required);
-  fork_id:string;
 }
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
 // Source paths name a definition or an external folder in the current project.
@@ -311,7 +310,7 @@ table LayoutCard {
   /// In the order drawn.
   inputs:[LayoutPort] (id: 5);
   outputs:[LayoutPort] (id: 6);
-  /// Its ports may be drawn in another order (not those of a fork, a branch
+  /// Its ports may be drawn in another order (not those of a branch
   /// and the like, whose places have a meaning).
   reorderable:bool (id: 7);
 }
@@ -392,10 +391,10 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
+  /// What it is, which decides its shape: trigger, input, branch, merge,
   /// draft, subgraph or code.
   kind:string (id: 3, required);
-  /// The ports a fork or merge fans over, which decide its width; 0 for others.
+  /// The inputs of a Merge, which decide its width; 0 for others.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);

@@ -13,9 +13,6 @@
         "id": "prepare"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "knn"
       },
       {
@@ -38,9 +35,6 @@
       },
       {
         "id": "compare"
-      },
-      {
-        "id": "views"
       },
       {
         "id": "tradeoff"
@@ -79,16 +73,6 @@
           "port": "subset"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "knn"
-        },
-        "to": {
           "card": "knn",
           "port": "data"
         }
@@ -105,8 +89,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "logistic"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "logistic",
@@ -125,8 +109,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "svm"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "svm",
@@ -145,8 +129,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "forest"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "forest",
@@ -165,8 +149,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "boosting"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "boosting",
@@ -185,8 +169,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "mlp"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "mlp",
@@ -205,8 +189,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "cnn"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "cnn",
@@ -225,8 +209,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "compare"
+          "card": "prepare",
+          "port": "subset"
         },
         "to": {
           "card": "compare",
@@ -237,16 +221,6 @@
         "from": {
           "card": "compare",
           "port": "comparison"
-        },
-        "to": {
-          "card": "views",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "views",
-          "port": "tradeoff"
         },
         "to": {
           "card": "tradeoff",
@@ -255,8 +229,8 @@
       },
       {
         "from": {
-          "card": "views",
-          "port": "recall"
+          "card": "compare",
+          "port": "comparison"
         },
         "to": {
           "card": "recall",
@@ -265,8 +239,8 @@
       },
       {
         "from": {
-          "card": "views",
-          "port": "hard"
+          "card": "compare",
+          "port": "comparison"
         },
         "to": {
           "card": "hard",
