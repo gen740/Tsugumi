@@ -42,12 +42,6 @@ internal static unsafe class Layout {
         void Add(string name, void* start, void* field, ulong size) =>
             list.Add((name, (ulong)((byte*)field - (byte*)start), size));
 
-        NativeBuffer bufValue = default;
-        var buf = &bufValue;
-        list.Add(("tsugumi_buffer", 0, (ulong)sizeof(NativeBuffer)));
-        Add("tsugumi_buffer.data", buf, &buf->Data, pointer);
-        Add("tsugumi_buffer.size", buf, &buf->Size, (ulong)sizeof(nuint));
-
         NativeBlob bValue = default;
         var b = &bValue;
         list.Add(("tsugumi_blob", 0, (ulong)sizeof(NativeBlob)));
@@ -64,6 +58,51 @@ internal static unsafe class Layout {
         Add("tsugumi_series.y", s, &s->Y, pointer);
         Add("tsugumi_series.count", s, &s->Count, (ulong)sizeof(nuint));
 
+        NativeScalar scalarValue = default;
+        var scalar = &scalarValue;
+        list.Add(("tsugumi_scalar", 0, (ulong)sizeof(NativeScalar)));
+        Add("tsugumi_scalar.value", scalar, &scalar->Value, (ulong)sizeof(double));
+        Add("tsugumi_scalar.label", scalar, &scalar->Label, pointer);
+
+        NativeChart chartValue = default;
+        var chart = &chartValue;
+        list.Add(("tsugumi_chart", 0, (ulong)sizeof(NativeChart)));
+        Add("tsugumi_chart.series", chart, &chart->Series, pointer);
+        Add("tsugumi_chart.count", chart, &chart->Count, (ulong)sizeof(nuint));
+
+        NativeTable tableValue = default;
+        var table = &tableValue;
+        list.Add(("tsugumi_table", 0, (ulong)sizeof(NativeTable)));
+        Add("tsugumi_table.columns", table, &table->Columns, pointer);
+        Add("tsugumi_table.column_count", table, &table->ColumnCount, (ulong)sizeof(nuint));
+        Add("tsugumi_table.cells", table, &table->Cells, pointer);
+        Add("tsugumi_table.row_count", table, &table->RowCount, (ulong)sizeof(nuint));
+
+        NativeImage imageValue = default;
+        var image = &imageValue;
+        list.Add(("tsugumi_image", 0, (ulong)sizeof(NativeImage)));
+        Add("tsugumi_image.media_type", image, &image->MediaType, pointer);
+        Add("tsugumi_image.data", image, &image->Data, pointer);
+        Add("tsugumi_image.size", image, &image->Size, (ulong)sizeof(nuint));
+        Add("tsugumi_image.alt", image, &image->Alt, pointer);
+
+        NativePoints pointsValue = default;
+        var points = &pointsValue;
+        list.Add(("tsugumi_points", 0, (ulong)sizeof(NativePoints)));
+        Add("tsugumi_points.x", points, &points->X, pointer);
+        Add("tsugumi_points.y", points, &points->Y, pointer);
+        Add("tsugumi_points.z", points, &points->Z, pointer);
+        Add("tsugumi_points.colors", points, &points->Colors, pointer);
+        Add("tsugumi_points.count", points, &points->Count, (ulong)sizeof(nuint));
+
+        NativeModule moduleValue = default;
+        var module = &moduleValue;
+        list.Add(("tsugumi_module", 0, (ulong)sizeof(NativeModule)));
+        Add("tsugumi_module.name", module, &module->Name, pointer);
+        Add("tsugumi_module.config_json", module, &module->Config, pointer);
+        Add("tsugumi_module.blobs", module, &module->Blobs, pointer);
+        Add("tsugumi_module.count", module, &module->Count, (ulong)sizeof(nuint));
+
         NativeCall cValue = default;
         var c = &cValue;
         list.Add(("tsugumi_call", 0, (ulong)sizeof(NativeCall)));
@@ -72,8 +111,6 @@ internal static unsafe class Layout {
         Add("tsugumi_call.run_id", c, &c->RunId, pointer);
         Add("tsugumi_call.card", c, &c->Card, pointer);
         Add("tsugumi_call.invocation", c, &c->Invocation, sizeof(ulong));
-        Add("tsugumi_call.inputs", c, &c->Inputs, pointer);
-        Add("tsugumi_call.inputs_size", c, &c->InputsSize, (ulong)sizeof(nuint));
         Add("tsugumi_call.params", c, &c->Params, pointer);
         Add("tsugumi_call.params_size", c, &c->ParamsSize, (ulong)sizeof(nuint));
         Add("tsugumi_call.working_directory", c, &c->Work, pointer);
@@ -85,23 +122,17 @@ internal static unsafe class Layout {
         NativeHost hValue = default;
         var h = &hValue;
         list.Add(("tsugumi_host", 0, (ulong)sizeof(NativeHost)));
-        Add("tsugumi_host.display_text", h, &h->Text, pointer);
-        Add("tsugumi_host.display_scalar", h, &h->Scalar, pointer);
-        Add("tsugumi_host.display_line_chart", h, &h->LineChart, pointer);
+        Add("tsugumi_host.display", h, &h->Display, pointer);
         Add("tsugumi_host.log", h, &h->Log, pointer);
         Add("tsugumi_host.cancelled", h, &h->Cancelled, pointer);
         Add("tsugumi_host.remaining_ms", h, &h->Remaining, pointer);
         Add("tsugumi_host.fail", h, &h->Fail, pointer);
-        Add("tsugumi_host.display_table", h, &h->Table, pointer);
-        Add("tsugumi_host.display_image", h, &h->Image, pointer);
-        Add("tsugumi_host.display_points", h, &h->Points, pointer);
-        Add("tsugumi_host.display_module", h, &h->Module, pointer);
-        Add("tsugumi_host.display_markdown", h, &h->Markdown, pointer);
+        Add("tsugumi_host.input", h, &h->Input, pointer);
+        Add("tsugumi_host.output", h, &h->Output, pointer);
         Add("tsugumi_host.inputs_json", h, &h->InputsJson, pointer);
         Add("tsugumi_host.params_json", h, &h->ParamsJson, pointer);
         Add("tsugumi_host.input_kind", h, &h->InputKind, pointer);
-        Add("tsugumi_host.outputs_json", h, &h->OutputsJson, pointer);
-        Add("tsugumi_host.display_json", h, &h->DisplayJson, pointer);
+        Add("tsugumi_host.output_json", h, &h->OutputJson, pointer);
         Add("tsugumi_host.fail_at", h, &h->FailAt, pointer);
 
         return list;

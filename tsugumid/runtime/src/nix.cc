@@ -348,7 +348,8 @@ types::TypeRef NixRunner::params_type(const Node& node) {
   for (const auto& p : node.settings.params)
     fields.emplace_back(p.name, param_fbs_type(p.type));
   std::string err;
-  auto t = types::compile(types::params_schema(fields), "params.Params", &err);
+  auto t =
+      types::compile(types::params_schema(fields), "parameters.Params", &err);
   if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
   return *t;
 }
