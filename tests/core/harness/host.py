@@ -6,6 +6,7 @@ import socket
 import struct
 import subprocess
 import tempfile
+from collections import deque
 from pathlib import Path
 
 import flatbuffers
@@ -18,6 +19,7 @@ from Tsugumi.Host.Payload import Payload
 from Tsugumi.Host.ReplyPayload import ReplyPayload
 from Tsugumi.Host.Request import RequestT
 from Tsugumi.Host.RequestPayload import RequestPayload
+from Tsugumi.Trace.Client import Client
 
 
 class HostFailure(RuntimeError):
@@ -27,36 +29,20 @@ class HostFailure(RuntimeError):
         super().__init__(string(failure.message))
 
 
-class Host:
-    def __init__(self, directory, *, rpc_trace=False):
-        self.directory = Path(directory).resolve()
-        self.socket_directory = tempfile.TemporaryDirectory(prefix="th-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
-        self.log_path = Path(self.socket_directory.name) / "host.log"
-        self.log = self.log_path.open("wb")
-        self.process = None
-        self.socket = None
-        self.stream = None
+class HostConnection:
+    def __init__(self, ready, *, trace=False):
+        self.socket = socket.socket(socket.AF_UNIX)
+        self.socket.settimeout(30)
+        self.stream = self.socket.makefile("rwb", buffering=0)
         self.request_id = 0
+        self.events = deque()
         try:
-            self.process = subprocess.Popen([
-                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "hostd/tsugumi-hostd")),
-                "--state-dir", str(self.directory), "--no-websocket",
-                "--socket-dir", str(Path(self.socket_directory.name) / "b"),
-                "--usage-scratch-dir", str(self.directory / "run-scratch"),
-                "--unix", str(Path(self.socket_directory.name) / "rpc"),
-            ], stdout=self.log, stderr=self.log,
-                env=dict(os.environ, TSUGUMI_RPC_TRACE="1" if rpc_trace else "0"))
-            ready = process_file(self.process, self.directory / "host.ready")
-            if ready is None:
-                raise RuntimeError(self.log_path.read_text())
-            self.ready = json.loads(ready.read_text())
-            self.socket = socket.socket(socket.AF_UNIX)
-            self.socket.settimeout(30)
-            self.socket.connect(self.ready["host_socket"])
-            self.stream = self.socket.makefile("rwb", buffering=0)
-            self.call("HelloRequest", token=self.ready["user_token"])
+            self.socket.connect(ready["host_socket"])
+            self.call("HelloRequest", token=ready["user_token"],
+                      client=Client.Trace if trace else Client.Unspecified)
         except BaseException:
-            self.close()
+            self.stream.close()
+            self.socket.close()
             raise
 
     def call(self, name, /, **fields):
@@ -78,9 +64,10 @@ class Host:
         builder.Finish(message.Pack(builder), file_identifier=b"TSH1")
         data = bytes(builder.Output())
         self.socket.sendall(struct.pack("<I", len(data)) + data)
-        size, = struct.unpack("<I", exact(self.stream, 4))
-        assert 0 < size <= 16 << 20
-        response = MessageT.InitFromPackedBuf(exact(self.stream, size))
+        response = self._receive()
+        while response.payloadType == Payload.Event:
+            self.events.append(response.payload)
+            response = self._receive()
         assert response.requestId == self.request_id and response.payloadType == Payload.Reply
         reply = response.payload
         if reply.valueType == ReplyPayload.Failure:
@@ -99,11 +86,54 @@ class Host:
                 item.tags = []
         return value
 
+    def _receive(self):
+        size, = struct.unpack("<I", exact(self.stream, 4))
+        assert 0 < size <= 16 << 20
+        return MessageT.InitFromPackedBuf(exact(self.stream, size))
+
+    def next_event(self):
+        if self.events:
+            return self.events.popleft()
+        response = self._receive()
+        assert response.payloadType == Payload.Event
+        return response.payload
+
     def close(self):
-        if self.stream:
-            self.stream.close()
-        if self.socket:
-            self.socket.close()
+        self.stream.close()
+        self.socket.close()
+
+
+class Host(HostConnection):
+    def __init__(self, directory, *, rpc_trace=False, args=()):
+        self.directory = Path(directory).resolve()
+        self.socket_directory = tempfile.TemporaryDirectory(prefix="th-", dir=os.environ.get("TSUGUMI_SOCKET_DIR", "/tmp"))
+        self.log_path = Path(self.socket_directory.name) / "host.log"
+        self.log = self.log_path.open("wb")
+        self.process = None
+        try:
+            self.process = subprocess.Popen([
+                os.environ.get("TSUGUMI_HOSTD", str(BUILD / "hostd/tsugumi-hostd")),
+                "--state-dir", str(self.directory), "--no-websocket",
+                "--socket-dir", str(Path(self.socket_directory.name) / "b"),
+                "--usage-scratch-dir", str(self.directory / "run-scratch"),
+                "--unix", str(Path(self.socket_directory.name) / "rpc"),
+                *args,
+            ], stdout=self.log, stderr=self.log,
+                env=dict(os.environ, TSUGUMI_RPC_TRACE="1" if rpc_trace else "0"))
+            ready = process_file(self.process, self.directory / "host.ready")
+            if ready is None:
+                raise RuntimeError(self.log_path.read_text())
+            self.ready = json.loads(ready.read_text())
+            super().__init__(self.ready)
+        except BaseException:
+            self._stop()
+            raise
+
+    def close(self):
+        super().close()
+        self._stop()
+
+    def _stop(self):
         if self.process is not None and self.process.poll() is None:
             self.process.terminate()
             # Escalate only if a fixture fails to shut down gracefully.
