@@ -8,6 +8,7 @@
 #include <fstream>
 #include <future>
 #include <set>
+#include <stop_token>
 
 #include "collect_value.hh"
 #include "execution_service.hh"
@@ -246,13 +247,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // Once finalize() has taken the final status it is on its way to the
     // history: a "cancelling" written now would land after it and stay as the
     // run's state.
-    if (interrupted) detaching_.store(true);
+    if (interrupted) detaching_.request_stop();
     if (!interrupted && !finishing_) explicit_cancel_.store(true);
     if (!cancel_ && !finishing_) {
       cancel_ = true;
       interrupted_ = interrupted;
-      for (auto& node : nodes_)
-        if (node.cancellation) node.cancellation->stop.store(true);
+      work_stop_.request_stop();
       summary_.status.state = RunState::cancelling;
       persist_status_locked();
     }
@@ -277,8 +277,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     bool saved_partial_result = false;
   };
   struct BatchCancellation {
+    explicit BatchCancellation(std::stop_token run)
+        : run_stop(run, [this] { request_stop(); }) {}
+
     std::atomic<bool> stop{false};
     std::atomic<bool> failed{false};
+    std::stop_source stop_event;
+
+    void request_stop() {
+      stop.store(true);
+      stop_event.request_stop();
+    }
+
+    std::stop_callback<std::function<void()>> run_stop;
   };
   struct NodeRt {
     const Node* node = nullptr;
@@ -299,7 +310,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<FailureData> last_failure;
     std::optional<CardBuildPlan> build;
     std::optional<ExecutionTarget> build_target;
-    std::shared_ptr<BatchCancellation> cancellation;
     uint64_t display_rev = 0;
     std::optional<DisplayData> display;
     // Groups of the latest activation, saved at the end of the run.
@@ -688,8 +698,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               if (!w) continue;
               n.running = true;
               w->activation = ++n.activations;
-              w->cancellation = std::make_shared<BatchCancellation>();
-              n.cancellation = w->cancellation;
+              w->cancellation =
+                  std::make_shared<BatchCancellation>(work_stop_.get_token());
               ++running_;
               tasks_.push_back(std::move(*w));
               task_cv_.notify_one();
@@ -706,7 +716,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           stall_failure_ = stall_reason_locked();
           break;
         }
-        cv_.wait_for(l, std::chrono::milliseconds(200));
+        cv_.wait(l);
       }
       pool_stop_ = true;
     }
@@ -772,7 +782,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       {
         std::lock_guard<std::mutex> l(mu_);
         nodes_[w.node].running = false;
-        nodes_[w.node].cancellation.reset();
         --running_;
       }
       cv_.notify_all();
@@ -838,7 +847,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     request.cores = p_.nix_cores;
     request.timeout_seconds = node.settings.build_timeout_seconds;
     request.max_implementations = max_implementations;
-    request.cancel = &work.cancellation->stop;
+    request.cancel = work.cancellation->stop_event.get_token();
     // Resolve worker kind and system before any Card or source evaluation.
     prepared = svc_.prepare_execution(
         node, invocation_dir(node, work.invocation), request);
@@ -1150,8 +1159,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           failure = produced.failure.value_or(
               FailureData::make(FailureKind::interrupted, "batch interrupted"));
           work.cancellation->failed.store(!produced.detached &&
-                                          !detaching_.load());
-          work.cancellation->stop.store(true);
+                                          !detaching_.stop_requested());
+          work.cancellation->request_stop();
         }
         if (failure) produced.outputs.clear();
         members[index] = std::move(produced);
@@ -1433,10 +1442,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         History& h = svc_.history();
         std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
         const bool failed_batch =
-            out.failure && w.execution && !detaching_.load();
+            out.failure && w.execution && !detaching_.stop_requested();
         if (failed_batch) {
           w.cancellation->failed.store(true);
-          w.cancellation->stop.store(true);
+          w.cancellation->request_stop();
         }
         {
           std::lock_guard<std::mutex> lock(log_policy_mu_);
@@ -1915,7 +1924,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&] {
            return explicit_cancel_.load() || w.cancellation->failed.load();
          },
-         detaching_,
+         detaching_.get_token(),
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
@@ -1970,7 +1979,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            stage_begin(s, Phase::validate, StageOutcome::running, begin);
            svc_.server()->broadcast(timeline_note(
                run_id_, node.path, inv, Phase::validate, lane, begin, end));
-         }});
+         },
+         w.cancellation->stop_event.get_token()});
     s.transfer_direction.clear();
     s.transfer_name.clear();
     Produced p;
@@ -2169,9 +2179,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   uint32_t running_ = 0;
   uint64_t token_seq_ = 0;
   std::vector<std::string> seed_notes_;  // journaled once the run has started
+  std::stop_source work_stop_;
   std::atomic<bool> cancel_{false};
   std::atomic<bool> explicit_cancel_{false};
-  std::atomic<bool> detaching_{false};
+  std::stop_source detaching_;
   bool finishing_ =
       false;  // under mu_: the final status is decided, a cancel comes too late
   bool interrupted_ = false;

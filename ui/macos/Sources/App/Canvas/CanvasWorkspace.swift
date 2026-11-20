@@ -180,6 +180,8 @@ struct CanvasRunControl: View {
 
   var body: some View {
     let state = session.runStatus?.state ?? .idle
+    let label = session.stopRequested ? String(localized: "停止を要求中")
+      : (shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label)
     let problems = session.diagnostics.filter(\.error).count + session.cardStates.values.filter { $0.state == .failed }.count
     HStack(spacing: 8) {
       // One button of a fixed size: its title and color change, nothing moves.
@@ -192,23 +194,32 @@ struct CanvasRunControl: View {
       .buttonStyle(.borderedProminent)
       .tint(shownActive ? .red : .accentColor)
       .guideTarget("run")
-      .disabled(shownActive ? (!session.runActive || state == .cancelling) : !session.connected)
+      .disabled(shownActive ? !session.canStopRun : !session.connected)
       .help(shownActive ? tip(String(localized: "Workflow の実行を停止（チャットの回答停止とは別の操作です）"), .stop)
                         : tip(String(localized: "文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）"), .run))
-      // State and time on one line in a fixed width (what runs now is in the
-      // tooltip); the clock ticks in hundredths while the run is active.
-      HStack(spacing: 4) {
-        Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
-          .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
-        Text(shownActive && !session.runActive ? Tsugumi_Data_RunState.running.label : state.label).lineLimit(1)
-        SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
-          Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+      if let error = session.stopError {
+        Label(error, systemImage: "exclamationmark.circle.fill")
+          .foregroundStyle(.red)
+          .lineLimit(2)
+          .frame(width: 172, alignment: .leading)
+          .help(error)
+          .accessibilityElement(children: .combine)
+      } else {
+        // State and time on one line in a fixed width (what runs now is in the
+        // tooltip); the clock ticks in hundredths while the run is active.
+        HStack(spacing: 4) {
+          Image(systemName: shownActive ? Tsugumi_Data_RunState.running.symbol : state.symbol)
+            .foregroundStyle(shownActive ? Tsugumi_Data_RunState.running.color : state.color)
+          Text(label).lineLimit(1)
+          SwiftUI.TimelineView(.periodic(from: .now, by: session.runActive ? 0.03 : 1)) { _ in
+            Text(elapsed).monospacedDigit().foregroundStyle(.secondary).fixedSize()
+          }
         }
+        .frame(width: 172, alignment: .leading)
+        .help(shownActive ? (session.stopRequested ? label : (activity ?? state.label)) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
+                          : String(localized: "Run の状態と経過時間"))
+        .accessibilityElement(children: .combine)
       }
-      .frame(width: 172, alignment: .leading)
-      .help(shownActive ? (activity ?? state.label) + String(localized: "（経過時間は Run の受付から、実行環境の時計で計ります）")
-                        : String(localized: "Run の状態と経過時間"))
-      .accessibilityElement(children: .combine)
       Button { showIssues.toggle() } label: {
         HStack(spacing: 2) {
           Image(systemName: problems > 0 ? "exclamationmark.triangle.fill" : "checkmark.seal")

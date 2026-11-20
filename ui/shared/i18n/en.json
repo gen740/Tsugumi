@@ -963,6 +963,8 @@
   "停止": "Stop",
   "停止 終了": "stop end",
   "停止中": "Stopping",
+  "停止を要求中": "Stop requested",
+  "停止を要求できませんでした（{0}）": {"text": "Could not request Stop ({0})", "mac": ["@"]},
   "停止済み": "Stopped",
   "偶数を半分にする": "Halves even numbers",
   "偶数？": "Even?",

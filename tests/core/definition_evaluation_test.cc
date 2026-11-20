@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <cstdlib>
 #include <fstream>
+#include <future>
 
 #include "nix_eval.hh"
 #include "tsugumi/document/document.hh"
@@ -77,6 +78,43 @@ class DefinitionEvaluation : public ::testing::Test {
   std::filesystem::path root;
   NixCall call;
 };
+
+TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
+  auto eval = evaluator("builtins.readFile (args.root + \"/value\")");
+  std::promise<void> entered, enqueued, release;
+  auto gate = release.get_future();
+  auto busy_call = call;
+  busy_call.on_phase = [&](bool) {
+    entered.set_value();
+    gate.wait();
+  };
+  auto busy =
+      std::async(std::launch::async, [&] { eval->evaluate(busy_call); });
+  if (entered.get_future().wait_for(std::chrono::seconds(5)) !=
+      std::future_status::ready) {
+    release.set_value();
+    busy.get();
+    FAIL() << "first evaluation did not enter";
+  }
+
+  std::stop_source stop;
+  auto queued = call;
+  queued.cancel = stop.get_token();
+  queued.on_phase = [&](bool) { enqueued.set_value(); };
+  auto waiting = std::async(std::launch::async, [&] {
+    EXPECT_THROW(eval->evaluate(queued), NixInterrupted);
+  });
+  const auto admission =
+      enqueued.get_future().wait_for(std::chrono::seconds(5));
+  stop.request_stop();
+  // Bound the deadlock assertion so a regression can still release the gate.
+  const auto outcome = waiting.wait_for(std::chrono::seconds(5));
+  release.set_value();
+  waiting.get();
+  busy.get();
+  EXPECT_EQ(admission, std::future_status::ready);
+  EXPECT_EQ(outcome, std::future_status::ready);
+}
 
 TEST_F(DefinitionEvaluation,
        UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
@@ -178,6 +216,7 @@ TEST_F(DefinitionEvaluation,
 }  // namespace tsugumi
 
 auto main(int argc, char** argv) -> int {
+  tsugumi::NixEvaluator::run_subprocess_if_requested(argc, argv);
   if (auto result = tsugumi::NixEvaluator::build_client(argc, argv))
     return *result;
   testing::InitGoogleTest(&argc, argv);

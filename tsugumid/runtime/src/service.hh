@@ -125,7 +125,7 @@ class Service : public RequestSink {
       -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
-  auto remote_targets() const -> std::vector<RemoteTarget>;
+  auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
   static auto execution_diagnostic(const Node& node,
                                    const std::vector<RemoteTarget>& targets)
       -> std::optional<Diag>;
@@ -258,6 +258,7 @@ class Service : public RequestSink {
   std::unique_ptr<Scheduler> scheduler_;
   std::unique_ptr<Lane> mutation_lane_;
   std::unique_ptr<Lane> read_pool_;
+  std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;

@@ -129,7 +129,8 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
 
   const st = session.runStatus?.state ?? D.RunState.idle
   const info = runState(shownActive ? D.RunState.running : st)
-  const label = shownActive && !session.runActive ? runState(D.RunState.running).label : runState(st).label
+  const label = session.stopRequested ? L('停止を要求中')
+    : shownActive && !session.runActive ? runState(D.RunState.running).label : runState(st).label
   const problems = session.diagnostics.filter((d) => d.error).length + [...session.cardStates.values()].filter((s) => s.state === D.CardState.failed).length
 
   // What the run is doing now: the stage of a running Card, or how many run.
@@ -155,18 +156,23 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
     <div className="capsule material cv-run">
       {/* One button of a fixed size: its title and color change, nothing moves. */}
       <Button kind={shownActive ? 'danger' : 'prominent'} icon={shownActive ? 'stop.fill' : 'play.fill'} className="cv-run-button" guide="run"
-        disabled={shownActive ? !session.runActive || st === D.RunState.cancelling : !session.connected}
+        disabled={shownActive ? !session.canStopRun : !session.connected}
         help={shownActive ? tip(L('Workflow の実行を停止（チャットの回答停止とは別の操作です）'), 'stop') : tip(L('文書の Workflow 全体を開始 Card から実行（未保存の変更は先に保存します）'), 'run')}
         onClick={() => (session.runActive ? void session.cancelRun() : runAll(session))}>
         {shownActive ? L('停止') : L('実行')}
       </Button>
-      {/* State and time on one line in a fixed width (what runs now is in the tooltip). */}
-      <span className="cv-run-state"
-        title={shownActive ? (activity ?? runState(st).label) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
-        <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
-        <span className="nowrap">{label}</span>
-        <span className="secondary mono-digits nowrap">{elapsed}</span>
-      </span>
+      {session.stopError ? (
+        <span className="cv-run-state cv-stop-error" role="alert" title={session.stopError}>
+          {session.stopError}
+        </span>
+      ) : (
+        <span className="cv-run-state"
+          title={shownActive ? (session.stopRequested ? label : (activity ?? runState(st).label)) + L('（経過時間は Run の受付から、実行環境の時計で計ります）') : L('Run の状態と経過時間')}>
+          <Icon name={info.icon} style={{ color: `var(--${info.color})` }} />
+          <span className="nowrap">{label}</span>
+          <span className="secondary mono-digits nowrap">{elapsed}</span>
+        </span>
+      )}
       <span ref={issues}>
         <Button kind="borderless" small icon={problems > 0 ? 'exclamationmark.triangle.fill' : 'checkmark.seal'}
           style={{ color: problems > 0 ? 'var(--orange)' : 'var(--secondary)' }}

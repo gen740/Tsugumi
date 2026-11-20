@@ -33,7 +33,7 @@ struct BuildPlan {
 };
 
 auto check_interrupted(const NixCall& call) -> void {
-  if (call.cancel && call.cancel->load())
+  if (call.cancel.stop_requested())
     throw NixInterrupted(false, "mock build cancelled");
   if (call.deadline && std::chrono::steady_clock::now() >= *call.deadline)
     throw NixInterrupted(true, "mock build exceeded its deadline");
@@ -87,6 +87,8 @@ struct NixEvaluator::Impl {
 };
 
 auto NixEvaluator::init_process() -> void {}
+
+auto NixEvaluator::run_subprocess_if_requested(int, char**) -> void {}
 
 auto NixEvaluator::build_client(int, char**) -> std::optional<int> {
   return std::nullopt;
@@ -154,8 +156,6 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     const auto started = impl_->control / (*gate + ".started");
     const auto release = impl_->control / (*gate + ".release");
     fs::write_atomic(started, "started\n", 0600);
-    // The mock evaluator receives a cancellation flag and deadline in the
-    // evaluation call. They have no wake handle to join with the release file.
     while (!std::filesystem::exists(release)) {
       check_interrupted(call);
       std::this_thread::sleep_for(std::chrono::milliseconds(5));

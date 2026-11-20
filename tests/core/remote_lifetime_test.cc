@@ -76,6 +76,7 @@ class JournalBroker : public testing::Test {
         ::bind(socket_, reinterpret_cast<sockaddr*>(&address), sizeof address),
         0);
     ASSERT_EQ(::listen(socket_, 16), 0);
+    std::filesystem::create_symlink(path, path + ".c");
     thread_ = std::jthread([this] { Serve(); });
   }
   auto TearDown() -> void override {
@@ -107,7 +108,7 @@ class JournalBroker : public testing::Test {
     b.Finish(R::JobSpec::Pack(b, &spec));
     const std::string bytes(reinterpret_cast<const char*>(b.GetBufferPointer()),
                             b.GetSize());
-    EXPECT_EQ(client.submit("worker", journal->instance(), job, bytes).state,
+    EXPECT_EQ(client.submit("worker", journal->instance(), job, bytes, {}).state,
               "queued");
     return crypto::sha256_hex(bytes);
   }

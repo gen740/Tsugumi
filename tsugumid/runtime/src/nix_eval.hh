@@ -1,11 +1,8 @@
-// The Nix evaluator inside tsugumid (libnixexpr / libnixstore): one evaluator
-// and store connection per process, used from a single thread of its own, so
-// that nixpkgs is read once and evaluation state is reused between Cards and
-// runs. Transfers use libnix on the caller's thread. Native builds use a
-// separate Nix client so each connection has its own build options.
+// Cached libnix evaluation runs in a child that Stop can terminate. Transfers
+// use their own store connections in the core. Native builds use a separate
+// Nix client so each connection has its own build options.
 #pragma once
 
-#include <atomic>
 #include <chrono>
 #include <filesystem>
 #include <functional>
@@ -13,6 +10,7 @@
 #include <memory>
 #include <optional>
 #include <stdexcept>
+#include <stop_token>
 #include <string>
 #include <tuple>
 #include <vector>
@@ -48,7 +46,7 @@ struct NixCall {
   std::optional<uint32_t> jobs;
   std::optional<uint32_t> cores;
   uint32_t max_implementations = kMaxExecutionBatchSize;
-  const std::atomic<bool>* cancel = nullptr;
+  std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;
   NixOutput log;  // evaluation messages and build output
   std::function<void(bool building)>
@@ -79,6 +77,7 @@ class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).
   static void init_process();
+  static auto run_subprocess_if_requested(int argc, char** argv) -> void;
   // Dispatch the private build-client mode before starting the evaluator.
   static auto build_client(int argc, char** argv) -> std::optional<int>;
   // `entry` is the entry function's source; `allowed` the folders evaluation
@@ -106,8 +105,6 @@ class NixEvaluator {
   // applied here before derivations cross into the restricted Card evaluator.
   // It also supplies the target system, cancellation, deadline and log.
   FlakeInfo flake(const NixCall& call, const std::string& ref);
-
-  // Resident memory of the evaluator's heap (Boehm GC), in bytes.
 
  private:
   struct Impl;

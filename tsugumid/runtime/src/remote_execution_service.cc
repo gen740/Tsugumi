@@ -2,8 +2,9 @@
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
 #include <fstream>
-#include <thread>
+#include <mutex>
 
 #include "remote_invocation.hh"
 #include "service.hh"
@@ -28,8 +29,8 @@ auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
   throw BrokerDisconnected("execution gateway returned an unknown job state");
 }
 
-auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job)
-    -> RemoteJobState {
+auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
+                     std::stop_token stop) -> RemoteJobState {
   const auto& s = job.invocation;
   const auto fingerprint = crypto::sha256_hex(job.spec);
   RemoteJobState reply;
@@ -37,8 +38,8 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job)
     reply = client.cancel(s.execution_service, job.instance, s.execution_job_id,
                           fingerprint);
   } else {
-    reply =
-        client.status(s.execution_service, job.instance, s.execution_job_id);
+    reply = client.status(s.execution_service, job.instance, s.execution_job_id,
+                          stop);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted)
         return {"interrupted",
@@ -46,7 +47,7 @@ auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job)
                 {},
                 "the execution service lost a previously accepted job"};
       reply = client.submit(s.execution_service, job.instance,
-                            s.execution_job_id, job.spec);
+                            s.execution_job_id, job.spec, stop);
     }
   }
   if (reply.fingerprint != fingerprint)
@@ -124,14 +125,14 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       service_.project_id() + "\n" + s.run_id + "\n" + path_key(node.path) +
       "\n" + std::to_string(s.invocation));
   const auto archive_digest = stage_remote_archive(
-      client_, target_, instance_, s.execution_job_id, archive_, request.cancel,
+      client_, target_, instance_, s.execution_job_id, archive_, request.stop,
       [&](uint64_t done, uint64_t total) {
         if (request.transfer) request.transfer("upload", "Nix", done, total);
       });
   auto spec =
       stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
                               service_.file_roots(), archive_digest, request);
-  if (request.cancel.load())
+  if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
 
@@ -150,14 +151,16 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
 
   auto& history = service_.history();
   ExecutionResult output;
-  while (!request.detach.load()) {
+  std::mutex wait_mutex;
+  std::condition_variable_any next_status;
+  while (!request.detach.stop_requested()) {
     const auto before = s.execution_state;
-    if (request.cancel_requested() && !job.cancel_requested) {
-      job.cancel_requested = true;
-    }
+    job.cancel_requested |= request.cancel_requested();
+    const auto stop = job.cancel_requested ? request.detach : request.stop;
     std::optional<RemoteJobState> reply;
     try {
-      reply = poll_remote_job(client_, job);
+      reply = poll_remote_job(client_, job, stop);
+      if (stop.stop_requested()) continue;
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,
@@ -173,22 +176,28 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           FailureData::make(FailureKind::invalid_request, error.what());
       return output;
     } catch (const std::exception&) {
+      if (stop.stop_requested()) continue;
       reply.reset();
       s.execution_state = RemoteExecutionState::disconnected;
     }
-    if (request.detach.load()) throw ExecutionDetached{};
+    if (request.detach.stop_requested()) throw ExecutionDetached{};
     if (reply && reply->log_truncated && !s.log_truncated_at_bytes) {
       s.log_truncated_at_bytes = request.log_limit_bytes;
       if (request.log_truncated) request.log_truncated();
     }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
+      if (job.cancel_requested) {
+        output.failure =
+            FailureData::make(FailureKind::cancelled, "Run cancelled");
+        return output;
+      }
       try {
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules", node.outputs,
-            request.display, request.detach,
+            request.display, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -208,6 +217,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         if (output.failure) s.execution_state = RemoteExecutionState::failed;
         return output;
       } catch (const BrokerDisconnected&) {
+        if (request.stop.stop_requested()) continue;
         s.execution_state = RemoteExecutionState::disconnected;
         request.publish();
       }
@@ -217,7 +227,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       output.failure = remote_failure(*reply);
       return output;
     }
-    std::this_thread::sleep_for(std::chrono::milliseconds(750));
+    // The worker protocol reports progress by polling. Stop interrupts the
+    // interval and the exchange so Cancel can use a new connection immediately.
+    std::unique_lock lock(wait_mutex);
+    next_status.wait_for(lock, stop, std::chrono::milliseconds(750),
+                         [] { return false; });
   }
   throw ExecutionDetached{};
 }
@@ -238,14 +252,16 @@ auto RemoteExecutionService::prepare(const Node& node,
     throw Failed(
         FailureKind::unsupported,
         "remote worker requires sandbox, no worker reuse or host folders");
-  const auto targets = service_.remote_targets();
+  const auto targets = service_.remote_targets(build.cancel);
+  if (build.cancel.stop_requested())
+    throw Failed(FailureKind::cancelled, "worker selection cancelled");
   const auto target =
       std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
   if (target == targets.end())
     throw Failed(FailureKind::unsupported, "execution service " +
                                                settings.execution_service +
                                                " is not registered");
-  auto probe = client_.probe(target->id, target->server_id);
+  auto probe = client_.probe(target->id, target->server_id, build.cancel);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
   if (settings.execution_resources && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,

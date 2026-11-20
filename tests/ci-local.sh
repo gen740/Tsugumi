@@ -72,6 +72,15 @@ linux_in_container() {
       git config --global --add safe.directory /src
       git init -q && git add -A
       echo "experimental-features = nix-command flakes" >> /etc/nix/nix.conf
+      # Daemon cancellation tests use a real build connection in this container.
+      nix-daemon &
+      daemon_pid=$!
+      trap "kill $daemon_pid 2>/dev/null || true; wait $daemon_pid || true" EXIT
+      # A store ping verifies readiness, including when a stale socket exists.
+      until nix store ping --store daemon >/dev/null 2>&1; do
+        kill -0 "$daemon_pid"
+        sleep 0.1
+      done
       # The image has no ps, which the isolated test runner uses to clean up.
       nix shell --inputs-from . nixpkgs#procps -c bash tests/ci-local.sh linux'
 }
