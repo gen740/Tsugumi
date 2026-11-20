@@ -98,23 +98,18 @@ assert.equal(folded.h, CardGeometry.header * 0.3)
 // The kinds as the daemon names them.
 assert.equal(cardKindNamed('something new'), 'code')
 
-// The UI asks only for a note. No client-side diff, model choice or note write.
+// The UI asks only for the change record. No client-side diff, model or note write.
 const { ProjectSession } = await import('../src/model/session')
 const { layoutHost } = await import('../src/wire/hostLayout')
 const rawCanvas = { layoutJson: '{"cards":{"plan":{"x":120,"y":80}}}', cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
 const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [], flow: 'topToBottom' }
 const fetchBefore = globalThis.fetch
-let mode: 'mechanical' | 'agent' = 'mechanical'
 let failNote = false
 const calls: { path: string; body?: Record<string, unknown> }[] = []
 globalThis.fetch = async (url, init) => {
   const path = String(url)
   const body = init?.body ? JSON.parse(String(init.body)) : undefined
   calls.push({ path, body })
-  if (path === '/api/settings') {
-    if (body?.versionNoteMode) mode = body.versionNoteMode
-    return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
-  }
   if (path === '/api/versions/comments') return new Response(JSON.stringify({ comments: [{ card: 'plan', text: 'Ask', change: 'resolved', by: 'agent', cards: ['plan'] }] }))
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
@@ -126,17 +121,12 @@ try {
     assert.deepEqual(input, rawCanvas)
     return hostCanvas
   } }, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
-  await session.loadVersionNoteMode()
-  assert.equal(session.versionNoteMode, 'mechanical')
   await session.loadVersionCanvas('version')
   assert.deepEqual(session.versionCanvases.get('version'), hostCanvas)
   await session.loadVersionNote('version')
   assert.equal(session.versionNotes.get('version'), 'Host-owned note')
   assert.equal(session.versionComments.get('version')?.[0].card, 'plan')
   assert.deepEqual(calls.at(-1), { path: '/api/versions/note', body: { path: '/project', commit: 'version' } })
-  await session.setVersionNoteMode('agent')
-  assert.equal(session.versionNoteMode, 'agent')
-  assert.equal(session.versionNotes.size, 0)
   failNote = true
   await session.loadVersionNote('version')
   assert.equal(session.versionNoteBusy.size, 0)
@@ -150,13 +140,12 @@ try {
   globalThis.fetch = (url, init) => String(url) === '/api/versions/note'
     ? new Promise<Response>((resolve) => { release = resolve }) : immediateFetch(url, init)
   const oldRequest = session.loadVersionNote('version')
-  await session.setVersionNoteMode('mechanical')
   globalThis.fetch = immediateFetch
   await session.loadVersionNote('version')
-  release(new Response(JSON.stringify({ text: 'Late response for the previous mode' })))
+  release(new Response(JSON.stringify({ text: 'Late response for an earlier request' })))
   await oldRequest
-  assert.equal(session.versionNotes.get('version'), 'Host-owned note', 'a late response cannot overwrite the chosen mode')
+  assert.equal(session.versionNotes.get('version'), 'Host-owned note', 'a late response cannot overwrite a newer one')
 } finally {
   globalThis.fetch = fetchBefore
 }
-console.log('version canvas and comments: host requests; notes: mode switching, failure display and retry passed')
+console.log('version canvas and comments: host requests; notes: failure display, retry and late responses passed')

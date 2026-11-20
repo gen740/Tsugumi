@@ -435,14 +435,10 @@ public actor CoreHostClient {
     return result.comments.compactMap { $0 }
   }
 
-  /// Platform credential transport only; hostd chooses the note mode and model.
-
+  /// The version's change record, rendered by hostd in `language`.
   public func versionNote(project: String, commit: String, language: String) async throws -> String {
-    for (id, account) in [("anthropic", "Anthropic"), ("openai", "OpenAI")] {
-      try await provisionKey(Keychain.loadWithoutAsking(account: account), id: id)
-    }
     let request = Tsugumi_Host_VersionNoteRequestT(); request.projectId = project; request.commit = commit
-    request.profile = "desktop"; request.language = language; request.anthropicKeyProfile = keyProfile; request.openaiKeyProfile = keyProfile
+    request.language = language
     let result: Tsugumi_Service_TextResultT = try await hostCall(.versionnoterequest, request)
     return result.text ?? ""
   }

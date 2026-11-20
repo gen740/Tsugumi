@@ -598,7 +598,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `ModelSelectionRequest` | `profile: string` (required), `purpose: string` (required) |
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
-| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `profile: string` (required), `language: string` (required), `anthropic_key_profile: string`, `openai_key_profile: string` |
+| `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `language: string` (required) |
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |

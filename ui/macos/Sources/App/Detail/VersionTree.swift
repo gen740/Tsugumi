@@ -164,7 +164,6 @@ struct VersionTreeView: View {
   @State private var name = ""
   @State private var message = ""
   @State private var confirmStart: String?
-  @HostStorage("versions.noteMode") private var noteMode = "mechanical"
   // The version under the pointer, where the pointer came in, and the one
   // whose panel shows (a moment later).
   @State private var pointed: String?
@@ -224,15 +223,6 @@ struct VersionTreeView: View {
     } message: {
       Text("今の定義と追加パスは版として残ってから、この版の内容に戻ります。ここから変更して実行すると、新しい枝になります。")
     }
-    .onChange(of: noteMode) {
-      session.versionNotes.removeAll()
-      session.versionNoteRequests.removeAll()
-      session.versionNoteBusy.removeAll()
-      session.versionNoteErrors.removeAll()
-      Task {
-        for commit in Set([selected, pointed].compactMap { $0 }) { await session.loadVersionNote(commit) }
-      }
-    }
     .task(id: selected) {
       if let selected { await session.loadVersionNote(selected) }
     }
@@ -271,16 +261,6 @@ struct VersionTreeView: View {
         }
       }
       Spacer()
-      VStack(alignment: .leading, spacing: 3) {
-        Picker("版のノート", selection: $noteMode) {
-          Text("変更の記録").tag("mechanical")
-          Text("Agent の要約").tag("agent")
-        }
-        .fixedSize()
-        Text("変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。")
-          .font(.caption).foregroundStyle(.secondary)
-        if let error = CorePreferences.shared.error { Text(error).font(.caption).foregroundStyle(.red) }
-      }
       Button("版として残す…") {
         name = ""
         message = ""
@@ -328,8 +308,8 @@ struct VersionTreeView: View {
     }
   }
 
-  /// What shows while the pointer is on a version: what it changed, in a
-  /// selected note style, and its Cards. Below the pointer, or above it near the
+  /// What shows while the pointer is on a version: its change record and its
+  /// Cards. Below the pointer, or above it near the
   /// bottom of the tree.
   @ViewBuilder
   private func hoverPanel(_ g: Tsugumi_RPC_VersionGraphT, in size: CGSize) -> some View {

@@ -63,7 +63,6 @@ TEST_F(VersionNote,
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
   EXPECT_EQ(versions.note(params).record_json, neutral);
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
-  EXPECT_TRUE(host::ReadSummary(root, params, true).empty());
   Put("definitions/a/_card.json",
       "{ \"params\": [ { \"data\": \"PRIVATE_SENTINEL\", \"name\": \"secret\" "
       "} ], \"language\": \"python\" "
@@ -82,9 +81,6 @@ TEST_F(VersionNote,
   EXPECT_TRUE(host::VersionDiff(root, change).truncated);
   ExpectChanges(versions.note(change).record_json, {"c"}, {"b"},
                 {{"a", {"definition", "source", "wiring"}}});
-  host::StoreSummary(root, change, true, "An Agent note");
-  EXPECT_EQ(host::ReadSummary(root, change, true), "An Agent note");
-  EXPECT_TRUE(host::ReadSummary(root, change, false).empty());
   EXPECT_EQ(host::ChangeText(
                 version_facts::changes(versions.note(change).record_json), true)
                 .find("SENTINEL"),
@@ -183,11 +179,11 @@ TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
   EXPECT_FALSE(host::ChangeText(changes, true).empty());
 }
 TEST(VersionText, ModelReadPolicyLivesOnTheHost) {
-  EXPECT_TRUE(host::SummaryReads("externals/p/definitions/a/src/main.py"));
-  EXPECT_TRUE(host::SummaryReads("definitions/a/_meta.json"));
-  EXPECT_FALSE(host::SummaryReads("definitions/a/src/data.csv"));
-  EXPECT_FALSE(host::SummaryReads("definitions/a/data/private.py"));
-  EXPECT_FALSE(host::SummaryReads("layout.json"));
+  EXPECT_TRUE(host::DiffReads("externals/p/definitions/a/src/main.py"));
+  EXPECT_TRUE(host::DiffReads("definitions/a/_meta.json"));
+  EXPECT_FALSE(host::DiffReads("definitions/a/src/data.csv"));
+  EXPECT_FALSE(host::DiffReads("definitions/a/data/private.py"));
+  EXPECT_FALSE(host::DiffReads("layout.json"));
 }
 }  // namespace
 }  // namespace tsugumi

@@ -170,7 +170,6 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
   const [hovered, setHovered] = useState<string>()
   const treeRef = useRef<HTMLDivElement>(null)
   useEffect(() => { void session.refreshVersions() }, [session, session.rev])
-  useEffect(() => { void session.loadVersionNoteMode().catch((e) => setError(String(e))) }, [session])
   useEffect(() => {
     setHovered(undefined)
     if (!pointed) return
@@ -180,10 +179,10 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
       void session.loadVersionNote(pointed)
     }, 250)
     return () => clearTimeout(t)
-  }, [session, pointed, session.versionNoteMode])
+  }, [session, pointed])
   useEffect(() => {
     if (selected) void session.loadVersionNote(selected)
-  }, [session, selected, session.versionNoteMode])
+  }, [session, selected])
   // The run's note is written as the run ends: read it a moment later.
   useEffect(() => {
     const t = setTimeout(() => void session.refreshVersions(), 600)
@@ -236,14 +235,6 @@ export function VersionTreeView({ session }: { session: ProjectSession }) {
         <span>{branch ? L('枝: {0}', branch) : L('枝の外（次の変更で新しい枝）')}</span>
         {(g.dirty || session.dirty) && <span className="caption" style={{ color: 'var(--orange)' }}>{L('最後の版から変更あり（次の実行で版になります）')}</span>}
         <span className="flex1" />
-        <div className="col gap4">
-          <label>{L('版のノート')} <select value={session.versionNoteMode}
-            onChange={(e) => act(() => session.setVersionNoteMode(e.target.value as 'mechanical' | 'agent'))}>
-            <option value="mechanical">{L('変更の記録')}</option>
-            <option value="agent">{L('Agent の要約')}</option>
-          </select></label>
-          <div className="caption secondary">{L('変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。')}</div>
-        </div>
         <Button disabled={!session.connected} onClick={() => setNaming(true)}>{L('版として残す…')}</Button>
         <Button kind="borderless" iconOnly icon="arrow.clockwise" help={L('読み直す')} onClick={() => void session.refreshVersions()} />
       </div>

@@ -58,8 +58,6 @@ interface Settings {
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
-  /** Hostd chooses how to produce version notes. */
-  versionNoteMode: 'mechanical' | 'agent'
   allowUnscopedHelpers: boolean
   animateAgentWork: boolean
   /** The UI's language (the desktop app's too, on a Mac): the page's strings, the
@@ -76,7 +74,7 @@ const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
   effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
-  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
+  animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', language: 'app.language',
 }
 const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolders', vmCpus: 'vm.cpus', vmMemoryGiB: 'vm.memoryGiB', vmStoreGiB: 'vm.storeGiB' }
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
@@ -503,8 +501,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   },
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
-    const [anthropic_key_profile, openai_key_profile] = await Promise.all([core.keys.provision('anthropic'), core.keys.provision('openai')])
-    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), profile: settingsProfile(), language: settings().language, anthropic_key_profile, openai_key_profile })
+    return core.user.call('VersionNoteRequest', { project_id: project, commit: String(b.commit), language: settings().language })
   },
   'POST /api/settings/key': async (b) => ({ message: await saveKey(keyedProvider(b.provider), String(b.key ?? '')) }),
   'POST /api/settings/key/delete': async (b) => ({ message: await deleteKey(keyedProvider(b.provider)) }),

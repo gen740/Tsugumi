@@ -752,9 +752,8 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
       context->inspected = host::CaptureSaveBase(InspectProject(project, stop));
     const auto& base = inspected ? *inspected : *context->inspected;
     const auto at_rev = json::Get(base.snapshot, "rev");
-    if (!revision.empty() &&
-        json::UInt(json::String(revision, revision)) !=
-            json::UInt(json::String(at_rev, at_rev)))
+    if (!revision.empty() && json::UInt(json::String(revision, revision)) !=
+                                 json::UInt(json::String(at_rev, at_rev)))
       throw Failure("revision_conflict",
                     "The project changed; read the project again and "
                     "re-apply your input.");
@@ -766,13 +765,14 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
     if (const auto found = base.files.find(path); found != base.files.end())
       return cache.emplace(path, context->policy->FileText(path, found->second))
           .first->second;
-    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"},
+    json::Members args{{"path", json::Quote(path)},
+                       {"limit_bytes", "1048576"},
                        {"at_rev", at_rev}};
     std::string bytes;
     for (;;) {
       args["offset"] = std::to_string(bytes.size());
-      const auto reply = json::Object(
-          RawProjectCall(project, "project_file_read", json::Encode(args), stop));
+      const auto reply = json::Object(RawProjectCall(
+          project, "project_file_read", json::Encode(args), stop));
       if (json::Text(reply, "reply") == "Failure") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
         const auto kind = json::Text(failure, "kind");
@@ -1351,6 +1351,25 @@ auto Tools::ExecuteTool(const std::string& conversation,
       } catch (const host::FolderReadFailure& error) {
         throw Failure(error.code, error.what());
       }
+    } else if (call.name == "version_diff") {
+      std::string root;
+      {
+        std::lock_guard lock(mutex);
+        auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
+        path.bind(1, project);
+        if (path.step()) root = path.text(0);
+      }
+      if (root.empty())
+        throw Failure("not_found", "Project path is not registered");
+      const auto from = json::Text(args, "from_commit");
+      const auto diff = host::VersionDiff(
+          root, host::ResolveVersion(root, json::Text(args, "commit")),
+          from.empty() ? "" : host::ResolveVersion(root, from));
+      result = json::Encode(json::Members{
+          {"reply", json::Quote("VersionDiff")},
+          {"value", json::Encode(json::Members{
+                        {"text", json::Quote(diff.text)},
+                        {"truncated", diff.truncated ? "true" : "false"}})}});
     } else if (spec->host) {
       const auto bytes = catalog.HostRequest(call.name, json::Encode(args), 1);
       try {

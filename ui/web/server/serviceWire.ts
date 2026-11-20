@@ -106,7 +106,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
   if (host) switch (method) {
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
-    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
+    case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.language)
     case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
     case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
     case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)

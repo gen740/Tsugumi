@@ -76,7 +76,6 @@
 "Agent のリクエストは ChatGPT プランの利用枠から使われます。利用状況は ChatGPT の設定（Usage）で確認・管理できます。" = "The Agent's requests use your ChatGPT plan. You can review and manage usage in ChatGPT settings (Usage).";
 "Agent の作業をアニメーションで表示" = "Animate the Agent’s work";
 "Agent の発言とツールの結果を、数秒ごとに小さなモデル（%@、接続先: %@）に送って要約し、Canvas の鶫の吹き出しに出します。Agent とは別に token を使います。オフにすると、吹き出しはツール呼び出しから作る短い文だけになります。" = "Every few seconds the Agent's words and tool results are sent to a small model (%@, via %@) to be summarized and shown in the Tsugumi's speech bubble on the canvas. This uses tokens besides the Agent's. When off, the bubble shows only short lines made from tool calls.";
-"Agent の要約" = "Agent summary";
 "Altair（対話型 HTML）" = "Altair (interactive HTML)";
 "Anthropic API キー" = "Anthropic API Key";
 "Anthropic API（API キー）" = "Anthropic API (API key)";
@@ -986,8 +985,6 @@
 "変更: %@" = "Changed: %@";
 "変更した Card: %@" = "Changed Cards: %@";
 "変更できませんでした" = "Could not change";
-"変更の記録" = "Change record";
-"変更の記録は Card の追加・削除と定義・ソース・パラメータ・接続の変更を無料で記録します。Agent の要約は差分をモデルのプロバイダへ送り、token を使います。この設定は全プロジェクトに適用します。" = "The change record lists added and removed Cards and changes to definitions, source, parameters and wiring at no cost. The Agent summary sends the diff to the model provider and uses tokens. This setting applies to all projects.";
 "変更はありません" = "No changes";
 "変更はメニューに反映されます（反映されない場合はウインドウを開き直してください）。" = "Changes apply to the menus (reopen the window if they do not).";
 "変更は操作するたびに保存されます。チャットや別のウインドウでの変更もすぐに反映されます。" = "Changes are saved as you make them. Changes from the chat or other windows show up at once.";
@@ -1300,7 +1297,6 @@
 "版として残す" = "Keep as Version";
 "版として残す…" = "Keep as Version…";
 "版に含める追加パス" = "Additional paths to version";
-"版のノート" = "Version note";
 "版の履歴" = "Version History";
 "版の履歴…" = "Version History…";
 "版の履歴を開く（確定 revision %llu、⌥⌘Y）" = "Open the version history (saved revision %llu, ⌥⌘Y)";

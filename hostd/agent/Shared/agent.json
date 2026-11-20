@@ -36,6 +36,25 @@
   ],
   "hostTools": [
     {
+      "name": "version_diff",
+      "description": "Read the code and settings diff of a saved version against its first parent, or against from_commit. Covers tsugumi.json, Card definitions and code in src/; data files and layout.json are left out. Long diffs are cut (truncated).",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "commit": {
+            "type": "string"
+          },
+          "from_commit": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "commit"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "tool_result_read",
       "description": "Read saved tool output by call_id. Returns text, next_offset, total_bytes and eof; offsets are UTF-8 bytes, pages default/max 2048 bytes.",
       "inputSchema": {
@@ -908,6 +927,7 @@
       "versions": {
         "graph": "version_graph",
         "canvas": "version_canvas",
+        "diff": "version_diff",
         "checkout": "version_checkout",
         "init": "version_init",
         "mark": "version_mark"

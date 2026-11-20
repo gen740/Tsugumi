@@ -118,8 +118,6 @@ using git::Ptr;
 using Repo = Ptr<git_repository, git_repository_free>;
 using Tree = Ptr<git_tree, git_tree_free>;
 using Commit = Ptr<git_commit, git_commit_free>;
-using Sig = Ptr<git_signature, git_signature_free>;
-using Note = Ptr<git_note, git_note_free>;
 using Diff = Ptr<git_diff, git_diff_free>;
 using Patch = Ptr<git_patch, git_patch_free>;
 
@@ -137,10 +135,6 @@ bool open(Repo& r, const stdfs::path& root) {
                                  GIT_REPOSITORY_OPEN_NO_SEARCH, nullptr) == 0;
 }
 
-auto SummaryRef(bool english) -> const char* {
-  return english ? "refs/notes/tsugumi-summary-en"
-                 : "refs/notes/tsugumi-summary-ja";
-}
 }  // namespace
 auto ResolveVersion(const std::filesystem::path& root, const std::string& name)
     -> std::string {
@@ -158,7 +152,7 @@ auto ResolveVersion(const std::filesystem::path& root, const std::string& name)
   return full;
 }
 
-auto SummaryReads(const std::string& path) -> bool {
+auto DiffReads(const std::string& path) -> bool {
   if (path == "tsugumi.json")
     return true;  // layout.json is where things sit, not what they do
   std::vector<std::string> parts;
@@ -216,7 +210,7 @@ auto VersionDiff(const stdfs::path& root, const std::string& commit,
     const auto* delta = git_diff_get_delta(d.get(), i);
     const char* path =
         delta->new_file.path ? delta->new_file.path : delta->old_file.path;
-    if (!path || !SummaryReads(path)) continue;
+    if (!path || !DiffReads(path)) continue;
     Patch p;
     if (git_patch_from_diff(p.out(), d.get(), i) != 0 || !p) continue;
     git_buf buf = GIT_BUF_INIT;
@@ -241,34 +235,4 @@ auto VersionDiff(const stdfs::path& root, const std::string& commit,
   return out;
 }
 
-auto ReadSummary(const stdfs::path& root, const std::string& commit,
-                 bool english) -> std::string {
-  init_once();
-  Repo repo;
-  git_oid oid;
-  if (!open(repo, root) || git_oid_fromstr(&oid, commit.c_str()) != 0)
-    throw ProjectFailure("not_found", "no version " + commit);
-  Note note;
-  if (git_note_read(note.out(), repo.get(), SummaryRef(english), &oid) != 0)
-    return "";
-  return git_note_message(note.get());
-}
-auto StoreSummary(const stdfs::path& root, const std::string& commit,
-                  bool english, const std::string& text) -> void {
-  init_once();
-  Repo repo;
-  git_oid oid;
-  if (!open(repo, root) || git_oid_fromstr(&oid, commit.c_str()) != 0)
-    throw ProjectFailure("not_found", "no version " + commit);
-  Commit target;
-  check(git_commit_lookup(target.out(), repo.get(), &oid), "summary target");
-  Sig sig;
-  if (git_signature_default(sig.out(), repo.get()) != 0)
-    check(git_signature_now(sig.out(), "Tsugumi", "tsugumi@localhost"),
-          "signature");
-  git_oid result;
-  check(git_note_create(&result, repo.get(), SummaryRef(english), sig.get(),
-                        sig.get(), &oid, text.c_str(), 1),
-        "summary");
-}
 }  // namespace tsugumi::host
