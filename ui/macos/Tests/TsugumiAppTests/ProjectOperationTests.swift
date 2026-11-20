@@ -147,6 +147,34 @@ import TsugumiTestSupport
     calls.continuation.finish()
   }
 
+  @Test func draftInputPresetPreservesExistingSchema() async throws {
+    let (session, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let snapshot = Tsugumi_RPC_ProjectSnapshotT()
+    snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
+    snapshot.layoutJson = "{}"
+    let definition = Tsugumi_RPC_DefinitionT()
+    definition.id = "a"; definition.cardJson = #"{"template":"draft"}"#
+    snapshot.definitions = [definition]
+    let schema = Tsugumi_RPC_SourceInfoT()
+    schema.path = "definitions/a/_outputs.fbs"; schema.hash = "custom"; schema.sizeBytes = 32
+    snapshot.sources = [schema]
+    session.receiveProjectSnapshot(snapshot, projectId: "p")
+    session.operateProject = { request in
+      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
+      #expect(!body.edits.contains { $0?.value?.type == .projectfileput || $0?.value?.type == .projectfileremove })
+      let saved = self.delta(0, request.opId, "saved")
+      saved.projectJson = snapshot.projectJson
+      return self.result(saved)
+    }
+    let editor = CardEditorModel(session: session, cardKey: "a")
+    editor.implementAs("input")
+    editor.implementAs("input_bool")
+    #expect(editor.kind == .input)
+    #expect(await editor.apply())
+    #expect(session.sources[schema.path]?.hash == "custom")
+  }
+
   @Test func parameterAndDraftKeepTheirSelectedValues() async throws {
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
@@ -257,52 +285,38 @@ import TsugumiTestSupport
     calls.continuation.finish()
   }
 
-  @Test func internalDocumentsFinishBeforeTheNextGesture() async throws {
+  @Test func internalDocumentsApplyInRevisionOrder() async throws {
     for echoFirst in [false, true] {
       let (session, dir) = try session()
       defer { try? FileManager.default.removeItem(at: dir) }
       let prefix = "externals/sub/"
       let project = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
       func card(_ value: UInt64) -> String { #"{"template":"input","params":[{"name":"value","type":"int","data":\#(value)}]}"# }
-      let reads = AsyncStream<CheckedContinuation<Void, Never>>.makeStream()
-      var iterator = reads.stream.makeAsyncIterator()
-      session.readExternalFile = { path, revision in
-        if path.hasSuffix("/_card.json") && revision == 1 {
-          await withCheckedContinuation { reads.continuation.yield($0) }
-        }
-        return Data((path.hasSuffix("/tsugumi.json") ? project : card(revision + 1)).utf8)
-      }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
       snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
-      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = "{}"; link.linkJson = #"{"external":"sub"}"#
+      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"external":"sub"}"#
       snapshot.definitions = [link]
-      func sources(_ value: UInt64) -> [Tsugumi_RPC_SourceInfoT?] {
-        [prefix + "tsugumi.json", prefix + "definitions/a/_card.json"].map { path in
-          let source = Tsugumi_RPC_SourceInfoT(); source.path = path; source.hash = String(value); return source
-        }
+      func source(_ file: String, _ text: String) -> Tsugumi_RPC_SourceInfoT {
+        let value = Tsugumi_RPC_SourceInfoT(); value.path = prefix + file; value.documentJson = text
+        return value
       }
-      snapshot.sources = sources(0)
+      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", card(1))]
       session.receiveProjectSnapshot(snapshot, projectId: "p")
-      await session.refreshExternals()?.value
       var calls = 0
       session.operateProject = { request in
         calls += 1
         let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
         let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
         #expect(try field.oldValue.json.map(JSONValue.parse) == .number(String(calls)))
-        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = sources(UInt64(calls))
+        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = [source("definitions/a/_card.json", card(UInt64(calls + 1)))]
         if echoFirst { session.applyDelta(d) }
         return self.result(d)
       }
       session.setParam("sub/a", "value", .number("2"))
       session.setParam("sub/a", "value", .number("3"))
-      let release = try #require(await iterator.next())
-      #expect(calls == 1)
-      release.resume()
       await session.save()
       #expect(calls == 2 && session.saveError == nil)
       #expect(session.cardDefinition("sub/a")?["params"]?.array?.first?["data"] == .number("3"))
-      reads.continuation.finish()
     }
   }
 
@@ -682,10 +696,45 @@ extension ProjectOperationTests {
     #expect(s.comments("plan").isEmpty)
   }
 
+  @Test func writingANewDraftWaitsForPlacementAndRevealsIt() async throws {
+    let (s, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let placements = AsyncStream<CheckedContinuation<String, Never>>.makeStream()
+    defer { placements.continuation.finish() }
+    s.prepareLayout = { project, _, _ in
+      let cards = try JSONValue.parse(project)["canvas"]?["cards"]?.array
+      guard cards?.first?["id"]?.string == "draft" else { return "{}" }
+      return await withCheckedContinuation { placements.continuation.yield($0) }
+    }
+    s.cardIdProvider = { name, _ in name }
+    s.operateProject = { request in
+      let d = self.delta(s.rev, request.opId, "draft")
+      d.projectJson = #"{"canvas":{"cards":[{"id":"draft"}],"connections":[]}}"#
+      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
+    }
+    let tab = WorkflowTab(scope: [])
+    let canvas = GraphCanvas(workspace: Workspace(), session: s, tab: tab)
+    let viewport = CGSize(width: 800, height: 600)
+    let draft = try await s.addCard(template: .draft, in: [], at: .zero, name: "draft", automaticPlacement: true)
+    var waiting = placements.stream.makeAsyncIterator()
+    let placement = try #require(await waiting.next())
+    let writing = canvas.writeDraft(draft, in: viewport)
+    #expect(s.inlineDraft == nil)
+    placement.resume(returning: #"{"cards":{"draft":{"x":4000,"y":4000}}}"#)
+    await writing.value
+
+    let origin = s.placedPosition(draft), geometry = s.geometry(draft).size
+    let a = canvas.screen(origin)
+    let b = canvas.screen(CGPoint(x: origin.x + geometry.width, y: origin.y + geometry.height))
+    #expect(a.x >= 0 && a.y >= 0 && b.x <= viewport.width && b.y <= viewport.height)
+    #expect(s.inlineDraft?.card == draft)
+  }
+
   @Test func automaticAndExplicitCardPlacementReachTheHost() async throws {
     let (s, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
     s.cardIdProvider = { name, _ in name }
+    s.prepareLayout = { _, _, _ in #"{"cards":{"auto":{"x":50,"y":4000}}}"# }
     let here = CGPoint(x: 4000, y: 4000)
     var placements: [Bool] = []
     s.operateProject = { request in
@@ -693,55 +742,19 @@ extension ProjectOperationTests {
       #expect(add.x == here.x && add.y == here.y && add.template == "draft")
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
-      d.projectJson = nil
-      let x = add.automaticPlacement ? 50 : 4000
-      d.layoutJson = #"{"cards":{"\#(add.id)":{"x":\#(x),"y":4000}}}"#
+      let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#
+      d.projectJson = #"{"canvas":{"cards":[\#(cards)],"connections":[]}}"#
+      if !add.automaticPlacement {
+        d.layoutJson = #"{"cards":{"drop":{"x":4000,"y":4000}}}"#
+      }
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
     }
     let auto = try await s.addCard(template: .draft, in: [], at: here, name: "auto", automaticPlacement: true)
-    #expect(s.position(auto).x == 50)
+    await s.refreshDerivedLayout().value
+    #expect(s.layout["cards"]?["auto"] == nil)
+    #expect(s.position(auto) == CGPoint(x: 50, y: 4000))
     let dropped = try await s.addCard(template: .draft, in: [], at: here, name: "drop")
     #expect(s.position(dropped) == here)
     #expect(placements == [true, false])
-  }
-}
-
-extension ProjectOperationTests {
-  @Test func deletingAWireEndWhileAllocatingAForkLeavesTheDeletionInPlace() async throws {
-    let dir = try directory()
-    defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: [
-      ("start", #"{"template":"trigger"}"#), ("a", #"{"language":"bash"}"#), ("b", #"{"language":"bash"}"#),
-    ])
-    let allocating = AsyncStream<Void>.makeStream()
-    let allocated = AsyncStream<String>.makeStream()
-    defer { allocating.continuation.finish(); allocated.continuation.finish() }
-    s.cardIdProvider = { _, _ in
-      allocating.continuation.yield(())
-      var ids = allocated.stream.makeAsyncIterator()
-      return try #require(await ids.next())
-    }
-    s.operateProject = { request in
-      if let connect = request.body?.value as? Tsugumi_Host_ProjectConnectT {
-        #expect(connect.toCard == "b" && connect.forkId == "fork-delayed")
-        #expect(s.instance("b") == nil)
-        throw RPCFailure(kind: .notFound, diagnostic: "")
-      }
-      let delete = try #require(request.body?.value as? Tsugumi_Host_ProjectSelectionT)
-      #expect(delete.action == .delete && delete.cards == ["b"])
-      let d = self.delta(s.rev, request.opId, "unused")
-      d.projectJson = #"{"canvas":{"cards":[{"id":"start"},{"id":"a"}],"connections":[]}}"#
-      d.definitionsRemoved = ["b"]
-      return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
-    }
-    let connect = Task { try await s.connect(from: ("start", "out"), to: ("b", "in"), in: []) }
-    var starts = allocating.stream.makeAsyncIterator()
-    _ = await starts.next()
-    s.deleteCards(["b"], in: [])
-    await s.save()
-    allocated.continuation.yield("fork-delayed")
-    await #expect(throws: RPCFailure.self) { try await connect.value }
-    #expect(s.instance("b") == nil && s.instance("fork-delayed") == nil)
-    #expect(s.connections(in: []).isEmpty)
   }
 }

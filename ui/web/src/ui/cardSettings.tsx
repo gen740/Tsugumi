@@ -3,6 +3,7 @@
 // "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
+import inputTemplates from '../../../shared/templates/input/Sources/InputTemplates/inputs.json'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
@@ -13,7 +14,7 @@ import { prefs } from '../model/prefs'
 import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str } from '../../shared/json'
 import { D, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -60,6 +61,7 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
+  private presetOutputs?: string
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -109,15 +111,28 @@ export class CardEditorModel extends Observable {
     return ends
   }
 
+  get implementation() {
+    const template = str(get(this.definition, 'template'))
+    if (template === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
+    return template ?? str(get(this.definition, 'language')) ?? 'draft'
+  }
+
   implementAs(value: string) {
-    if (value === 'draft') this.definition = obj([['template', 'draft']])
+    if (value === 'input' || value === 'input_bool') {
+      const files = inputTemplates[value]
+      this.definition = parse(files['_card.json'])
+      const p = this.outputsPath
+      if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
+        const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
+        if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
+          const outputs = files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card')
+          this.createFile('_outputs.fbs', outputs)
+          this.presetOutputs = outputs
+        }
+      }
+    } else if (value === 'draft') this.definition = obj([['template', 'draft']])
     else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
     else this.definition = obj([['template', value]])
-    if (value === 'input' || value === 'switch') {
-      this.setSetting('params', [obj([['name', 'value'], ['type', value === 'input' ? 'double' : 'bool'], ['data', value === 'input' ? new JNum('0') : false]])])
-      if (value === 'input' && this.outputsPath && !this.files.includes(this.outputsPath))
-        this.createFile('_outputs.fbs', 'namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n')
-    }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
   }
@@ -126,7 +141,7 @@ export class CardEditorModel extends Observable {
   get files(): string[] {
     const prefix = this.prefix
     if (!prefix) return []
-    const docs = new Set([prefix + '_card.json', prefix + '_meta.json', prefix + '_link.json'])
+    const docs = new Set([prefix + '_card.json', prefix + '_meta.json'])
     const all = new Set([...this.session.sourcePaths.filter((p) => p.startsWith(prefix) && !docs.has(p)), ...this.created])
     for (const p of this.removed) all.delete(p)
     return [...all].sort()
@@ -151,6 +166,7 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
+    this.presetOutputs = undefined
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -282,6 +298,7 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
+    if (p === this.outputsPath) this.presetOutputs = undefined
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -295,6 +312,7 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
+    if (p === this.outputsPath || target === this.outputsPath) this.presetOutputs = undefined
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
@@ -708,7 +726,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }} />
       {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
-        {def !== undefined && kind !== 'switch' && (
+        {def !== undefined && (
           <Row label={L('アイコン')}>
             <SymbolPicker symbol={str(get(def, 'symbol')) || undefined} inherited={KIND_ICON[kind]}
               onChange={(v) => model.setSetting('symbol', v)} />
@@ -724,11 +742,12 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
-        <Row label={L('種類')}><Select value={str(get(def, 'template')) ?? str(get(def, 'language')) ?? 'draft'} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'switch', 'trigger', 'fork', 'branch', 'merge', 'collect'].map(value => ({ value, label: value }))
+        <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
+          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
         } /></Row>
       </Section>}
-      {kind !== 'switch' && params.length > 0 && (
+      {params.length > 0 && (
         <Section title={L('パラメータ')}>
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
         </Section>

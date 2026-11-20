@@ -44,7 +44,9 @@ struct DebugPanel: View {
   var body: some View {
     TabView {
       presentation.tabItem { Text("表示オプション") }
-      RPCTraceView().tabItem { Text("RPC トレース") }
+      if ProcessInfo.processInfo.environment["TSUGUMI_RPC_TRACE"] == "1" {
+        RPCTraceView().tabItem { Text("RPC トレース") }
+      }
     }
   }
 

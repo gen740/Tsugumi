@@ -205,7 +205,8 @@ actor Driver {
     guard !exitState.isEnding else { throw LauncherError.notReady("the VM host is stopping") }
     let slot = try await shares(request.key, request.mounts)
     let origins = request.origins.compactMap { $0 }.joined(separator: ",")
-    _ = try await vm.request("start \(request.key) \(request.hostName) \(slot)" + (origins.isEmpty ? "" : " " + origins))
+    let trace = request.rpcTrace ? 1 : 0
+    _ = try await vm.request("start \(request.key) \(request.hostName) \(slot) \(trace)" + (origins.isEmpty ? "" : " " + origins))
     return try await process(request.key)
   }
   func stop(_ key: String) async throws {

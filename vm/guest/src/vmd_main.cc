@@ -22,7 +22,7 @@
 //
 //   1024  control, one request line per connection, one reply line:
 //           ping                            -> ok
-//           start <id> <name> <slot> [origins] -> ok <id>
+//           start <id> <name> <slot> <rpc_trace:0|1> [origins] -> ok <id>
 //           stop <id>                       -> ok
 //           forget <id>                     -> ok (stop and delete build
 //                                              roots and scratch)
@@ -492,7 +492,7 @@ std::string mount_slot(int slot) {
 }
 
 auto start_project(const std::string& id, const std::string& name, int slot,
-                   const std::string& origins) -> std::string {
+                   bool rpc_trace, const std::string& origins) -> std::string {
   std::unique_lock<std::mutex> l(mu);
   if (auto it = projects.find(id); it != projects.end() && it->second.running)
     return "ok " + id;
@@ -578,6 +578,7 @@ auto start_project(const std::string& id, const std::string& name, int slot,
     at = end + 1;
   }
   args.env = project_env(id);
+  if (rpc_trace) args.env.emplace_back("TSUGUMI_RPC_TRACE=1");
   args.env.emplace_back("TSUGUMI_EXECUTION_BROKER=vsock:1027");
   args.env.emplace_back(
       "TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=/control/"
@@ -996,9 +997,10 @@ void control(int conn) {
   else if (w[0] == "cache-usage") {
     cache_usage->snapshot();
     r = "ok";
-  } else if (w[0] == "start" && (w.size() == 4 || w.size() == 5))
-    r = start_project(w[1], w[2], std::atoi(w[3].c_str()),
-                      w.size() == 5 ? w[4] : "");
+  } else if (w[0] == "start" && (w.size() == 5 || w.size() == 6) &&
+             (w[4] == "0" || w[4] == "1"))
+    r = start_project(w[1], w[2], std::atoi(w[3].c_str()), w[4] == "1",
+                      w.size() == 6 ? w[5] : "");
   else if (w[0] == "stop" && w.size() == 2) {
     stop_project(w[1]);
     r = "ok";

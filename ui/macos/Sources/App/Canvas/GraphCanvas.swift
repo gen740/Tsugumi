@@ -290,7 +290,7 @@ struct GraphCanvas: View {
       // as soon as its Cards are there.
       .onChange(of: cardKeys.count) { fitIfNew() }
       .onChange(of: tab.revealNixCard) { _, card in
-        if let card { reveal(card); tab.revealNixCard = nil }
+        if let card { reveal(card, in: size); tab.revealNixCard = nil }
       }
       .onChange(of: geo.size) { size = geo.size }
       .onReceive(NotificationCenter.default.publisher(for: .canvasFitAll)) { n in
@@ -813,10 +813,14 @@ struct GraphCanvas: View {
   }
 
   /// Starts writing a Draft on its Card, at a zoom where the text can be read.
-  func writeDraft(_ k: CardKey) {
-    Task { await session.startDraftEdit(k) }
-    if camera.zoom < 0.8 { setZoom(1, around: screen(cardRect(k).center)) }
-    reveal(k)
+  @discardableResult
+  func writeDraft(_ k: CardKey, in viewport: CGSize) -> Task<Void, Never> {
+    Task {
+      guard await session.waitForPlacement(k), Array(path(k).dropLast()) == tab.scope else { return }
+      if camera.zoom < 0.8 { setZoom(1, around: screen(cardRect(k).center)) }
+      reveal(k, in: viewport)
+      await session.startDraftEdit(k)
+    }
   }
 
   /// Keeps the Draft's name and content under its permanent key.
@@ -1005,17 +1009,17 @@ struct GraphCanvas: View {
     session.performCardEdit {
       let k = try await session.addCard(template: .draft, in: tab.scope, at: world(CGPoint(x: size.width / 2, y: size.height / 2)), automaticPlacement: true)
       tab.selection = [k]
-      writeDraft(k)
+      writeDraft(k, in: size)
     }
   }
 
   /// The Card menu's "Write name and content".
   func handleWriteDraft(_ n: Notification) {
-    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.isEditable { writeDraft(k) }
+    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey, session.isEditable { writeDraft(k, in: size) }
   }
 
   func handleReveal(_ n: Notification) {
-    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey { reveal(k) }
+    if (n.object as? UUID) == tab.id, let k = n.userInfo?["card"] as? CardKey { reveal(k, in: size) }
   }
 
   // MARK: - Card search (⌘F)
@@ -1063,7 +1067,7 @@ struct GraphCanvas: View {
   private func pick(_ k: CardKey) {
     tab.selection = [k]
     findText = nil
-    reveal(k)
+    reveal(k, in: size)
   }
 
   // MARK: - Hover details
@@ -1295,7 +1299,7 @@ struct GraphCanvas: View {
     switch session.kind(k) {
     case .subgraph: tab.enter(path(k))
     case .draft where session.isEditable:
-      if session.inlineDraft?.card != k { writeDraft(k) }
+      if session.inlineDraft?.card != k { writeDraft(k, in: size) }
     default: openWindow(id: "card", value: CardRef(path: session.identity.url.path, card: k))
     }
   }
@@ -1341,8 +1345,7 @@ struct GraphCanvas: View {
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String, _ edit: InlineParamEdit?, overwrite: Bool) async -> Bool {
     guard session.isEditable, let edit else { return false }
-    let type = session.kind(k) == .switchCard && name == "value" ? "bool"
-      : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
+    let type = session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
     guard let type else { return false }
     return await edit.commit(session, text: text) { $0.updateParam(k, name, parseParam(text, type), initial: edit.parameterBase(session, k, name, overwrite: overwrite)) }
   }
@@ -1374,7 +1377,7 @@ struct GraphCanvas: View {
     session.performCardEdit {
       let k = try await session.addCard(template: t, in: tab.scope, at: w, automaticPlacement: true)
       tab.selection = [k]
-      if t == .draft { writeDraft(k) }
+      if t == .draft { writeDraft(k, in: size) }
     }
   }
 
@@ -1402,14 +1405,14 @@ struct GraphCanvas: View {
   }
 
   /// Centres a Card in the view when it is not fully visible (zoom kept).
-  private func reveal(_ k: CardKey) {
-    guard session.instance(k) != nil, size.width > 0 else { return }
+  private func reveal(_ k: CardKey, in viewport: CGSize) {
+    guard session.instance(k) != nil, viewport.width > 0 else { return }
     let r = cardRect(k)
     let s = CGRect(origin: screen(r.origin), size: CGSize(width: r.width * camera.zoom, height: r.height * camera.zoom))
-    if CGRect(origin: .zero, size: size).insetBy(dx: 20, dy: 50).contains(s) { return }
+    if CGRect(origin: .zero, size: viewport).insetBy(dx: 20, dy: 50).contains(s) { return }
     var c = camera
-    c.x = size.width / 2 - r.midX * c.zoom
-    c.y = size.height / 2 - r.midY * c.zoom
+    c.x = viewport.width / 2 - r.midX * c.zoom
+    c.y = viewport.height / 2 - r.midY * c.zoom
     withAnimation(.easeInOut(duration: 0.2)) { session.cameras[scopeKey] = c }
     saveView()
   }
@@ -1636,7 +1639,7 @@ struct BuiltinCardItems: View {
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
   static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
-  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .collect]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .booleanInput, .branch, .merge, .collect]
 
   var body: some View {
     Menu("レポート（HTML・PDF 未対応）") {

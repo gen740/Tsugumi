@@ -75,7 +75,7 @@ bool compatible(const Type& a, const Type& b);
 std::string render_closure(const Type& t, const std::string& prefix,
                            std::string& out, bool nested = false);
 
-// One Card ABI catalog, shared by binding generation and worker invocation.
+// A catalog of the message types used to generate a Card's SDK bindings.
 auto card_catalog(const std::vector<PortType>& ports, bool inputs)
     -> std::string;
 
@@ -90,7 +90,6 @@ std::vector<UnionField> root_unions(const Type& t, const std::string& prefix);
 
 // Builtin message types.
 TypeRef empty_type();
-TypeRef bool_condition_type();  // table Condition { value:bool; }
 
 // Union wrapper used by merge: `table Merged { value:In; }` with one union
 // member per input port name. Returns nullopt with an error on failure.

@@ -56,7 +56,7 @@ TEST_F(VersionFiles, DefinitionsAndLiteralOptInsShareOneSelection) {
       "definitions/a/default.nix",
       "definitions/a/flake.lock",
       "definitions/a/_outputs.fbs",
-      "definitions/b/_link.json",
+      "definitions/b/_card.json",
       "skills/example/SKILL.md",
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/b/_card.json"};
