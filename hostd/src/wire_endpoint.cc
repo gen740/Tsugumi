@@ -23,8 +23,13 @@ auto Endpoint(ServerOptions& options, const char* subprotocol, Read read,
         r->value_type() > Tag::MAX)
       return std::nullopt;
     const auto* hello = r->value_as_HelloRequest();
+    bool include = true;
+    if constexpr (requires { Tag::HostTraceRequest; })
+      include = r->value_type() != Tag::HostTraceRequest &&
+                (!hello || hello->client() != Tsugumi::Trace::Client::Trace);
     return FrameInfo{m->request_id(), hello != nullptr,
-                     hello ? trace::ClientName(hello->client()) : nullptr};
+                     hello ? trace::ClientName(hello->client()) : nullptr,
+                     include};
   };
   options.codec.completed = [read](std::string_view bytes) {
     return read(bytes.data())->request_id();

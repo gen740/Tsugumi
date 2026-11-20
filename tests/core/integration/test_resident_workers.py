@@ -146,7 +146,7 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
 #include <signal.h>
 #include <stdio.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char gate[4096], stopped[4096], sending[4096];
   snprintf(gate, sizeof gate, "%s/../home/stop", c->working_directory);
@@ -171,8 +171,8 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     if (ready) fclose(ready);
     _exit(0);
   }
-  c->effects->display_text(c->host, gate);
-  return c->effects->outputs_json(c->host, "{\"out\":{\"value\":1}}", outputs);
+  tsugumi_display_text(c, gate, 0);
+  return c->effects->output_json(c->host, "out", "{\"value\":1}");
 }
 '''
     definition = {

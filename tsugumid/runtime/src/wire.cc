@@ -78,15 +78,19 @@ Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
 Off<R::SourceInfo> source_info(FBB& b, const std::string& p, D::SourceKind kind,
                                bool exists,
                                const std::optional<std::string>& hash,
-                               std::optional<uint64_t> size) {
+                               std::optional<uint64_t> size,
+                               const std::string* document_json) {
   auto ps = b.CreateString(p);
   auto hs = hash ? b.CreateString(*hash) : Off<flatbuffers::String>();
+  const auto json = document_json ? b.CreateString(*document_json)
+                                  : Off<flatbuffers::String>();
   R::SourceInfoBuilder sb(b);
   sb.add_path(ps);
   sb.add_kind(kind);
   sb.add_exists(exists);
   if (hash) sb.add_hash(hs);
   if (size) sb.add_size_bytes(*size);
+  if (document_json) sb.add_document_json(json);
   return sb.Finish();
 }
 
@@ -94,8 +98,7 @@ Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d) {
   return R::CreateDefinition(
       b, b.CreateString(id), b.CreateString(d.card_json),
-      d.meta_json ? b.CreateString(*d.meta_json) : Off<flatbuffers::String>(),
-      d.link_json ? b.CreateString(*d.link_json) : Off<flatbuffers::String>());
+      d.meta_json ? b.CreateString(*d.meta_json) : Off<flatbuffers::String>());
 }
 
 Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {

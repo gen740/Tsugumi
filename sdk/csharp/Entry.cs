@@ -69,8 +69,8 @@ public static class Entry {
     }
 
     [UnmanagedCallersOnly]
-    public static int Execute(nint pointer, nint outputs) {
-        try { return Invoke(pointer, outputs); }
+    public static int Execute(nint pointer) {
+        try { return Invoke(pointer); }
         catch { return 1; }
     }
     // Called once by host.cc before any other entry, with abi.h's layout.
@@ -79,7 +79,7 @@ public static class Entry {
         try { return Layout.Check(fields, count) ? 0 : 1; }
         catch (Exception error) { Console.Error.WriteLine(error); return 1; }
     }
-    private static unsafe int Invoke(nint pointer, nint outputs) {
+    private static unsafe int Invoke(nint pointer) {
         InvocationScope? scope = null;
         int result = 0;
         try {
@@ -88,15 +88,11 @@ public static class Entry {
             var inputs = new Inputs(scope);
             var report = new Report(scope);
             var run = new Run(scope);
-            if (outputs == 0) {
+            if (scope.IsRunStart) {
                 card.OnRunStartAsync(inputs, report, run).AsTask().GetAwaiter().GetResult();
             } else {
                 var value = card.RunAsync(inputs, report, run).AsTask().GetAwaiter().GetResult();
-                var bytes = value.Pack();
-                var target = (NativeBuffer*)outputs;
-                target->Data = (byte*)NativeMemory.Alloc((nuint)bytes.Length);
-                target->Size = (nuint)bytes.Length;
-                bytes.AsSpan().CopyTo(new Span<byte>(target->Data, bytes.Length));
+                value.Send(scope);
             }
             result = 0;
         } catch (Exception error) {

@@ -229,8 +229,8 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
   }
 }
 
-auto NixRunner::prepared(const std::string& card, const std::string& key) const
-    -> NixResult {
+auto NixRunner::prepared(const std::string& card, const std::string& key,
+                         uint32_t max_implementations) const -> NixResult {
   const auto found = prepared_->find(card);
   if (found == prepared_->end())
     throw Failed(FailureKind::unsupported,
@@ -247,6 +247,13 @@ auto NixRunner::prepared(const std::string& card, const std::string& key) const
                      " changed since its build was prepared: its definition, "
                      "contract, Nix parameters or upstream exports differ",
                  {{"card", card}});
+  const auto* count = schema::get(p.implementations);
+  const auto implementations = count ? *count : 0;
+  try {
+    enforce_implementation_limit(implementations, max_implementations);
+  } catch (const NixImplementationLimit& e) {
+    throw Failed(FailureKind::execution_limit, e.what(), {{"card", card}});
+  }
   NixResult res;
   res.derivation.path = *schema::get(p.derivation);
   res.derivation.output = *schema::get(p.manifest);
@@ -261,8 +268,7 @@ auto NixRunner::prepared(const std::string& card, const std::string& key) const
   if (const auto* closure = schema::get(p.closure)) res.closure = *closure;
   if (const auto* list = schema::get(p.execution_list))
     res.execution_list = *list;
-  if (const auto* count = schema::get(p.implementations))
-    res.implementation_count = static_cast<uint32_t>(*count);
+  res.implementation_count = static_cast<uint32_t>(implementations);
   res.built = false;
   return res;
 }
@@ -342,7 +348,8 @@ types::TypeRef NixRunner::params_type(const Node& node) {
   for (const auto& p : node.settings.params)
     fields.emplace_back(p.name, param_fbs_type(p.type));
   std::string err;
-  auto t = types::compile(types::params_schema(fields), "params.Params", &err);
+  auto t =
+      types::compile(types::params_schema(fields), "parameters.Params", &err);
   if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
   return *t;
 }
@@ -651,7 +658,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
                         std::get<2>(key) + "\n" + std::get<3>(key);
   if (prepared_) {
     if (req.on_phase) req.on_phase(Phase::evaluate);
-    res = prepared(path_key(node.path), key_text);
+    res = prepared(path_key(node.path), key_text, call.max_implementations);
+    if (req.on_plan) req.on_plan(res.implementation_count);
   } else {
     try {
       call.root_dir = gcroots_dir();
@@ -687,6 +695,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
         log::info("Card full evaluation " + std::to_string(count));
         res = evaluator().evaluate(call);
       }
+      if (req.on_plan) req.on_plan(res.implementation_count);
       if (!req.transport)
         throw std::runtime_error(
             "execution target has no derivation transport");

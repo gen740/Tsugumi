@@ -202,9 +202,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
       request.node.settings.timeout_seconds
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)
-          : std::nullopt,
-      types::card_catalog(request.node.inputs, true),
-      types::card_catalog(request.node.outputs, false));
+          : std::nullopt);
   *invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
   blobs.insert(*invocation.call_sha256);

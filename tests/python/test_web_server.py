@@ -209,6 +209,39 @@ def post(port: int, cookie: str, route: str, body: dict):
     return json.loads(data)
 
 
+def web_host(port, cookie):
+    from harness.host import HostConnection
+    from harness.transport import ws_connect
+
+    token = post(port, cookie, "/api/host/connect", {})["token"]
+    connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.host.v1",
+                                    path="/rpc/host", headers=[("Cookie", cookie)])
+    if status.split()[1] != "101":
+        connection.close()
+        raise AssertionError(status)
+    return HostConnection({"user_token": token}, websocket=connection)
+
+
+def test_host_rpc_requires_the_page_cookie_and_origin(web):
+    from contextlib import closing
+    from harness.transport import ws_connect
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    response, _ = request(port, "POST", "/api/host/connect", {"Cookie": cookie}, "{}")
+    assert response.status == 403
+    for origin, headers in [
+        (f"http://127.0.0.1:{port}", []),
+        (None, [("Cookie", cookie)]),
+        ("http://another.example", [("Cookie", cookie)]),
+    ]:
+        connection, status = ws_connect(port, origin, "tsugumi.host.v1", path="/rpc/host", headers=headers)
+        with connection:
+            assert status.split()[1] == "403"
+    with closing(web_host(port, cookie)) as host:
+        assert host.call("HostRecentListRequest").projects == []
+
+
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
     from test_claude_code_plugin import Events
     from conftest import write_project
@@ -267,51 +300,58 @@ def test_the_page_is_told_whether_host_folders_can_be_used(http_server):
 
 
 def test_a_terminal_is_a_real_terminal(web, tmp_path):
-    from test_claude_code_plugin import Events
+    from contextlib import closing
+    from Tsugumi.Host.EventPayload import EventPayload
+    from Tsugumi.Host.TerminalAction import TerminalAction
     from conftest import write_project
 
     _, port, key = web
     cookie = page_cookie(port, key)
     project = tmp_path / "proj"
     write_project(project)
-    page = Events(port, cookie, "a")
-    page.start()
-    t = post(port, cookie, "/api/terminal/start", {"path": str(project), "cols": 91, "rows": 17})
+    assert post(port, cookie, "/api/env/start", {"path": str(project)})["state"] == "ready"
+    with closing(web_host(port, cookie)) as host:
+        terminal = host.call("HostTerminalRequest", project=str(project), cols=91, rows=17)
+        printed = bytearray()
 
-    def printed() -> str:
-        return "".join(e["data"] for e in list(page.events) if e.get("type") == "terminal" and e["id"] == t["id"])
+        def next_terminal_event():
+            while True:
+                event = host.next_event()
+                if event.valueType == EventPayload.HostTerminalData and event.value.session == terminal.session:
+                    if event.value.data is not None:
+                        printed.extend(bytes(event.value.data))
+                    return event.value
 
-    def until(text: str):
-        try:
-            page.wait(lambda: text in printed())
-        except AssertionError:
-            pytest.fail(repr(printed()))
+        def until(text: str):
+            while text.encode() not in printed:
+                assert not next_terminal_event().closed, printed.decode(errors="replace")
 
-    def send(data: str):
-        post(port, cookie, "/api/terminal/input", {"id": t["id"], "data": data})
+        def send(data: str):
+            host.call("HostTerminalRequest", action=TerminalAction.Input, session=terminal.session, data=data.encode())
 
-    # It has a terminal, of the size the page draws, and programs may use it.
-    send('''tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語
+        # It has a terminal, of the size the page draws, and programs may use it.
+        send('''tty; echo "size=$(stty size)" "term=$TERM"; echo 日本語
 ''')
-    until("/dev/")
-    until("size=17 91 term=xterm-256color")
-    until("日本語")
-    post(port, cookie, "/api/terminal/resize", {"id": t["id"], "cols": 100, "rows": 30})
-    send('''echo "now=$(stty size)"
+        until("/dev/")
+        until("size=17 91 term=xterm-256color")
+        until("日本語")
+        host.call("HostTerminalRequest", action=TerminalAction.Resize, session=terminal.session, cols=100, rows=30)
+        send('''echo "now=$(stty size)"
 ''')
-    until("now=30 100")
-    # A key: ⌃C stops what runs, not the shell.
-    send(r'''sh -c 'trap "printf \"\000INTERRUPTED\000\"; exit 0" INT; printf "\000WAITING\000"; read line'
+        until("now=30 100")
+        # A key: ⌃C stops what runs, not the shell.
+        send(r'''sh -c 'trap "printf \"\000INTERRUPTED\000\"; exit 0" INT; printf "\000WAITING\000"; read line'
 ''')
-    until('\0WAITING\0')
-    send("\x03")
-    # Wait for signal handling before sending input that the TTY could flush.
-    until('\0INTERRUPTED\0')
-    send('''echo after-interrupt-$((1 + 1))
+        until('\0WAITING\0')
+        send("\x03")
+        # Wait for signal handling before sending input that the TTY could flush.
+        until('\0INTERRUPTED\0')
+        send('''echo after-interrupt-$((1 + 1))
 ''')
-    until("after-interrupt-2")
-    post(port, cookie, "/api/terminal/stop", {"id": t["id"]})
-    page.wait(lambda: any(e.get("type") == "terminal-exit" and e["id"] == t["id"] for e in page.events))
+        until("after-interrupt-2")
+        host.call("HostTerminalRequest", action=TerminalAction.Close, session=terminal.session)
+        while not next_terminal_event().closed:
+            pass
 
 
 def test_project_creation_forwards_core_errors_and_accepts_empty_folders(web, tmp_path):

@@ -139,16 +139,13 @@ class Inputs:
     __slots__ = ("_values", "_params", "_decoded")
 
     def __init__(self) -> None:
-        from inputs.Inputs import Inputs as InputTable
         from tsugumi import contract
-        from tsugumi.values import _accessor
-        table = InputTable.GetRootAs(_host.inputs())
         object.__setattr__(self, "_values", {
-            port["name"]: getattr(table, _accessor(port["name"]))()
+            port["name"]: _host.input(port["name"])
             for port in contract.ports()
         })
         object.__setattr__(self, "_decoded", {})
-        from params.Params import ParamsT
+        from parameters.Params import ParamsT
         object.__setattr__(self, "_params", _freeze(ParamsT.InitFromPackedBuf(_host.params())))
 
     def __setattr__(self, name, value):
@@ -171,17 +168,13 @@ class Inputs:
         return self._values.get(port) is not None
 
     def input_bytes(self, port: str) -> bytes:
-        from tsugumi import contract
-        return message(contract.input_object(self, port))
+        if not self.has_input(port):
+            raise Failure("input_missing", f"input {port} was not provided")
+        return self._values[port]
 
     def input(self, port: str, cls: Any) -> Any:
         """Read a FlatBuffers view when the low-level generated API is needed."""
-        if not self.has_input(port):
-            raise Failure("input_missing", f"input {port} was not provided")
-        view = self._values[port]
-        value = cls()
-        value.Init(view._tab.Bytes, view._tab.Pos)
-        return value
+        return cls.GetRootAs(self.input_bytes(port))
 
 
 

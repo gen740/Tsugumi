@@ -80,17 +80,15 @@ def test_backpressure_stall_ends_the_run(env):
                      reuseWorker=True),
         "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
         "branch": {"template": "branch"},
-        # (an output feeds one wire: a value goes to two inputs through a fork)
-        "fork": {"template": "fork", "maxRuns": 1000},
     }
     c = load(env, defs,
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
-              card("each", "fork"), card("never", "flag"), card("both", "fork"), card("gate", "branch"),
+              card("never", "flag"), card("gate", "branch"),
               card("wait", "branch")],
-             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "each", "in"),
-              conn("each", "out1", "loop", "again"), conn("each", "out2", "wait", "value"),
-              conn("never", "flag", "both", "in"), conn("both", "out1", "gate", "value"),
-              conn("both", "out2", "gate", "condition"), conn("gate", "a", "wait", "condition")])
+             [conn("seed", "out", "loop", "init"), conn("loop", "out", "step", "x"), conn("step", "out", "loop", "again"),
+              conn("step", "out", "wait", "value"),
+              conn("never", "flag", "gate", "value"),
+              conn("never", "flag", "gate", "condition"), conn("gate", "a", "wait", "condition")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.execution_limit
@@ -669,12 +667,12 @@ def test_unselected_branch_is_not_evaluated(env):
 '''}
     defs = {"trigger": {"template": "trigger"},
             "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
-            "branch": {"template": "branch"}, "broken": broken, "fork": {"template": "fork"}}
+            "branch": {"template": "branch"}, "broken": broken}
     c = load(env, defs,
              [card("start", "trigger"),
-              card("cond", "flag"), card("both", "fork"), card("gate", "branch"), card("never", "broken")],
-             [conn("cond", "flag", "both", "in"), conn("both", "out1", "gate", "value"),
-              conn("both", "out2", "gate", "condition"), conn("gate", "a", "never", "in")])
+              card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
+             [conn("cond", "flag", "gate", "value"),
+              conn("cond", "flag", "gate", "condition"), conn("gate", "a", "never", "in")])
     snap = c.call("ProjectInspectRequest")
     acc = c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="t", card=path("start"), maxConcurrency=2)
     run_id = text(acc.run.runId)

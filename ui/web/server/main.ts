@@ -10,9 +10,10 @@ import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { runtimeRoot, AGENT_KEY_HEADER, AGENT_ROUTES, ServerInfo, webDataDir, serverBuild, runningServer, serverRequest } from './paths'
 import { startupLock } from './startup'
-import { cancelChats, resumeChats, chatRoutes, chatStatus, hostRequest, observeHost } from './chat'
+import { cancelChats, resumeChats, chatRoutes, chatStatus, hostReady, hostRequest, observeHost } from './chat'
 import { EnvironmentManager, EnvState } from './environment'
-import type { VMHostOptions, VMTerminal } from './environment'
+import type { VMHostOptions } from './environment'
+import { pageRpcUpgrade, proxyHostRpc } from './rpcProxy'
 import { L, language } from './i18n'
 import { CoreHostError } from './coreHost'
 import { hostProjectErrorText } from './hostProjects'
@@ -134,42 +135,6 @@ function publicState(s: EnvState) {
     executionScopeUnavailable: s.executionScopeUnavailable }
 }
 
-// ---- Terminals ---------------------------------------------------------------------
-
-/** A shell in a project's folder on this host, on a pseudo terminal: the page
- *  sends keys and draws what it prints. Only the same-origin UI can start one
- *  (the API header), and they end with the server. */
-interface Terminal { id: string; project: string; proc: VMTerminal }
-const terminals = new Map<string, Terminal>()
-
-const terminalSize = (v: unknown, fallback: number) => Number(v ?? fallback)
-
-async function startTerminal(project: string, cols: unknown, rows: unknown) {
-  const id = randomUUID()
-  const shell = '/bin/bash'
-  const proc = await envs.terminal(project, terminalSize(cols, 80), terminalSize(rows, 24))
-  const t: Terminal = { id, project, proc }
-  terminals.set(id, t)
-  proc.onData((data) => broadcast({ type: 'terminal', id, data }))
-  proc.onExit(({ exitCode, signal }: { exitCode: number; signal?: number }) => {
-    terminals.delete(id)
-    broadcast({ type: 'terminal-exit', id, code: exitCode, signal })
-  })
-  return { id, cwd: vm ? '/project' : project, shell }
-}
-
-function terminal(id: unknown): Terminal {
-  const t = typeof id === 'string' ? terminals.get(id) : undefined
-  if (!t) throw new HttpError(404, L('ターミナルは終了しました'))
-  return t
-}
-
-function stopTerminal(t: Terminal) {
-  try {
-    t.proc.kill()
-  } catch {}
-}
-
 // ---- Setup -----------------------------------------------------------------------
 
 
@@ -230,16 +195,13 @@ async function updateExecutionServices(method: string, body: unknown) {
 
 type Handler = (b: any, url: URL, signal?: AbortSignal) => unknown | Promise<unknown>
 const routes: Record<string, Handler> = {
-  'POST /api/project/operate': (b) => hostRequest('ProjectOperateRequest', b),
+  'POST /api/host/connect': async () => ({ token: (await hostReady()).user_token }),
   'GET /api/runtime': () => hostRequest('HostRuntimeRequest'),
   'POST /api/runtime/cache-usage': () => vm ? hostRequest('HostRuntimeRequest', { action: 'Command', command: 'cache-usage' }) : {},
   'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
   'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
   'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
-  'POST /api/layout/display-geometry': () => hostRequest('DisplayGeometryRequest', {}),
-  'POST /api/layout/complete': (b) => hostRequest('LayoutCompleteRequest', b),
-  'POST /api/layout/version-canvas': (b) => hostRequest('VersionCanvasRequest', b),
   'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
   'POST /api/execution-services/register': (body) => updateExecutionServices('ExecutionServicePutRequest', body),
   'POST /api/execution-services/remove': (body) => updateExecutionServices('ExecutionServiceRemoveRequest', body),
@@ -282,7 +244,6 @@ const routes: Record<string, Handler> = {
     if (elsewhere) return { ok: true }
     broadcast({ type: 'projectClosed', project: dir })
     cancelChats(dir)
-    for (const t of terminals.values()) if (t.project === dir) stopTerminal(t)
     return { ok: true }
   },
   'POST /api/env/start': async (b) => publicState(await envs.start(projectDir(b.path))),
@@ -303,20 +264,6 @@ const routes: Record<string, Handler> = {
     return listDir(dir)
   },
 
-  'POST /api/terminal/start': (b) => startTerminal(projectDir(b.path), b.cols, b.rows),
-  'POST /api/terminal/input': (b) => {
-    terminal(b.id).proc.write(String(b.data ?? ''))
-    return {}
-  },
-  'POST /api/terminal/resize': (b) => {
-    const t = terminal(b.id)
-    t.proc.resize(terminalSize(b.cols, t.proc.cols), terminalSize(b.rows, t.proc.rows))
-    return {}
-  },
-  'POST /api/terminal/stop': (b) => {
-    stopTerminal(terminal(b.id))
-    return { ok: true }
-  },
   ...chatRoutes({ support, envs, projectDir, broadcast, httpError: (status, message) => new HttpError(status, message), here, listeners: () => streams.size, showOnPage, openPage, desktop }),
 }
 
@@ -333,8 +280,10 @@ const agentKey = randomBytes(32).toString('hex')
 const serverFile = path.join(support, 'server.json')
 const cookieName = () => `tsugumi_${(server.address() as net.AddressInfo).port}`
 
-const sameSecret = (got: string, want: string) =>
-  got.length === want.length && timingSafeEqual(Buffer.from(got), Buffer.from(want))
+const sameSecret = (got: string, want: string) => {
+  const bytes = Buffer.from(got)
+  return bytes.length === want.length && timingSafeEqual(bytes, Buffer.from(want))
+}
 
 function authorized(req: http.IncomingMessage): boolean {
   const want = `${cookieName()}=${key}`
@@ -393,6 +342,24 @@ const server = http.createServer({ headersTimeout: 0, requestTimeout: 0 }, async
     // A malformed request (an undecodable path, a broken body) fails alone.
     if (!res.headersSent) send(res, e instanceof URIError ? 400 : 500, { error: (e as Error).message ?? String(e) })
     else res.end()
+  }
+})
+
+server.on('upgrade', async (req, socket, head) => {
+  if (!pageRpcUpgrade(req, (server.address() as net.AddressInfo).port, authorized(req))) {
+    socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n')
+    return
+  }
+  const close = () => socket.destroy()
+  socket.once('error', close)
+  try {
+    const ready = await hostReady()
+    if (!socket.destroyed) proxyHostRpc(req, socket, head, ready.host_endpoint)
+  } catch (error) {
+    console.error((error as Error).message)
+    socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n')
+  } finally {
+    socket.off('error', close)
   }
 })
 
@@ -522,7 +489,6 @@ async function shutdown() {
     if (JSON.parse(fs.readFileSync(serverFile, 'utf8')).pid === process.pid) fs.rmSync(serverFile, { force: true })
   } catch {}
   for (const s of streams.keys()) s.end()
-  for (const t of terminals.values()) stopTerminal(t)
   server.close()
   // Core and the resident VM host outlive browser and launcher sessions.
   process.exit(0)

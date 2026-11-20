@@ -13,9 +13,6 @@
         "id": "simulate"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "summary"
       },
       {
@@ -55,24 +52,14 @@
           "port": "walks"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "summary"
-        },
-        "to": {
           "card": "summary",
           "port": "walks"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "diffusion"
+          "card": "simulate",
+          "port": "walks"
         },
         "to": {
           "card": "diffusion",
@@ -81,8 +68,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "explore"
+          "card": "simulate",
+          "port": "walks"
         },
         "to": {
           "card": "explore",
@@ -91,8 +78,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "spread"
+          "card": "simulate",
+          "port": "walks"
         },
         "to": {
           "card": "spread",
