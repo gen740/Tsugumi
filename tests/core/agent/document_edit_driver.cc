@@ -39,7 +39,6 @@ class ProjectFixture {
           const auto name = path.substr(slash + 1);
           const auto key = name == "_card.json"   ? "card_json"
                            : name == "_meta.json" ? "meta_json"
-                           : name == "_link.json" ? "link_json"
                                                   : "";
           if (key != std::string("")) {
             const auto id = path.substr(12, slash - 12);
@@ -81,8 +80,7 @@ class ProjectFixture {
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
           for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                          {"meta_json", "_meta.json"},
-                                          {"link_json", "_link.json"}}) {
+                                          {"meta_json", "_meta.json"}}) {
             const auto text = json::Text(v, key);
             if (text.empty())
               files.erase(dir + name);

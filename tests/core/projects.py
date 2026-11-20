@@ -75,7 +75,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
             doc["boundary"] = inner["boundary"]
             put(root / "externals" / cid / "tsugumi.json", json.dumps(doc))
-            put(folder / "_link.json", json.dumps({"external": cid}))
+            put(folder / "_card.json", json.dumps({"external": cid}))
             continue
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"template": "draft"}

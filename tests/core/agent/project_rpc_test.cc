@@ -2701,7 +2701,7 @@ TEST_F(AgentProjectFixture,
         R"({"template":"draft"})");
   Write(directory.path / "project/definitions/secret/_meta.json",
         R"({"description":"HIDDEN_CARD_SENTINEL"})");
-  Write(directory.path / "project/definitions/outer/_link.json",
+  Write(directory.path / "project/definitions/outer/_card.json",
         R"({"external":"different-directory"})");
   Write(directory.path / "project/externals/different-directory/tsugumi.json",
         R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");

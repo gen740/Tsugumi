@@ -24,8 +24,7 @@ auto Object(const std::string& text) -> json::Members {
 }
 auto DefinitionFile(const std::string& path) -> bool {
   if (path.size() < 10) return false;
-  if (!path.ends_with("/_card.json") && !path.ends_with("/_meta.json") &&
-      !path.ends_with("/_link.json"))
+  if (!path.ends_with("/_card.json") && !path.ends_with("/_meta.json"))
     return false;
   return comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
 }
@@ -58,9 +57,8 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
        json::Array(json::Get(snapshot, "definitions", "[]"))) {
     auto d = json::Object(raw);
     auto dir = "definitions/" + json::Text(d, "id") + "/";
-    for (const auto& [field, file] : {std::pair{"card_json", "_card.json"},
-                                      {"link_json", "_link.json"},
-                                      {"meta_json", "_meta.json"}})
+    for (const auto& [field, file] :
+         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
       if (!json::Text(d, field).empty())
         before[dir + file] = json::Text(d, field);
   }
@@ -91,11 +89,7 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
     const auto id = json::Text(c, "id"), path = json::Text(c, "path");
     if (kind == "PutDefinition") {
       const auto dir = "definitions/" + id + "/";
-      after.erase(dir + "_card.json");
-      after.erase(dir + "_link.json");
-      const auto link = json::Text(c, "link_json");
-      after[dir + (link.empty() ? "_card.json" : "_link.json")] =
-          link.empty() ? json::Text(c, "card_json") : link;
+      after[dir + "_card.json"] = json::Text(c, "card_json");
       if (const auto meta = json::Text(c, "meta_json"); !meta.empty())
         after[dir + "_meta.json"] = meta;
       else if (!(json::Bool(json::Get(c, "keep_meta")) ||
@@ -155,11 +149,9 @@ auto PrepareAgentSave(json::Members args, const ProjectRead& read,
     if (!path.ends_with("/_card.json") ||
         json::Text(Object(text), "template") != "draft")
       continue;
-    const auto link_path = path.substr(0, path.size() - 10) + "_link.json";
     const bool implemented =
-        after.contains(link_path) ||
-        (after.contains(path) &&
-         json::Text(Object(after.at(path)), "template") != "draft");
+        after.contains(path) &&
+        json::Text(Object(after.at(path)), "template") != "draft";
     if (!implemented) continue;
     auto meta_path = path.substr(0, path.size() - 10) + "_meta.json";
     auto old_meta =

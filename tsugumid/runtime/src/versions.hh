@@ -7,6 +7,7 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
@@ -84,7 +85,9 @@ class Versions {
   // The folder becomes `commit` (what is saved now is committed first). On a
   // branch's tip HEAD follows that branch, else it is detached and the next
   // commit starts a branch.
-  void checkout(const std::string& commit);
+  void checkout(
+      const std::string& commit,
+      const std::function<void(const std::filesystem::path&)>& validate);
   VersionGraphData graph(size_t limit);
   // Raw layout and definition data of `commit`, without presentation logic.
   VersionCanvasData canvas(const std::string& commit);

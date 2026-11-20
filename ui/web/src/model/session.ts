@@ -175,12 +175,10 @@ export interface InlineDraft {
   revision: RevisionEdit
 }
 
-/** Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
- *  Card in Card `_link.json`), or its removal. */
+/** Draft of one Card's definition (`_card.json` and optional `_meta.json`). */
 export interface DefinitionDraft {
   card: J
   meta?: J
-  link?: J
 }
 
 /** A project inside this one (externals/<name>/, nested further): the inner
@@ -189,17 +187,10 @@ export interface DefinitionDraft {
 export interface ExternalProject {
   project: J
   layout: J
-  /** Card id -> its definition files (_card.json or _link.json, _meta.json). */
+  /** Card id -> its definition files (_card.json and optional _meta.json). */
   definitions: Map<string, DefinitionDraft>
   /** Removed (the folder goes with it). */
 }
-
-/** Card id -> external name (its own Cards in Card). */
-export const externalLinks = (e: ExternalProject) =>
-  new Map([...e.definitions].flatMap(([id, d]) => {
-    const n = str(get(d.link, 'external'))
-    return n ? [[id, n] as [string, string]] : []
-  }))
 
 /** The documents as files, relative to the external's folder. */
 export type SyncState =
@@ -399,7 +390,6 @@ export class ProjectSession extends Observable {
   confirmedLayout: J = obj()
   confirmedDefinitions = new Map<string, J>()
   confirmedDefinitionMeta = new Map<string, J>()
-  confirmedLinks = new Map<string, J>()
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
   private externalsKey = ''
@@ -523,7 +513,6 @@ export class ProjectSession extends Observable {
     return this.dirty ? { kind: 'saving' } : { kind: 'saved' }
   }
   get definitions(): Map<string, J> { return this.confirmedDefinitions }
-  get links(): Map<string, J> { return this.confirmedLinks }
   get definitionMeta(): Map<string, J> { return this.confirmedDefinitionMeta }
   get sourcePaths(): string[] { return [...this.sources.keys()].sort() }
 
@@ -840,15 +829,8 @@ export class ProjectSession extends Observable {
   private readDefinitions(defs: R.DefinitionT[]) {
     for (const d of defs) {
       const id = s(d.id)
-      if (d.linkJson !== null) {
-        const l = tryParse(s(d.linkJson))
-        if (l !== undefined) this.confirmedLinks.set(id, l)
-        this.confirmedDefinitions.delete(id)
-      } else {
-        const c = tryParse(s(d.cardJson))
-        if (c !== undefined) this.confirmedDefinitions.set(id, c)
-        this.confirmedLinks.delete(id)
-      }
+      const c = tryParse(s(d.cardJson))
+      if (c !== undefined) this.confirmedDefinitions.set(id, c)
       const m = d.metaJson !== null ? tryParse(s(d.metaJson)) : undefined
       if (m !== undefined) this.confirmedDefinitionMeta.set(id, m)
       else this.confirmedDefinitionMeta.delete(id)
@@ -864,7 +846,6 @@ export class ProjectSession extends Observable {
     this.confirmedLayout = tryParse(s(snap.layoutJson)) ?? obj()
     this.confirmedDefinitions = new Map()
     this.confirmedDefinitionMeta = new Map()
-    this.confirmedLinks = new Map()
     this.readDefinitions(snap.definitions)
     this.sources = new Map()
     for (const src of snap.sources) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
@@ -933,7 +914,6 @@ export class ProjectSession extends Observable {
     for (const id of d.definitionsRemoved) {
       this.confirmedDefinitions.delete(s(id))
       this.confirmedDefinitionMeta.delete(s(id))
-      this.confirmedLinks.delete(s(id))
     }
     this.readDefinitions(d.definitionsUpsert)
     for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
@@ -1049,7 +1029,6 @@ export class ProjectSession extends Observable {
   get confirmedDefinitionDrafts(): Map<string, DefinitionDraft> {
     const d = new Map<string, DefinitionDraft>()
     for (const [id, c] of this.confirmedDefinitions) d.set(id, { card: c, meta: this.confirmedDefinitionMeta.get(id) })
-    for (const [id, l] of this.confirmedLinks) d.set(id, { card: obj(), meta: this.confirmedDefinitionMeta.get(id), link: l })
     return d
   }
 
@@ -1065,9 +1044,8 @@ export class ProjectSession extends Observable {
     this.editJSON(prefix + 'layout.json', before.layout, after.layout)
     for (const [id, d] of after.definitions) {
       const old = before.definitions.get(id), dir = prefix + 'definitions/' + id + '/'
-      this.editJSON(dir + '_card.json', old?.link === undefined ? old?.card : undefined, d.link === undefined ? d.card : undefined)
+      this.editJSON(dir + '_card.json', old?.card, d.card)
       this.editJSON(dir + '_meta.json', old?.meta, d.meta)
-      this.editJSON(dir + '_link.json', old?.link, d.link)
     }
   }
 
@@ -1289,9 +1267,8 @@ export class ProjectSession extends Observable {
   // ---- Document helpers ------------------------------------------------------------
 
   private extLink(prefix: string, id: string): string | undefined {
-    if (prefix === '') return str(get(this.links.get(id), 'external'))
-    const e = this.external(prefix)
-    return e ? externalLinks(e).get(id) : undefined
+    const card = prefix === '' ? this.definitions.get(id) : this.external(prefix)?.definitions.get(id)?.card
+    return str(get(card, 'external'))
   }
 
   /** The project a scope's Cards are written in: "" for this project,
@@ -1385,7 +1362,7 @@ export class ProjectSession extends Observable {
   /** The Card's settings (its _card.json). */
   cardDefinition(k: CardKey): J | undefined {
     const d = this.cardDefinitionDraft(k)
-    return d && d.link === undefined ? d.card : undefined
+    return d && get(d.card, 'external') === undefined ? d.card : undefined
   }
 
   /** The Card's _meta.json. */
@@ -1397,9 +1374,8 @@ export class ProjectSession extends Observable {
   setCardDefinition(k: CardKey, d: DefinitionDraft | undefined) {
     const dir = this.definitionDir(k), before = this.cardDefinitionDraft(k)
     if (!dir || !d) return
-    if (d.link === undefined) this.editJSON(dir + '_card.json', before?.card, d.card)
+    this.editJSON(dir + '_card.json', before?.card, d.card)
     this.editJSON(dir + '_meta.json', before?.meta, d.meta)
-    this.editJSON(dir + '_link.json', before?.link, d.link)
   }
 
   /** The external project of a Card in Card ("externals/<name>/…"), if it is one. */
@@ -1425,7 +1401,7 @@ export class ProjectSession extends Observable {
   /** Changes a Card's _card.json in the draft. */
   updateCard(k: CardKey, fn: (c: JObj) => void) {
     const d = this.cardDefinitionDraft(k)
-    if (!d || d.link !== undefined) return
+    if (!d || get(d.card, 'external') !== undefined) return
     const n = cloneDef(d)
     if (!isObj(n.card)) n.card = obj()
     fn(n.card as JObj)
@@ -1532,7 +1508,7 @@ export class ProjectSession extends Observable {
     const saved = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
     const definitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
     const task = this.layoutHost.complete(serialize(graph), serialize(saved),
-      Object.fromEntries([...definitions].filter(([, d]) => d.link === undefined).map(([id, d]) => [id, serialize(d.card)])))
+      Object.fromEntries([...definitions].map(([id, d]) => [id, serialize(d.card)])))
       .then(text => {
         const currentGraph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
         const currentLayout = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
@@ -1601,7 +1577,7 @@ export class ProjectSession extends Observable {
       const split = p.lastIndexOf('/definitions/')
       if (split < 0) continue
       const [id, file, extra] = p.slice(split + '/definitions/'.length).split('/')
-      if (extra || !['_card.json', '_link.json'].includes(file)) continue
+      if (extra || file !== '_card.json') continue
       const prefix = p.slice(0, split + 1)
       const ids = definitionIds.get(prefix) ?? new Set<string>()
       ids.add(id); definitionIds.set(prefix, ids)
@@ -1632,9 +1608,8 @@ export class ProjectSession extends Observable {
         const ids = definitionIds.get(prefix) ?? new Set<string>()
         for (const id of [...ids].sort()) {
           const dir = `${prefix}definitions/${id}/`
-          const [meta, l, card] = await Promise.all(['_meta.json', '_link.json', '_card.json'].map(file => doc(dir + file)))
-          if (l !== undefined) ext.definitions.set(id, { card: obj(), meta, link: l })
-          else if (card !== undefined) ext.definitions.set(id, { card, meta })
+          const [meta, card] = await Promise.all(['_meta.json', '_card.json'].map(file => doc(dir + file)))
+          if (card !== undefined) ext.definitions.set(id, { card, meta })
         }
         found.set(prefix, ext)
       }
@@ -1681,7 +1656,7 @@ export class ProjectSession extends Observable {
   /** Definition folders of this project that no Card uses. */
   get unplacedDefinitions(): string[] {
     const used = new Set(this.cards([]).map((c) => str(get(c, 'id'))))
-    return [...new Set([...this.definitions.keys(), ...this.links.keys()])].filter((id) => !used.has(id)).sort()
+    return [...this.definitions.keys()].filter((id) => !used.has(id)).sort()
   }
 
   /** Places a definition folder no Card uses as its Card (the same name). */
@@ -2632,6 +2607,7 @@ export const KIND_ICON: Record<CardKind, string> = {
 export const cardKindNamed = (name: string): CardKind => ((KINDS as string[]).includes(name) ? name as CardKind : 'code')
 
 export function definitionKind(def: J | undefined): CardKind {
+  if (get(def, 'external') !== undefined) return 'subgraph'
   const t = str(get(def, 'template'))
   if (t && (KINDS as string[]).includes(t)) return t as CardKind
   return get(def, 'language') === undefined ? 'draft' : 'code'

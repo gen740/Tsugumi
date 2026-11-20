@@ -149,12 +149,10 @@ struct TimelineEntry: Identifiable, Hashable {
   var stages: [StageRecord] = []
 }
 
-/// Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
-/// Card in Card `_link.json`), or its removal.
+/// Draft of one Card's definition (_card.json and optional _meta.json).
 struct DefinitionDraft: Equatable {
   var card: JSONValue
   var meta: JSONValue?
-  var link: JSONValue? = nil
 }
 
 /// A project inside this one (externals/<name>/, nested further): the inner
@@ -163,12 +161,10 @@ struct DefinitionDraft: Equatable {
 struct ExternalProject: Equatable {
   var project: JSONValue
   var layout: JSONValue
-  /// Card id -> its definition files (_card.json or _link.json, _meta.json).
+  /// Card id -> its definition files (_card.json and optional _meta.json).
   var definitions: [String: DefinitionDraft]
   /// Removed (the folder goes with it).
 
-  /// Card id -> external name (its own Cards in Card).
-  var links: [String: String] { definitions.compactMapValues { $0.link?["external"]?.string } }
 
 
 }
@@ -304,7 +300,6 @@ final class ProjectSession {
   private(set) var confirmedLayout: JSONValue = .object([])
   private(set) var confirmedDefinitions: [String: JSONValue] = [:]
   private(set) var confirmedDefinitionMeta: [String: JSONValue] = [:]
-  private(set) var confirmedLinks: [String: JSONValue] = [:]
   /// The Agent on the canvas: what it reads, writes and threads.
   let presence = AgentPresence()
   /// The helpers' birds while the Agent has work delegated (one per helper),
@@ -365,7 +360,6 @@ final class ProjectSession {
     return dirty ? .saving : .saved
   }
   var definitions: [String: JSONValue] { confirmedDefinitions }
-  var links: [String: JSONValue] { confirmedLinks }
   var definitionMeta: [String: JSONValue] { confirmedDefinitionMeta }
   var sourcePaths: [String] { sources.keys.sorted() }
 
@@ -752,9 +746,8 @@ final class ProjectSession {
     confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
     confirmedDefinitions = [:]
     confirmedDefinitionMeta = [:]
-    confirmedLinks = [:]
     for d in s.definitions.compactMap({ $0 }) {
-      if let l = d.linkJson { confirmedLinks[d.id] = try? JSONValue.parse(l) } else { confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson) }
+      confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson)
       if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
     }
     sources = [:]
@@ -892,16 +885,9 @@ final class ProjectSession {
     for def in d.definitionsRemoved.compactMap({ $0 }) {
       confirmedDefinitions[def] = nil
       confirmedDefinitionMeta[def] = nil
-      confirmedLinks[def] = nil
     }
     for def in d.definitionsUpsert.compactMap({ $0 }) {
-      if let l = def.linkJson {
-        confirmedLinks[def.id] = try? JSONValue.parse(l)
-        confirmedDefinitions[def.id] = nil
-      } else {
-        confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
-        confirmedLinks[def.id] = nil
-      }
+      confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
       confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
     }
     for s in d.sourcesUpsert.compactMap({ $0 }) { sources[s.path] = (s.hash ?? "", s.sizeBytes ?? 0) }
@@ -996,11 +982,10 @@ final class ProjectSession {
 
   // MARK: - Editing (draft, undo/redo)
 
-  /// Confirmed definitions as definition files (card, meta, link).
+  /// Confirmed definitions as definition files (card and meta).
   var confirmedDefinitionDrafts: [String: DefinitionDraft] {
     var d: [String: DefinitionDraft] = [:]
     for (id, c) in confirmedDefinitions { d[id] = DefinitionDraft(card: c, meta: confirmedDefinitionMeta[id]) }
-    for (id, l) in confirmedLinks { d[id] = DefinitionDraft(card: .object([]), meta: confirmedDefinitionMeta[id], link: l) }
     return d
   }
 
@@ -1015,9 +1000,8 @@ final class ProjectSession {
     editJSON(prefix + "layout.json", old: before.layout, new: after.layout)
     for (id, d) in after.definitions {
       let old = before.definitions[id], dir = prefix + "definitions/" + id + "/"
-      editJSON(dir + "_card.json", old: old?.link == nil ? old?.card : nil, new: d.link == nil ? d.card : nil)
+      editJSON(dir + "_card.json", old: old?.card, new: d.card)
       editJSON(dir + "_meta.json", old: old?.meta, new: d.meta)
-      editJSON(dir + "_link.json", old: old?.link, new: d.link)
     }
   }
 
@@ -1344,9 +1328,7 @@ final class ProjectSession {
   func projectPrefix(_ scope: [String]) -> String? {
     var prefix = ""
     for id in scope {
-      let link: String?
-      if prefix.isEmpty { link = links[id]?["external"]?.string } else { link = external(prefix)?.links[id] }
-      guard let name = link else { return nil }
+      guard let name = externalName(prefix: prefix, id: id) else { return nil }
       prefix += "externals/\(name)/"
     }
     return prefix
@@ -1406,7 +1388,7 @@ final class ProjectSession {
 
   /// The Card's settings (its _card.json).
   func cardDefinition(_ k: CardKey) -> JSONValue? {
-    guard let d = cardDefinitionDraft(k), d.link == nil else { return nil }
+    guard let d = cardDefinitionDraft(k), d.card["external"] == nil else { return nil }
     return d.card
   }
 
@@ -1417,17 +1399,20 @@ final class ProjectSession {
   func setCardDefinition(_ k: CardKey, _ d: DefinitionDraft?) {
     guard let dir = definitionDir(k), let d else { return }
     let before = cardDefinitionDraft(k)
-    if d.link == nil { editJSON(dir + "_card.json", old: before?.card, new: d.card) }
+    editJSON(dir + "_card.json", old: before?.card, new: d.card)
     editJSON(dir + "_meta.json", old: before?.meta, new: d.meta)
-    editJSON(dir + "_link.json", old: before?.link, new: d.link)
   }
 
   /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
   func cardExternal(_ k: CardKey) -> String? {
     let p = path(k)
     guard let id = p.last, let prefix = projectPrefix(Array(p.dropLast())) else { return nil }
-    let name = prefix.isEmpty ? links[id]?["external"]?.string : external(prefix)?.links[id]
-    return name.map { prefix + "externals/\($0)/" }
+    return externalName(prefix: prefix, id: id).map { prefix + "externals/\($0)/" }
+  }
+
+  private func externalName(prefix: String, id: String) -> String? {
+    let card = prefix.isEmpty ? definitions[id] : external(prefix)?.definitions[id]?.card
+    return card?["external"]?.string
   }
 
   /// The folder of the Card's definition, project relative ("definitions/<id>/").
@@ -1445,7 +1430,7 @@ final class ProjectSession {
 
   /// Changes a Card's _card.json in the draft.
   func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), d.link == nil else { return }
+    guard var d = cardDefinitionDraft(k), d.card["external"] == nil else { return }
     fn(&d.card)
     setCardDefinition(k, d)
   }
@@ -1549,7 +1534,7 @@ final class ProjectSession {
     let task = Task {
       do {
         let text = try await prepareLayout(graph.serialized(), saved.serialized(),
-          definitions.filter { $0.value.link == nil }.mapValues { $0.card.serialized() })
+          definitions.mapValues { $0.card.serialized() })
         let currentGraph = prefix.isEmpty ? confirmedProject : externals[prefix]?.project ?? .object([])
         let currentLayout = prefix.isEmpty ? confirmedLayout : externals[prefix]?.layout ?? .object([])
         let currentDefinitions = prefix.isEmpty ? confirmedDefinitionDrafts : externals[prefix]?.definitions ?? [:]
@@ -1618,7 +1603,7 @@ final class ProjectSession {
     for p in paths {
       guard let split = p.range(of: "/definitions/", options: .backwards) else { continue }
       let parts = p[split.upperBound...].split(separator: "/")
-      if parts.count == 2, ["_card.json", "_link.json"].contains(String(parts[1])) {
+      if parts.count == 2, parts[1] == "_card.json" {
         definitionIds[String(p[..<split.lowerBound]) + "/", default: []].insert(String(parts[0]))
       }
     }
@@ -1644,11 +1629,9 @@ final class ProjectSession {
         for id in ids.sorted() {
           let dir = prefix + "definitions/\(id)/"
           async let metaRead = doc(dir + "_meta.json")
-          async let linkRead = doc(dir + "_link.json")
           async let cardRead = doc(dir + "_card.json")
-          let (meta, link, card) = await (metaRead, linkRead, cardRead)
-          if let link { ext.definitions[id] = DefinitionDraft(card: .object([]), meta: meta, link: link) }
-          else if let card { ext.definitions[id] = DefinitionDraft(card: card, meta: meta) }
+          let (meta, card) = await (metaRead, cardRead)
+          if let card { ext.definitions[id] = DefinitionDraft(card: card, meta: meta) }
         }
         found[prefix] = ext
       }

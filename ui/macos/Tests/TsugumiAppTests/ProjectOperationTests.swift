@@ -274,7 +274,7 @@ import TsugumiTestSupport
       }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
       snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
-      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = "{}"; link.linkJson = #"{"external":"sub"}"#
+      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"external":"sub"}"#
       snapshot.definitions = [link]
       func sources(_ value: UInt64) -> [Tsugumi_RPC_SourceInfoT?] {
         [prefix + "tsugumi.json", prefix + "definitions/a/_card.json"].map { path in

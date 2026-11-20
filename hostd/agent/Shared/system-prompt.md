@@ -29,7 +29,7 @@ the person's decision.
 - What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
-- A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its own
+- A Card in Card is definitions/<id>/_card.json {"external": "<name>"}: the project externals/<name>/ with its own
   tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
   the paths under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one

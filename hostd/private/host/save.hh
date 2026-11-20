@@ -22,6 +22,7 @@ class SourcePatches {
       projected_;
 };
 
+auto DecodeSourceBytes(const std::string& raw) -> std::string;
 auto CardStem(const std::string& name) -> std::string;
 // Only definition documents and source hashes; never execution records.
 struct SaveBase {

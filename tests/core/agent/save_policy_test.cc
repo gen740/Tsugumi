@@ -33,16 +33,13 @@ class AgentSavePolicy : public ::testing::Test {
     std::vector<std::string> sources;
     for (const auto& [path, text] : files) {
       if (path.starts_with("definitions/") &&
-          (path.ends_with("/_card.json") || path.ends_with("/_meta.json") ||
-           path.ends_with("/_link.json"))) {
+          (path.ends_with("/_card.json") || path.ends_with("/_meta.json"))) {
         const auto slash = path.find('/', 12);
         const auto id = path.substr(12, slash - 12),
                    file = path.substr(slash + 1);
         auto& d = definitions[id];
         d["id"] = json::Quote(id);
-        d[file == "_card.json"   ? "card_json"
-          : file == "_meta.json" ? "meta_json"
-                                 : "link_json"] = json::Quote(text);
+        d[file == "_card.json" ? "card_json" : "meta_json"] = json::Quote(text);
       } else
         sources.push_back(json::Encode(
             json::Members{{"path", json::Quote(path)},
@@ -129,8 +126,7 @@ TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyFieldsAreFilled) {
 }
 TEST_F(AgentSavePolicy, ImplementingDraftAsCardInCardAlsoKeepsItsIntent) {
   json::Members link{{"id", json::Quote("plan")},
-                     {"card_json", json::Quote("")},
-                     {"link_json", json::Quote(R"({"external":"library"})")},
+                     {"card_json", json::Quote(R"({"external":"library"})")},
                      {"keep_meta", "true"}};
   auto change = [&] {
     return json::Encode(
@@ -346,7 +342,7 @@ TEST(HostVersionComments,
     git_tree_free(tree);
     return id;
   };
-  test::Write(directory.path / "definitions/outer-id/_link.json",
+  test::Write(directory.path / "definitions/outer-id/_card.json",
               R"({"external":"library"})");
   const auto meta =
       directory.path / "externals/library/definitions/inner-id/_meta.json";

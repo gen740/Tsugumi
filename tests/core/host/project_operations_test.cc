@@ -317,11 +317,11 @@ class TransformationProject {
       {"definitions/a/_card.json", R"({"template":"draft"})"},
       {"definitions/a/_meta.json", R"({"name":"source"})"},
       {"definitions/a/data.bin", std::string("\0\xff\x80\n", 4)},
-      {"definitions/sub/_link.json", R"({"external":"inner"})"},
+      {"definitions/sub/_card.json", R"({"external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"name":"inner","canvas":{"cards":[{"id":"b"}],"connections":[]}})"},
       {"externals/inner/layout.json", R"({"cards":{"b":{"x":1,"y":2}}})"},
-      {"externals/inner/definitions/b/_link.json", R"({"external":"deep"})"},
+      {"externals/inner/definitions/b/_card.json", R"({"external":"deep"})"},
       {"externals/inner/externals/deep/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
       {"externals/inner/externals/deep/layout.json", "{}"},
@@ -394,7 +394,6 @@ class TransformationProject {
           const auto name = path.substr(slash + 1);
           const auto key = name == "_card.json"   ? "card_json"
                            : name == "_meta.json" ? "meta_json"
-                           : name == "_link.json" ? "link_json"
                                                   : "";
           if (key != std::string("")) {
             const auto id = path.substr(12, slash - 12);
@@ -435,8 +434,7 @@ class TransformationProject {
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
           for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                          {"meta_json", "_meta.json"},
-                                          {"link_json", "_link.json"}}) {
+                                          {"meta_json", "_meta.json"}}) {
             const auto text = json::Text(v, key);
             if (text.empty())
               files.erase(dir + name);
@@ -543,6 +541,31 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       EXPECT_DOUBLE_EQ(std::stod(outer.at("y")), std::stod(before.at("y")));
     }
   }
+}
+TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
+  TransformationProject project;
+  project.files["definitions/spare/_card.json"] = R"({"external":"inner"})";
+  const auto inner = project.files.at("externals/inner/tsugumi.json");
+  H::ProjectSelectionT remove_card;
+  remove_card.action = H::ProjectSelectionAction::Delete;
+  remove_card.cards = {"sub"};
+  const auto restore_card = project.Apply(remove_card);
+  EXPECT_FALSE(project.files.contains("definitions/sub/_card.json"));
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  project.Apply(restore_card);
+  EXPECT_EQ(project.files.at("definitions/sub/_card.json"),
+            R"({"external":"inner"})");
+
+  H::ProjectSelectionT remove_definition;
+  remove_definition.action = H::ProjectSelectionAction::DeleteDefinitions;
+  remove_definition.cards = {"spare"};
+  project.Apply(remove_definition);
+  EXPECT_FALSE(project.files.contains("definitions/spare/_card.json"));
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  const auto restore_tree = project.Apply(remove_card);
+  EXPECT_FALSE(project.files.contains("externals/inner/tsugumi.json"));
+  project.Apply(restore_tree);
+  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
 }
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
@@ -651,7 +674,7 @@ TEST(ProjectOperationTransform,
   EXPECT_EQ(project.saves, 2);
   project.files.erase("externals/copy/later.bin");
   auto redo_copy = project.Apply(undo_copy);
-  EXPECT_FALSE(project.files.contains("definitions/copy/_link.json"));
+  EXPECT_FALSE(project.files.contains("definitions/copy/_card.json"));
   project.Apply(redo_copy);
   EXPECT_EQ(project.files.at("externals/copy/definitions/a/data.bin"),
             initial.at("definitions/a/data.bin"));
@@ -665,7 +688,7 @@ TEST(ProjectOperationTransform,
   EXPECT_EQ(project.files.at(deep), initial.at(deep));
   EXPECT_EQ(json::Text(json::Object(project.files.at("tsugumi.json")), "name"),
             "other writer");
-  EXPECT_TRUE(project.files.contains("definitions/copy/_link.json"));
+  EXPECT_TRUE(project.files.contains("definitions/copy/_card.json"));
 }
 }  // namespace
 }  // namespace tsugumi::host
@@ -711,7 +734,7 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
     (void)ignored;
     EXPECT_FALSE(path.starts_with("externals/imported/"));
   }
-  EXPECT_FALSE(project.files.contains("definitions/imported/_link.json"));
+  EXPECT_FALSE(project.files.contains("definitions/imported/_card.json"));
 }
 
 TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {

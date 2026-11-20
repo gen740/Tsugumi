@@ -170,8 +170,7 @@ auto SummaryReads(const std::string& path) -> bool {
   const std::string& file = parts[i + 2];
   if (i + 3 == parts.size())
     return file == "_card.json" || file == "_meta.json" ||
-           file == "_link.json" || file == "_outputs.fbs" ||
-           file == "default.nix";
+           file == "_outputs.fbs" || file == "default.nix";
   static const std::set<std::string> code = {".py",  ".cc",  ".cpp", ".cxx",
                                              ".c",   ".h",   ".hh",  ".hpp",
                                              ".nix", ".fbs", ".sh"};

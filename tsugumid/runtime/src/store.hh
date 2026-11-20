@@ -35,8 +35,7 @@ struct ChangeIn {
     RemoveSource
   };
   Kind kind;
-  std::string id;  // definitions
-  std::optional<std::string> link_json;
+  std::string id;    // definitions
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   bool keep_meta =
@@ -110,8 +109,8 @@ class Store {
                   const std::optional<std::string>& expected_hash,
                   const std::function<void()>& check_cancelled) const
       -> std::shared_ptr<SourceFile>;
-  Staged stage_reload(const std::string& op_id,
-                      const std::string& origin) const;
+  Staged stage_reload(const std::string& op_id, const std::string& origin,
+                      const std::filesystem::path& checkout = {}) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
   // Resolves a staged document now (commit then reuses it).

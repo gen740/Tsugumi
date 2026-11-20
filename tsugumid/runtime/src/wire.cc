@@ -94,8 +94,7 @@ Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d) {
   return R::CreateDefinition(
       b, b.CreateString(id), b.CreateString(d.card_json),
-      d.meta_json ? b.CreateString(*d.meta_json) : Off<flatbuffers::String>(),
-      d.link_json ? b.CreateString(*d.link_json) : Off<flatbuffers::String>());
+      d.meta_json ? b.CreateString(*d.meta_json) : Off<flatbuffers::String>());
 }
 
 Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {

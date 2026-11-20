@@ -651,17 +651,8 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                        "invalid definition id " + c.id);
         DefinitionDoc d;
         wrap([&] {
-          if (c.link_json) {
-            if (!c.json.empty())
-              throw DocumentError(
-                  "invalid_document",
-                  "a definition has card_json or link_json, not both");
-            d.link = parse_link_json(c.id, *c.link_json).external->value();
-            d.link_json = *c.link_json;
-          } else {
-            d.card = parse_card_json(c.id, c.json);
-            d.card_json = c.json;
-          }
+          d.card = parse_card_json(c.id, c.json);
+          d.card_json = c.json;
           if (c.meta_json) {
             check_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
@@ -816,19 +807,9 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
     bool fresh = old == base->definitions.end();
-    bool card_changed = fresh || old->second.card_json != d.card_json ||
-                        old->second.link_json != d.link_json;
+    bool card_changed = fresh || old->second.card_json != d.card_json;
     bool meta_changed = fresh || old->second.meta_json != d.meta_json;
-    if (card_changed) {
-      if (d.link_json)
-        files[def_dir(id) + "_link.json"] = *d.link_json;
-      else
-        files[def_dir(id) + "_card.json"] = d.card_json;
-      if (!fresh && d.link_json && !old->second.link_json)
-        files[def_dir(id) + "_card.json"] = std::nullopt;
-      if (!fresh && !d.link_json && old->second.link_json)
-        files[def_dir(id) + "_link.json"] = std::nullopt;
-    }
+    if (card_changed) files[def_dir(id) + "_card.json"] = d.card_json;
     if (meta_changed) {
       if (d.meta_json)
         files[def_dir(id) + "_meta.json"] = *d.meta_json;
@@ -840,14 +821,18 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : base->definitions) {
     if (doc->definitions.count(id)) continue;
     st.delta.definitions_removed.push_back(id);
-    files[def_dir(id) + (d.link_json ? "_link.json" : "_card.json")] =
-        std::nullopt;
+    files[def_dir(id) + "_card.json"] = std::nullopt;
     if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {
     if (content && Document::is_card_meta_file(path))
       wrap([&] { check_meta_json(*content); });
     if (Document::is_document_file(path)) continue;
+    if (content && Document::is_card_definition_file(path))
+      wrap([&] {
+        parse_card_json(stdfs::path(path).parent_path().filename().string(),
+                        *content);
+      });
     auto old = base->sources.find(path);
     if (content) {
       if (old == base->sources.end() ||
@@ -875,6 +860,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     st.ops.push_back({path, content});
   }
   for (const auto& [path, file] : streamed) {
+    if (Document::is_card_definition_file(path))
+      wrap([&] {
+        parse_card_json(stdfs::path(path).parent_path().filename().string(),
+                        fs::read_file_or_throw(file->path));
+      });
     if (Document::is_card_meta_file(path))
       wrap([&] {
         // Apply the existing metadata limit before reading its JSON into
@@ -908,18 +898,42 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   return st;
 }
 
-Store::Staged Store::stage_reload(const std::string& op_id,
-                                  const std::string& origin) const {
-  auto base = current();
-  std::shared_ptr<Document> doc;
+namespace {
+auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
   try {
-    doc = load_from_disk(opts_.root);
+    return load_from_disk(root);
   } catch (const DocumentError& e) {
     std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
                                                           e.args.end());
     throw Failed(
         failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
         e.what(), args);
+  }
+}
+
+void check_ports(const Resolution& resolution) {
+  // Endpoint validity is a document invariant, including when a Draft becomes
+  // implemented. Never infer a port, even if there is only one candidate.
+  for (const auto& diagnostic : resolution.all_diagnostics(false))
+    if (diagnostic.code == "unknown_port")
+      throw Failed(FailureKind::validation_failed, diagnostic.message);
+}
+}  // namespace
+
+Store::Staged Store::stage_reload(const std::string& op_id,
+                                  const std::string& origin,
+                                  const stdfs::path& checkout) const {
+  auto base = current();
+  auto doc = load_document(checkout.empty() ? opts_.root : checkout);
+  if (!checkout.empty()) {
+    doc->resolution = resolve(*doc, [&](const std::string& path) {
+      return fs::read_file(checkout / path);
+    });
+    doc->resolution_key = doc->execution_fingerprint;
+    check_ports(*doc->resolution);
+    for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
+      if (diagnostic.code == "invalid_document")
+        throw Failed(FailureKind::invalid_document, diagnostic.message);
   }
   Staged st;
   st.delta.base_rev = base->rev;
@@ -952,8 +966,6 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   // changes.
   doc->rev = base->rev;
   doc->execution_rev = base->execution_rev;
-  doc->execution_fingerprint =
-      execution_fingerprint(*doc, reader(*doc, &st.ops));
   st.doc = doc;
   return st;
 }
@@ -987,11 +999,7 @@ void Store::commit(Staged& st, const std::string& kind,
   auto doc = st.doc;
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
-  // Endpoint validity is a document invariant, including when a Draft becomes
-  // implemented. Never infer a port, even if there is only one candidate.
-  for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
-    if (diagnostic.code == "unknown_port")
-      throw Failed(FailureKind::validation_failed, diagnostic.message);
+  check_ports(*doc->resolution);
   doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
                            ? base->execution_rev + 1
                            : base->execution_rev;
