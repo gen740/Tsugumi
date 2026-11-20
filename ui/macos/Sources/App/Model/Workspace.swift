@@ -160,6 +160,8 @@ final class Workspace {
   var logStream: Tsugumi_Data_LogStream = .journal
   /// Stage whose log section to open (a click on a stage icon).
   var logStage: Stage?
+  /// A Card hostd asked this window to show (PageShow), until the project has it.
+  var revealCard: CardKey?
 
   var active: WorkflowTab? { tabs.first { $0.id == activeTab } ?? tabs.first }
 

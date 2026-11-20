@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 # Builds dist/Tsugumi.app: the SwiftUI app, the bundled
-# demos and the release-built guest archive.
+# demos, the built Web UI (the hostd the app starts serves it) and the
+# release-built guest archive.
 # Tools (flatc, cmake, ninja) are taken from the flake's nixpkgs; compilers
 # are Apple's.
 #
@@ -42,6 +43,8 @@ vm="$dist/tsugumi-vm"
 guest_args=()
 [ "$channel" != release ] || guest_args=(--release)
 (cd "$repo" && nix run .#guest-image -- ${guest_args[@]+"${guest_args[@]}"})
+# The Web UI, built reproducibly from the pinned Nix package (as for the command's archive).
+web_out="$(cd "$repo" && nix build --no-link --print-out-paths '.#web^out')"
 
 # The native host service and RPC client are shared by both UI frontends.
 "$repo/hostd/tools/build-macos.sh"
@@ -91,6 +94,11 @@ cp "$repo/ui/macos/Sources/Grammars/LICENSE.tree-sitter" "$licenses/"
 cp -R "$repo/hostd/formatters/third-party" "$licenses/formatters"
 cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
+# The page hostd serves (CoreHostClient passes it as --web-root) and its licences.
+cp -R "$web_out/share/tsugumi/ui/web/dist/public" "$app/Contents/Resources/web"
+mkdir -p "$licenses/web"
+cp -R "$web_out/share/tsugumi/ui/web/dist/licenses/". "$licenses/web/"
+chmod -R u+w "$app/Contents/Resources/web" "$licenses/web"
 # The common isolated frame host. Modules and libraries come from tsugumid over RPC.
 mods="$app/Contents/Resources/modules"
 mkdir -p "$mods"

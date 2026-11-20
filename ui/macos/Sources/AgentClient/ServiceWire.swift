@@ -398,6 +398,7 @@ enum ServiceWire {
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
+    case let show as Tsugumi_Host_PageShowT: return ["type": "PageShow", "project": show.project, "card": show.card ?? "", "page": show.page ?? ""]
     default: throw RPCError.disconnected
     }
   }

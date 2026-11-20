@@ -206,6 +206,12 @@ public actor CoreHostClient {
     daemon.arguments = ["--ensure", "--state-dir", state.path, "--unix", directory.appendingPathComponent("agent.sock").path,
                         "--listen", "127.0.0.1:0", "--demos-dir", demos.path]
     daemon.arguments! += runtimeArguments ?? HostRuntimeConfiguration.arguments(support: state.deletingLastPathComponent())
+    // The built Web UI the app carries: the host serves it whichever client started it.
+    let web = ProcessInfo.processInfo.environment["TSUGUMI_WEB_ROOT"].map { URL(fileURLWithPath: $0) }
+      ?? Bundle.main.url(forResource: "web", withExtension: nil) ?? Self.repository.appendingPathComponent("ui/web/dist/public")
+    if FileManager.default.fileExists(atPath: web.appendingPathComponent("index.html").path) {
+      daemon.arguments! += ["--web-root", web.path]
+    }
     // The service creates and numbers its state folder. Until then, its usual
     // stderr log lives beside state (on the same filesystem) until startup succeeds.
     let stateLog = state.appendingPathComponent("host.log")
@@ -365,6 +371,14 @@ public actor CoreHostClient {
     let result = try ServiceWire.decodeReply(data, host: true)
     guard let result = result as? T else { throw CoreHostFailure(code: "protocol", message: "Invalid Host reply", requestID: nil) }
     return result
+  }
+
+  /// Tells hostd what one of this app's windows shows (nil: Home), or that it
+  /// closed. The windows share this connection; each names its page.
+  public func reportPage(_ page: String, project: String?, closed: Bool = false) async throws {
+    let request = Tsugumi_Host_HostPageRequestT()
+    request.page = page; request.project = project; request.closed = closed
+    let _: Tsugumi_Service_AcknowledgementT = try await hostCall(.hostpagerequest, request)
   }
 
   public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {

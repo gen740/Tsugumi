@@ -252,3 +252,33 @@ def test_hostd_routes_projects_to_pages(web, tmp_path):
         child.call("HostPageRequest", project=real, detached=True)
         home.call("HostPageRequest")
         assert next_event(child, "PageClosed").project.decode() == real
+
+
+@pytest.mark.skipif(not TSUGUMID.exists(), reason="needs tsugumid")
+def test_one_connection_holds_several_named_pages(web, tmp_path):
+    """The Mac app's windows share one Host connection: each names its page,
+    PageShow names the page chosen, and a closed page is no longer chosen."""
+    env, port, key = web
+    project = tmp_path / "proj"
+    write_project(project)
+    real = str(project.resolve())
+
+    def show():
+        r = subprocess.run([str(CLI), "web", "--no-browser", str(project)], capture_output=True, text=True, env=env, timeout=300)
+        assert r.returncode == 0, r.stderr
+        assert "A Tsugumi page shows it." in r.stdout
+
+    with closing(page_host(port, page_cookie(port, key))) as app:
+        app.call("HostPageRequest", page="a")
+        app.call("HostPageRequest", page="b")
+        show()
+        told = next_event(app, "PageShow")
+        assert (told.project.decode(), told.page.decode()) == (real, "a")
+        app.call("HostPageRequest", page="a", project=real)
+        # The window showing it again comes forward.
+        show()
+        assert next_event(app, "PageShow").page.decode() == "a"
+        app.call("HostPageRequest", page="a", closed=True)
+        assert next_event(app, "PageClosed").project.decode() == real
+        show()
+        assert next_event(app, "PageShow").page.decode() == "b"

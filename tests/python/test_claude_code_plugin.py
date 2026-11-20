@@ -427,9 +427,10 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
     with closing(page(root)) as on_a, closing(page(root)) as home:
         on_a.call("HostPageRequest", project=a)
         home.call("HostPageRequest")
-        # The project of a page: it stays where it is.
+        # The project of a page: it stays where it is, and that page comes forward.
         text, error = mcp.call("tsugumi_open", {"folder": "a", "browser": False})
         assert not error and "page shows it now" in text, text
+        assert told(on_a) == a
         # Another project: the page on Home takes it.
         text, error = mcp.call("tsugumi_open", {"folder": "b", "browser": False})
         assert not error and "page shows it now" in text, text

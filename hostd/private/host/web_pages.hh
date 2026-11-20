@@ -1,6 +1,7 @@
 // The Web UI: its origin (WebEdge, served whenever hostd runs with a built
-// page) and the attached UIs, Host connections that reported what they show.
-// Other Host clients are not pages.
+// page) and the attached UIs: pages that reported on a Host connection what
+// they show (a Web page, a window of the Mac app). Other Host clients are not
+// pages.
 #pragma once
 
 #include <functional>
@@ -8,6 +9,7 @@
 #include <memory>
 #include <mutex>
 #include <string>
+#include <utility>
 
 #include "host/web_edge.hh"
 #include "tsugumi/protocol/host_generated.h"
@@ -48,8 +50,8 @@ class WebPages {
     bool opened = false;  // a browser window was asked to open it
   };
   /** Shows a project (empty: Home) without taking another page's away: a
-   *  page that shows it already, or one on Home is told to; else a browser
-   *  window opens it when browser is set. */
+   *  page that shows it already (it comes forward), or one on Home is told
+   *  to; else a browser window opens it when browser is set. */
   auto Show(const std::string& project, const std::string& card, bool browser) -> Shown;
   /** The URL that opens a page with the key: for the user alone. */
   auto PageUrl(const std::string& project = {}) -> std::string;
@@ -59,6 +61,10 @@ class WebPages {
     std::string project;
     bool detached = false;
   };
+  // A connection and the name its page gave itself (one connection may hold
+  // several: the Mac app's windows).
+  using PageId = std::pair<ConnId, std::string>;
+  auto Tell(const PageId& page, const std::string& project, const std::string& card) -> void;
   TransportServer* host_;
   TransportServer* agent_;
   std::string user_token_;
@@ -66,7 +72,7 @@ class WebPages {
   WebHome home_;
   std::mutex mutex_;
   std::unique_ptr<WebEdge> edge_;
-  std::map<ConnId, Page> pages_;
+  std::map<PageId, Page> pages_;
 };
 
 }  // namespace tsugumi::host

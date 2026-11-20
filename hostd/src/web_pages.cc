@@ -127,28 +127,28 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
   return true;
 }
 
+auto WebPages::Tell(const PageId& page, const std::string& project, const std::string& card) -> void {
+  H::PageShowT show;
+  show.project = project;
+  show.card = card;
+  show.page = page.second;
+  host_->reply(page.first, wire::HostEvent(std::move(show)));
+}
+
 auto WebPages::Show(const std::string& project, const std::string& card, bool browser) -> Shown {
   {
     std::lock_guard lock(mutex_);
     // Home: any page will do.
     if (project.empty() && !pages_.empty()) return {true, false};
-    for (const auto& [connection, page] : pages_)
+    for (const auto& [id, page] : pages_)
       if (!project.empty() && page.project == project) {
-        if (!card.empty()) {
-          H::PageShowT show;
-          show.project = project;
-          show.card = card;
-          host_->reply(connection, wire::HostEvent(std::move(show)));
-        }
+        Tell(id, project, card);
         return {true, false};
       }
-    for (auto& [connection, page] : pages_) {
+    for (auto& [id, page] : pages_) {
       if (project.empty() || !page.project.empty() || page.detached) continue;
       page.project = project;
-      H::PageShowT show;
-      show.project = project;
-      show.card = card;
-      host_->reply(connection, wire::HostEvent(std::move(show)));
+      Tell(id, project, card);
       return {true, false};
     }
   }
@@ -162,7 +162,7 @@ auto WebPages::PageUrl(const std::string& project) -> std::string {
 
 auto WebPages::Disconnected(ConnId connection) -> void {
   std::lock_guard lock(mutex_);
-  pages_.erase(connection);
+  std::erase_if(pages_, [&](const auto& entry) { return entry.first.first == connection; });
 }
 
 auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::string {
@@ -221,16 +221,23 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
     return wire::HostReply(request.request_id, Listing(dir));
   }
   const auto* report = r.value_as_HostPageRequest();
-  const auto project = report->project() ? report->project()->str() : "";
+  const auto project = report->project() && !report->closed() ? report->project()->str() : "";
+  const PageId id{request.conn, report->page() ? report->page()->str() : ""};
   std::string closed;
   {
     std::lock_guard lock(mutex_);
-    auto& page = pages_[request.conn];
-    if (!page.project.empty() && page.project != project) closed = page.project;
-    page.project = project;
-    page.detached = report->detached();
+    const auto found = pages_.find(id);
+    if (found != pages_.end() && !found->second.project.empty() && found->second.project != project)
+      closed = found->second.project;
+    if (report->closed()) {
+      if (found != pages_.end()) pages_.erase(found);
+    } else {
+      auto& page = pages_[id];
+      page.project = project;
+      page.detached = report->detached();
+    }
     if (!closed.empty())
-      for (const auto& [connection, other] : pages_)
+      for (const auto& [other_id, other] : pages_)
         if (!other.detached && other.project == closed) closed.clear();
   }
   // A child workflow's page closes with its project.

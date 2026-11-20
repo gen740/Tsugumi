@@ -123,10 +123,12 @@ table SettingsChanged { profile:string (required); revision:ulong; }
 table SignInChanged { profile:string (required); }
 // The durable event and its presentation are read with Agent EventsRequest.
 table ConversationChanged { conversation_id:string; answered_permission:string; }
-// A Web page reports on its Host connection what it shows (none: Home).
-// hostd gives Claude Code's projects to a page on Home; a detached page (a
-// child workflow's) is never given another.
-table HostPageRequest { project:string; detached:bool; }
+// A page (a Web page, a window of the Mac app) reports on its Host connection
+// what it shows (none: Home). page names it among the pages of one connection
+// (the app's windows share one; a Web page leaves it empty); closed: it is
+// gone. hostd gives the projects ShowRequest shows to a page on Home; a
+// detached page (a child workflow's) is never given another.
+table HostPageRequest { project:string; detached:bool; page:string; closed:bool; }
 // The Web UI's Home: this host's folders and the runtime hostd starts
 // (always in place with the shared VM). repo holds the bundled demos.
 table HostHomeRequest {}
@@ -144,9 +146,10 @@ table HostFolderListRequest { path:string; }
 table HostFolderCreateRequest { parent:string (required); name:string (required); }
 table FolderEntry { name:string (required); project:bool; }
 table FolderListing { path:string (required); parent:string; project:bool; entries:[FolderEntry]; }
-// To the one page chosen to show a project, and a Card in it when given
-// (Agent ShowRequest).
-table PageShow { project:string (required); card:string; }
+// To the one page chosen to show a project, also when it shows it already
+// (to come forward), and a Card in it when given (Agent ShowRequest). page:
+// the page as it named itself.
+table PageShow { project:string (required); card:string; page:string; }
 // To every page: no page shows the project any more.
 table PageClosed { project:string (required); }
 union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged, PageShow, PageClosed }
