@@ -67,7 +67,9 @@ private actor HostServiceLock {
 
   func install(state: URL, support: URL, waitForHome: Bool = true, selectState: Bool = true) async {
     if waitForHome { await AppModel.shared.initialRefresh?.value }
-    await CoreHostClient.shared.disconnect()
+    // Select the new service before releasing the connection. Other tasks
+    // call the shared client concurrently; one that reconnects between the
+    // release and the switch would stay on the previous service.
     if selectState { setenv("TSUGUMI_HOST_STATE", state.path, 1) }
     else { unsetenv("TSUGUMI_HOST_STATE") }
     setenv("TSUGUMI_SUPPORT_DIR", support.path, 1)
@@ -77,18 +79,12 @@ private actor HostServiceLock {
     setenv("TSUGUMI_SOCKET_DIR", state.deletingLastPathComponent().path, 1)
     setenv("TSUGUMI_RUN_SCRATCH_DIR", canonicalDirectory(support).appendingPathComponent("scratch").path, 1)
     installedState = state
+    await CoreHostClient.shared.disconnect()
   }
 
   func restore() async {
-    await CoreHostClient.shared.disconnect()
-    // Read the current lock winner, including a service a reconnect started
-    // after the fixture's original Process exited. Never inspect real support.
-    if let state = installedState,
-       let data = try? Data(contentsOf: state.appendingPathComponent("host.ready")),
-       let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-       let pid = record["pid"] as? Int32, pid > 1, pid != getpid() {
-      try? finishFixtureProcess(pid, signal: SIGTERM)
-    }
+    // As in install: switch first, then release the connection.
+    let state = installedState
     installedState = nil
     if let previousState { setenv("TSUGUMI_HOST_STATE", previousState, 1) }
     else { unsetenv("TSUGUMI_HOST_STATE") }
@@ -98,6 +94,15 @@ private actor HostServiceLock {
     else { unsetenv("TSUGUMI_SOCKET_DIR") }
     if let previousScratch { setenv("TSUGUMI_RUN_SCRATCH_DIR", previousScratch, 1) }
     else { unsetenv("TSUGUMI_RUN_SCRATCH_DIR") }
+    await CoreHostClient.shared.disconnect()
+    // Read the current lock winner, including a service a reconnect started
+    // after the fixture's original Process exited. Never inspect real support.
+    if let state,
+       let data = try? Data(contentsOf: state.appendingPathComponent("host.ready")),
+       let record = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+       let pid = record["pid"] as? Int32, pid > 1, pid != getpid() {
+      try? finishFixtureProcess(pid, signal: SIGTERM)
+    }
   }
 }
 
