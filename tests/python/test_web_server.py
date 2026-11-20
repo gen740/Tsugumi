@@ -5,7 +5,7 @@ sniffing. Needs node and a built ui/web/dist (npm run build)."""
 
 from __future__ import annotations
 
-from contextlib import ExitStack, contextmanager
+from contextlib import ExitStack, closing, contextmanager
 from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
@@ -87,13 +87,13 @@ class Scripts(HTMLParser):
 
 def test_only_the_page_with_the_key_reaches_the_api(http_server):
     p, port, key = http_server
-    r, _ = request(port, "GET", "/api/env/list")
+    r, _ = request(port, "GET", "/api/fs")
     assert r.status == 401
     r, _ = request(port, "GET", "/api/events")
     assert r.status == 401
     r, _ = request(port, "GET", "/api/settings")
     assert r.status == 401
-    r, _ = request(port, "GET", "/api/env/list", {"Cookie": f"tsugumi_{port}=wrong"})
+    r, _ = request(port, "GET", "/api/fs", {"Cookie": f"tsugumi_{port}=wrong"})
     assert r.status == 401
     r, _ = request(port, "GET", f"/?key={key}&project=x")
     assert r.status == 302
@@ -105,7 +105,7 @@ def test_only_the_page_with_the_key_reaches_the_api(http_server):
     session, = cookies.values()
     assert session["httponly"] and session["samesite"].lower() == "strict"
     cookie = f"{session.key}={session.value}"
-    r, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
+    r, data = request(port, "GET", "/api/fs", {"Cookie": cookie})
     assert r.status == 200, data
     json.loads(data)
 
@@ -134,7 +134,7 @@ signal.sigwait(signals)
             pid = int(started.read_text())
             cleanup.callback(terminate_process, pid)
             exited = cleanup.enter_context(process_exit(pid))
-            assert request(port, "GET", "/api/env/list", {"Cookie": page_cookie(port, key)})[0].status == 200
+            assert request(port, "GET", "/api/fs", {"Cookie": page_cookie(port, key)})[0].status == 200
             assert not (tmp_path / "host-core/host.ready").exists()
         assert select.select([exited], [], [], 0)[0], "hostd survived Web fixture teardown"
 
@@ -223,7 +223,6 @@ def web_host(port, cookie):
 
 
 def test_host_rpc_requires_the_page_cookie_and_origin(web):
-    from contextlib import closing
     from harness.transport import ws_connect
 
     _, port, key = web
@@ -243,6 +242,8 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
 
 
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
     from test_claude_code_plugin import Events
     from conftest import write_project
 
@@ -256,40 +257,42 @@ def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp
         p.start()
     for page in ("a", "b", "child"):
         post(port, cookie, "/api/page", {"page": page, "project": str(project)})
-    before = post(port, cookie, "/api/env/start", {"path": str(project)})
-    assert before["state"] == "ready", before
-    # Another page shows it: it goes on.
-    assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)})["ok"] is True
-    assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
-    # The last page detaches its views while core remains available.
-    assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)})["ok"] is True
-    pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
-    assert any(event.get("type") == "projectClosed" and event.get("project") == real
-               for event in pages[2].events)
-    after = post(port, cookie, "/api/env/start", {"path": str(project)})
-    assert (after["endpoint"], after["projectId"], after["token"]) == (before["endpoint"], before["projectId"], before["token"])
+    with closing(web_host(port, cookie)) as host:
+        before = host.call("EnvironmentRequest", project=real, action=EnvironmentAction.Start)
+        assert before.phase == EnvironmentPhase.Ready
+        # Another page shows it: it goes on.
+        assert post(port, cookie, "/api/project/close", {"page": "a", "path": str(project)})["ok"] is True
+        assert not [e for e in pages[2].events if e.get("type") == "projectClosed"]
+        # The last page detaches its views while core remains available.
+        assert post(port, cookie, "/api/project/close", {"page": "b", "path": str(project)})["ok"] is True
+        pages[2].wait(lambda: any(e.get("type") == "projectClosed" for e in pages[2].events))
+        assert any(event.get("type") == "projectClosed" and event.get("project") == real
+                   for event in pages[2].events)
+        after = host.call("EnvironmentRequest", project=real)
+        assert (after.endpoint, after.projectId, after.token) == (before.endpoint, before.projectId, before.token)
 
 
 def test_environment_stop_is_owned_by_hostd_and_a_later_start_reuses_the_host(web, tmp_path):
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
     from conftest import write_project
 
     _, port, key = web
     cookie = page_cookie(port, key)
     project = tmp_path / "restart"
     write_project(project)
-    first = post(port, cookie, "/api/env/start", {"path": str(project)})
-    assert first["state"] == "ready", first
-    agent = json.loads((tmp_path / "host-core/host.ready").read_text())
-    assert post(port, cookie, "/api/env/stop", {"path": str(project)})["ok"] is True
-    response, data = request(port, "GET", "/api/env/list", {"Cookie": cookie})
-    assert response.status == 200
-    environment = next(row for row in json.loads(data) if row["project"] == str(project.resolve()))
-    assert environment["state"]["state"] == "stopped"
-    restarted = post(port, cookie, "/api/env/start", {"path": str(project)})
-    assert restarted["state"] == "ready", restarted
-    assert restarted["projectId"] == first["projectId"]
-    assert restarted["token"] != first["token"]
-    assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
+    with closing(web_host(port, cookie)) as host:
+        first = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
+        assert first.phase == EnvironmentPhase.Ready
+        agent = json.loads((tmp_path / "host-core/host.ready").read_text())
+        stopped = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Stop)
+        assert stopped.phase == EnvironmentPhase.Stopped
+        assert host.call("EnvironmentListRequest").environments == []
+        restarted = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
+        assert restarted.phase == EnvironmentPhase.Ready
+        assert restarted.projectId == first.projectId
+        assert restarted.token != first.token
+        assert json.loads((tmp_path / "host-core/host.ready").read_text())["pid"] == agent["pid"]
 
 
 def test_the_page_is_told_whether_host_folders_can_be_used(http_server):
@@ -300,7 +303,8 @@ def test_the_page_is_told_whether_host_folders_can_be_used(http_server):
 
 
 def test_a_terminal_is_a_real_terminal(web, tmp_path):
-    from contextlib import closing
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
     from Tsugumi.Host.EventPayload import EventPayload
     from Tsugumi.Host.TerminalAction import TerminalAction
     from conftest import write_project
@@ -309,8 +313,9 @@ def test_a_terminal_is_a_real_terminal(web, tmp_path):
     cookie = page_cookie(port, key)
     project = tmp_path / "proj"
     write_project(project)
-    assert post(port, cookie, "/api/env/start", {"path": str(project)})["state"] == "ready"
     with closing(web_host(port, cookie)) as host:
+        ready = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
+        assert ready.phase == EnvironmentPhase.Ready
         terminal = host.call("HostTerminalRequest", project=str(project), cols=91, rows=17)
         printed = bytearray()
 
