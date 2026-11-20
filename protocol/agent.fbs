@@ -48,11 +48,19 @@ table AccessResolveRequest { request_id:string (required); allow:bool; selected:
 table AccessRevokeRequest { grant_id:string (required); }
 table AccessListRequest { conversation_id:string; }
 
+// Claude Code's plugin opens a project folder in the Web UI. hostd validates
+// and remembers it (create: a new empty project when the folder does not
+// exist yet), starts its environment and shows it on a page on Home, else
+// opens a browser window when browser is set. Opening grants no access to
+// the project's contents.
+table ProjectOpenRequest { path:string (required); create:bool; browser:bool = true; }
+table ProjectOpened { path:string (required); project_id:string (required); shown:bool; opened:bool; url:string; }
+
 table ConversationSummarizeRequest { conversation_id:string (required); provider:Tsugumi.Service.ProviderSelection; }
 
 union RequestPayload {
   HelloRequest:Tsugumi.Service.HelloRequest,
-  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest
+  ConfigureRequest, ConversationCreateRequest, ConversationListRequest, ConversationGetRequest, ConversationDeleteRequest, ConversationSearchRequest, ConversationSendRequest, ConversationActionRequest, ConversationCancelRequest, EventsRequest, ToolCatalogRequest, ToolCallRequest, AccessRequest, AccessResolveRequest, AccessRevokeRequest, AccessListRequest, ConversationSummarizeRequest, ToolCallCancelRequest, CallIdRequest, ProjectOpenRequest
 }
 table Request { value:RequestPayload; }
 
@@ -109,7 +117,7 @@ union ReplyPayload {
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   ConversationResult, ConversationList, SearchResult, EventsPage, ToolCatalog,
   ToolResult, AccessResult, AccessList, TextResult:Tsugumi.Service.TextResult,
-  Failure:Tsugumi.Service.Failure, CallId
+  Failure:Tsugumi.Service.Failure, CallId, ProjectOpened
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply }

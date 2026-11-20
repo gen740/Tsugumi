@@ -487,6 +487,67 @@ struct Service::State {
     events->Publish(wire::HostEvent(std::move(notification)));
   }
 
+  // Runs a Host project request in process, under the request mutex.
+  template <class T>
+  auto ProjectPath(T value) -> std::string {
+    H::RequestT request;
+    request.value.Set(std::move(value));
+    H::MessageT message;
+    message.payload.Set(std::move(request));
+    flatbuffers::FlatBufferBuilder b;
+    H::FinishMessageBuffer(b, H::Message::Pack(b, &message));
+    const auto reply = host_projects.Handle(
+        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 0);
+    const auto* out = H::GetMessage(reply.data())->payload_as_Reply();
+    if (const auto* recent = out->value_as_RecentProject())
+      return recent->path()->str();
+    return out->value_as_ProjectLocation()->path()->str();
+  }
+  auto OpenProject(const RequestIn& request, const A::ProjectOpenRequest& p,
+                   std::unique_lock<std::recursive_mutex>& lock)
+      -> std::string {
+    const std::filesystem::path folder = p.path()->str();
+    if (!folder.is_absolute())
+      throw Failure("invalid_request", "The project folder must be absolute");
+    std::string path;
+    H::HostRecentRememberRequestT remember;
+    remember.path = folder.string();
+    try {
+      path = ProjectPath(remember);
+    } catch (const host::ProjectFailure& e) {
+      if (e.code != "invalid_project" || !p.create()) throw;
+      H::HostProjectCreateRequestT create;
+      create.parent = folder.parent_path().string();
+      create.name = folder.filename().string();
+      remember.path = ProjectPath(std::move(create));
+      path = ProjectPath(remember);
+    }
+    lock.unlock();
+    if (!environments)
+      throw Failure("unavailable", "Environment service is not running");
+    // The page's origin may connect to the project core.
+    const auto url = web->Url();
+    H::EnvironmentRequestT start;
+    start.project = path;
+    start.action = H::EnvironmentAction::Start;
+    if (!url.empty()) {
+      const auto origin = url.substr(0, url.size() - 1);
+      start.origins = {origin, "http://localhost" + origin.substr(origin.rfind(':'))};
+    }
+    const auto state = environments->Handle(start);
+    if (state.phase != H::EnvironmentPhase::Ready || state.project_id.empty())
+      throw Failure("unavailable", state.message.empty()
+                                       ? "Project core is not ready"
+                                       : state.message);
+    const auto shown = web->Show(path, p.browser());
+    A::ProjectOpenedT result;
+    result.path = path;
+    result.project_id = state.project_id;
+    result.shown = shown.shown;
+    result.opened = shown.opened;
+    result.url = url;
+    return wire::AgentReply(request.request_id, std::move(result));
+  }
   auto Handle(const RequestIn& request, bool human) -> std::string {
     const auto* r = A::GetMessage(request.frame->data())->payload_as_Request();
     std::unique_lock lock(mutex);
@@ -558,6 +619,8 @@ struct Service::State {
       case A::RequestPayload::ToolCatalogRequest:
       case A::RequestPayload::ToolCallRequest:
         return tools->Handle(request, human, lock);
+      case A::RequestPayload::ProjectOpenRequest:
+        return OpenProject(request, *r->value_as_ProjectOpenRequest(), lock);
       case A::RequestPayload::AccessRequest:
       case A::RequestPayload::AccessResolveRequest:
       case A::RequestPayload::AccessRevokeRequest:
