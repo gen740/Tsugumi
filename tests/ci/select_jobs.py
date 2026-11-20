@@ -155,6 +155,9 @@ def consumers(path):
     return ALL
 
 
+STANDALONE = {"docs", "prompt", "web-typecheck"} | GUEST
+
+
 def select(paths=None):
     changes = [(path, consumers(path)) for path in paths] if paths else [("", ALL)]
     jobs = set().union(*(selected for _, selected in changes))
@@ -174,8 +177,7 @@ def select(paths=None):
                 lanes.append({"job": job, "checks": {suite: True for suite in sorted(suites)}})
         if lanes:
             matrix.append({"system": system, "runner": SYSTEMS[system], "tests": {"include": lanes}})
-    standalone = {"docs", "prompt", "web-typecheck"} | GUEST
-    return {**{job: job in jobs for job in sorted(standalone)},
+    return {**{job: job in jobs for job in sorted(STANDALONE)},
             "platform": bool(matrix), "matrix": {"include": matrix}}
 
 
@@ -213,5 +215,10 @@ if __name__ == "__main__":
     parser.add_argument("--event", required=True)
     parser.add_argument("--base", default="")
     parser.add_argument("--head", default="HEAD")
+    # A pull request stacked on another branch is checked again once it
+    # targets main; until then only the static checks run.
+    parser.add_argument("--stacked", action="store_true")
     args = parser.parse_args()
-    print(json.dumps(select(changed_paths(args.event, args.base, args.head)), separators=(",", ":")))
+    selection = ({**{job: False for job in sorted(STANDALONE)}, "platform": False, "matrix": {"include": []}}
+                 if args.stacked else select(changed_paths(args.event, args.base, args.head)))
+    print(json.dumps(selection, separators=(",", ":")))

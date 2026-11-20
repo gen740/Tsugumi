@@ -10,16 +10,10 @@
         "id": "load"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "fit"
       },
       {
         "id": "forecast"
-      },
-      {
-        "id": "fits-share"
       },
       {
         "id": "scores"
@@ -48,24 +42,14 @@
           "port": "pelts"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "fit"
-        },
-        "to": {
           "card": "fit",
           "port": "pelts"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "forecast"
+          "card": "load",
+          "port": "pelts"
         },
         "to": {
           "card": "forecast",
@@ -78,24 +62,14 @@
           "port": "fits"
         },
         "to": {
-          "card": "fits-share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "fits-share",
-          "port": "scores"
-        },
-        "to": {
           "card": "scores",
           "port": "fits"
         }
       },
       {
         "from": {
-          "card": "fits-share",
-          "port": "phase"
+          "card": "fit",
+          "port": "fits"
         },
         "to": {
           "card": "phase",
@@ -104,8 +78,8 @@
       },
       {
         "from": {
-          "card": "fits-share",
-          "port": "check"
+          "card": "fit",
+          "port": "fits"
         },
         "to": {
           "card": "check",

@@ -10,9 +10,6 @@
         "id": "settings"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "trajectories"
       },
       {
@@ -45,24 +42,14 @@
           "port": "settings"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "trajectories"
-        },
-        "to": {
           "card": "trajectories",
           "port": "settings"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "stationary"
+          "card": "settings",
+          "port": "settings"
         },
         "to": {
           "card": "stationary",
@@ -71,8 +58,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "scaling"
+          "card": "settings",
+          "port": "settings"
         },
         "to": {
           "card": "scaling",
@@ -81,8 +68,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "binding"
+          "card": "settings",
+          "port": "settings"
         },
         "to": {
           "card": "binding",

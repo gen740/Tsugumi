@@ -40,6 +40,9 @@ namespace stdfs = std::filesystem;
 
 namespace {
 
+constexpr size_t kMaxViewBytes = 1u << 20;
+const std::string kExampleId = "00000000-0000-0000-0000-000000000000";
+
 const std::map<std::string, std::string>& digest_defaults() {
   static const std::map<std::string, std::string> d = {
       {"Tsugumi.RPC.ProjectValidateRequest.mode", "2"},
@@ -452,32 +455,6 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
   }
 }
 
-auto Service::prepare_early_build(const Node& node, BuildRequest& build)
-    -> bool {
-  const auto targets = remote_targets();
-  std::vector<WorkerCandidate> candidates;
-  for (const auto& target : targets)
-    candidates.push_back({target.id, target.grade, target.available});
-  std::string resident;
-  if (node.settings.reuse_worker) {
-    std::lock_guard guard(worker_selection_mutex_);
-    if (auto it = resident_targets_.find(path_key(node.path));
-        it != resident_targets_.end())
-      resident = it->second;
-  }
-  const auto choice =
-      select_worker(candidates, node.settings.worker_condition.get(),
-                    node.settings.execution_service, resident);
-  if (!choice.index || targets[*choice.index].id != kLocalExecutionService)
-    return false;
-  try {
-    execution_service_->prepare(node, {}, build);
-  } catch (const Failed&) {
-    return false;  // the activation reports it
-  }
-  return true;
-}
-
 auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
 }
@@ -671,6 +648,7 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
 
 void Service::disconnected(ConnId conn) {
   if (trace_owner_ == conn) {
+    trace::CancelWatch();
     trace::SetMode(trace::Mode::Off);
     trace_owner_.reset();
   }
@@ -727,6 +705,10 @@ void Service::dispatch(RequestIn req) {
   switch (request->value_type()) {
     case P::CoreTraceRequest: {
       namespace T = Tsugumi::Trace;
+      if (!trace::LaunchEnabled())
+        return fail(req, FailureData::make(
+                             FailureKind::permission_denied,
+                             "Project core was started without RPC tracing"));
       const auto* debug = request->value_as_CoreTraceRequest();
       if (req.websocket) {
         const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
@@ -748,7 +730,25 @@ void Service::dispatch(RequestIn req) {
         trace::SetMode(static_cast<trace::Mode>(*mode));
         snapshot.mode = static_cast<T::Mode>(*mode);
       } else {
-        snapshot = trace::ToWire(trace::Read());
+        std::function<void()> changed;
+        if (trace_owner_ == req.conn) {
+          changed = [server = server_, conn = req.conn] {
+            FBB b;
+            auto value = T::CreateTraceChanged(b);
+            auto note = R::CreateNotification(
+                b, b.CreateString("rpc-trace"), flatbuffers::nullopt,
+                R::NotificationPayload::TraceChanged, value.Union());
+            R::FinishMessageBuffer(
+                b, R::CreateMessage(b, flatbuffers::nullopt,
+                                    R::Payload::Notification, note.Union()));
+            server->reply(
+                conn,
+                std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
+                            b.GetSize()));
+          };
+        }
+        snapshot =
+            trace::ToWire(trace::Read(std::move(changed), debug->after()));
       }
       FBB b;
       auto value = T::Snapshot::Pack(b, &snapshot);
@@ -828,6 +828,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::run_history);
     case P::RunInvocationsRequest:
       return on_lane(r, std::move(req), &Service::run_invocations);
+    case P::RunDefinitionPathsRequest:
+      return on_lane(r, std::move(req), &Service::run_definition_paths);
     case P::RunLatestInvocationsRequest:
       return on_lane(r, std::move(req), &Service::run_latest_invocations);
     case P::ProjectShellRequest:
@@ -993,6 +995,31 @@ void Service::finish_op(const std::string& op_id,
 }
 
 namespace {
+auto operation_reply(uint64_t request_id, const std::string* bytes,
+                     bool pending) -> std::string {
+  FBB b;
+  flatbuffers::Offset<R::OperationReceipt> receipt;
+  if (bytes)
+    receipt = flatbuffers::Offset<R::OperationReceipt>(
+        wire::copy_table(
+            b, "Tsugumi.RPC.OperationReceipt",
+            reinterpret_cast<const flatbuffers::Table*>(
+                flatbuffers::GetRoot<R::OperationReceipt>(bytes->data())))
+            .o);
+  const auto state = bytes     ? D::OperationState::completed
+                     : pending ? D::OperationState::pending
+                               : D::OperationState::unknown;
+  auto result = R::CreateOperationResult(b, state, receipt);
+  return wire::reply(b, request_id, R::ReplyPayload::OperationResult,
+                     result.Union());
+}
+
+void check_frame(size_t size, std::string_view payload) {
+  if (size > kMaxFrameBytes)
+    throw Failed(FailureKind::resource_limit,
+                 std::string(payload) + " exceeds the 16 MiB frame limit");
+}
+
 std::string failure_receipt(const std::string& op_id, const FailureData& f) {
   FBB b;
   auto fo = wire::failure(b, f);
@@ -1040,8 +1067,8 @@ flatbuffers::Offset<flatbuffers::Vector<flatbuffers::Offset<R::SourceInfo>>>
 manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
   std::vector<flatbuffers::Offset<R::SourceInfo>> v;
   auto add = [&](const std::string& p, const SourceEntry& e) {
-    v.push_back(
-        wire::source_info(b, p, D::SourceKind::file, true, e.hash, e.size));
+    v.push_back(wire::source_info(b, p, D::SourceKind::file, true, e.hash,
+                                  e.size, e.document_json.get()));
   };
   if (only) {
     for (const auto& p : *only) add(p, doc.sources.at(p));
@@ -1079,7 +1106,8 @@ RunStatusData Service::current_run_status() {
 }
 
 flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
-    FBB& b, const Document& doc, const std::optional<std::string>& view_id) {
+    FBB& b, const Document& doc, const std::optional<std::string>& view_id,
+    const ViewRecord* record) {
   std::vector<flatbuffers::Offset<R::Definition>> defs;
   for (const auto& [id, d] : doc.definitions)
     defs.push_back(wire::definition(b, id, d));
@@ -1113,9 +1141,9 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   std::optional<uint64_t> vrev;
   if (view_id) {
     vid = b.CreateString(*view_id);
-    if (auto rec = load_view(*view_id)) {
-      view = b.CreateString(rec->view);
-      vrev = rec->rev;
+    if (record) {
+      view = b.CreateString(record->view);
+      vrev = record->rev;
     } else {
       vrev = 0;
     }
@@ -1142,9 +1170,10 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
 
 std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
                                     const std::optional<std::string>& view_id,
-                                    bool open, const std::string& sub_id) {
+                                    bool open, const std::string& sub_id,
+                                    const ViewRecord* view) {
   FBB b(1 << 16);
-  auto snap = snapshot(b, doc, view_id);
+  auto snap = snapshot(b, doc, view_id, view);
   std::string out;
   if (open) {
     auto r = R::CreateOpenResult(b, snap, b.CreateString(sub_id), uint64_t(1));
@@ -1153,10 +1182,15 @@ std::string Service::snapshot_reply(uint64_t request_id, const Document& doc,
     out = wire::reply(b, request_id, R::ReplyPayload::ProjectSnapshot,
                       snap.Union());
   }
-  if (out.size() > kMaxFrameBytes)
-    throw Failed(FailureKind::resource_limit,
-                 "the snapshot exceeds the 16 MiB frame limit");
+  check_frame(out.size(), "the snapshot");
   return out;
+}
+
+void Service::check_snapshot(const Document& doc) {
+  // The open envelope is larger than inspect and a view can grow independently
+  // of the document. Reserve the full view payload allowed by ViewSave.
+  static const ViewRecord largest_view{1, std::string(kMaxViewBytes, ' ')};
+  snapshot_reply(1, doc, kExampleId, true, kExampleId, &largest_view);
 }
 
 namespace {
@@ -1226,20 +1260,47 @@ std::string finish_receipt(FBB& b, const std::string& op_id,
                      b.GetSize());
 }
 
+auto doc_notification(FBB& b, const Delta& delta) {
+  const auto d = delta_offset(b, delta);
+  return std::make_pair(R::NotificationPayload::DocPatched,
+                        R::CreateDocPatched(b, d).Union());
+}
+
 }  // namespace
 
-void Service::publish_delta(const Delta& delta) {
-  // Keeping the run history switched on: the project's copy catches up.
+auto Service::prepare_save_reply(
+    Store::Staged& staged, const Document& base,
+    const flatbuffers::Vector<uint8_t>* operation_data) -> PreparedSaveReply {
+  store_->prepare_delta(staged);
+  const auto* delta = staged.delta.doc ? &staged.delta : nullptr;
+  FBB b(1 << 14);
+  const auto result = save_result(b, delta, base, operation_data);
+  auto receipt = finish_receipt(b, staged.delta.op_id,
+                                R::ReceiptValue::SaveResult, result.Union());
+  // Request ids have the same serialized width. Replay toggles a flag in
+  // place. A receipt must fit both its direct reply and OperationGet's wrapper.
+  check_frame(receipt_reply(1, receipt, true).size(), "the save reply");
+  check_frame(operation_reply(1, &receipt, false).size(), "the save receipt");
+  size_t notification_bytes = 0;
+  if (delta) {
+    check_snapshot(*delta->doc);
+    // Match ProjectOpen's subscription id width and the notification encoder.
+    FBB note;
+    auto [type, value] = doc_notification(note, *delta);
+    notification_bytes =
+        Server::notification(note, kExampleId, 2, type, value).size();
+    check_frame(notification_bytes, "the document notification");
+  }
+  return {std::move(receipt), notification_bytes};
+}
+
+void Service::publish_delta(const Delta& delta, size_t notification_bytes) {
   auto shared = std::make_shared<Delta>(delta);
   Note n;
   n.kind = Note::Kind::Doc;
-  n.approx_bytes =
-      4096 + delta.doc->project_json.size() + delta.doc->layout_json.size();
-  n.build = std::make_shared<const Note::Build>([shared](FBB& b) {
-    auto d = delta_offset(b, *shared);
-    return std::make_pair(R::NotificationPayload::DocPatched,
-                          R::CreateDocPatched(b, d).Union());
-  });
+  n.approx_bytes = notification_bytes;
+  n.build = std::make_shared<const Note::Build>(
+      [shared](FBB& b) { return doc_notification(b, *shared); });
   server_->broadcast(std::move(n));
 }
 
@@ -1270,7 +1331,9 @@ void Service::open_project(RequestIn& req) {
   // the subscription becoming active, and the reply is queued before any later
   // notification.
   auto doc = store_->current();
-  std::string bytes = snapshot_reply(req.request_id, *doc, view_id, true, sub);
+  const auto view = view_id ? load_view(*view_id) : std::nullopt;
+  std::string bytes = snapshot_reply(req.request_id, *doc, view_id, true, sub,
+                                     view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
     subscriptions_[req.conn] = sub;
@@ -1305,8 +1368,6 @@ std::vector<ChangeIn> decode_changes(
         // the user's intent, and leaving a field blank must not remove that.
         if (p->meta_json() && p->meta_json()->size() > 0)
           ch.meta_json = p->meta_json()->str();
-        if (p->link_json() && p->link_json()->size() > 0)
-          ch.link_json = p->link_json()->str();
         ch.keep_meta =
             p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
         break;
@@ -1453,22 +1514,9 @@ void Service::save(RequestIn& req) {
                      "until it ends",
                      {{"run_id", *active->run_id}});
     }
-    std::string receipt;
-    store_->commit(
-        staged, "save", digest,
-        [&](const Delta* d) {
-          FBB b(1 << 14);
-          auto sr = save_result(b, d, *base, r->operation_data());
-          receipt =
-              finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
-          return receipt;
-        },
-        check_cancelled);
-    if (staged.delta.doc)
-      scheduler_->document_changed(*base, *staged.delta.doc);
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    if (staged.delta.doc) publish_delta(staged.delta);
-    finish_op(op_id, receipt);
+    const auto response = prepare_save_reply(staged, *base, r->operation_data());
+    complete_save(req, op_id, "save", digest, *base, staged, response,
+                  check_cancelled);
   } catch (const Failed& f) {
     // A host operation re-reads and re-applies after a failed CAS. No write
     // happened, so keep this same op id available for its next save attempt.
@@ -1485,20 +1533,19 @@ void Service::save(RequestIn& req) {
   }
 }
 
-auto Service::complete_reload(RequestIn& req, const std::string& op_id,
-                              const std::string& digest, const Document& base,
-                              Store::Staged& staged) -> void {
-  std::string receipt;
-  store_->commit(staged, "reload", digest, [&](const Delta* d) {
-    FBB b(1 << 14);
-    auto sr = save_result(b, d, base);
-    receipt = finish_receipt(b, op_id, R::ReceiptValue::SaveResult, sr.Union());
-    return receipt;
-  });
+void Service::complete_save(RequestIn& req, const std::string& op_id,
+                            const std::string& kind, const std::string& digest,
+                            const Document& base, Store::Staged& staged,
+                            const PreparedSaveReply& response,
+                            const std::function<void()>& check_cancelled) {
+  store_->commit(staged, kind, digest,
+                 [&](const Delta*) { return response.receipt; },
+                 check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
-  reply(req, receipt_reply(req.request_id, receipt, false));
-  if (staged.delta.doc) publish_delta(staged.delta);
-  finish_op(op_id, receipt);
+  reply(req, receipt_reply(req.request_id, response.receipt, false));
+  if (staged.delta.doc)
+    publish_delta(staged.delta, response.notification_bytes);
+  finish_op(op_id, response.receipt);
 }
 
 void Service::reload(RequestIn& req) {
@@ -1525,7 +1572,8 @@ void Service::reload(RequestIn& req) {
                                  *staged.doc->resolution,
                                  r->approved_permissions());
     }
-    complete_reload(req, op_id, digest, *base, staged);
+    const auto response = prepare_save_reply(staged, *base);
+    complete_save(req, op_id, "reload", digest, *base, staged, response);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
     throw;
@@ -1636,10 +1684,13 @@ void Service::version_checkout(RequestIn& req) {
     if (!versions_->enabled())
       throw Failed(FailureKind::invalid_request,
                    "the project is not versioned yet");
-    versions_->checkout(r->commit()->str());
-    // The files are those of the version now: read them like a reload.
-    auto staged = store_->stage_reload(op_id, r->origin()->str());
-    complete_reload(req, op_id, digest, *base, staged);
+    Store::Staged staged;
+    PreparedSaveReply response;
+    versions_->checkout(r->commit()->str(), [&](const stdfs::path& target) {
+      staged = store_->stage_reload(op_id, r->origin()->str(), target);
+      response = prepare_save_reply(staged, *base);
+    });
+    complete_save(req, op_id, "reload", digest, *base, staged, response);
   } catch (const Failed& f) {
     store_failure_receipt(op_id, "reload", digest, f.failure);
     throw;
@@ -2027,24 +2078,8 @@ void Service::operation_get(RequestIn& req) {
     pending = pending_ops_.count(op_id) > 0;
   }
   if (shell_receipt && pending) bytes.reset();
-  FBB b;
-  flatbuffers::Offset<R::OperationReceipt> rc;
-  if (bytes) {
-    rc = flatbuffers::Offset<R::OperationReceipt>(
-        wire::copy_table(
-            b, "Tsugumi.RPC.OperationReceipt",
-            reinterpret_cast<const flatbuffers::Table*>(
-                flatbuffers::GetRoot<R::OperationReceipt>(bytes->data())))
-            .o);
-  }
-  R::OperationResultBuilder ob(b);
-  ob.add_state(bytes     ? D::OperationState::completed
-               : pending ? D::OperationState::pending
-                         : D::OperationState::unknown);
-  if (bytes) ob.add_receipt(rc);
-  auto off = ob.Finish();
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::OperationResult,
-                         off.Union()));
+  reply(req, operation_reply(req.request_id, bytes ? &*bytes : nullptr,
+                             pending));
 }
 
 namespace {
@@ -2085,8 +2120,7 @@ void Service::file_list(RequestIn& req) {
   files.insert("tsugumi.json");
   files.insert("layout.json");
   for (const auto& [id, d] : doc->definitions) {
-    files.insert("definitions/" + id +
-                 (d.link_json ? "/_link.json" : "/_card.json"));
+    files.insert("definitions/" + id + "/_card.json");
     if (d.meta_json) files.insert("definitions/" + id + "/_meta.json");
   }
   std::string prefix = path == "." ? "" : path + "/";
@@ -2140,9 +2174,8 @@ void Service::file_list(RequestIn& req) {
       } else {
         auto id = p.substr(12, p.find('/', 12) - 12);
         const auto& d = doc->definitions.at(id);
-        const std::string& text = p.ends_with("_card.json")   ? d.card_json
-                                  : p.ends_with("_link.json") ? *d.link_json
-                                                              : *d.meta_json;
+        const auto& text =
+            p.ends_with("_card.json") ? d.card_json : *d.meta_json;
         hash = crypto::sha256_hex(text);
         size = text.size();
       }
@@ -2177,10 +2210,7 @@ std::optional<std::string> confirmed_bytes(const Document& doc,
     auto id = p.substr(12, p.find('/', 12) - 12);
     auto it = doc.definitions.find(id);
     if (it == doc.definitions.end()) return std::nullopt;
-    if (p.ends_with("_card.json"))
-      return it->second.link_json ? std::nullopt
-                                  : std::optional(it->second.card_json);
-    if (p.ends_with("_link.json")) return it->second.link_json;
+    if (p.ends_with("_card.json")) return it->second.card_json;
     return it->second.meta_json;
   }
   if (!doc.sources.count(p)) return std::nullopt;
@@ -2338,7 +2368,7 @@ void Service::view_save(RequestIn& req) {
   if (!r->base_view_rev())
     throw Failed(FailureKind::invalid_request, "base_view_rev is required");
   const auto view = r->view_json()->str();
-  if (view.size() > 1024 * 1024)
+  if (view.size() > kMaxViewBytes)
     throw Failed(FailureKind::resource_limit, "view exceeds 1 MiB");
   // Validate JSON syntax only; scope, selection and camera belong to clients.
   schema::Json opaque;

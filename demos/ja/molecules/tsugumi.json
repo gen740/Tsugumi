@@ -13,9 +13,6 @@
         "id": "properties"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "structures"
       },
       {
@@ -55,24 +52,14 @@
           "port": "molecules"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "structures"
-        },
-        "to": {
           "card": "structures",
           "port": "molecules"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "lipinski"
+          "card": "properties",
+          "port": "molecules"
         },
         "to": {
           "card": "lipinski",
@@ -81,8 +68,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "similarity"
+          "card": "properties",
+          "port": "molecules"
         },
         "to": {
           "card": "similarity",
