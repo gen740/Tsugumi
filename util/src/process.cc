@@ -7,6 +7,7 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstdio>
 #include <cstring>
@@ -15,6 +16,17 @@
 #include <string_view>
 
 namespace tsugumi::proc {
+namespace {
+
+// How a child's writes reach a pipe read depends on the OS and on timing: a
+// macOS reader often wakes for one or two lines. Collect complete stderr lines
+// across reads and deliver them at most once per interval (or once enough
+// bytes have collected), so a consumer that stores each delivery sees a
+// number of deliveries bounded by elapsed time and volume, not by reads.
+constexpr auto kStderrFlushInterval = std::chrono::milliseconds(50);
+constexpr size_t kStderrFlushBytes = 256 << 10;
+
+}  // namespace
 
 pid_t spawn(const Spec& spec) {
   if (spec.argv.empty()) throw std::invalid_argument("empty argv");
@@ -239,6 +251,15 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   std::string pending;
   std::vector<std::string> lines;
   bool truncated = false;
+  size_t line_bytes = 0;
+  // Set when `lines` gains its first entry since the last delivery.
+  std::optional<std::chrono::steady_clock::time_point> flush_at;
+  const auto flush = [&] {
+    deliver({lines, truncated});
+    lines.clear();
+    line_bytes = 0;
+    flush_at.reset();
+  };
   bool out_open = true;
   bool err_open = true;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -246,7 +267,14 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   while (out_open || err_open) {
     pollfd fds[2] = {{out_open ? out_pipe[0] : -1, POLLIN, 0},
                      {err_open ? err_pipe[0] : -1, POLLIN, 0}};
-    ::poll(fds, 2, 100);
+    int timeout_ms = 100;
+    if (flush_at) {
+      const auto left = std::chrono::ceil<std::chrono::milliseconds>(
+          *flush_at - std::chrono::steady_clock::now());
+      timeout_ms = static_cast<int>(
+          std::clamp<int64_t>(left.count(), 0, timeout_ms));
+    }
+    ::poll(fds, 2, timeout_ms);
     char buf[8192];
     if (out_open && (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
       ssize_t r = ::read(out_pipe[0], buf, sizeof buf);
@@ -276,19 +304,24 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
           remaining.remove_prefix(fragment.size());
           if (newline == remaining.npos) {
             pending.append(fragment);
-          } else if (pending.empty()) {
+            continue;
+          }
+          if (pending.empty()) {
             lines.emplace_back(fragment);
           } else {
             pending.append(fragment);
             lines.push_back(std::move(pending));
             pending.clear();
           }
+          line_bytes += lines.back().size();
+          if (!flush_at)
+            flush_at = std::chrono::steady_clock::now() + kStderrFlushInterval;
         }
-        deliver({lines, truncated});
-        lines.clear();
+        if (truncated || line_bytes >= kStderrFlushBytes) flush();
       }
     }
     auto now = std::chrono::steady_clock::now();
+    if (flush_at && now >= *flush_at) flush();
     if (!term_sent) {
       bool stop = false;
       if (cancel && cancel->load()) {
@@ -309,7 +342,11 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       kill_at.reset();
     }
   }
-  if (!pending.empty() && !log_error) deliver({std::span(&pending, 1)});
+  if (!pending.empty()) {
+    lines.push_back(std::move(pending));
+    line_bytes += lines.back().size();
+  }
+  if (!lines.empty() && !log_error) flush();
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
   res.status = wait(pid);

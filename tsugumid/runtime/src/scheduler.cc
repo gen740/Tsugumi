@@ -872,7 +872,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     // Until evaluation identifies a member, keep its diagnostics off the
     // invocation history. Use the same budget as the rest of its log, and
-    // keep each read's accepted prefix together as one history write.
+    // keep each delivered chunk's accepted prefix together as one history
+    // write.
     workerd::InvocationLog pending_budget(kInvocationLogLimitBytes);
     std::vector<std::string> pending_logs;
     bool published = false;
