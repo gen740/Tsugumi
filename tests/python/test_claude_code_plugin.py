@@ -540,7 +540,7 @@ def test_the_agent_key_cannot_answer_approvals_or_reach_the_page_routes(plugin):
     info = json.loads((data / "server.json").read_text())
     port, agent = info["port"], {"X-Tsugumi-Agent": info["agentKey"]}
     assert status(port, "POST", "/api/agent/tools", agent) == 200
-    for method, route in [("POST", "/api/chat/permission"), ("POST", "/api/page"), ("GET", "/api/events"), ("POST", "/api/terminal/start"),
+    for method, route in [("POST", "/api/chat/permission"), ("POST", "/api/page"), ("GET", "/api/events"), ("POST", "/api/host/connect"),
                           ("GET", "/api/fs"), ("POST", "/api/settings"), ("POST", "/api/chat/send")]:
         assert status(port, method, route, agent) == 401, route
     # A wrong agent key reaches nothing, the page's key everything.
