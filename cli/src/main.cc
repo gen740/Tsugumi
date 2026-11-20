@@ -20,8 +20,8 @@
 #include <vector>
 
 #include "commands.hh"
-#include "launch.hh"
-#include "rpc.hh"
+#include "tsugumi/cli/launch.hh"
+#include "tsugumi/cli/rpc.hh"
 #include "maintenance.hh"
 #include "mcp.hh"
 

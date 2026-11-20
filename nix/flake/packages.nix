@@ -68,6 +68,15 @@ in
           tsugumid = core;
           inherit web;
         };
+        # The desktop UI (ui/linux): GTK 4 windows on the same host.
+        linux-ui = pkgs.callPackage ../linux-ui.nix {
+          inherit
+            cardNixpkgs
+            hosq
+            core
+            web
+            ;
+        };
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {
         inherit kernel vm-boot vm-system;

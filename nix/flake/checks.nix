@@ -5,7 +5,12 @@
 { ... }:
 {
   perSystem =
-    { pkgs, config, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     let
       inherit (config.packages) web;
       # Reuse the installed production host archives and compile only the
@@ -19,6 +24,12 @@
         web-typecheck = web.override { typecheckOnly = true; };
         web = pkgs.callPackage ../web-checks.nix {
           inherit web operationDriver;
+        };
+      }
+      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
+        linux-ui = pkgs.callPackage ../linux-ui-check.nix {
+          inherit (config.packages) linux-ui;
+          core = config.packages.tsugumid;
         };
       };
       formatter = pkgs.treefmt.withConfig {

@@ -1,4 +1,4 @@
-#include "launch.hh"
+#include "tsugumi/cli/launch.hh"
 
 #include <fcntl.h>
 #include <sys/stat.h>
@@ -11,7 +11,7 @@
 #include <random>
 #include <stdexcept>
 
-#include "rpc.hh"
+#include "tsugumi/cli/rpc.hh"
 #include "tsugumi/protocol/agent_generated.h"
 #include "tsugumi/protocol/host_generated.h"
 #include "tsugumi/util/json_object.hh"

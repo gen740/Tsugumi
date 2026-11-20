@@ -100,6 +100,13 @@ jobs:
         if: matrix.checks['web-contracts']
         run: nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.web"
 
+      - name: Linux desktop UI package and headless GTK check
+        if: matrix.checks['linux-ui']
+        run: |
+          nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.linux-ui"
+          # The arm64 package is defined from the same expression.
+          nix eval --raw .#packages.aarch64-linux.linux-ui.drvPath > /dev/null
+
       - name: Build and run Cards through loopback tsugumi-workerd
         if: matrix.job == 'remote-execution'
         run: bash tests/ci-remote-worker.sh

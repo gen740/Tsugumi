@@ -39,7 +39,7 @@ def test_full_run_schedules_only_supported_jobs():
     plan = selection.select()
     assert {entry["system"]: [job["job"] for job in entry["tests"]["include"]]
             for entry in plan["matrix"]["include"]} == {
-        "x86_64-linux": ["native-checks", "host-and-web", "sdk", "remote-execution"],
+        "x86_64-linux": ["native-checks", "host-and-web", "sdk", "remote-execution", "linux-ui"],
         "aarch64-darwin": ["native-checks", "swift"],
     }
     assert checks(None)["aarch64-linux"] == {"vm", "pack-guest"}
@@ -50,6 +50,7 @@ def test_changed_paths_produce_only_selected_matrix_entries():
     assert checks(["ui/macos/Package.swift"]) == {"aarch64-darwin": {"swift"}}
     assert checks(["tests/remote/test_worker.py"]) == {"x86_64-linux": {"remote-execution"}}
     assert checks(["pack/build.sh"]) == {"aarch64-linux": {"pack-guest"}}
+    assert checks(["ui/linux/src/main.cc"]) == {"x86_64-linux": {"linux-ui"}}
     assert checks(["tests/core/agent/project_rpc_test.cc"])["aarch64-linux"] == {"vm"}
 
     boundary = selection.select(["ui/web/scripts/check-boundaries.mjs"])

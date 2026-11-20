@@ -1800,5 +1800,11 @@
   "（省略可）": " (optional)",
   "（経過時間は Run の受付から、実行環境の時計で計ります）": "(the elapsed time counts from the Run's acceptance, by the environment's clock)",
   "：": ": ",
-  "：失敗": ": failed"
+  "：失敗": ": failed",
+  "Tsugumi のホストに接続していません": "Not connected to the Tsugumi host",
+  "Tsugumi のホストを起動できませんでした": "The Tsugumi host could not start",
+  "プロジェクトを開けませんでした": "The project could not be opened",
+  "tsugumid に接続できませんでした": "Could not connect to tsugumid",
+  "前のログを読む": "Read Earlier Log",
+  "Card を選ぶと、ここにログを表示します": "Choose a Card to show its log here"
 }
