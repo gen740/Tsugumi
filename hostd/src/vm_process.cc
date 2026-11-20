@@ -19,6 +19,7 @@
 
 #include "host/binary_caches.hh"
 #include "tsugumi/protocol/trace_codec.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -359,11 +360,7 @@ class VMProcess final : public EnvironmentProcess {
     return mounts;
   }
   auto TryConnect() -> int {
-    sockaddr_un address{};
-    address.sun_family = AF_UNIX;
-    if (path_.size() >= sizeof(address.sun_path))
-      throw std::runtime_error("VM helper socket path too long");
-    std::memcpy(address.sun_path, path_.c_str(), path_.size() + 1);
+    const auto address = unix_socket::Address(path_);
     Socket socket{::socket(AF_UNIX, SOCK_STREAM, 0)};
     if (socket.fd < 0) return -1;
     ::fcntl(socket.fd, F_SETFD, FD_CLOEXEC);
@@ -371,7 +368,7 @@ class VMProcess final : public EnvironmentProcess {
     int enabled = 1;
     ::setsockopt(socket.fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof enabled);
 #endif
-    if (::connect(socket.fd, reinterpret_cast<sockaddr*>(&address),
+    if (::connect(socket.fd, reinterpret_cast<const sockaddr*>(&address),
                   sizeof address))
       return -1;
     const auto fd = socket.fd;

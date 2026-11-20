@@ -17,6 +17,7 @@
 #include <optional>
 #include <stdexcept>
 
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -110,12 +111,12 @@ void TransportServer::start() {
                                std::string(std::strerror(errno)));
     ::fcntl(fd, F_SETFD, FD_CLOEXEC);
     sockaddr_un addr{};
-    addr.sun_family = AF_UNIX;
-    if (path.size() >= sizeof addr.sun_path) {
+    try {
+      addr = unix_socket::Address(path);
+    } catch (...) {
       ::close(fd);
-      throw std::runtime_error("unix socket path too long");
+      throw;
     }
-    std::strcpy(addr.sun_path, path.c_str());
     ::unlink(path.c_str());
     int rc = ::bind(fd, reinterpret_cast<sockaddr*>(&addr), sizeof addr);
     if (rc != 0) {

@@ -37,6 +37,7 @@
 
 #include "journal.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/invocation.hh"
@@ -567,13 +568,10 @@ auto supervise(const std::string& self, const stdfs::path& root,
 }
 
 auto unix_listener(const stdfs::path& path) -> int {
-  sockaddr_un address{};
-  const auto text = path.string();
-  if (!path.is_absolute() || text.size() >= sizeof address.sun_path)
-    throw std::runtime_error(
-        "Unix socket path must be absolute and shorter than " +
-        std::to_string(sizeof address.sun_path) +
-        " bytes (choose one with --socket): " + text);
+  if (!path.is_absolute())
+    throw std::runtime_error("Unix socket path must be absolute: " +
+                             path.string());
+  const auto address = unix_socket::Address(path.string());
   // The singleton lock owns this private endpoint; never unlink arbitrary
   // files.
   struct stat st{};
@@ -583,10 +581,9 @@ auto unix_listener(const stdfs::path& path) -> int {
     ::unlink(path.c_str());
   }
   int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  address.sun_family = AF_UNIX;
-  std::memcpy(address.sun_path, text.data(), text.size());
   if (fd < 0 ||
-      ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof address) != 0 ||
+      ::bind(fd, reinterpret_cast<const sockaddr*>(&address),
+             sizeof address) != 0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on Unix socket");
   ::chmod(path.c_str(), 0600);
