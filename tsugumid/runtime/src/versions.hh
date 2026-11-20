@@ -111,8 +111,6 @@ class Versions {
       -> VersionDiffData;
   auto comment_changes(const std::string& commit)
       -> std::vector<comments::Change>;
-  auto summary(const std::string& commit, bool english,
-               const std::optional<std::string>& text = {}) -> std::string;
 
   static std::string format_note(const VersionRunNote& r);
   static std::string iso_utc(int64_t ms);

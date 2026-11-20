@@ -244,6 +244,8 @@ std::vector<std::string> configured_substituters(const stdfs::path& file) {
 Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   mutation_lane_ = std::make_unique<Lane>(1);
   read_pool_ = std::make_unique<Lane>(6);
+  // Plan requests can occupy every reader while the execution broker is down.
+  cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
 }
 
@@ -376,12 +378,18 @@ class SelectedExecution final : public PreparedExecution {
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
-  auto targets = remote_targets();
+  auto targets = remote_targets(build.cancel);
+  std::stop_callback wake(build.cancel, [&] {
+    std::lock_guard lock(worker_selection_mutex_);
+    worker_selection_cv_.notify_all();
+  });
   const auto card = path_key(node.path);
   std::unique_lock lock(worker_selection_mutex_);
   if (!node.settings.reuse_worker) resident_targets_.erase(card);
   std::string selected;
   for (;;) {
+    if (build.cancel.stop_requested())
+      throw Failed(FailureKind::cancelled, "worker selection cancelled");
     std::vector<WorkerCandidate> candidates;
     for (const auto& target : targets) {
       const auto capacity =
@@ -407,7 +415,7 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
         lock.unlock();
         RemoteProbe live;
         try {
-          live = remote_jobs_.probe(target.id, target.server_id);
+          live = remote_jobs_.probe(target.id, target.server_id, build.cancel);
         } catch (...) {
           lock.lock();
           throw;
@@ -423,11 +431,11 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       break;
     }
     if (!selected.empty()) break;
-    if (build.cancel && build.cancel->load())
+    if (build.cancel.stop_requested())
       throw Failed(FailureKind::cancelled, "worker selection cancelled");
     worker_selection_cv_.wait_for(lock, std::chrono::milliseconds(100));
     lock.unlock();
-    targets = remote_targets();
+    targets = remote_targets(build.cancel);
     lock.lock();
   }
   ++worker_slots_[selected];
@@ -457,9 +465,9 @@ auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
 }
 
-auto Service::remote_targets() const -> std::vector<RemoteTarget> {
+auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {
   try {
-    auto targets = remote_jobs_.catalog();
+    auto targets = remote_jobs_.catalog(stop);
     auto local =
         std::ranges::find(targets, kLocalExecutionService, &RemoteTarget::id);
     if (local == targets.end()) {
@@ -541,6 +549,7 @@ void Service::shutdown() {
       cancelled->store(true);
   }
   if (shell_lane_) shell_lane_->stop();
+  if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
@@ -599,8 +608,7 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionCanvas",
                                    "VersionNote",
                                    "VersionDiff",
-                                   "VersionComments",
-                                   "VersionSummary"};
+                                   "VersionComments"};
   // Every Display kind of the protocol.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE)
@@ -803,8 +811,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::version_diff);
     case P::VersionCommentsRequest:
       return on_lane(r, std::move(req), &Service::version_comments);
-    case P::VersionSummaryRequest:
-      return on_lane(m, std::move(req), &Service::version_summary);
     case P::ProjectInspectRequest:
       return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest:
@@ -828,7 +834,7 @@ void Service::dispatch(RequestIn req) {
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
-      return on_lane(r, std::move(req), &Service::run_cancel);
+      return on_lane(*cancel_lane_, std::move(req), &Service::run_cancel);
     case P::RunStatusRequest:
       return on_lane(r, std::move(req), &Service::run_status);
     case P::RunHistoryRequest:
@@ -1101,6 +1107,7 @@ std::optional<Service::ViewRecord> Service::load_view(
 
 auto Service::busy() -> bool {
   return !mutation_lane_->idle() || !read_pool_->idle() ||
+         !cancel_lane_->idle() ||
          !shell_lane_->idle() || scheduler_->active_status().has_value();
 }
 
@@ -1810,17 +1817,6 @@ void Service::version_comments(RequestIn& req) {
                            value.Union());
   check_frame(bytes.size(), "the version comments");
   reply(req, std::move(bytes));
-}
-
-void Service::version_summary(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_VersionSummaryRequest();
-  const auto text = versions_->summary(
-      r->commit()->str(), r->english(),
-      r->text() ? std::optional(r->text()->str()) : std::nullopt);
-  FBB b;
-  const auto value = R::CreateVersionSummary(b, b.CreateString(text));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionSummary,
-                         value.Union()));
 }
 
 void Service::cache_clear(RequestIn& req) {

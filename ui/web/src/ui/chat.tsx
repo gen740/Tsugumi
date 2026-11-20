@@ -62,12 +62,12 @@ export function PermissionHost({ session }: { session: ProjectSession }) {
   const chat = app.chat(session)
   useObserve(chat)
   const p = chat.permission
-  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} onAnswer={(allow, selected) => chat.answerPermission(allow, p.id, selected)} /> : null
+  return p ? <PermissionPrompt key={p.id} asked={p.asked} groups={p.groups} from={p.from} callId={p.call_id} onAnswer={(allow, selected) => chat.answerPermission(allow, p.id, selected)} /> : null
 }
 
 /** Presents core-owned access and operation requests.
  *  Return allows and Esc declines. */
-export function PermissionPrompt({ asked, groups = [], from, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; reload?: boolean; onAnswer: (allow: boolean, selected?: string[]) => void }) {
+export function PermissionPrompt({ asked, groups = [], from, callId, reload = false, onAnswer }: { asked: string[]; groups?: AccessGroup[]; from?: string; callId?: string; reload?: boolean; onAnswer: (allow: boolean, selected?: string[]) => void }) {
   const who = from ?? 'Agent'
   const [selected, setSelected] = useState(() => defaultPermissionSelection(asked).filter(r => !r.startsWith('project_access ') || projectAccessNeededNow(r)))
   useEffect(() => {
@@ -87,6 +87,7 @@ export function PermissionPrompt({ asked, groups = [], from, reload = false, onA
       <div className="sheet-body permission-prompt">
         <div className="title2"><Icon name="hand.raised" /> {reload ? L('外部の変更が Card の権限を広げます') : operation ? L('{0} がこの操作の承認を求めています', who) : access.length ? L('{0} がアクセスの許可を求めています', who) : L('{0} が Card の権限を広げようとしています', who)}</div>
         {!groups.length && <p className="secondary">{reload ? L('表示された権限を許可して、外部の変更を読み込みますか？') : operation ? L('表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。') : access.length ? L('表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。') : L('許可すると、この保存が行われます。許可しなければ何も保存されず、{0} には理由を説明するよう伝えます。', who)}</p>}
+        {callId && <p className="caption secondary mono">{callId}</p>}
         <PermissionRequests asked={asked} groups={groups} selected={selected} onSelect={(request, on) => setSelected(on ? [...selected, request] : selected.filter(r => r !== request))} />
         {!!groups.length && <p className="secondary caption">{L('読み取った内容は接続先のモデルに送信される場合があります。')}</p>}
         <div className="row end gap8">

@@ -9,7 +9,6 @@
 #include <thread>
 #include <vector>
 
-#include "agent/approvals.hh"
 #include "agent/helpers.hh"
 #include "agent/providers.hh"
 #include "agent/store.hh"
@@ -50,7 +49,6 @@ namespace H = Tsugumi::Host;
 namespace S = Tsugumi::Service;
 namespace json = ::tsugumi::json;
 namespace wire = agent::wire;
-using agent::Approvals;
 using agent::Cancelled;
 using agent::ConversationStore;
 using agent::Helpers;
@@ -104,14 +102,7 @@ struct Service::State {
         terminal_closes(1),
         environment_stops(2) {
     host_settings = std::make_unique<host::Settings>(
-        options.state_dir,
-        [this](const std::string& id, const json::Members& values) {
-          credentials.Import(id, values);
-        },
-        [this](const std::string& id, std::string_view stale) {
-          return credentials.AccessToken(id, stale);
-        },
-        [this](const std::string& id) { return credentials.Forget(id); },
+        options.state_dir, credentials,
         nullptr, host::Settings::kKeyStorage,
         [this] { return host::Models::StoredChatGPTModels(options.state_dir); },
         [this](std::string event) {
@@ -124,9 +115,8 @@ struct Service::State {
     conversations = std::make_unique<ConversationStore>(
         state_gate, db, registry,
         [this](std::string raw) { return Scrub(std::move(raw)); },
-        [this](const std::string& resource, const std::string& id,
-               Tsugumi::Service::Access access) {
-          return this->access->HasGrant(resource, id, access);
+        [this](const std::string& resource, Tsugumi::Service::Access access) {
+          return this->access->HasGrant(resource, access);
         },
         [this](const std::string& id) { return turns->running.contains(id); });
     access = std::make_unique<host::Access>(
@@ -134,21 +124,16 @@ struct Service::State {
         host::Access::Dependencies{
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
-            .cancel =
-                [this](const auto& project, const auto& conversation) {
-                  for (const auto& [key, call] : tools->file_calls)
-                    if (call.project == project &&
-                        (conversation.empty() || key.first == conversation))
-                      call.stop->request_stop();
-                  // A model-issued shell uses its conversation's stop token.
-                  for (const auto& [id, job] : turns->jobs)
-                    if ((conversation.empty() || id == conversation) &&
-                        conversations->GetConversation(id).project == project)
-                      job->request_stop();
-                }});
+            .cancel = [this](const auto& project) {
+              for (const auto& [_, call] : tools->file_calls)
+                if (call.project == project) call.stop->request_stop();
+              for (const auto& [id, job] : turns->jobs)
+                if (conversations->GetConversation(id).project == project)
+                  job->request_stop();
+            }});
     turns = std::make_unique<Turns>(
         state_gate, db, *conversations, *providers, *host_settings, shutdown,
-        stopping, access->changed, *access,
+        stopping, *access,
         Turns::Dependencies{
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
@@ -178,27 +163,12 @@ struct Service::State {
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
-            .approve_operation =
-                [this](const auto& project, const auto& id, const auto& call,
-                       const auto& digest, const auto& args, bool wait,
-                       auto stop, const auto& permissions) {
-                  return approvals->ApproveOperation(
-                      project, id, call, digest, args, wait, stop, permissions);
-                },
             .run_helper =
                 [this](const auto& id, const auto& call, size_t index,
                        const auto& task, auto stop, const auto& authorization) {
                   return helpers->RunHelper(id, call, index, task, stop,
                                             authorization);
-                },
-            .helper_result =
-                [this](const auto& output, const auto& id, const auto& call,
-                       size_t index) {
-                  return helpers->HelperResult(output, id, call, index);
                 }});
-    approvals =
-        std::make_unique<Approvals>(state_gate, db, *conversations, *tools,
-                                    stopping, access->changed, *access);
     helpers = std::make_unique<Helpers>(
         state_gate, *conversations, *providers, *host_settings, *tools, *turns,
         *access,
@@ -207,13 +177,11 @@ struct Service::State {
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
         });
-    skills_service = std::make_unique<host::SkillsService>(db, *host_settings);
+    skills_service = std::make_unique<host::SkillsService>(db);
     models = std::make_unique<host::Models>(
         db, *host_settings, shutdown.get_token(),
         [this](std::string raw) { return Scrub(std::move(raw)); });
-    versions = std::make_unique<host::Versions>(
-        *host_settings, *tools, *turns,
-        [this](std::string raw) { return Scrub(std::move(raw)); });
+    versions = std::make_unique<host::Versions>(*tools);
     events = std::make_unique<host::HostEvents>(
         state_gate, terminal_closes, [this](uint64_t session) {
           H::HostTerminalRequestT close;
@@ -343,7 +311,6 @@ struct Service::State {
   std::unique_ptr<Providers> providers;
   std::unique_ptr<Turns> turns;
   std::unique_ptr<Tools> tools;
-  std::unique_ptr<Approvals> approvals;
   std::unique_ptr<Helpers> helpers;
   std::unique_ptr<host::Access> access;
   std::unique_ptr<host::SkillsService> skills_service;
@@ -383,7 +350,7 @@ struct Service::State {
         const auto key = query.text(3);
         if (options.vm.binary.empty() || key.empty()) continue;
         capability = fs::read_file(options.environment.directory / key /
-                                  "control/execution-broker-capability")
+                                   "control/execution-broker-capability")
                          .value_or("");
         if (capability.empty()) continue;
       }
@@ -575,7 +542,8 @@ struct Service::State {
         throw Failure("permission_denied",
                       "Host was started without RPC tracing");
       if (request.websocket)
-        throw Failure("permission_denied", "RPC capture requires local host access");
+        throw Failure("permission_denied",
+                      "RPC capture requires local host access");
       lock.unlock();
       auto result = debug_trace.Handle(request.conn, *debug, [this] {
         std::lock_guard lock(mutex);
@@ -749,9 +717,7 @@ struct Service::State {
         lock.lock();
         if (snapshot) {
           H::SettingsChangedT changed;
-          changed.profile =
-              r->value_as_SettingsUpdateRequest()->profile()->str();
-          changed.revision = snapshot->revision();
+          changed.revision = snapshot->revision()->str();
           events->Publish(wire::HostEvent(std::move(changed)));
         }
       }

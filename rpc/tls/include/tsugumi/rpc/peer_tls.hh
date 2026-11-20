@@ -45,8 +45,9 @@ class Context {
 };
 class Stream {
  public:
-  // The caller owns fd before handshake.
-  Stream(const Context& context, int fd, bool server);
+  // The caller owns fd. If a downstream fd is supplied, fd is nonblocking
+  // and a pending TLS operation also wakes when the downstream disconnects.
+  Stream(const Context& context, int fd, bool server, int downstream = -1);
   ~Stream();
   Stream(const Stream&) = delete;
   auto operator=(const Stream&) -> Stream& = delete;

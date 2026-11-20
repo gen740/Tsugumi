@@ -448,65 +448,99 @@ auto SkillNameKey(std::string_view name) -> std::string {
   return Normalize(RepairUTF8(name));
 }
 
-auto ProjectTrusted(sql::Db& db, const fs::path& path,
-                    const std::vector<std::string>& folders) -> bool {
-  return ProjectTrust(db, path, folders) == H::ProjectTrustDecision::Trusted;
-}
-
-auto TrustedParent(const fs::path& path,
-                   const std::vector<std::string>& folders) -> std::string {
-  if (path.empty()) return {};
-  std::error_code error;
-  const auto project = fs::canonical(path, error);
-  if (error) return {};
-  for (const auto& folder : folders) {
-    const auto root = fs::canonical(folder, error);
-    if (error || root != fs::path(folder) || !fs::is_directory(root, error))
-      continue;
-    const auto match =
-        std::mismatch(root.begin(), root.end(), project.begin(), project.end());
-    if (match.first == root.end()) return folder;
-  }
-  return {};
-}
-
-auto ProjectTrust(sql::Db& db, const fs::path& path,
-                  const std::vector<std::string>& folders)
-    -> H::ProjectTrustDecision {
-  if (path.empty()) return H::ProjectTrustDecision::Unknown;
-  if (!TrustedParent(path, folders).empty())
-    return H::ProjectTrustDecision::Trusted;
-  const auto canonical = fs::weakly_canonical(path);
+namespace {
+auto DirectoryIdentity(const fs::path& path)
+    -> std::optional<std::pair<uint64_t, uint64_t>> {
   struct stat folder{};
+  if (::stat(path.c_str(), &folder) != 0 || !S_ISDIR(folder.st_mode))
+    return std::nullopt;
+  return std::pair{static_cast<uint64_t>(folder.st_dev),
+                   static_cast<uint64_t>(folder.st_ino)};
+}
+auto SaveTrust(sql::Db& db, const fs::path& canonical, bool recursive,
+               H::ProjectTrustDecision decision) -> void {
+  const auto identity = DirectoryIdentity(canonical);
+  if (!identity) throw std::runtime_error("Cannot identify the trusted folder");
+  auto save =
+      db.prepare("INSERT OR REPLACE INTO skill_trust VALUES(?,?,?,?,?)");
+  save.bind(1, canonical.string())
+      .bind(2, recursive)
+      .bind(3, identity->first)
+      .bind(4, identity->second)
+      .bind(5, static_cast<int>(decision))
+      .run();
+}
+}  // namespace
+
+auto TrustedFolders(sql::Db& db) -> std::vector<std::string> {
   auto query = db.prepare(
-      "SELECT device,inode,decision FROM project_trust WHERE path=?");
+      "SELECT path FROM skill_trust WHERE recursive=1 ORDER BY path");
+  std::vector<std::string> folders;
+  while (query.step()) folders.push_back(query.text(0));
+  return folders;
+}
+
+auto SetTrustedFolders(sql::Db& db, const std::vector<std::string>& folders)
+    -> void {
+  const auto previous = TrustedFolders(db);
+  const std::set<std::string> saved(previous.begin(), previous.end());
+  std::set<std::string> selected;
+  for (const auto& entry : folders) {
+    const fs::path path(entry);
+    if (!path.is_absolute())
+      throw std::runtime_error("Choose an existing absolute folder");
+    const auto canonical =
+        saved.contains(entry) ? entry : fs::canonical(path).string();
+    if (selected.insert(canonical).second && !saved.contains(canonical))
+      SaveTrust(db, canonical, true, H::ProjectTrustDecision::Trusted);
+  }
+  for (const auto& entry : saved) {
+    if (selected.contains(entry)) continue;
+    auto remove =
+        db.prepare("DELETE FROM skill_trust WHERE path=? AND recursive=1");
+    remove.bind(1, entry).run();
+  }
+}
+
+auto ProjectTrust(sql::Db& db, const fs::path& path) -> H::ProjectTrustT {
+  H::ProjectTrustT trust;
+  if (path.empty()) return trust;
+  std::error_code error;
+  const auto canonical = fs::canonical(path, error);
+  if (error) return trust;
+  auto query = db.prepare(
+      "SELECT path,recursive,device,inode,decision FROM skill_trust "
+      "WHERE recursive=1 OR path=? ORDER BY recursive DESC,path");
   query.bind(1, canonical.string());
-  if (!query.step()) return H::ProjectTrustDecision::Unknown;
-  if (::stat(canonical.c_str(), &folder) == 0 && S_ISDIR(folder.st_mode) &&
-      query.u64(0) == static_cast<uint64_t>(folder.st_dev) &&
-      query.u64(1) == static_cast<uint64_t>(folder.st_ino))
-    return static_cast<H::ProjectTrustDecision>(query.i64(2));
-  // Forget mismatched decisions, including declines. A replacement is a new
-  // project; moving the old folder back later must not restore its old answer.
-  auto forget = db.prepare("DELETE FROM project_trust WHERE path=?");
-  forget.bind(1, canonical.string()).run();
-  return H::ProjectTrustDecision::Unknown;
+  while (query.step()) {
+    const fs::path root(query.text(0));
+    const bool recursive = query.i64(1) != 0;
+    const auto match = std::mismatch(root.begin(), root.end(),
+                                     canonical.begin(), canonical.end());
+    if (match.first != root.end()) continue;
+    if (fs::canonical(root, error) == root && !error &&
+        DirectoryIdentity(root) == std::pair{query.u64(2), query.u64(3)}) {
+      trust.decision = static_cast<H::ProjectTrustDecision>(query.i64(4));
+      if (recursive) trust.trusted_folder = root.string();
+      return trust;
+    }
+    if (!recursive) {
+      // Replacing the project directory invalidates its individual decision.
+      auto forget =
+          db.prepare("DELETE FROM skill_trust WHERE path=? AND recursive=0");
+      forget.bind(1, root.string()).run();
+    }
+  }
+  return trust;
+}
+
+auto ProjectTrusted(sql::Db& db, const fs::path& path) -> bool {
+  return ProjectTrust(db, path).decision == H::ProjectTrustDecision::Trusted;
 }
 
 auto SetProjectTrust(sql::Db& db, const fs::path& path,
                      H::ProjectTrustDecision decision) -> void {
-  const auto canonical = fs::canonical(path);
-  struct stat folder{};
-  if (::stat(canonical.c_str(), &folder) != 0 || !S_ISDIR(folder.st_mode))
-    throw std::runtime_error("Cannot identify the project folder");
-  // Folder identity survives atomic saves of tsugumi.json and other files.
-  auto save =
-      db.prepare("INSERT OR REPLACE INTO project_trust VALUES(?,?,?,?)");
-  save.bind(1, canonical.string())
-      .bind(2, static_cast<uint64_t>(folder.st_dev))
-      .bind(3, static_cast<uint64_t>(folder.st_ino))
-      .bind(4, static_cast<int>(decision))
-      .run();
+  SaveTrust(db, fs::canonical(path), false, decision);
 }
 
 auto ListSkills(const fs::path& project,

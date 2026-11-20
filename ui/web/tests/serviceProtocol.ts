@@ -115,7 +115,7 @@ console.log('Host list readers: omitted vectors are empty')
 
 for (const type of [HostReplyPayload.Settings, HostReplyPayload.SignInStatus]) {
   const b = new fb.Builder()
-  const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, 0n, 0)
+  const value = type === HostReplyPayload.Settings ? Settings.createSettings(b, b.createString('host:0'), 0)
     : SignInStatus.createSignInStatus(b, 0, b.createString('idle'), 0, 0, 0, false, 0, false)
   const reply = HostReply.createReply(b, type, value)
   HostMessage.finishMessageBuffer(b, HostMessage.createMessage(b, 1n, HostPayload.Reply, reply))
@@ -192,9 +192,9 @@ assert.deepEqual(interruptedView.interruptedOperation, { kind: 'tool', id: 'call
   const { EventPayload } = await import('../shared/gen/tsugumi/host/event-payload')
   const { MessageT } = await import('../shared/gen/tsugumi/host/message')
   const b = new fb.Builder()
-  const message = new MessageT(0n, HostPayload.Event, new EventT(EventPayload.SettingsChanged, new SettingsChangedT('desktop', 42n)))
+  const message = new MessageT(0n, HostPayload.Event, new EventT(EventPayload.SettingsChanged, new SettingsChangedT('host:42')))
   HostMessage.finishMessageBuffer(b, message.pack(b))
-  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { profile: 'desktop', revision: 42 } })
+  assert.deepEqual(decodeReply(b.asUint8Array(), true).event, { type: 'SettingsChanged', value: { revision: 'host:42' } })
 }
 
 // Each checkbox travels independently; no implicit Write/Run grant.

@@ -21,7 +21,7 @@ GROUPS = [
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
                  "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
     ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead"]),
-    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments", "VersionSummary"]),
+    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments"]),
 ]
 
 

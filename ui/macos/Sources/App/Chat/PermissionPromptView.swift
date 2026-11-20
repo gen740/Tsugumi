@@ -52,6 +52,9 @@ struct PermissionPromptView: View {
       if prompt.groups.isEmpty { Text(reload ? "表示された権限を許可して、外部の変更を読み込みますか？" : prompt.operation != nil ? "表示された対象への、この操作だけを承認します。次の操作には再び承認が必要です。拒否すると何も変更しません。" : prompt.access.isEmpty ? "許可すると、この保存が行われます。許可しなければ何も保存されず、Agent には理由を説明するよう伝えます。" : "表示された対象へのアクセスを許可します。読み取った内容は接続先のモデルに送信される場合があります。")
         .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true) }
       VStack(alignment: .leading, spacing: 6) {
+        if let callId = prompt.callId, !callId.isEmpty {
+          Text(callId).font(.caption.monospaced()).textSelection(.enabled)
+        }
         if let operation = prompt.operation {
           ScrollView {
             Text(operation).font(.caption.monospaced()).textSelection(.enabled)

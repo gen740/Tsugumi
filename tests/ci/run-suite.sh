@@ -45,6 +45,7 @@ native_agent=(
   'SkillsFixture.StrictSizeBoundaryAndUnreadableFilesAndFolders'
   'BrokerFixture.*Handshake*' 'BrokerFixture.WrongWorkerKeyIsRejectedBeforeAnyApplicationRequest'
   'BrokerFixture.FragmentedFramesWaitForTheCompleteRequest'
+  'BrokerFixture.CancelReachesWorkerWhileOtherRepliesAreBlocked'
 )
 # Python suites that exercise native workers, paths or transports keep their
 # own marker. Shared rules and the rest of each mixed fixture run on x86 Linux.
@@ -90,7 +91,8 @@ case "$suite" in
     ;;
   host)
     if [[ "$system" == aarch64-darwin ]]; then
-      run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py
+      run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py \
+        tests/core/integration/test_nix_build_log.py
     else
       host_args=(--ignore=tests/core/integration/test_host_sandbox.py)
       if ! $full; then host_args+=(--ignore=tests/core/integration/test_definition_evaluation.py); fi

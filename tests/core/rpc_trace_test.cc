@@ -182,6 +182,7 @@ TEST_F(RpcTrace, CaptureRedactsTokensNestedCredentialsAndOpaqueSettings) {
 
   H::SettingsUpdateRequestT settings;
   settings.profile = "desktop";
+  settings.revision = "host:0";
   auto change = std::make_unique<H::SettingT>();
   change->key = "credential";
   change->value_json = "\"opaque-secret\"";

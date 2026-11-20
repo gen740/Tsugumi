@@ -17,7 +17,7 @@ final class ExecutionBrokerBridgeTests: XCTestCase {
       throw error
     }
     defer { Darwin.close(host[0]) }
-    // The VZ adapter uses this byte relay; it never decodes remote_worker.fbs.
+    // Other VM services preserve TCP half-close semantics.
     VMHostIPC.relay(guest[1], host[1])
     let request = Data([0, 255, 1, 0, 128])
     try check(request.withUnsafeBytes { Darwin.write(guest[0], $0.baseAddress, $0.count) } == request.count)
@@ -27,6 +27,26 @@ final class ExecutionBrokerBridgeTests: XCTestCase {
     try check(reply.withUnsafeBytes { Darwin.write(host[0], $0.baseAddress, $0.count) } == reply.count)
     Darwin.shutdown(host[0], SHUT_WR)
     XCTAssertEqual(try readToEnd(guest[0]), reply)
+  }
+
+  func testBrokerRelayStopsBothDirectionsWhenCoreDisconnects() throws {
+    var guest: [Int32] = [-1, -1]
+    var host: [Int32] = [-1, -1]
+    try check(socketpair(AF_UNIX, SOCK_STREAM, 0, &guest) == 0)
+    guard socketpair(AF_UNIX, SOCK_STREAM, 0, &host) == 0 else {
+      Darwin.close(guest[0])
+      Darwin.close(guest[1])
+      throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+    }
+    defer { Darwin.close(host[0]) }
+    let closed = expectation(description: "relay closes while host holds its response")
+    VMHostIPC.relay(guest[1], host[1], closeOnEOF: true) { closed.fulfill() }
+    Darwin.close(guest[0])
+    guard XCTWaiter.wait(for: [closed], timeout: 5) == .completed else {
+      XCTFail("The broker relay stayed open after the core disconnected.")
+      return
+    }
+    XCTAssertEqual(try readToEnd(host[0]), Data())
   }
 
   private func check(_ success: Bool) throws {

@@ -1,4 +1,6 @@
+import AppKit
 import Foundation
+import SwiftUI
 import Testing
 @testable import TsugumiApp
 @testable import TsugumiAgentClient
@@ -62,6 +64,72 @@ import TsugumiRPC
     selection.paths.remove(a.path)
     #expect(selection.rows(candidates).map(\.path) == [b.path, unknown.path])
     #expect(selection.knownBytes(candidates) == 5 && selection.hasUnknown(candidates))
+  }
+
+  @Test func stopTracksOnlyTheCurrentActiveRun() async throws {
+    let directory = try SyncTests.project()
+    defer { try? FileManager.default.removeItem(at: directory) }
+    let session = ProjectSession(identity: try ProjectIdentity(url: directory), environments: EnvironmentManager(image: nil))
+    func status(_ id: String, _ state: Tsugumi_Data_RunState) -> Tsugumi_RPC_RunStatusT {
+      let status = Tsugumi_RPC_RunStatusT()
+      status.runId = id
+      status.state = state
+      return status
+    }
+    func accept(_ id: String) {
+      let accepted = Tsugumi_RPC_RunAcceptedEventT()
+      accepted.status = status(id, .preparing)
+      let event = Tsugumi_RPC_RunEventT()
+      event.runId = id
+      event.value = Tsugumi_RPC_RunEventValueUnion(accepted, type: .runacceptedevent)
+      session.applyRunEvent(event)
+    }
+    func finish(_ id: String) {
+      let summary = Tsugumi_RPC_RunSummaryT()
+      summary.status = status(id, .succeeded)
+      let finished = Tsugumi_RPC_RunFinishedT()
+      finished.summary = summary
+      let event = Tsugumi_RPC_RunEventT()
+      event.runId = id
+      event.value = Tsugumi_RPC_RunEventValueUnion(finished, type: .runfinished)
+      session.applyRunEvent(event)
+    }
+
+    accept("failed-stop")
+    let workspace = Workspace(), tab = WorkflowTab(scope: [])
+    func toolbarHeight() -> CGFloat {
+      NSHostingView(rootView: CanvasRunControl(workspace: workspace, session: session, tab: tab)
+        .frame(width: 320)).fittingSize.height
+    }
+    let before = toolbarHeight()
+    struct Rejected: LocalizedError, CustomStringConvertible {
+      let description = "The execution service refused this Stop request."
+    }
+    await session.cancelRun { id in
+      #expect(id == "failed-stop")
+      #expect(session.stopRequested && !session.canStopRun)
+      throw Rejected()
+    }
+    #expect(session.stopError?.contains(Rejected().description) == true && session.canStopRun)
+    // The error occupies a second line in the narrow toolbar itself.
+    #expect(toolbarHeight() > before)
+    await session.cancelRun { id in status(id, .cancelling) }
+    #expect(session.runStatus?.state == .cancelling && !session.stopRequested && !session.canStopRun)
+    #expect(session.stopError == nil)
+
+    accept("finished")
+    await session.cancelRun { id in
+      finish(id)
+      return status(id, .cancelling)
+    }
+    #expect(session.runStatus?.state == .succeeded && !session.stopRequested)
+
+    accept("replaced")
+    await session.cancelRun { id in
+      accept("new")
+      return status(id, .cancelling)
+    }
+    #expect(session.currentRunId == "new" && session.canStopRun)
   }
 
   @Test func displayKeepsItsRunMarkAfterAnotherBranchRuns() throws {

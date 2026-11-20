@@ -12,6 +12,7 @@
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
+struct Credentials;
 // API-key storage has a narrow interface, independent of platform UI and OAuth.
 class SecretStore {
  public:
@@ -28,11 +29,6 @@ auto VMDefaultResources() -> Tsugumi::Host::VMResourcesT;
 auto VMResourceLimits() -> Tsugumi::Host::VMResourcesT;
 class Settings {
  public:
-  using Import =
-      std::function<void(const std::string&, const ::tsugumi::json::Members&)>;
-  using Token =
-      std::function<std::string(const std::string&, std::string_view)>;
-  using Forget = std::function<bool(const std::string&)>;
   using Models = std::function<std::vector<std::string>()>;
   enum class KeyStorage { Host, Keychain };
 #ifdef __APPLE__
@@ -40,8 +36,8 @@ class Settings {
 #else
   static constexpr auto kKeyStorage = KeyStorage::Host;
 #endif
-  Settings(const std::filesystem::path& directory, Import import, Token token,
-           Forget forget, std::unique_ptr<SecretStore> secrets = {},
+  Settings(const std::filesystem::path& directory, Credentials& credentials,
+           std::unique_ptr<SecretStore> secrets = {},
            KeyStorage storage = kKeyStorage, Models models = {},
            std::function<void(std::string)> publish = {});
   ~Settings();
@@ -49,17 +45,11 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
-  auto AllowUnscopedHelpers(const std::string& profile) -> bool;
-  auto TrustedFolders() -> std::vector<std::string>;
-  // vm.cpus, vm.memoryGiB and vm.storeGiB of the host profile; 0 (the default)
+  auto AllowUnscopedHelpers() -> bool;
+  // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
   // takes VMDefaultResources' value.
   auto VMResources() -> Tsugumi::Host::VMResourcesT;
-  auto Language(const std::string& profile) -> std::string;
-  auto VersionNoteMode(const std::string& profile) -> std::string;
-  auto VersionNoteProvider(const std::string& profile,
-                           const std::string& anthropic_keys,
-                           const std::string& openai_keys)
-      -> agent::ProviderConfig;
+  auto Language() -> std::string;
   auto ModelSelection(const std::string& profile, const std::string& purpose)
       -> Tsugumi::Service::ProviderSelectionT;
   auto Resolve(const ::tsugumi::json::Members& selection)

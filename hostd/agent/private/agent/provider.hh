@@ -31,6 +31,10 @@ struct ProviderConfig {
   // Maximum input tokens, after reserving reply tokens and a safety margin.
   uint32_t context_limit_tokens = 100000;
   bool web_search = false;
+  // Host-set domain lists for web search, passed to the provider's search
+  // tool. A domain on both lists is blocked.
+  std::vector<std::string> search_allowed_domains;
+  std::vector<std::string> search_blocked_domains;
   bool fast = false;
 };
 

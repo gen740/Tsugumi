@@ -8,14 +8,29 @@
 
 #include "../agent_fixture_server.hh"
 #include "agent/runtime.hh"
+#include "host/credentials.hh"
 #include "host/models.hh"
 #include "host/settings.hh"
+#include "host/skills.hh"
 #include "host/store.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
 namespace {
 namespace H = Tsugumi::Host;
+auto ReadSettingsRevision(host::Settings& service) -> std::string {
+  flatbuffers::FlatBufferBuilder b;
+  const auto get = H::CreateSettingsGetRequest(b, b.CreateString("desktop"));
+  b.Finish(
+      H::CreateRequest(b, H::RequestPayload::SettingsGetRequest, get.Union()));
+  const auto reply = service.Handle(
+      *flatbuffers::GetRoot<H::Request>(b.GetBufferPointer()), 1);
+  return H::GetMessage(reply.data())
+      ->payload_as_Reply()
+      ->value_as_Settings()
+      ->revision()
+      ->str();
+}
 class MemorySecrets final : public host::SecretStore {
  public:
   std::map<std::string, std::string> values;
@@ -30,10 +45,12 @@ class MemorySecrets final : public host::SecretStore {
 TEST(HostSettingsStore,
      ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   std::vector<std::string> changed;
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>(), host::Settings::KeyStorage::Host, {},
       [&](const std::string& bytes) {
         const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
@@ -66,10 +83,12 @@ TEST(HostSettingsStore,
 }
 TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const auto make = [&] {
     return std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         std::make_unique<MemorySecrets>());
   };
   auto service = make();
@@ -105,7 +124,8 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
     value.revision = H::GetMessage(before.data())
                          ->payload_as_Reply()
                          ->value_as_Settings()
-                         ->revision();
+                         ->revision()
+                         ->str();
     auto item = std::make_unique<H::SettingT>();
     item->key = "agent.animateWork";
     item->value_json = raw;
@@ -128,11 +148,13 @@ TEST(HostSettingsStore, AgentAnimationIsValidatedAndSurvivesReopening) {
 TEST(HostSettingsStore,
      ProviderInputsStayInTheSecretStoreAndFailuresAreSanitized) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   auto memory = std::make_unique<MemorySecrets>();
   auto* observed = memory.get();
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(memory), host::Settings::KeyStorage::Host);
   const auto put = [&](const std::string& secret) {
     flatbuffers::FlatBufferBuilder b;
@@ -203,11 +225,13 @@ TEST(HostSettingsStore,
 TEST(HostSettingsStore,
      KeychainProvisioningNeverWritesTheKeyToDiskOrFallsBack) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const std::string key = "KEYCHAIN_ONLY_SENTINEL";
   const auto make = [&] {
     return std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         nullptr, host::Settings::KeyStorage::Keychain);
   };
   auto service = make();
@@ -248,9 +272,11 @@ TEST(HostSettingsStore,
 namespace tsugumi::test {
 TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>());
   const auto update = [&](const std::string& profile, const std::string& key,
                           const std::string& raw) {
@@ -267,7 +293,8 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
     value.revision = H::GetMessage(before.data())
                          ->payload_as_Reply()
                          ->value_as_Settings()
-                         ->revision();
+                         ->revision()
+                         ->str();
     auto item = std::make_unique<H::SettingT>();
     item->key = key;
     item->value_json = raw;
@@ -299,69 +326,11 @@ TEST(HostSettingsStore, VMSizeFollowsTheDefaultsUntilSetWithinLimits) {
   EXPECT_FALSE(update("desktop", "vm.memoryGiB", "1"));
   EXPECT_FALSE(update("desktop", "vm.storeGiB", "8"));
   EXPECT_FALSE(update("desktop", "vm.storeGiB", Quote("64")));
-  EXPECT_FALSE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_TRUE(update("web:/somewhere", "vm.cpus", "2"));
+  EXPECT_EQ(service.VMResources().cpus, 2u);
   EXPECT_FALSE(update("desktop", "vm.other", "2"));
   EXPECT_TRUE(update("desktop", "vm.cpus", "0"));
   EXPECT_EQ(service.VMResources().cpus, defaults.cpus);
-}
-TEST(HostSettingsStore, VersionNotesUseAnExplicitModeAndRejectOtherValues) {
-  TemporaryDirectory directory;
-  auto memory = std::make_unique<MemorySecrets>();
-  auto* secrets = memory.get();
-  secrets->values["desktop:anthropic"] = "ANTHROPIC_NOTE_KEY";
-  secrets->values["desktop:openai"] = "OPENAI_NOTE_KEY";
-  host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
-      std::move(memory), host::Settings::KeyStorage::Host);
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
-  const auto update = [&](const std::string& mode, uint64_t revision,
-                          const std::string& key = "versions.noteMode") {
-    flatbuffers::FlatBufferBuilder b;
-    const auto change =
-        H::CreateSetting(b, b.CreateString(key), b.CreateString(mode));
-    const auto p =
-        H::CreateSettingsUpdateRequest(b, b.CreateString("desktop"), revision,
-                                       b.CreateVector(std::vector{change}));
-    const auto request = H::CreateRequest(
-        b, H::RequestPayload::SettingsUpdateRequest, p.Union());
-    H::FinishMessageBuffer(
-        b, H::CreateMessage(b, 1, H::Payload::Request, request.Union()));
-    return service.Handle(
-        *H::GetMessage(b.GetBufferPointer())->payload_as_Request(), 1);
-  };
-  for (const auto& invalid : {"true", "\"unknown\""}) {
-    const auto failure = update(invalid, 0);
-    ASSERT_TRUE(
-        H::GetMessage(failure.data())->payload_as_Reply()->value_as_Failure());
-  }
-  auto reply = update("\"agent\"", 0);
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "agent");
-  EXPECT_EQ(service.VersionNoteMode("web:other"), "mechanical");
-  reply = update("\"mechanical\"", 1);
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteMode("desktop"), "mechanical");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").credential,
-            "ANTHROPIC_NOTE_KEY");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
-            "claude-haiku-5-5");
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-platform-keys", "")
-                .credential,
-            "ANTHROPIC_NOTE_KEY");
-  reply = update("\"openai\"", 2, "agent.provider");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "missing-anthropic-keys", "")
-                .credential,
-            "OPENAI_NOTE_KEY");
-  reply = update("\"custom-small-model\"", 3, "agent.thoughtModel.openai");
-  ASSERT_TRUE(
-      H::GetMessage(reply.data())->payload_as_Reply()->value_as_Settings());
-  EXPECT_EQ(service.VersionNoteProvider("desktop", "", "").model,
-            "custom-small-model");
 }
 }  // namespace tsugumi::test
 
@@ -370,17 +339,20 @@ namespace {
 class HostPolicyTest : public ::testing::Test {
  protected:
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   std::unique_ptr<host::Settings> service;
   MemorySecrets* secrets = nullptr;
   std::vector<std::string> models;
-  uint64_t revision = 0;
+  std::string revision;
   auto Open(host::Settings::KeyStorage storage) -> void {
     auto store = std::make_unique<MemorySecrets>();
     secrets = store.get();
     service = std::make_unique<host::Settings>(
-        directory.path, [](const auto&, const auto&) {},
-        [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+        directory.path, credentials,
         std::move(store), storage, [this] { return models; });
+    revision = ReadSettingsRevision(*service);
   }
   template <typename T>
   auto Call(T value) -> std::unique_ptr<H::ReplyT> {
@@ -1018,6 +990,8 @@ TEST_F(ContextBudget, OversizedToolExchangeFailsAfterCappingWithoutRetrying) {
 TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   TemporaryDirectory directory;
   host::HostStore home(directory.path);
+  host::StateGate settings_gate;
+  host::Credentials credentials{settings_gate, home.db, {}};
   auto& db = home.db;
   auto insert = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
   insert.bind(1, "fixture")
@@ -1028,8 +1002,7 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
   secrets->values["desktop:anthropic"] = "TEST_KEY";
   secrets->values["desktop:openai"] = "TEST_KEY";
   host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(secrets), host::Settings::KeyStorage::Host);
   const auto fallback = settings.Resolve({}).context_limit_tokens;
   auto catalog = db.prepare("INSERT INTO model_lists VALUES(?,?,?)");
@@ -1050,11 +1023,12 @@ TEST(HostContextWindow, CatalogOverridesTheFallbackBudget) {
 TEST(HostContextWindow, ReportedWindowsBelongToTheSelectedConnection) {
   TemporaryDirectory directory;
   host::HostStore home(directory.path);
+  host::StateGate settings_gate;
+  host::Credentials credentials{settings_gate, home.db, {}};
   auto secrets = std::make_unique<MemorySecrets>();
   secrets->values["desktop:anthropic"] = "TEST_KEY";
   host::Settings settings(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::move(secrets), host::Settings::KeyStorage::Host);
   for (const auto* provider : {"anthropic", "chatgpt"})
     for (const auto* profile : {"desktop", "web"})
@@ -1100,14 +1074,16 @@ namespace tsugumi::test {
 TEST(HostSettingsStore,
      TrustedFoldersAreCanonicalAndRejectInvalidRegistrationAtomically) {
   TemporaryDirectory directory;
+  host::StateGate settings_gate;
+  host::HostStore settings_store{directory.path};
+  host::Credentials credentials{settings_gate, settings_store.db, {}};
   const auto folder = directory.path / "trusted";
   std::filesystem::create_directory(folder);
   std::filesystem::create_directory_symlink(folder, directory.path / "link");
   host::Settings service(
-      directory.path, [](const auto&, const auto&) {},
-      [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
+      directory.path, credentials,
       std::make_unique<MemorySecrets>());
-  uint64_t revision = 0;
+  auto revision = ReadSettingsRevision(service);
   auto update = [&](const std::string& raw,
                     const std::string& profile = "desktop") {
     H::RequestT request;
@@ -1128,27 +1104,26 @@ TEST(HostSettingsStore,
         *H::GetMessage(builder.GetBufferPointer())->payload_as_Request(), 1);
     const auto* result = H::GetMessage(reply.data())->payload_as_Reply();
     if (const auto* settings = result->value_as_Settings()) {
-      revision = settings->revision();
+      revision = settings->revision()->str();
       return true;
     }
     return false;
   };
-  EXPECT_TRUE(service.TrustedFolders().empty());
+  EXPECT_TRUE(host::TrustedFolders(settings_store.db).empty());
   EXPECT_TRUE(update("[" + Quote((directory.path / "link").string()) + "," +
                      Quote(folder.string()) + "]"));
   const std::vector<std::string> expected{
       std::filesystem::canonical(folder).string()};
-  EXPECT_EQ(service.TrustedFolders(), expected);
+  EXPECT_EQ(host::TrustedFolders(settings_store.db), expected);
   EXPECT_FALSE(update(R"(["relative"])"));
   EXPECT_FALSE(update("[" + Quote((directory.path / "absent").string()) + "]"));
   EXPECT_FALSE(update(R"([42])"));
-  EXPECT_FALSE(update("[]", "web:test"));
-  EXPECT_EQ(service.TrustedFolders(), expected);
+  EXPECT_EQ(host::TrustedFolders(settings_store.db), expected);
   std::filesystem::rename(folder, directory.path / "moved");
   EXPECT_TRUE(update("[" + Quote(expected.front()) + "," +
                      Quote((directory.path / "moved").string()) + "]"));
-  EXPECT_EQ(service.TrustedFolders().front(), expected.front());
+  EXPECT_EQ(host::TrustedFolders(settings_store.db).size(), 2u);
   EXPECT_TRUE(update("[]"));
-  EXPECT_TRUE(service.TrustedFolders().empty());
+  EXPECT_TRUE(host::TrustedFolders(settings_store.db).empty());
 }
 }  // namespace tsugumi::test

@@ -252,8 +252,8 @@ inline auto View(const A::AccessEntry* value) -> std::string {
                  {"project_id", View(value->project_id())},
                  {"conversation_id", View(value->conversation_id())},
                  {"access", View(value->access())},
-                 {"reason", View(value->reason())},
-                 {"state", View(value->state())}});
+                 {"state", View(value->state())},
+                 {"unavailable_reason", View(value->unavailable_reason())}});
 }
 inline auto View(const A::Grant* value) -> std::string {
   if (!value) return "null";

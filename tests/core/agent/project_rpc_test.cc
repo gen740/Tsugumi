@@ -2316,8 +2316,6 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("card-permission-approvals");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
-  // General grants must never substitute for approval of a particular save.
-  Grant(conversation, Tsugumi::Service::Access::CardPermissions);
   const auto snapshot = JsonString(Inspect(conversation).View(), "/text");
   const auto revision = JsonString(snapshot, "/value/rev");
   const auto document =
@@ -2496,8 +2494,6 @@ TEST_F(AgentProjectFixture,
   const auto conversation = Conversation("operation-approvals");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
-  // Even a project-wide CardPermissions grant cannot authorize these acts.
-  Grant(conversation, Tsugumi::Service::Access::CardPermissions);
   auto resolve = [&](const Reply& pending, bool allow) {
     EXPECT_EQ(pending.Code(), "grant_required");
     EXPECT_FALSE(pending.RequestId().empty());

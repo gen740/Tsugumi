@@ -72,8 +72,10 @@ enum ServiceWire {
       case "SettingsUpdateRequest":
         let v = Tsugumi_Host_SettingsUpdateRequestT()
         v.profile = fields["profile"] as? String ?? "desktop"
-        v.revision = (fields["revision"] as? NSNumber)?.uint64Value ?? 0
+        v.revision = fields["revision"] as? String ?? ""
         v.changes = (fields["changes"] as? [[String: String]] ?? []).map { item in let s = Tsugumi_Host_SettingT(); s.key = item["key"] ?? ""; s.valueJson = item["value_json"] ?? "null"; return s }
+        // The object API starts with an empty account guard; only onboarding sends one.
+        v.chatgptAccount = nil
         return (Tsugumi_Host_RequestPayload.settingsupdaterequest.rawValue, v)
       case "ProviderSetRequest":
         let v = Tsugumi_Host_ProviderSetRequestT()
@@ -314,6 +316,10 @@ enum ServiceWire {
       case "AccessListRequest":
         let v = Tsugumi_Agent_AccessListRequestT()
         v.conversationId = fields["conversation_id"] as? String
+        v.requestId = fields["request_id"] as? String
+        v.projectId = fields["project_id"] as? String
+        v.pendingOnly = fields["pending_only"] as? Bool ?? false
+        v.cursor = (fields["cursor"] as? NSNumber)?.int64Value ?? 0
         return (Tsugumi_Agent_RequestPayload.accesslistrequest.rawValue, v)
       case "ConversationSummarizeRequest":
         let v = Tsugumi_Agent_ConversationSummarizeRequestT()
@@ -400,7 +406,7 @@ enum ServiceWire {
     case is Tsugumi_Host_HostTerminalDataT: return ["type": "HostTerminalData", "value": try view(value)]
     case let changed as Tsugumi_Host_ProviderChangedT: return ["type": "ProviderChanged", "profile": changed.profile]
     case let changed as Tsugumi_Host_SignInChangedT: return ["type": "SignInChanged", "profile": changed.profile]
-    case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "profile": changed.profile, "revision": changed.revision]
+    case let changed as Tsugumi_Host_SettingsChangedT: return ["type": "SettingsChanged", "revision": changed.revision]
     default: throw RPCError.disconnected
     }
   }
@@ -512,6 +518,7 @@ enum ServiceWire {
       var out: [String: Any] = [:]
       out["code"] = v.code
       out["kind"] = v.kind
+      out["call_id"] = v.callId
       out["text"] = v.text ?? ""
       out["message"] = v.message
       out["input"] = v.inputJson
@@ -555,8 +562,9 @@ enum ServiceWire {
       out["project_id"] = v.projectId
       out["conversation_id"] = v.conversationId
       out["access"] = ["Read", "Write", "Run", "CardPermissions", "Shell", "HelperScope"][Int(v.access.rawValue)]
-      out["reason"] = v.reason
+      out["unavailable_reason"] = v.unavailableReason
       out["state"] = v.state
+      out["call_id"] = v.callId
       return out
     case let v as Tsugumi_Agent_GrantT:
       var out: [String: Any] = [:]
@@ -568,6 +576,7 @@ enum ServiceWire {
     case let v as Tsugumi_Agent_AccessListT:
       var out: [String: Any] = [:]
       out["requests"] = try v.requests.compactMap { try $0.map { try view($0) } }
+      out["next_cursor"] = v.nextCursor
       out["grants"] = try v.grants.compactMap { try $0.map { try view($0) } }
       return out
     case let v as Tsugumi_Host_DemoPathsT:

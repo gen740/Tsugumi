@@ -33,7 +33,7 @@ The installed Mac command uses the release app's support directory by default:
 | VM, store, project control folders | `~/Library/Application Support/Tsugumi/`; override with `TSUGUMI_SUPPORT_DIR` |
 | Recent projects | `recent-projects.json` under hostd's state directory; shared by clients of that service |
 | Default project destination | `~/Documents/Tsugumi` |
-| Language, provider, model, effort, Fast, web search, permission preferences, version note mode | hostd's `desktop` settings profile, shared with the app |
+| Language, model choices, web search, VM resources, and version notes | Host-wide settings shared by the app and Web clients on the same host |
 | Skill folders and ChatGPT accounts | Separate `web:<Web data folder>` profile in hostd |
 | Scripted guide progress | Separate desktop and Web sessions in hostd; shared across that client's windows or tabs |
 

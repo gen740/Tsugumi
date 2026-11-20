@@ -192,6 +192,8 @@ def test_cancel_before_submit_and_release_tombstone(worker):
     assert cancelled.body.state == R.JobState.Cancelled
     submitted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
     assert submitted.body.state == R.JobState.Cancelled
+    status = worker.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job)
+    assert status.body.state == R.JobState.Cancelled
     released = worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=job)
     assert released.bodyType == R.ReplyBody.Ack
     worker.restart()
@@ -434,10 +436,11 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         pid = process_file(peer.process, child_pid, child)
         assert pid is not None and Path(f"/proc/{pid}").exists()
         peer.restart()
-        peer.call(R.RequestBody.CancelRequest,
-                  R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
-        peer.wait_state(first, R.JobState.Cancelled)
+        acknowledged = peer.call(R.RequestBody.CancelRequest,
+                                 R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
+        assert acknowledged.body.state in (R.JobState.Cancelling, R.JobState.Cancelled)
         wait_for_exit(pid)
+        peer.wait_state(first, R.JobState.Cancelled)
         cancelled = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=first)
         assert cancelled.body.state == R.JobState.Cancelled
         blob = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=first)

@@ -184,9 +184,9 @@ def broker_request(endpoint, capability_file, body_type, body, **routing):
                                 service="remote-test", **routing)
     with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
         connection.settimeout(30)
-        connection.connect(endpoint.removeprefix("unix:"))
+        address = endpoint.removeprefix("unix:")
+        connection.connect(address + ".c" if body_type == R.RequestBody.CancelRequest else address)
         connection.sendall(R.frame(envelope))
-        connection.shutdown(socket.SHUT_WR)
         with connection.makefile("rb") as response:
             return R.read(response).payload
 
@@ -206,9 +206,9 @@ def module_downloads(remote_broker, monkeypatch):
                 request = R.MessageT.InitFromPackedBuf(payload).payload.request
                 if request.bodyType == R.RequestBody.GetBlobRequest:
                     downloads.add(text(request.body.digest))
-                connection.connect(upstream)
+                control = request.bodyType == R.RequestBody.CancelRequest
+                connection.connect(upstream + ".c" if control else upstream)
                 connection.sendall(header + payload)
-                connection.shutdown(socket.SHUT_WR)
                 with connection.makefile("rb") as response:
                     header = R.exact(response, 4)
                     size, = struct.unpack("<I", header)
@@ -217,6 +217,7 @@ def module_downloads(remote_broker, monkeypatch):
     with tempfile.TemporaryDirectory(prefix="mb-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
         address = str(Path(sockets) / "broker")
         with socketserver.ThreadingUnixStreamServer(address, Forward) as server:
+            os.symlink(address, address + ".c")
             monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + address)
             thread = threading.Thread(target=server.serve_forever)
             thread.start()

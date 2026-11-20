@@ -1,7 +1,5 @@
 #include "host/execution_broker.hh"
 
-#include "tsugumi/protocol/trace_codec.hh"
-
 #include <arpa/inet.h>
 #include <fcntl.h>
 #include <netdb.h>
@@ -10,6 +8,8 @@
 #include <sys/stat.h>
 #include <sys/un.h>
 #include <unistd.h>
+
+#include "tsugumi/protocol/trace_codec.hh"
 #ifdef __linux__
 #include <linux/stat.h>
 #include <sys/syscall.h>
@@ -29,6 +29,7 @@
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/util/sqlite.hh"
 #include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -229,8 +230,8 @@ struct ExecutionBroker::State {
   std::mutex mutex;
   std::set<int> active;
   bool stopping = false;
-  Socket listener;
-  std::vector<std::jthread> threads;
+  Socket listener, cancel_listener, wake_reader, wake_writer;
+  std::vector<std::jthread> receivers;
 
   State(std::filesystem::path dir, std::string path)
       : state(std::move(dir)),
@@ -257,45 +258,87 @@ struct ExecutionBroker::State {
       fs::write_atomic(file, crypto::random_token(32), 0600);
       key = ReadKey(file);
     }
-    auto address = ParseEndpoint("unix:" + socket);
+    Listen(listener, socket);
+    Listen(cancel_listener, socket + ".c");
+    int wake[2];
+    Require(::pipe(wake) == 0, "Cannot open execution broker wake pipe");
+    wake_reader.fd = wake[0];
+    wake_writer.fd = wake[1];
+    Require(::fcntl(wake_reader.fd, F_SETFD, FD_CLOEXEC) == 0 &&
+                ::fcntl(wake_writer.fd, F_SETFD, FD_CLOEXEC) == 0,
+            "Cannot configure execution broker wake pipe");
+    // Preserve eight transfer slots. Two independent readers leave room for
+    // another Stop even if a worker does not answer one Cancel.
+    try {
+      for (int i = 0; i < 8; ++i)
+        receivers.emplace_back([this] { Accept(listener.fd, false); });
+      for (int i = 0; i < 2; ++i)
+        receivers.emplace_back([this] { Accept(cancel_listener.fd, true); });
+    } catch (...) {
+      Stop();
+      throw;
+    }
+  }
+
+  static auto Listen(Socket& listener, const std::string& path) -> void {
+    auto address = ParseEndpoint("unix:" + path);
     listener.fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
     Require(listener.fd >= 0, "Cannot open execution broker listener");
     Configure(listener.fd);
-    ::unlink(socket.c_str());
+    ::unlink(path.c_str());
     Require(::bind(listener.fd, reinterpret_cast<sockaddr*>(&address.storage),
                    address.size) == 0 &&
-                ::chmod(socket.c_str(), 0600) == 0 &&
+                ::chmod(path.c_str(), 0600) == 0 &&
                 ::listen(listener.fd, 64) == 0,
             "Cannot listen on execution broker socket");
-    ::fcntl(listener.fd, F_SETFL, O_NONBLOCK);
-    for (int i = 0; i < 8; ++i)
-      threads.emplace_back([this](std::stop_token stop) {
-        while (!stop.stop_requested()) {
-          pollfd p{listener.fd, POLLIN, 0};
-          if (::poll(&p, 1, 100) <= 0) continue;
-          // Serialize accept with shutdown, and use a nonblocking listener so
-          // competing acceptors cannot get stuck after another drained the
-          // queue.
-          Socket client;
-          {
-            std::lock_guard lock(mutex);
-            if (stopping) return;
-            client.fd = ::accept(listener.fd, nullptr, nullptr);
-            if (client.fd < 0) continue;
-            active.insert(client.fd);
-          }
-          try {
-            Configure(client.fd);
-            Forward(client.fd);
-          } catch (...) {
-          }
-          {
-            std::lock_guard lock(mutex);
-            active.erase(client.fd);
-          }
-        }
-      });
+    Require(::fcntl(listener.fd, F_SETFL, O_NONBLOCK) == 0,
+            "Cannot configure execution broker listener");
   }
+
+  auto Accept(int source, bool cancel_only) -> void {
+    for (;;) {
+      pollfd ready[]{{source, POLLIN, 0}, {wake_reader.fd, POLLIN, 0}};
+      if (::poll(ready, 2, -1) < 0) {
+        if (errno == EINTR) continue;
+        log::error("Execution broker listener poll failed");
+        return;
+      }
+      if (ready[1].revents) return;
+      Socket client{::accept(source, nullptr, nullptr)};
+      if (client.fd < 0) {
+        if (errno == EINTR || errno == ECONNABORTED || errno == EAGAIN ||
+            errno == EWOULDBLOCK)
+          continue;
+        log::error("Execution broker accept failed: " +
+                   std::string(std::strerror(errno)));
+        return;
+      }
+      try {
+        Configure(client.fd);
+        auto activity = Track(client.fd);
+        Forward(client.fd, cancel_only);
+      } catch (const std::exception&) {
+        // An incomplete frame or disconnected caller has no reply channel.
+      }
+    }
+  }
+
+  struct Activity {
+    State& state;
+    int fd;
+    ~Activity() {
+      std::lock_guard lock(state.mutex);
+      state.active.erase(fd);
+    }
+  };
+
+  auto Track(int fd) -> Activity {
+    std::lock_guard lock(mutex);
+    Require(!stopping, "Execution broker is stopping");
+    active.insert(fd);
+    return {*this, fd};
+  }
+
   auto Entries() -> std::vector<Entry> {
     auto q = db.prepare(
         "SELECT id,name,endpoint,worker_public_key,capabilities,"
@@ -332,47 +375,39 @@ struct ExecutionBroker::State {
       result.services.push_back(Public(entry));
     return result;
   }
-  auto Remote(const Entry& entry, R::RequestT request) -> R::MessageT {
+  auto Remote(const Entry& entry, R::RequestT request, int client = -1)
+      -> R::MessageT {
     const auto address = ParseEndpoint(entry.endpoint);
     Socket peer{::socket(address.storage.ss_family, SOCK_STREAM, 0)};
     Require(peer.fd >= 0, "Cannot open worker connection");
     Configure(peer.fd);
-    ::fcntl(peer.fd, F_SETFL, O_NONBLOCK);
-    {
-      std::lock_guard lock(mutex);
-      Require(!stopping, "Execution broker is stopping");
-      active.insert(peer.fd);
-    }
-    struct Guard {
-      State& state;
-      int fd;
-      ~Guard() {
-        std::lock_guard lock(state.mutex);
-        state.active.erase(fd);
-      }
-    } guard{*this, peer.fd};
+    Require(::fcntl(peer.fd, F_SETFL, O_NONBLOCK) == 0,
+            "Cannot configure worker connection");
+    auto activity = Track(peer.fd);
     auto connected =
         ::connect(peer.fd, reinterpret_cast<const sockaddr*>(&address.storage),
                   address.size) == 0;
     if (!connected && errno == EINPROGRESS) {
-      pollfd p{peer.fd, POLLOUT, 0};
+      pollfd p[]{{peer.fd, POLLOUT, 0}, {client, POLLIN, 0}};
       int error = 0;
       socklen_t size = sizeof error;
       int ready;
       do {
-        ready = ::poll(&p, 1, -1);
+        ready = ::poll(p, 2, -1);
       } while (ready < 0 && errno == EINTR);
       connected =
-          ready > 0 &&
+          ready > 0 && !p[1].revents &&
           ::getsockopt(peer.fd, SOL_SOCKET, SO_ERROR, &error, &size) == 0 &&
           !error;
     }
     Require(connected, "Cannot connect to remote worker");
-    ::fcntl(peer.fd, F_SETFL, 0);
+    if (client < 0)
+      Require(::fcntl(peer.fd, F_SETFL, 0) == 0,
+              "Cannot configure worker stream");
     peer_tls::Context context(identity, false, [&](std::string_view key) {
       return key == entry.worker_public_key;
     });
-    peer_tls::Stream tls(context, peer.fd, false);
+    peer_tls::Stream tls(context, peer.fd, false, client);
     R::MessageT message;
     message.payload.Set(std::move(request));
     auto bytes = W::encode(std::move(message));
@@ -388,7 +423,7 @@ struct ExecutionBroker::State {
     Require(reply->payload.AsReply(), "Expected remote worker reply");
     return std::move(*reply);
   }
-  auto Forward(int fd) -> void {
+  auto Forward(int fd, bool cancel_only) -> void {
     bool forwarding = false;
     // A framing/verification failure has no trusted request to answer.
     auto message = Read(fd);
@@ -396,6 +431,8 @@ struct ExecutionBroker::State {
       auto* broker = message->payload.AsBrokerRequest();
       Require(broker, "Expected a private broker envelope");
       auto* request = broker->request.get();
+      Require(cancel_only == (request->body.AsCancelRequest() != nullptr),
+              "Wrong execution broker endpoint for this request");
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
       {
@@ -457,7 +494,7 @@ struct ExecutionBroker::State {
       }
       forwarding = true;
       const bool probing = request->body.AsProbeRequest() != nullptr;
-      auto response = Remote(entry, std::move(*request));
+      auto response = Remote(entry, std::move(*request), fd);
       if (probing) {
         const auto& reply = *response.payload.AsReply();
         if (!reply.body.AsFailure()) {
@@ -496,10 +533,12 @@ struct ExecutionBroker::State {
       if (stopping) return;
       stopping = true;
       for (int fd : active) ::shutdown(fd, SHUT_RDWR);
-      for (auto& thread : threads) thread.request_stop();
+      while (::write(wake_writer.fd, "x", 1) < 0 && errno == EINTR) {
+      }
     }
-    threads.clear();
+    receivers.clear();
     ::unlink(socket.c_str());
+    ::unlink((socket + ".c").c_str());
   }
 };
 
