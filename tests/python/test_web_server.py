@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
 import json
+import os
 import select
 import shutil
 import subprocess
@@ -241,17 +242,8 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
         assert host.call("HostRecentListRequest").projects == []
 
 
-def test_agent_rpc_reaches_the_authenticated_agent_listener(web):
-    import flatbuffers
-
+def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
     from harness.transport import ws_connect, ws_frame, ws_read
-    from Tsugumi.Agent.ConversationListRequest import ConversationListRequestT
-    from Tsugumi.Agent.Message import MessageT
-    from Tsugumi.Agent.Payload import Payload
-    from Tsugumi.Agent.ReplyPayload import ReplyPayload
-    from Tsugumi.Agent.Request import RequestT
-    from Tsugumi.Agent.RequestPayload import RequestPayload
-    from Tsugumi.Service.HelloRequest import HelloRequestT
 
     _, port, key = web
     cookie = page_cookie(port, key)
@@ -260,27 +252,26 @@ def test_agent_rpc_reaches_the_authenticated_agent_listener(web):
                                     path="/rpc/agent", headers=[("Cookie", cookie)])
     with connection:
         assert status.split()[1] == "101"
+        flatc = os.environ.get("TSUGUMI_FLATC", "flatc")
+        schema = str(ROOT / "protocol/agent.fbs")
 
         def call(request_id, kind, value):
-            request = RequestT()
-            request.valueType = kind
-            request.value = value
-            message = MessageT()
-            message.requestId = request_id
-            message.payloadType = Payload.Request
-            message.payload = request
-            builder = flatbuffers.Builder()
-            builder.Finish(message.Pack(builder), file_identifier=b"TSA1")
-            connection.sendall(ws_frame(builder.Output()))
-            result = MessageT.InitFromPackedBuf(ws_read(connection))
-            assert result.requestId == request_id and result.payloadType == Payload.Reply
-            return result.payload
+            request = tmp_path / "request.json"
+            request.write_text(json.dumps({
+                "request_id": request_id, "payload_type": "Request",
+                "payload": {"value_type": kind, "value": value},
+            }))
+            subprocess.run([flatc, "-b", "-o", str(tmp_path), schema, str(request)], check=True)
+            connection.sendall(ws_frame(request.with_suffix(".bin").read_bytes()))
+            reply = tmp_path / "reply.bin"
+            reply.write_bytes(ws_read(connection))
+            subprocess.run([flatc, "-t", "--strict-json", "-o", str(tmp_path), schema, "--", str(reply)], check=True)
+            result = json.loads(reply.with_suffix(".json").read_text())
+            assert result["request_id"] == request_id and result["payload_type"] == "Reply"
+            return result["payload"]["value_type"]
 
-        hello = HelloRequestT()
-        hello.token = token
-        assert call(1, RequestPayload.HelloRequest, hello).valueType == ReplyPayload.HelloResult
-        assert call(2, RequestPayload.ConversationListRequest,
-                    ConversationListRequestT()).valueType == ReplyPayload.ConversationList
+        assert call(1, "HelloRequest", {"token": token}) == "HelloResult"
+        assert call(2, "ConversationListRequest", {}) == "ConversationList"
 
 
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):

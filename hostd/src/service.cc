@@ -699,10 +699,19 @@ struct Service::State {
       lock.unlock();
       auto result = environments->Terminal(*input);
       lock.lock();
-      if (input->action == H::TerminalAction::Open)
+      if (input->action == H::TerminalAction::Open) {
+        if (!events->host_connections.contains(request.conn)) {
+          lock.unlock();
+          H::HostTerminalRequestT close;
+          close.action = H::TerminalAction::Close;
+          close.session = result.session;
+          environments->Terminal(close);
+          throw Cancelled();
+        }
         events->terminals[result.session] = request.conn;
-      if (input->action == H::TerminalAction::Close)
+      } else if (input->action == H::TerminalAction::Close) {
         events->terminals.erase(input->session);
+      }
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (host::ExecutionBroker::Handles(r->value_type())) {
