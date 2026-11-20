@@ -1,11 +1,8 @@
 #!/bin/sh
-# The `tsugumi` command on a Mac: serves the Web UI with its projects in the
-# shared Linux VM of the desktop app. The same VM, store, control folders,
-# recent projects and settings as the release app (docs/WebUI.md).
-#
-#   tsugumi [project folder]   opens the Web UI; Ctrl-C stops the Web host; projects keep running
-#   tsugumi update             puts the latest release in place
-#   tsugumi uninstall [--yes]   previews removal; --yes removes the command
+# The `tsugumi` command on a Mac: a client of the host the desktop app also
+# uses, with its projects in the app's shared Linux VM. The same VM, store,
+# control folders, recent projects and settings as the release app
+# (docs/WebUI.md). `tsugumi` alone prints its usage.
 set -eu
 
 self="$0"
@@ -18,21 +15,8 @@ while [ -L "$self" ]; do
 done
 root="$(cd "$(dirname "$self")" && pwd -P)"
 
-case "${1:-}" in
-  --version)
-    cat "$root/VERSION"
-    exit 0
-    ;;
-  -h | --help)
-    sed -n '6,8p' "$0" | cut -c3-
-    exit 0
-    ;;
-esac
-
-support="${TSUGUMI_SUPPORT_DIR:-$HOME/Library/Application Support/Tsugumi}"
-export TSUGUMI_SUPPORT_DIR="$support"
-export TSUGUMI_WEB_DATA="${TSUGUMI_WEB_DATA:-$support/web}"
+export TSUGUMI_SUPPORT_DIR="${TSUGUMI_SUPPORT_DIR:-$HOME/Library/Application Support/Tsugumi}"
 export TSUGUMI_VMHOST="$root/bin/tsugumi-vmhost"
 export TSUGUMI_VM_IMAGE="$root/vm"
 export TSUGUMI_REPO="$root"
-exec "$root/bin/node" "$root/ui/web/dist/server.js" --open --reuse "$@"
+exec "$root/bin/tsugumi" "$@"

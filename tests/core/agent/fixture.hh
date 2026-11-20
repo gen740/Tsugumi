@@ -339,11 +339,11 @@ class AgentFixture : public ::testing::Test {
       key.api_key = "FIXTURE_API_KEY";
       return H::CreateProviderSetRequest(
                  b, b.CreateString("desktop"), b.CreateString(provider),
-                 Tsugumi::Host::ProviderInput::Pack(b, &key), false, true)
+                 Tsugumi::Host::ProviderInput::Pack(b, &key))
           .Union();
     });
     if (!reply.Code().empty())
-      throw std::runtime_error("cannot provision model fixture key");
+      throw std::runtime_error("cannot store the model fixture key");
     const auto current =
         Call(*host, H::RequestPayload::SettingsGetRequest, [](Builder& b) {
           return H::CreateSettingsGetRequest(b, b.CreateString("desktop"))

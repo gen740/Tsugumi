@@ -99,6 +99,9 @@ class TransportServer {
   // Endpoint state changes and sends run on the same ordered loop.
   void ordered(std::function<void()> action);
   void ordered(ConnId conn, std::function<void()> action);
+  // Takes a connected stream socket whose WebSocket handshake (`head`) was
+  // read and checked by another listener (the Web edge).
+  void adopt(int fd, std::string head);
   // The following methods are called only by ordered actions.
   void send(ConnId conn, std::string bytes);
   void send_note(ConnId conn, PendingMessage note);

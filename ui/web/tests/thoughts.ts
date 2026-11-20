@@ -4,9 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { Thoughts, type ThoughtReply } from '../src/model/thoughts'
-import { chatRoutes } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
-import { ProviderKeys } from '../server/providerKeys'
+import { chatRoutes } from '../src/host/chat'
+import { CoreHost } from '../src/host/coreHost'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -131,7 +130,7 @@ try {
 
 // The adapter sends the existing FlatBuffers request, including refreshed
 // provider references. No provider calls or sockets are opened in these tests.
-const host = new CoreHost('/nonexistent', '/nonexistent', {} as never, 'ja')
+const host = new CoreHost({} as never)
 let forwarded: any
 host.user.call = async (method, fields) => {
   assert.equal(method, 'ConversationSummarizeRequest')
@@ -155,20 +154,9 @@ const conversation = CoreHost.prototype.conversation
 try {
   CoreHost.prototype.conversation = async () => ({} as never)
   CoreHost.prototype.getSettings = async function (profile) {
-    // Keep this adapter test independent of the operator's environment and Keychain.
-    Object.assign(this, { keys: new ProviderKeys((method, fields) => this.user.call(method, fields),
-      this.keyProfile, 'darwin', async (command, args) => {
-        assert.equal(command, '/usr/bin/security')
-        assert.equal(args[0], 'find-generic-password')
-        return { code: 1, out: '' }
-      }, { ANTHROPIC_API_KEY: 'test-key' }) })
     this.user.call = async (method, fields) => {
-      if (method === 'ProviderSetRequest') {
-        assert.equal(fields.ephemeral, true)
-        if (fields.source === 'env') assert.equal(fields.provider.api_key, 'test-key')
-        else { assert.equal(fields.source, 'keychain'); assert.equal(fields.remove, true) }
-        return { configured: true } as any
-      }
+      // Keys stay in hostd: a summary never provisions one.
+      assert.notEqual(method, 'ProviderSetRequest')
       if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as any
       assert.equal(method, 'ConversationSummarizeRequest')
       forwarded = fields
@@ -176,7 +164,7 @@ try {
     }
     return getSettings.call(this, profile)
   }
-  const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
+  const routes = chatRoutes({ envs: {}, projectDir: (p: unknown) => String(p),
   } as any)
   const result = await routes['POST /api/chat/thoughts']({ path: root, session: 'web-thoughts' }, new URL('http://localhost'))
   assert.deepEqual(result, reply('reading'))

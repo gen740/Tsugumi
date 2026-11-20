@@ -35,18 +35,17 @@ table SettingsGetRequest { profile:string (required); }
 table ExpectedAccount { profile:string (required); client_id:string (required); }
 table SettingsUpdateRequest { profile:string (required); revision:string (required); changes:[Setting]; chatgpt_account:ExpectedAccount; }
 table Settings { revision:string (required); values:[Setting]; }
-// ephemeral source: env, keychain, or memory (omitted). The host selects env
-// before keychain before memory, then a stored key on Linux only. On macOS
-// persistent API-key writes are refused; clients save through the login Keychain.
-table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; ephemeral:bool; source:string; }
+// hostd stores API keys itself on every platform; clients save and read them
+// only through it.
+table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; }
 // Availability uses exactly the same key policy as model requests.
-table ProviderStatusRequest { profile:string (required); id:string (required); key_profile:string; }
+table ProviderStatusRequest { profile:string (required); id:string (required); }
 // Model choices for guide/summary are read from host settings and catalogs.
 // purpose is guide or summary. The reply contains no credentials.
 table ModelSelectionRequest { profile:string (required); purpose:string (required); }
 table ModelSelection { provider:Tsugumi.Service.ProviderSelection (required); }
-// storage tells the platform adapter where an explicit Save must go.
-table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; storage:string; message:string; code:string; }
+// source: hostd (a stored key) or oauth (a signed-in ChatGPT plan).
+table ProviderStatus { id:string (required); configured:bool; endpoint:string (trace_secret); source:string; message:string; code:string; }
 table SignInBeginRequest { profile:string (required); client_id:string; consent:bool; issuer:string; resource:string; replace_pending:bool; }
 table SignInBegin { attempt_id:string (required); url:string (required, trace_secret); }
 table SignInActionRequest { profile:string (required); attempt_id:string; action:string (required); client_id:string; }
@@ -127,7 +126,36 @@ table SettingsChanged { revision:string (required); }
 table SignInChanged { profile:string (required); }
 // The durable event and its presentation are read with Agent EventsRequest.
 table ConversationChanged { conversation_id:string; answered_permission:string; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged }
+// A page (a Web page, a window of the Mac app) reports on its Host connection
+// what it shows (none: Home). page names it among the pages of one connection
+// (the app's windows share one; a Web page leaves it empty); closed: it is
+// gone. hostd gives the projects ShowRequest shows to a page on Home; a
+// detached page (a child workflow's) is never given another.
+table HostPageRequest { project:string; detached:bool; page:string; closed:bool; }
+// The Web UI's Home: this host's folders and the runtime hostd starts
+// (always in place with the shared VM). repo holds the bundled demos.
+table HostHomeRequest {}
+table RuntimeFile { path:string (required); ok:bool; }
+table HostHome {
+  home:string (required); documents:string (required); repo:string;
+  host_folders:bool; vm:bool; nix:bool;
+  tsugumid:RuntimeFile; worker:RuntimeFile; sdk:RuntimeFile;
+}
+// Shows a file or folder in Finder or the file manager.
+table HostRevealRequest { path:string (required); }
+// The page's folder picker: folders only, hidden ones left out. A folder
+// made with HostFolderCreateRequest is listed back.
+table HostFolderListRequest { path:string; }
+table HostFolderCreateRequest { parent:string (required); name:string (required); }
+table FolderEntry { name:string (required); project:bool; }
+table FolderListing { path:string (required); parent:string; project:bool; entries:[FolderEntry]; }
+// To the one page chosen to show a project, also when it shows it already
+// (to come forward), and a Card in it when given (Agent ShowRequest). page:
+// the page as it named itself.
+table PageShow { project:string (required); card:string; page:string; }
+// To every page: no page shows the project any more.
+table PageClosed { project:string (required); }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, SignInChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged, PageShow, PageClosed }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -148,7 +176,7 @@ table SkillFolder { path:string (required); status:string (required); }
 table SkillsList { skills:[Skill]; folders:[SkillFolder]; }
 // provider_id keeps the existing per-connection catalogs. Only refresh needs
 // a provider configuration; ordinary reads never need credentials.
-table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; key_profile:string; }
+table ModelsListRequest { provider_id:string (required); refresh:bool; profile:string; account_profile:string; }
 table HostProjectDefaultsRequest {}
 // Binary file payload used by guarded operation inverses.
 table ProjectFile { path:string (required); bytes:[ubyte]; }
@@ -497,7 +525,8 @@ union RequestPayload {
 
   ModelSelectionRequest,
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
-  HostTraceRequest:Tsugumi.Trace.HostTraceRequest,
+  HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
+  HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -510,7 +539,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff:Tsugumi.RPC.VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
-  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,
+  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

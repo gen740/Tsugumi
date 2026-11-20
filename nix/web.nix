@@ -1,5 +1,5 @@
-# The Web UI, its host adapter and runtime assets. No native core build is
-# included here; the Linux command injects those executables in its wrapper.
+# The Web UI (hostd serves dist/public) and its runtime assets. No native core
+# build is included here; the Linux command injects those executables.
 {
   lib,
   buildNpmPackage,
@@ -28,14 +28,12 @@ buildNpmPackage {
         ../ui/web/package-lock.json
         ../ui/web/scripts/check-boundaries.mjs
         ../ui/web/scripts/gen.sh
-        ../ui/web/server
         ../ui/web/src
         ../ui/web/shared
         ../ui/web/tsconfig.json
         ../ui/web/tsconfig.base.json
         ../ui/web/tsconfig.shared.json
         ../ui/web/tsconfig.browser.json
-        ../ui/web/tsconfig.server.json
         ../hostd/agent/Shared/agent.json
         ../hostd/agent/Shared/demo-skill.md
         ../ui/shared/i18n/en.json
@@ -106,5 +104,5 @@ buildNpmPackage {
         cp -R ui/web/shared/gen $testSupport/gen
         runHook postInstall
       '';
-  meta.description = "Tsugumi Web UI and platform host adapter";
+  meta.description = "Tsugumi Web UI";
 }

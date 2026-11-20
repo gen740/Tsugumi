@@ -7,7 +7,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const config = ts.parseJsonConfigFileContent(ts.readConfigFile(path.join(root, 'tsconfig.json'), ts.sys.readFile).config, ts.sys, root)
 const owner = file => {
   const relative = path.relative(root, file).replaceAll(path.sep, '/')
-  return ['shared', 'src', 'server'].find(name => relative.startsWith(name + '/'))
+  return ['shared', 'src'].find(name => relative.startsWith(name + '/'))
 }
 const errors = []
 for (const file of config.fileNames) {
@@ -22,7 +22,7 @@ for (const file of config.fileNames) {
       const name = specifier.text
       const resolved = ts.resolveModuleName(name, file, config.options, ts.sys).resolvedModule?.resolvedFileName
       const dependency = resolved && owner(resolved)
-      if (sourceOwner === 'shared' && (dependency === 'src' || dependency === 'server') || sourceOwner === 'src' && dependency === 'server' || sourceOwner === 'server' && dependency === 'src' || sourceOwner !== 'server' && name.startsWith('node:') || sourceOwner !== 'src' && /^react(?:$|[-/])/.test(name)) {
+      if (sourceOwner === 'shared' && dependency === 'src' || name.startsWith('node:') || sourceOwner !== 'src' && /^react(?:$|[-/])/.test(name)) {
         errors.push(`${path.relative(root, file)}: ${sourceOwner} cannot import ${name}`)
       }
     }

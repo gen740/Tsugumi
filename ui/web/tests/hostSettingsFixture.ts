@@ -1,13 +1,11 @@
-import { CoreHost } from '../server/coreHost'
+import { CoreHost } from '../src/host/coreHost'
 /** A typed Host settings reply for presentation tests without a daemon. */
 export function mockHostSettings() {
-  const environment = CoreHost.prototype.provisionEnvironment
-  CoreHost.prototype.provisionEnvironment = async () => {}
   const original = CoreHost.prototype.getSettings
   CoreHost.prototype.getSettings = async () => ({ revision: 'host:0', values: Object.entries({
     'agent.provider': 'anthropic', 'agent.model': 'claude-sonnet-5-5', 'agent.model.openai': 'gpt-6.1-sol', 'agent.model.chatgpt': 'gpt-6.1-sol',
     'agent.fixturePort': 8765, 'agent.effort': '', 'agent.fastModel': '', 'agent.webSearch': false, 'agent.webSearch.allowedDomains': [], 'agent.webSearch.blockedDomains': [],
     'agent.skillFolders': [], 'agent.trustedFolders': [], 'app.language': 'ja',
   }).map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) })
-  return () => { CoreHost.prototype.getSettings = original; CoreHost.prototype.provisionEnvironment = environment }
+  return () => { CoreHost.prototype.getSettings = original }
 }

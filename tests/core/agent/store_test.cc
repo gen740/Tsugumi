@@ -82,7 +82,7 @@ TEST_F(ConversationStoreTest,
   host::Credentials credentials{gate, home.db, {}};
   host::Settings settings(
       directory.path, credentials,
-      nullptr, host::Settings::KeyStorage::Host);
+      nullptr);
   H::ProviderSetRequestT provider;
   provider.profile = "desktop";
   provider.id = "fixture";

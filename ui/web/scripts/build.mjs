@@ -1,4 +1,4 @@
-// Bundles the host server, the plugin's MCP server and the browser UI into dist/ with esbuild.
+// Bundles the browser UI into dist/public (hostd serves it) with esbuild.
 import * as esbuild from 'esbuild'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
 import fs from 'node:fs'
@@ -40,8 +40,6 @@ const copy = () => {
     recursive: true,
     filter: (from) => !['index.json', 'ports.json'].includes(path.basename(from)) && !from.endsWith('.run.json'),
   })
-  fs.copyFileSync(gen, path.join(out, 'tsugumi.bfbs'))
-  for (const schema of ['agent', 'host']) fs.copyFileSync(path.join(root, 'shared', 'gen', `${schema}.bfbs`), path.join(out, `${schema}.bfbs`))
   const client = process.env.TSUGUMI_WASM_CLIENT_DIR ?? path.join(root, '../..', 'build-wasm', 'client')
   fs.mkdirSync(path.join(out, 'public', 'client'), { recursive: true })
   for (const file of ['tsugumi-client.js', 'tsugumi-client.wasm']) {
@@ -50,14 +48,6 @@ const copy = () => {
 }
 copy()
 
-const server = {
-  // The host server, and the Claude Code plugin's MCP server (plugins/tsugumi).
-  entryPoints: { server: path.join(root, 'server', 'main.ts'), mcp: path.join(root, 'server', 'mcp.ts') },
-  outdir: out,
-  bundle: true, platform: 'node', format: 'esm', target: 'node22', sourcemap: watch, legalComments: 'none', loader: { '.md': 'text' },
-  // A native module: loaded from node_modules when a terminal opens.
-  logLevel: 'info',
-}
 const client = {
   entryPoints: { app: path.join(root, 'src', 'main.tsx') },
   outdir: path.join(out, 'public'),
@@ -65,11 +55,5 @@ const client = {
   loader: { '.css': 'css' }, jsx: 'automatic', logLevel: 'info',
   define: { 'process.env.NODE_ENV': watch ? '"development"' : '"production"' },
 }
-if (watch) {
-  for (const o of [server, client]) await (await esbuild.context(o)).watch()
-} else {
-  const [, browser] = await Promise.all([esbuild.build(server), esbuild.build(client)])
-  const forbidden = Object.keys(browser.metafile.inputs).filter(input => path.resolve(input).startsWith(path.join(root, 'server') + path.sep))
-  if (forbidden.length) throw new Error(`Browser bundle contains server modules: ${forbidden.join(', ')}`)
-
-}
+if (watch) await (await esbuild.context(client)).watch()
+else await esbuild.build(client)

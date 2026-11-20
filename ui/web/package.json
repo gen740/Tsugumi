@@ -2,7 +2,7 @@
   "name": "tsugumi-web",
   "private": true,
   "version": "1.0.0",
-  "description": "Tsugumi web UI: a browser client of tsugumid and a small host launcher",
+  "description": "Tsugumi web UI: a browser client of hostd and tsugumid",
   "type": "module",
   "engines": {
     "node": ">=22"
@@ -11,8 +11,7 @@
     "gen": "sh scripts/gen.sh",
     "build": "sh scripts/build-client.sh && node scripts/build.mjs",
     "watch": "node scripts/build.mjs --watch",
-    "start": "node dist/server.js",
-    "typecheck": "node scripts/check-boundaries.mjs && tsc --build tsconfig.shared.json && tsc --noEmit -p tsconfig.browser.json && tsc --noEmit -p tsconfig.server.json",
+    "typecheck": "node scripts/check-boundaries.mjs && tsc --build tsconfig.shared.json && tsc --noEmit -p tsconfig.browser.json",
     "contract": "node scripts/contract.mjs",
     "test": "node scripts/test.mjs"
   },

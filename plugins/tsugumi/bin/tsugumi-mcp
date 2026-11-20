@@ -1,20 +1,13 @@
 #!/bin/sh
-# Starts the plugin's MCP server from a built Tsugumi checkout: the one set in
-# the plugin's options, else the checkout this plugin
-# folder is in (a plugin loaded from a checkout rather than from Claude Code's
-# cache). Node comes from PATH, else from the checkout's Nix dev shell.
+# Starts the plugin's MCP server (`tsugumi mcp`) from a built Tsugumi
+# checkout: the one set in the plugin's options, else the checkout this
+# plugin folder is in (a plugin loaded from a checkout rather than from
+# Claude Code's cache).
 here=$(cd "$(dirname "$0")" && pwd)
 for repo in "$1" "$here/../../.."; do
-  if [ -n "$repo" ] && [ -f "$repo/ui/web/dist/mcp.js" ]; then
-    mcp="$repo/ui/web/dist/mcp.js"
-    break
+  if [ -n "$repo" ] && [ -x "$repo/build/cli/tsugumi" ]; then
+    exec "$repo/build/cli/tsugumi" mcp
   fi
 done
-if [ -z "$mcp" ]; then
-  echo "tsugumi: no built Tsugumi checkout found (web/dist/mcp.js). Build it (docs/claude-code.md) and set the plugin's \"Tsugumi checkout\" option." >&2
-  exit 1
-fi
-if command -v node >/dev/null 2>&1; then
-  exec node "$mcp"
-fi
-exec nix develop "$repo" --command node "$mcp"
+echo "tsugumi: no built Tsugumi checkout found (build/cli/tsugumi). Build it (docs/claude-code.md) and set the plugin's \"Tsugumi checkout\" option." >&2
+exit 1
