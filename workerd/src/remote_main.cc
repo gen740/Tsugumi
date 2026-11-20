@@ -25,6 +25,7 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
@@ -260,6 +261,16 @@ class Daemon {
           journal->job_path(q.job_id) / "work/log-truncated", ec);
       return status;
     };
+    const auto log_slice = [&](uint64_t offset, uint32_t limit) {
+      auto range = journal->log(q.job_id, offset,
+                                std::min(limit, kLogChunkBytes), q.core_life_id);
+      return [offset, range = std::move(range)](R::JobStatusT status) {
+        status.log_offset = offset;
+        status.log_size = range.first;
+        status.log_bytes.assign(range.second.begin(), range.second.end());
+        return status;
+      };
+    };
     switch (q.body.type) {
       case R::RequestBody::PutBlobRequest:
         journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
@@ -289,6 +300,9 @@ class Daemon {
       case R::RequestBody::StatusRequest: {
         auto status =
             with_log_status(journal->status(q.job_id, q.core_life_id).status());
+        const auto& query = *q.body.AsStatusRequest();
+        status =
+            log_slice(query.log_offset, query.log_limit)(std::move(status));
         if (status.state == R::JobState::Running) {
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
@@ -302,10 +316,16 @@ class Daemon {
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {
-        const auto state =
-            journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint);
+        const auto& query = *q.body.AsCancelRequest();
+        // Check the reader before cancelling; the slice may predate this
+        // cancellation, and the next one continues from its end.
+        std::function<R::JobStatusT(R::JobStatusT)> slice =
+            [](R::JobStatusT status) { return status; };
+        if (query.log_limit)
+          slice = log_slice(query.log_offset, query.log_limit);
+        const auto state = journal->cancel(q.job_id, query.fingerprint);
         if (state.state == R::JobState::Cancelling) notify_cancel(state);
-        return reply(with_log_status(state.status()));
+        return reply(slice(with_log_status(state.status())));
       }
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);

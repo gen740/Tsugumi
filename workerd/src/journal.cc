@@ -266,6 +266,43 @@ auto Journal::get(std::string_view job, const R::GetBlobRequestT& r,
   });
   return result;
 }
+auto Journal::log(std::string_view job, uint64_t offset, uint32_t limit,
+                  std::string_view core) const
+    -> std::pair<uint64_t, std::string> {
+  if (limit > kLogChunkBytes)
+    throw Error(R::ErrorCode::Invalid, "invalid log chunk limit");
+  std::pair<uint64_t, std::string> result;
+  locked(job, [&](const auto& dir) {
+    require_owner(read(dir), core);
+    // The supervised invocation appends whole entries and flushes each one.
+    Fd file{::open((dir / "work/result/logs.jsonl").c_str(),
+                   O_RDONLY | O_CLOEXEC | O_NOFOLLOW)};
+    if (file.value < 0) {
+      if (errno == ENOENT || errno == ENOTDIR) return;
+      throw Error(R::ErrorCode::Internal, "cannot open job log");
+    }
+    struct stat st{};
+    if (::fstat(file.value, &st) != 0 || !S_ISREG(st.st_mode))
+      throw Error(R::ErrorCode::Internal, "job log is not a regular file");
+    result.first = static_cast<uint64_t>(st.st_size);
+    // A cursor past the end returns no bytes; the size tells the caller.
+    if (offset >= result.first) return;
+    result.second.resize(static_cast<size_t>(
+        std::min<uint64_t>(limit, result.first - offset)));
+    size_t got = 0;
+    while (got < result.second.size()) {
+      const auto n = ::pread(file.value, result.second.data() + got,
+                             result.second.size() - got,
+                             static_cast<off_t>(offset + got));
+      if (n < 0 && errno == EINTR) continue;
+      if (n < 0) throw Error(R::ErrorCode::Internal, "cannot read job log");
+      if (n == 0) break;
+      got += static_cast<size_t>(n);
+    }
+    result.second.resize(got);
+  });
+  return result;
+}
 auto Journal::submit(std::string_view job, std::string_view bytes,
                      const R::JobSpecT& spec, std::string_view core) -> Record {
   const auto fingerprint = crypto::sha256_hex(bytes);

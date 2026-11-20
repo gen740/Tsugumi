@@ -49,6 +49,10 @@ class Journal {
            std::string_view core) -> void;
   auto get(std::string_view job, const R::GetBlobRequestT& request,
            std::string_view core) const -> R::BlobChunkT;
+  // Bytes of the running or kept job log from `offset`, at most `limit`, and
+  // the log's current size. A job without a log yet has size zero.
+  auto log(std::string_view job, uint64_t offset, uint32_t limit,
+           std::string_view core) const -> std::pair<uint64_t, std::string>;
   auto submit(std::string_view job, std::string_view bytes,
               const R::JobSpecT& spec, std::string_view core) -> Record;
   auto cancel(std::string_view job, const std::string& fingerprint) -> Record;
