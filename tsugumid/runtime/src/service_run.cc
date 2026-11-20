@@ -226,11 +226,13 @@ void Service::run_cancel(RequestIn& req) {
 void Service::run_status(RequestIn& req) {
   const auto* r = project_request(req)->value_as_RunStatusRequest();
   RunStatusData st;
+  std::vector<InvocationSummaryData> live;
   if (r->run_id()) {
     require_run_id(*r->run_id(), "run_id");
     auto active = scheduler_->active_status();
     if (active && active->run_id == r->run_id()->str()) {
       st = *active;
+      live = history_->live(*st.run_id);
     } else {
       auto run = history_->read(
           [&](sql::Db& db) { return History::run(db, r->run_id()->str()); });
@@ -241,9 +243,10 @@ void Service::run_status(RequestIn& req) {
     }
   } else {
     st = current_run_status();
+    if (st.run_id && !st.terminal()) live = history_->live(*st.run_id);
   }
   FBB b;
-  auto off = wire::run_status(b, st);
+  auto off = wire::run_status(b, st, live);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::RunStatus,
                          off.Union()));
 }

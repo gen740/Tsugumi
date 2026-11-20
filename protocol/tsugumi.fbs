@@ -71,6 +71,23 @@ table RunStatus {
   partial_run:bool (id: 9);
   /// Consumed values derived from a partial run, here or through saved inputs. Kept results retain this provenance.
   uses_partial_result:bool (id: 10);
+  /// Cards of an active run that are in progress now, when the run's status is queried.
+  active:[ActiveInvocation] (id: 11);
+}
+
+/// A Card invocation in progress: its current stage and the derivations its Nix build is building.
+table ActiveInvocation {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  invocation:uint64 (id: 1);
+  stage:Tsugumi.Data.Phase (id: 2);
+  stage_elapsed_ms:uint64 (id: 3);
+  /// Derivations being built now; the Card's own derivation is the last to build, after its dependencies.
+  building:[BuildActivity] (id: 4);
+}
+
+table BuildActivity {
+  derivation:string (id: 0, required);
+  elapsed_ms:uint64 (id: 1);
 }
 
 enum ExecutionServiceKind:ubyte { local, remote_daemon }
@@ -520,7 +537,7 @@ table RunRequest {
 /// -> RunStatus. Cancel run_id.
 table RunCancelRequest { run_id:string (id: 0, required); }
 
-/// -> RunStatus. Read run_id; omitted selects the active run, then the latest locally started run, then idle.
+/// -> RunStatus. Read run_id; omitted selects the active run, then the latest locally started run, then idle. An active run lists its Cards in progress with their stage and derivations being built.
 table RunStatusRequest { run_id:string (id: 0); }
 
 table ShellMount { path:string (required); name:string (required); project_relative:bool; writable:bool; }
@@ -690,7 +707,7 @@ table ArtifactReadRequest {
   limit_bytes:uint32 = null (id: 3);
 }
 
-/// -> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds. Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0.
+/// -> LogSlice. Read recorded run logs. Select the Card and stream=build for Nix evaluation and build output from its execution target, including failed builds and a build in progress (tail=true for its latest lines). Use run_record for the failure diagnostic. invocation requires card. tail=true reads the end with offset=0.
 table LogRangeRequest {
   run_id:string (id: 0, required);
   card:Tsugumi.Data.CardPath (id: 1);
