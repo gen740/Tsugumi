@@ -4,16 +4,21 @@ import type { IncomingMessage } from 'node:http'
 import net from 'node:net'
 import type { Duplex } from 'node:stream'
 
-export function pageRpcUpgrade(req: IncomingMessage, port: number, authorized: boolean): boolean {
+const protocols = { '/rpc/host': 'tsugumi.host.v1', '/rpc/agent': 'tsugumi.agent.v1' } as const
+
+export function pageRpcUpgrade(req: IncomingMessage, port: number, authorized: boolean): 'host' | 'agent' | undefined {
   const host = req.headers.host
   const key = req.headers['sec-websocket-key']
-  return req.url === '/rpc/host' && req.method === 'GET' && authorized &&
+  const route = req.url === '/rpc/host' || req.url === '/rpc/agent' ? req.url : undefined
+  if (route && req.method === 'GET' && authorized &&
     (host === `127.0.0.1:${port}` || host === `localhost:${port}`) && req.headers.origin === `http://${host}` &&
-    req.headers.upgrade?.toLowerCase() === 'websocket' && req.headers['sec-websocket-protocol'] === 'tsugumi.host.v1' &&
-    req.headers['sec-websocket-version'] === '13' && typeof key === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(key)
+    req.headers.upgrade?.toLowerCase() === 'websocket' && req.headers['sec-websocket-protocol'] === protocols[route] &&
+    req.headers['sec-websocket-version'] === '13' && typeof key === 'string' && /^[A-Za-z0-9+/]{22}==$/.test(key)) {
+    return route === '/rpc/host' ? 'host' : 'agent'
+  }
 }
 
-export function proxyHostRpc(req: IncomingMessage, page: Duplex, head: Buffer, endpoint: string) {
+export function proxyRpc(req: IncomingMessage, page: Duplex, head: Buffer, endpoint: string) {
   const url = new URL(endpoint)
   const host = net.createConnection({ host: url.hostname, port: Number(url.port) })
   page.once('error', () => host.destroy())
@@ -25,7 +30,7 @@ export function proxyHostRpc(req: IncomingMessage, page: Duplex, head: Buffer, e
   host.write([
     'GET /rpc HTTP/1.1', `Host: ${url.host}`, 'Upgrade: websocket', 'Connection: Upgrade',
     'Sec-WebSocket-Version: 13', `Sec-WebSocket-Key: ${req.headers['sec-websocket-key']}`,
-    'Sec-WebSocket-Protocol: tsugumi.host.v1', '', '',
+    `Sec-WebSocket-Protocol: ${req.headers['sec-websocket-protocol']}`, '', '',
   ].join('\r\n'))
   host.write(head)
   page.pipe(host).pipe(page)

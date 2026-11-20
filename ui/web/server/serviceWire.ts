@@ -204,7 +204,7 @@ function view(value: any): any {
   }
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
-  const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id',
+  const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id', projectPath: 'project_path',
     trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }

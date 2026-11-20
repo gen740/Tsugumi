@@ -404,6 +404,12 @@ auto Access::Handle(const RequestIn& request, bool human) -> std::string {
         entry->project_id = q.text(1);
         entry->conversation_id = q.text(2);
         entry->access = static_cast<Tsugumi::Service::Access>(q.i64(3));
+        auto folder = db.prepare("SELECT project FROM folders WHERE id=?");
+        folder.bind(1, entry->project_id);
+        if (const auto root =
+                registry.Location(folder.step() ? folder.text(0)
+                                                : entry->project_id))
+          entry->project_path = root->string();
         entry->reason = q.text(4);
         entry->state = q.text(5);
         entry->asked = AccessDescriptions(

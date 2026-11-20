@@ -470,15 +470,19 @@ struct Service::State {
   auto Event(const std::string& id, const std::string& input) -> void {
     const auto raw = Scrub(input);
     std::lock_guard lock(mutex);
-    if (turns->running.contains(id)) {
-      const auto event = json::Object(raw);
-      const auto kind = json::Text(event, "kind");
+    const auto event = json::Object(raw);
+    const auto kind = json::Text(event, "kind");
+    if (turns->running.contains(id))
       turns->ThoughtsFor(id)->Note(
           kind == "helper"
               ? json::Text(json::Object(json::Get(event, "event")), "kind")
               : kind);
-    }
     conversations->RecordEvent(id, raw);
+    H::ConversationChangedT notification;
+    notification.conversation_id = id;
+    if (kind == "permissionAnswered")
+      notification.answered_permission = json::Text(event, "id");
+    events->Publish(wire::HostEvent(std::move(notification)));
   }
 
   auto Handle(const RequestIn& request, bool human) -> std::string {

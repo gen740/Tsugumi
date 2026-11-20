@@ -438,7 +438,9 @@ function reloadChats() {
 }
 
 function SkillSettings() {
-  const [folders, setFolders] = useState<SkillFolder[]>()
+  type SkillFolderSettings = { skillFolders: SkillFolder[]; revision: Record<string, number> }
+  const [data, setData] = useState<SkillFolderSettings>()
+  const folders = data?.skillFolders
   const [exists, setExists] = useState<Record<string, boolean>>({})
   const [query, setQuery] = useState('')
   const [state, setState] = useState<'idle' | 'loading' | 'loaded' | { failed: string }>('idle')
@@ -446,11 +448,12 @@ function SkillSettings() {
   const [picking, setPicking] = useState(false)
 
   /** Reads the folders on the host; a slow or missing folder never blocks the window. */
-  const reload = async (list?: SkillFolder[]) => {
+  const reload = async (updated?: SkillFolderSettings) => {
     setState('loading')
     try {
-      const f = list ?? (await api<{ skillFolders: SkillFolder[] }>('/api/settings')).skillFolders
-      setFolders(f)
+      const snapshot = updated ?? await api<SkillFolderSettings>('/api/settings')
+      const f = snapshot.skillFolders
+      setData(snapshot)
       const ex = await api<Record<string, boolean>>('/api/settings/skillFolderStatus', { paths: f.map((x) => x.path) })
       setExists(ex)
       setFound(await api<Skill[]>('/api/skills', {}))
@@ -465,9 +468,10 @@ function SkillSettings() {
     void reload()
   }, [])
   const save = async (next: SkillFolder[]) => {
-    setFolders(next)
-    await api('/api/settings', { skillFolders: next })
-    await reload(next)
+    if (!data) return
+    try {
+      await reload(await api<SkillFolderSettings>('/api/settings', { skillFolders: next, revision: data.revision }))
+    } catch (error) { setState({ failed: errorText(error) }) }
   }
   const q = query.toLowerCase()
   const shown = found.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))

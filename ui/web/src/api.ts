@@ -1,19 +1,12 @@
 import { modelErrorMessage } from './i18n'
 // Calls to the host server (files, processes, the Agent).
 
-let settingsRevision: Record<string, number> | undefined
-
 export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  if (path === '/api/settings' && body !== undefined) {
-    if (!settingsRevision) await api('/api/settings')
-    body = { revision: settingsRevision, ...(body as object) }
-  }
   const r = await fetch(path, body === undefined
     ? { signal, headers: { 'x-tsugumi': '1' } }
     : { signal, method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
   const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
   if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
-  if (path === '/api/settings' && v.revision) settingsRevision = v.revision
   if (path === '/api/settings' && body !== undefined) {
     for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
   }

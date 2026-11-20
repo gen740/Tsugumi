@@ -102,7 +102,7 @@ table ToolCatalog { tools:[Tool]; }
 table Image { media_type:string; data:string; }
 table ToolResult { text:string; is_error:bool; images:[Image]; }
 table AccessResult { id:string (required); }
-table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; reason:string; state:string; asked:[string]; groups:[AccessGroup]; }
+table AccessEntry { id:string; project_id:string; conversation_id:string; access:Tsugumi.Service.Access; reason:string; state:string; asked:[string]; groups:[AccessGroup]; project_path:string; }
 table Grant { id:string; project_id:string; access:Tsugumi.Service.Access; active:bool; }
 table AccessList { requests:[AccessEntry]; grants:[Grant]; }
 union ReplyPayload {

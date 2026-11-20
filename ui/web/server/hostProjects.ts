@@ -18,6 +18,6 @@ export function hostProjectErrorText(code: string, message?: string): string {
     case 'demo_not_found': return L('デモが見つかりません。')
     case 'invalid_language': return L('デモの言語が正しくありません。')
     case 'permission_denied': return L('この操作にはユーザーの権限が必要です。')
-    default: return L('プロジェクトの操作に失敗しました。')
+    default: return message || L('プロジェクトの操作に失敗しました。')
   }
 }

@@ -5,8 +5,8 @@ import { randomUUID } from 'node:crypto'
 import path from 'node:path'
 import { modelChoices } from '../shared/agentShared'
 import type { Access } from '../shared/gen/tsugumi/service/access'
-import { type AgentEvent, type ProviderConfig } from './agent'
-import { CoreHost, CoreHostError, RemoteAgent } from './coreHost'
+import { type ProviderConfig } from './agent'
+import { CoreHost, CoreHostError } from './coreHost'
 import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './environment'
 import { L, setLanguage, type Language } from './i18n'
@@ -21,8 +21,6 @@ export interface ChatContext {
   httpError: (status: number, message: string) => Error
   /** Folder of the server bundle (tsugumi.bfbs is next to it). */
   here: string
-  /** How many pages are connected (their event streams). */
-  listeners: () => number
   /** Opens the page in the default browser (the page's key is the server's alone). */
   showOnPage: (project: string) => boolean
   openPage: (project?: string) => void
@@ -82,31 +80,38 @@ const HOST_KEYS: Record<string, string> = { trustedFolders: 'agent.trustedFolder
 const LOCAL_KEYS: Record<string, string> = { skillFolders: 'agent.skillFolders' }
 const localProfile = () => `web:${ctx.support}`
 const settingsProfile = () => ctx.desktop ? 'desktop' : localProfile()
-const revisions: Record<string, number> = {}
+function settingsProfiles() {
+  const profiles = new Map<string, Record<string, string>>()
+  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
+    profiles.set(profile, { ...profiles.get(profile), ...keys })
+  }
+  return profiles
+}
 let snapshot = {} as Settings
 const settings = (): Settings => snapshot
 async function loadSettings() {
   await core.provisionEnvironment()
-  const next: any = {}
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
+  const next: Partial<Settings> = {}
+  const revision: Record<string, number> = {}
+  for (const [profile, keys] of settingsProfiles()) {
     const reply = await core.getSettings(profile)
-    revisions[profile] = reply.revision
+    revision[profile] = reply.revision
     const values = Object.fromEntries(reply.values.map((s) => [s.key, JSON.parse(s.value_json)]))
-    for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) next[name] = values[key]
+    for (const [name, key] of Object.entries(keys)) if (values[key] !== undefined) Object.assign(next, { [name]: values[key] })
   }
-  snapshot = next
+  snapshot = next as Settings
   setLanguage(snapshot.language)
+  return { ...snapshot, revision }
 }
-async function patchSettings(change: Partial<Settings>, expected: Record<string, number> = { ...revisions }) {
-  const patches = new Map<string, { key: string; value_json: string }[]>()
-  for (const [profile, keys] of [[settingsProfile(), SHARED_KEYS], [localProfile(), LOCAL_KEYS], ['desktop', HOST_KEYS]] as const) {
-    const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify((change as any)[name]) }))
-    if (changes.length) patches.set(profile, [...(patches.get(profile) ?? []), ...changes])
+async function patchSettings(change: Partial<Settings>, expected?: Record<string, number>) {
+  for (const [profile, keys] of settingsProfiles()) {
+    const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify(change[name as keyof Settings]) }))
+    if (!changes.length) continue
+    const revision = expected ? expected[profile] : (await core.getSettings(profile)).revision
+    if (revision === undefined) throw ctx.httpError(400, 'Missing settings revision')
+    await core.user.call('SettingsUpdateRequest', { profile, revision, changes, client: 'web' })
   }
-  for (const [profile, changes] of patches) {
-    await core.user.call('SettingsUpdateRequest', { profile, revision: expected[profile], changes, client: 'web' })
-  }
-  await loadSettings()
+  return loadSettings()
 }
 const PROVIDERS = { anthropic: { name: 'Anthropic', env: 'ANTHROPIC_API_KEY' }, openai: { name: 'OpenAI', env: 'OPENAI_API_KEY' } } as const
 type KeyedProvider = keyof typeof PROVIDERS
@@ -197,25 +202,11 @@ async function chatGPTState() {
 // app with the same model connection as the Agent. Scripted guidance uses the Host contract. It
 // reads the project on the page's screen and explains; what it offers to do
 // (guide_show) the user does with a button of the page.
-let guideAgent: RemoteAgent | undefined
-/** The project the page asked about (its reads go there), if one is open. */
 let guideProject: string | undefined
-const guideEvents = (event: AgentEvent) => {
-  ctx.broadcast({ type: 'guide', event })
-  if (guideProject && (event.kind === 'permission' || event.kind === 'permissionAnswered')) {
-    ctx.broadcast({ type: 'chat', project: guideProject, session: EXTERNAL_SESSION, event })
-  }
-}
 
-async function guide(): Promise<RemoteAgent> {
-  if (!guideAgent || guideAgent.project !== guideProject) {
-    guideAgent?.close()
-    guideAgent = await new RemoteAgent(core, 'guide', guideProject, 'guide').open()
-  }
+async function guideTurn() {
+  await core.conversation('guide', guideProject, 'guide')
   await core.configure(await guideProvider(), 'guide')
-  guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
-  await guideAgent.refresh()
-  return guideAgent
 }
 
 /** The host chooses the guide/summary model from settings and its catalog. */
@@ -274,65 +265,19 @@ async function modelCatalogs() {
 
 // ---- Agent hosting -------------------------------------------------------------
 
-interface PermissionWait {
-  project: string
-  session: string
+interface AccessRequest {
+  id: string; state: string; conversation_id: string; project_path?: string
   asked: string[]; groups?: AccessGroup[]
-  resolve: (allow: boolean) => void
-}
-const permissionWaits = new Map<string, PermissionWait>()
-const EXTERNAL_SESSION = 'external'
-
-async function answerPermission(id: string, allow: boolean, selected?: Access[]) {
-  const result = await core.user.call<{ accepted: boolean }>('AccessResolveRequest', { request_id: id, allow, selected })
-  const waiting = permissionWaits.get(id)
-  permissionWaits.delete(id)
-  waiting?.resolve(result.accepted)
-  if (waiting) ctx.broadcast({ type: 'chat', project: waiting.project, session: waiting.session,
-    event: { kind: 'permissionAnswered', id } })
 }
 
-const waitingFor = (project: string, session: string) =>
-  [...permissionWaits.entries()].filter(([, w]) => w.project === project && w.session === session)
+const pendingAccess = async () =>
+  (await core.user.call<{ requests: AccessRequest[] }>('AccessListRequest')).requests.filter(r => r.state === 'pending')
 
-async function withAccess<T>(project: string, session: string, run: () => Promise<T>, from?: string): Promise<T> {
-  for (;;) {
-    try { return await run() } catch (error) {
-      if (!(error instanceof CoreHostError) || error.code !== 'grant_required' || !error.requestId) throw error
-      const id = error.requestId
-      const access = await core.user.call<{ requests: { id: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest')
-      const request = access.requests.find(r => r.id === id)
-      if (!request) throw error
-      const allowed = new Promise<boolean>((resolve) => {
-        const asked = request.asked
-        permissionWaits.set(id, { project, session, asked, groups: request.groups, resolve })
-        ctx.broadcast({ type: 'chat', project, session, event: { kind: 'permission', id, asked, groups: request.groups, from } })
-      })
-      if (!await allowed) throw new CoreHostError('permission_denied', L('プロジェクトへのアクセスは許可されませんでした。'))
-    }
-  }
-}
+const answerPermission = (id: string, allow: boolean, selected?: Access[]) =>
+  core.user.call('AccessResolveRequest', { request_id: id, allow, selected })
 
 class ChatHost {
-  private conversations = new Map<string, RemoteAgent>()
   constructor(readonly project: string) {}
-
-  async agent(id: string): Promise<RemoteAgent> {
-    let a = this.conversations.get(id)
-    if (!a) {
-      a = await new RemoteAgent(core, id, this.project).open()
-      this.conversations.set(id, a)
-      const access = await core.user.call<{ requests: { id: string; conversation_id: string; project_id: string; state: string }[] }>('AccessListRequest')
-      for (const request of access.requests) {
-        if (request.state === 'pending' && request.conversation_id !== id && core.projectFolder(request.project_id) === this.project) {
-          await showExternalAccess(request.id, this.project)
-        }
-      }
-    }
-    a.observe(this.events(id), () => ctx.listeners() > 0)
-    await a.refresh()
-    return a
-  }
 
   async attachFolders(folders: string[]) {
     try { return await ctx.envs.attachFolders(this.project, folders) }
@@ -349,22 +294,8 @@ class ChatHost {
     if (folders.size) await this.attachFolders([...folders])
   }
 
-  events(id: string) {
-    return (event: AgentEvent) => ctx.broadcast({ type: 'chat', project: this.project, session: id, event })
-  }
-
-  resume() { for (const [id, conversation] of this.conversations) conversation.observe(this.events(id), () => ctx.listeners() > 0) }
-
-  detach() { for (const conversation of this.conversations.values()) conversation.close() }
-
   async sessions() {
     return core.user.call('ConversationListRequest', { project_id: await core.project(this.project) })
-  }
-
-  async delete(id: string) {
-    await core.user.call('ConversationDeleteRequest', { conversation_id: id })
-    this.conversations.get(id)?.close()
-    this.conversations.delete(id)
   }
 
   async search(text: string) { return core.user.call('ConversationSearchRequest', { text, project_id: await core.project(this.project) }) }
@@ -391,32 +322,14 @@ class ChatHost {
   }
 }
 
-const chats = new Map<string, ChatHost>()
-function chatFor(dir: string): ChatHost {
-  const key = projectKey(dir)
-  let chat = chats.get(key)
-  if (!chat) { chat = new ChatHost(key); chats.set(key, chat) }
-  return chat
-}
-
-/** A disconnected page does not own the lifetime of a core conversation. */
-export function resumeChats() {
-  for (const host of chats.values()) host.resume()
-  if (guideAgent) guideAgent.observe(guideEvents, () => ctx.listeners() > 0)
-}
-
-export function cancelChats(dir: string) { chats.get(projectKey(dir))?.detach() }
+const chatFor = (dir: string) => new ChatHost(projectKey(dir))
 
 async function showExternalAccess(requestId: string, fallback?: string) {
-  const access = await core.user.call<{ requests: { id: string; project_id: string; asked: string[]; groups?: AccessGroup[]; state: string }[] }>('AccessListRequest')
-  const request = access.requests.find((r) => r.id === requestId && r.state === 'pending')
-  if (!request) return
-  const project = core.projectFolder(request.project_id) ?? fallback
-  if (!project) return
-  const asked = request.asked
-  permissionWaits.set(requestId, { project, session: EXTERNAL_SESSION, asked, groups: request.groups, resolve: () => {} })
-  ctx.broadcast({ type: 'chat', project, session: EXTERNAL_SESSION,
-    event: { kind: 'permission', id: requestId, asked, groups: request.groups, from: 'Claude Code' } })
+  const request = (await pendingAccess()).find((r) => r.id === requestId)
+  const project = request?.project_path ?? fallback
+  if (!request || !project) return
+  ctx.broadcast({ type: 'chat', project, session: 'external',
+    event: { kind: 'permission', id: requestId, asked: request.asked, groups: request.groups, from: 'Claude Code' } })
 }
 
 async function externalAPI(name: string, args: unknown, project?: string, signal?: AbortSignal) {
@@ -435,15 +348,21 @@ async function externalAPI(name: string, args: unknown, project?: string, signal
 }
 
 
-/** The Agent of a session, ready for a new turn (current connection and folders). */
 async function turnAgent(b: any) {
   const host = chatFor(ctx.projectDir(b.path))
-  const a = await host.agent(String(b.session))
-  await core.configure(await chatProvider(), a.id)
-  return { host, a }
+  const id = String(b.session)
+  await core.conversation(id, host.project)
+  await core.configure(await chatProvider(), id)
+  return { host, id }
 }
 
-// The same authenticated host connection also serves Home's project requests.
+function conversationAction(action: string) {
+  return async (b: any) => {
+    const { id } = await turnAgent(b)
+    return core.user.call('ConversationActionRequest', { conversation_id: id, action })
+  }
+}
+
 export function hostReady() { return core.ready() }
 
 export function hostRequest<T = any>(method: string, fields: unknown = {}): Promise<T> {
@@ -458,7 +377,7 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
     if (event.type === 'SettingsChanged' && [settingsProfile(), localProfile(), 'desktop'].includes(event.value.profile)) {
-      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }))
+      void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }), (error) => console.error(error))
     }
   })
   const initialSettings = loadSettings()
@@ -474,15 +393,14 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { animateWork: settings().animateAgentWork }
   },
   'GET /api/settings': async () => ({
-    ...settings(),
-    revision: { ...revisions },
+    ...await loadSettings(),
     ...await modelCatalogs(),
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
     keyEnv: { Anthropic: PROVIDERS.anthropic.env, OpenAI: PROVIDERS.openai.env },
   }),
   'POST /api/settings': async (b) => {
-    await patchSettings(b ?? {}, b?.revision ?? { ...revisions })
-    return { ...settings(), revision: { ...revisions }, ...await modelCatalogs(), chatProvider: await providerInfo() }
+    const updated = await patchSettings(b, b.revision)
+    return { ...updated, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
   'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),
   'POST /api/versions/graph': async (b) => {
@@ -564,11 +482,12 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     return { id: result.conversation.id }
   },
   'POST /api/chat/conversation': async (b) => {
-    const host = chatFor(projectDir(b.path))
-    const a = await host.agent(String(b.session))
-    const [wait] = [...waitingFor(host.project, a.id), ...waitingFor(host.project, EXTERNAL_SESSION)]
-    const access = await core.user.call<{ requests: { id: string; state: string; asked: string[]; groups?: AccessGroup[] }[] }>('AccessListRequest', { conversation_id: a.id })
-    const pending = access.requests.find((r) => r.state === 'pending')
+    const project = projectKey(projectDir(b.path))
+    const id = String(b.session)
+    const a = await core.conversation(id, project)
+    const pending = (await pendingAccess()).filter(r => r.conversation_id === id || r.project_path === project)
+    const permissions = pending.map(r => ({ id: r.id, asked: r.asked, groups: r.groups,
+      from: r.conversation_id !== id && r.conversation_id !== 'guide' ? 'Claude Code' : undefined }))
     let info = await providerInfo()
     if (a.busy && a.modelBinding) {
       const p = a.modelBinding
@@ -576,65 +495,47 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
         model: p.model, effort: p.effort, fast: p.fast, plan: p.providerId === 'chatgpt', remote: p.providerId !== 'fixture',
         api: p.providerId === 'chatgpt' || p.providerId === 'openai' ? 'openAIResponses' : 'anthropicMessages' }
     }
-    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable, provider: info,
-      permission: pending ? { id: pending.id, asked: pending.asked, groups: pending.groups } : wait ? { id: wait[0], asked: wait[1].asked, groups: wait[1].groups } : null }
+    return { conversation: a.conversation, busy: a.busy, resumable: a.resumable, interruptedOperation: a.interruptedOperation, continuable: a.continuable,
+      eventSeq: String(a.event_seq), provider: info, permissions }
   },
   'POST /api/chat/send': async (b) => {
-    const { host, a } = await turnAgent(b)
-    const turn = randomUUID()
+    const { host, id } = await turnAgent(b)
     const skillNames = Array.isArray(b.skillNames) ? b.skillNames.map(String) : []
-    await host.attachSkillFolders(skillNames, a.id)
-    await withAccess(host.project, a.id, () => a.send(String(b.text ?? ''), host.events(a.id), turn, {
+    await host.attachSkillFolders(skillNames, id)
+    return core.user.call('ConversationSendRequest', {
+      conversation_id: id, turn_id: randomUUID(), text: String(b.text ?? ''),
       display: String(b.display ?? b.text ?? ''),
       selected_cards: Array.isArray(b.selectedCards) ? b.selectedCards.map(String) : [],
       selected_displays: Array.isArray(b.selectedDisplays) ? b.selectedDisplays.map(String) : [],
       skill_names: [...new Set(skillNames)],
       scoped_skill: b.scopedSkill ? String(b.scopedSkill) : undefined,
       attached_resources: Array.isArray(b.attachedResources) ? b.attachedResources.map(String) : [],
-    }))
-      .catch((e) => host.events(a.id)({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
-    return { ok: true }
+    })
   },
   'POST /api/chat/thoughts': async (b) => {
-    const a = await chatFor(projectDir(b.path)).agent(String(b.session))
-    return core.summarize(a.id, await purposeProvider('summary'))
+    const id = String(b.session)
+    await core.conversation(id, projectKey(projectDir(b.path)))
+    return core.summarize(id, await purposeProvider('summary'))
   },
-  'POST /api/chat/resume': async (b) => {
-    const { host, a } = await turnAgent(b)
-    await a.action('Resume', host.events(a.id))
-    return { ok: true }
-  },
-  'POST /api/chat/continue': async (b) => {
-    const { host, a } = await turnAgent(b)
-    await a.action('Continue', host.events(a.id))
-    return { ok: true }
-  },
-  'POST /api/chat/retry': async (b) => {
-    const { host, a } = await turnAgent(b)
-    await a.action('Retry', host.events(a.id))
-    return { ok: true }
-  },
-  'POST /api/chat/compact': async (b) => {
-    const { host, a } = await turnAgent(b)
-    await a.action('Compact', host.events(a.id))
-    return { ok: true }
-  },
+  'POST /api/chat/resume': conversationAction('Resume'),
+  'POST /api/chat/continue': conversationAction('Continue'),
+  'POST /api/chat/retry': conversationAction('Retry'),
+  'POST /api/chat/compact': conversationAction('Compact'),
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
     if (allow && Array.isArray(b.always) && b.always.length > 0) {
-      const merged = [...new Set([...(settings().allowedPermissions ?? []), ...b.always.map(String)])]
-      await patchSettings({ allowedPermissions: merged })
+      const { allowedPermissions, revision } = await loadSettings()
+      const merged = [...new Set([...allowedPermissions, ...b.always.map(String)])]
+      await patchSettings({ allowedPermissions: merged }, revision)
     }
     await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
   },
   'POST /api/chat/cancel': async (b) => {
-    const host = chatFor(projectDir(b.path))
-    await (await host.agent(String(b.session))).cancel()
-    for (const [id] of waitingFor(host.project, String(b.session))) await answerPermission(id, false)
+    await core.cancelConversation(String(b.session))
     return { ok: true }
   },
-  'POST /api/chat/delete': async (b) => { await chatFor(projectDir(b.path)).delete(String(b.session)); return { ok: true } },
+  'POST /api/chat/delete': (b) => core.user.call('ConversationDeleteRequest', { conversation_id: String(b.session) }),
   'POST /api/chat/folders': async (b) => {
     if (!Array.isArray(b.selected)) throw ctx.httpError(400, 'Select at least one folder.')
     const folders = b.selected.map(String)
@@ -669,8 +570,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),
   'POST /api/guide': async () => {
     const state = await guideState()
-    const a = state.available ? await guide() : undefined
-    return { ...state, conversation: a?.conversation ?? null, busy: a?.busy ?? false }
+    const a = state.available ? await core.conversation('guide', guideProject, 'guide') : undefined
+    return { ...state, conversation: a?.conversation ?? null, busy: a?.busy ?? false, eventSeq: a && String(a.event_seq) }
   },
   'POST /api/guide/get': () => core.user.call('GuideGetRequest', { session_id: guideSession(), language: settings().language }),
   'POST /api/guide/advance': async (b) => {
@@ -693,28 +594,20 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     const status = await guideAvailability()
     if (!status.configured) throw ctx.httpError(409, providerConnectionMessage(status.code) ?? L('ガイドに使える API キーがありません。'))
     guideProject = typeof b.project === 'string' && b.project ? projectDir(b.project) : undefined
-    const a = await guide()
-    const turn = randomUUID()
-    void withAccess(guideProject ?? '', 'guide', () => a.send(String(b.text ?? ''), guideEvents, turn))
-      .catch((e) => guideEvents({ kind: 'error', message: e.message, code: e instanceof CoreHostError ? e.code : undefined }))
-    return { ok: true }
+    await guideTurn()
+    return core.user.call('ConversationSendRequest', {
+      conversation_id: 'guide', turn_id: randomUUID(), text: String(b.text ?? ''),
+    })
   },
   'POST /api/guide/retry': async () => {
-    const a = await guide()
-    await a.action('Retry', guideEvents)
-    return { ok: true }
+    await guideTurn()
+    return core.user.call('ConversationActionRequest', { conversation_id: 'guide', action: 'Retry' })
   },
   'POST /api/guide/cancel': async () => {
-    await guideAgent?.cancel()
+    await core.cancelConversation('guide')
     return { ok: true }
   },
-  /** A new conversation (the old one is gone; the tour stays). */
-  'POST /api/guide/reset': async () => {
-    await guideAgent?.cancel()
-    guideAgent = undefined
-    await core.user.call('ConversationDeleteRequest', { conversation_id: 'guide' })
-    return { ok: true }
-  },
+  'POST /api/guide/reset': () => core.user.call('ConversationDeleteRequest', { conversation_id: 'guide' }),
   }
   return Object.fromEntries(Object.entries(routes).map(([key, route]) => [key, async (body, url, signal) => { await initialSettings; return route(body, url, signal) }]))
 }
