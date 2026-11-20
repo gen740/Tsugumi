@@ -18,7 +18,7 @@ import Testing
       for await _ in events {}
       throw CancellationError()
     }, load: { .init(accounts: [], result: nil) }, acknowledge: { _ in Issue.record("Unexpected welcome") })
-    model.signIn { Issue.record("Cancelled sign-in finished setup") }
+    model.signIn { _ in Issue.record("Cancelled sign-in finished setup") }
     #expect(model.signingIn != nil)
     let pending = model.signingIn
     pending?.cancel()
@@ -35,11 +35,11 @@ import Testing
       if consent { #expect(client == a.clientId) }
       return .init(account: a, welcome: false)
     }, load: { .init(accounts: [a], result: nil) }, acknowledge: { _ in Issue.record("Unexpected welcome") })
-    model.signIn { Issue.record("Plan permission was not granted") }
+    model.signIn { _ in Issue.record("Plan permission was not granted") }
     await model.signingIn?.value
     #expect(model.active?.planEnabled == false && model.welcome == nil)
     #expect(model.message != nil)
-    model.signIn(clientId: a.clientId, consent: true) { Issue.record("Plan permission was not granted") }
+    model.signIn(clientId: a.clientId, consent: true) { _ in Issue.record("Plan permission was not granted") }
     await model.signingIn?.value
     #expect(requests == [false, true])
   }
@@ -53,10 +53,10 @@ import Testing
       return .init(account: a, welcome: false)
     }, load: { .init(accounts: [a], result: nil) }, acknowledge: { _ in })
     var finished = 0
-    model.signIn { finished += 1 }
+    model.signIn { _ in finished += 1 }
     await model.signingIn?.value
     #expect(finished == 0 && model.message == "ChatGPT: fixture failure")
-    model.signIn { finished += 1 }
+    model.signIn { _ in finished += 1 }
     await model.signingIn?.value
     #expect(finished == 1 && model.welcome == nil)
   }
@@ -75,14 +75,17 @@ import Testing
     }
     let setup = ChatGPTSignInModel(authenticate: authenticate, load: { .init(accounts: [a], result: nil) }, acknowledge: acknowledge)
     var finished = 0
-    setup.signIn { finished += 1 }
+    setup.signIn { id in
+      #expect(id == a.clientId)
+      finished += 1
+    }
     await setup.signingIn?.value
     #expect(setup.welcome == a.clientId && finished == 0)
     await setup.welcomed()
     await setup.welcomed()
     #expect(finished == 1 && acknowledgements == 1 && setup.welcome == nil)
     let settings = ChatGPTSignInModel(authenticate: authenticate, load: { .init(accounts: [a], result: nil) }, acknowledge: acknowledge)
-    settings.signIn { finished += 1 }
+    settings.signIn { _ in finished += 1 }
     await settings.signingIn?.value
     #expect(settings.welcome == nil && finished == 2 && acknowledgements == 1)
   }
@@ -135,7 +138,7 @@ import Testing
         Task { @MainActor in cancellation.value += 1 }
       }
     }, load: { await auth.status() })
-    let view = NSHostingView(rootView: AnyView(ChatGPTConnection(model: model, onboarding: true) {
+    let view = NSHostingView(rootView: AnyView(ChatGPTConnection(model: model, onboarding: true) { _ in
       Issue.record("Dismissed sign-in finished setup")
     }))
     let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 500, height: 300),
@@ -144,7 +147,7 @@ import Testing
     defer { window.contentView = nil }
     view.layoutSubtreeIfNeeded()
     try await until { host.statusReads > 0 }
-    model.signIn { Issue.record("Dismissed sign-in finished setup") }
+    model.signIn { _ in Issue.record("Dismissed sign-in finished setup") }
     let pending = try #require(model.signingIn)
     try await until { host.begins == 1 && (beginPending || host.browserOpens == 1) }
     // Replace the actual SwiftUI subtree, invoking its onDisappear modifier.
@@ -166,7 +169,7 @@ import Testing
     let model = ChatGPTSignInModel(authenticate: { client, consent in
       try await auth.signIn(clientId: client, consent: consent) { _ in await host.openBrowser() }
     }, load: { await auth.status() })
-    model.signIn { Issue.record("Quit finished setup") }
+    model.signIn { _ in Issue.record("Quit finished setup") }
     let pending = try #require(model.signingIn)
     try await until { host.begins == 1 && (beginPending || host.browserOpens == 1) }
     // onDisappear may already have cancelled the task when Quit is handled.
@@ -203,21 +206,25 @@ import Testing
         try await fixture.signInChatGPT(clientId: $0, consent: $1)
       }
       let model = ChatGPTSignInModel(authenticate: authenticate)
-      model.signIn { try await guide.finishChatGPTSetup() }
+      model.signIn { try await guide.finishChatGPTSetup(clientId: $0) }
       await model.signingIn?.value
       #expect(model.welcome != nil && !guide.setupDone)
       // Reopening the app creates a new presentation model; hostd survives.
       let reopened = ChatGPTSignInModel(authenticate: authenticate)
-      await reopened.refresh { try await guide.finishChatGPTSetup() }
+      await reopened.refresh { try await guide.finishChatGPTSetup(clientId: $0) }
       #expect(reopened.welcome == model.welcome)
       await reopened.welcomed()
-      await CorePreferences.shared.reload()
-      #expect(CorePreferences.shared.string(forKey: "agent.provider") == "chatgpt")
+      let persisted = try await CoreHostClient.shared.call("SettingsGetRequest", ["profile": "desktop"])
+      let entries = persisted["values"] as? [[String: String]]
+      let provider = entries?.first { $0["key"] == "agent.provider" }?["value_json"]
+      try #require(provider == #""chatgpt""#)
+      let welcomeError = reopened.message
+      try #require(welcomeError == nil)
       try await fixtures.until("ChatGPT finishes setup and connects the guide") { guide.setupDone && guide.connected }
       #expect(model.active?.email == "fixture@example.com")
       let id = try #require(model.active?.clientId)
       let settings = ChatGPTSignInModel(authenticate: authenticate)
-      settings.signIn(clientId: id) {}
+      settings.signIn(clientId: id) { _ in }
       await settings.signingIn?.value
       #expect(settings.active?.planEnabled == true && settings.welcome == nil)
     }
