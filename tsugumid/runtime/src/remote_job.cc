@@ -22,6 +22,7 @@
 #include <sstream>
 
 #include "model.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -139,12 +140,14 @@ auto connect_broker(std::string_view endpoint,
     -> int {
   if (endpoint.starts_with("unix:")) {
     const std::string_view path = endpoint.substr(5);
-    sockaddr_un address{};
-    if (path.empty() || path.front() != '/' ||
-        path.size() >= sizeof address.sun_path)
+    if (path.empty() || path.front() != '/')
       throw BrokerDisconnected("invalid execution broker Unix socket path");
-    address.sun_family = AF_UNIX;
-    std::memcpy(address.sun_path, path.data(), path.size());
+    sockaddr_un address{};
+    try {
+      address = unix_socket::Address(std::string(path));
+    } catch (const std::runtime_error& error) {
+      throw BrokerDisconnected(error.what());
+    }
     return socket_for(AF_UNIX, reinterpret_cast<const sockaddr*>(&address),
                       sizeof address, io);
   }

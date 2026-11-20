@@ -22,6 +22,7 @@
 #include <utility>
 
 #include "tsugumi/rpc/client_transport.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::client {
@@ -163,11 +164,7 @@ class NativeTransport final : public Transport {
       auto path = options.endpoint.substr(5);
       if (path.empty() || path.front() != '/')
         throw std::runtime_error("Unix socket path must be absolute");
-      sockaddr_un address{};
-      if (path.size() >= sizeof address.sun_path)
-        throw std::runtime_error("Unix socket path is too long");
-      address.sun_family = AF_UNIX;
-      std::memcpy(address.sun_path, path.c_str(), path.size() + 1);
+      const auto address = unix_socket::Address(path);
       fd = ::socket(AF_UNIX, SOCK_STREAM, 0);
       if (fd < 0) throw std::runtime_error("cannot create Unix socket");
       if (::fcntl(fd, F_SETFL, O_NONBLOCK) < 0 ||
@@ -177,7 +174,7 @@ class NativeTransport final : public Transport {
       int enabled = 1;
       ::setsockopt(fd, SOL_SOCKET, SO_NOSIGPIPE, &enabled, sizeof enabled);
 #endif
-      if (::connect(fd, reinterpret_cast<sockaddr*>(&address),
+      if (::connect(fd, reinterpret_cast<const sockaddr*>(&address),
                     sizeof address) == 0)
         return;
       if (errno != EINPROGRESS)
