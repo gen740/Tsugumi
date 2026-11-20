@@ -20,7 +20,7 @@ NATIVE_CORE_CASES = {
     },
     "test_run_scratch_usage.py": {"test_unreadable_scratch_is_listed_and_explicitly_deletable"},
     "test_remote_recovery.py": {
-        "test_stop_is_accepted_while_early_build_catalog_is_pending",
+        "test_stop_is_accepted_while_worker_selection_catalog_is_pending",
         "test_stop_cancels_remote_job_before_the_pending_reply",
         "test_network_cut_within_same_core_life_resumes",
         "test_core_shutdown_releases_an_unresponsive_gateway",
