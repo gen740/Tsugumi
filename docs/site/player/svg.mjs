@@ -536,9 +536,9 @@ function tileSvg(id) {
 /** The window of the README's screenshots (docs/assets/screenshots, ui/macos/tools/screenshots/readme.ui): 1440 × 900, the chat column on the right. */
 const WIN = { width: 1440, height: 900, bar: 52, chat: 344 }
 /** Where the Cas A Canvas has the Cards, output frames and the note: the screenshots' arrangement (Cards in one row, the
- *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (ciao, and the forks begin and share). */
+ *  spectrum above, the band table and the RGB image below), with the Cards the demo has now (including ciao). */
 const WINDOW_LAYOUT = {
-  cards: { start: [0, 484], begin: [150, 495], load: [230, 484], ciao: [230, 640], bands: [500, 484], share: [770, 495], rgb: [850, 484], spectrum: [1110, 484] },
+  cards: { start: [0, 484], load: [230, 484], ciao: [230, 640], bands: [500, 484], rgb: [850, 484], spectrum: [1110, 484] },
   displays: { spectrum: [760, 0, 680, 400], bands: [500, 650, 340, 150], rgb: [880, 650, 420, 440] },
   note: [0, 0, 700, 430],
 }
@@ -937,7 +937,7 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
  *  part of the demo's recorded run (the timeline's `<card>/<inner>` entries). */
 function innerDemo(demo, card) {
   const root = path.join(ROOT, 'demos', 'en', demo)
-  const ext = readJson(path.join(root, 'definitions', card, '_link.json')).external
+  const ext = readJson(path.join(root, 'definitions', card, '_card.json')).external
   const inner = path.join(root, 'externals', ext)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)
@@ -1006,10 +1006,13 @@ const write = async (file, spec) => {
 const kb = (n) => `${(n / 1024).toFixed(0)} KB`
 let tiles = 0
 for (const id of ids) {
-  if (id === LARGE) {
-    for (const [name, spec] of [[`${id}-demo`, () => largeSvg(id)], [`${id}-window`, windowSvg], [`${id}-timeline`, timelineSvg], [`${id}-guide`, guideSvg], [`${id}-source`, sourceSvg], ['collatz-subworkflow', subworkflowSvg]]) {
+  if (id === LARGE && recorded.includes(id)) {
+    for (const [name, spec] of [[`${id}-demo`, () => largeSvg(id)], [`${id}-window`, windowSvg], [`${id}-timeline`, timelineSvg], [`${id}-guide`, guideSvg], [`${id}-source`, sourceSvg]]) {
       console.log(`docs/assets/${name}.svg ${kb(await write(path.join(OUT, `${name}.svg`), spec()))}`)
     }
+  }
+  if (id === 'collatz' && recorded.includes(id)) {
+    console.log(`docs/assets/collatz-subworkflow.svg ${kb(await write(path.join(OUT, 'collatz-subworkflow.svg'), subworkflowSvg()))}`)
   }
   const n = await write(path.join(OUT, 'demos', `${id}.svg`), tileSvg(id))
   tiles += n

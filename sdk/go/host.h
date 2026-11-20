@@ -23,6 +23,9 @@ int tsugumi_go_line(const tsugumi_call* call, const char* id, const char* label,
                     const double* x, const double* y, size_t count);
 int tsugumi_go_points(const tsugumi_call* call, const float* x, const float* y,
                       const float* z, const uint32_t* colors, size_t count);
-const unsigned char* tsugumi_go_inputs(const tsugumi_call* call, size_t* size);
+const uint8_t* tsugumi_go_input(const tsugumi_call* call, const char* port,
+                                size_t* size);
+int tsugumi_go_output(const tsugumi_call* call, const char* port,
+                      const uint8_t* bytes, size_t size);
 const unsigned char* tsugumi_go_params(const tsugumi_call* call, size_t* size);
 const char* tsugumi_go_info(const tsugumi_call* call, unsigned field);

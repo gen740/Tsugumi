@@ -326,9 +326,8 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-// Includes partial-run provenance, portable run commits and File content
-// digests.
-constexpr int kHistoryVersion = 13;
+// Includes the definition paths recorded when a run is accepted.
+constexpr int kHistoryVersion = 14;
 }  // namespace
 
 History::History(const std::filesystem::path& db_path, std::string fault)
@@ -373,6 +372,9 @@ History::~History() {
 void History::init_schema(sql::Db& db) {
   db.exec(run_tables("") + R"SQL(
 CREATE INDEX IF NOT EXISTS logs_card ON logs(run_id, card, stream, card_off);
+CREATE TABLE IF NOT EXISTS run_definition_paths(
+  run_id TEXT NOT NULL, card TEXT NOT NULL, path TEXT NOT NULL,
+  PRIMARY KEY(run_id, card));
 CREATE TABLE IF NOT EXISTS active_environments(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, environment_id TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
@@ -1601,7 +1603,7 @@ std::vector<std::string> History::delete_runs(
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
           "ivalues", "logs", "log_truncations", "artifacts", "displays",
-          "statuses", "active_environments"}) {
+          "statuses", "active_environments", "run_definition_paths"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");
       for (const auto& id : ids) {

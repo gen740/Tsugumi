@@ -95,6 +95,8 @@ struct WorkerConditionJson {
 };
 
 struct CardDefinition {
+  Opt<"external", v::String>
+      external;  // externals/<external>/ for Cards in Card
   Opt<"symbol", v::String> symbol;
   Opt<"language", v::String> language;
   Opt<"template", v::String> template_name;
@@ -127,12 +129,6 @@ struct CardDefinition {
   // Carried opaquely; only clients interpret it.
   Opt<"displayMode", Json> display_mode;
   Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
-};
-
-// definitions/<id>/_link.json: the Card is a Card in Card, the project
-// externals/<external>/ (never a symlink).
-struct CardLink {
-  Opt<"external", v::String> external;
 };
 
 }  // namespace tsugumi::schema

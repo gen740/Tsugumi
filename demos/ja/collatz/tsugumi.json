@@ -10,9 +10,6 @@
         "id": "initial"
       },
       {
-        "id": "both"
-      },
-      {
         "id": "collatz-cpp"
       },
       {
@@ -48,24 +45,14 @@
           "port": "value"
         },
         "to": {
-          "card": "both",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "both",
-          "port": "cpp"
-        },
-        "to": {
           "card": "collatz-cpp",
           "port": "n"
         }
       },
       {
         "from": {
-          "card": "both",
-          "port": "python"
+          "card": "initial",
+          "port": "value"
         },
         "to": {
           "card": "collatz-py",
@@ -74,8 +61,8 @@
       },
       {
         "from": {
-          "card": "both",
-          "port": "julia"
+          "card": "initial",
+          "port": "value"
         },
         "to": {
           "card": "collatz-jl",
@@ -84,8 +71,8 @@
       },
       {
         "from": {
-          "card": "both",
-          "port": "r"
+          "card": "initial",
+          "port": "value"
         },
         "to": {
           "card": "collatz-r",

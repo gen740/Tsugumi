@@ -60,20 +60,17 @@ static int prepare(void) {
            "input_kind = Ptr{Cvoid}(%p), "
            "invocation = Ptr{Cvoid}(%p), "
            "display = Ptr{Cvoid}(%p), "
+           "output = Ptr{Cvoid}(%p), "
            "cancelled = Ptr{Cvoid}(%p), "
            "remaining_ms = Ptr{Cvoid}(%p), "
            "log = Ptr{Cvoid}(%p), "
            "fail = Ptr{Cvoid}(%p), "
            ")",
-           (void*)tsugumi_native_inputs,
-           (void*)tsugumi_native_params,
-           (void*)tsugumi_native_info,
-           (void*)tsugumi_native_input_kind,
-           (void*)tsugumi_native_invocation,
-           (void*)tsugumi_native_display,
-           (void*)tsugumi_native_cancelled,
-           (void*)tsugumi_native_remaining_ms,
-           (void*)tsugumi_native_log,
+           (void*)tsugumi_native_inputs, (void*)tsugumi_native_params,
+           (void*)tsugumi_native_info, (void*)tsugumi_native_input_kind,
+           (void*)tsugumi_native_invocation, (void*)tsugumi_native_display,
+           (void*)tsugumi_native_output, (void*)tsugumi_native_cancelled,
+           (void*)tsugumi_native_remaining_ms, (void*)tsugumi_native_log,
            (void*)tsugumi_native_fail);
   jl_eval_string(host);
   if (check_exception()) return 1;
@@ -97,27 +94,22 @@ static int load(const tsugumi_call* call) {
   current_call = NULL;
   return error;
 }
-static int invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+static int invoke(const tsugumi_call* call) {
   current_call = call;
-  jl_value_t* result = jl_eval_string(
-      outputs ? "Tsugumi.invoke(false)" : "Tsugumi.invoke(true)");
-  int error = check_exception();
-  if (!error) {
-    if (outputs)
-      error = !jl_is_string(result) ||
-              call->effects->outputs_json(call->host, jl_string_ptr(result), outputs);
-    else
-      error = result != jl_true;
-  }
+  jl_value_t* result = jl_eval_string(call->phase == TSUGUMI_RUN_START
+                                          ? "Tsugumi.invoke(true)"
+                                          : "Tsugumi.invoke(false)");
+  int error = check_exception() || result != jl_true;
   current_call = NULL;
   return error;
 }
-int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+int tsugumi_card_invoke(const tsugumi_call* call) {
   switch (call->phase) {
     case TSUGUMI_PREPARE: return prepare();
     case TSUGUMI_LOAD: return load(call);
-    case TSUGUMI_RUN_START: return invoke(call, NULL);
-    case TSUGUMI_RUN: return invoke(call, outputs);
+    case TSUGUMI_RUN_START:
+    case TSUGUMI_RUN:
+      return invoke(call);
   }
   return 1;
 }

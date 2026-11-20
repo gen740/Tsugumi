@@ -172,6 +172,7 @@ class VMProcess final : public EnvironmentProcess {
         ch = '-';
     run.host_name = name.empty() ? "project" : name.substr(0, 40);
     run.origins = launch.origins;
+    run.rpc_trace = trace::LaunchEnabled();
     run.mounts = Mounts(launch);
     auto reply = Call(std::move(run));
     const auto* process = reply->value.AsProcess();

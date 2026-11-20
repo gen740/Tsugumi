@@ -44,8 +44,6 @@ struct Invocation {
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
   InvocationParameters params;
-  std::string input_schema;
-  std::string output_schema;
   std::string path;
   std::string worker_binary;
   std::vector<std::pair<std::string, std::string>> environment;
