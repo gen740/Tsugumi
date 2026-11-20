@@ -121,7 +121,21 @@ table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
 // The durable event and its presentation are read with Agent EventsRequest.
 table ConversationChanged { conversation_id:string; answered_permission:string; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged }
+// hostd serves the Web UI's origin. A local client (not a page) starts it,
+// giving the built page's folder when it is not serving yet; open also opens
+// a page in the default browser, on project when given. The page key goes to
+// the browser alone; url carries none.
+table HostWebRequest { root:string; port:uint; open:bool; project:string; }
+table HostWeb { url:string (required); }
+// A Web page reports on its Host connection what it shows (none: Home).
+// hostd gives Claude Code's projects to a page on Home; a detached page (a
+// child workflow's) is never given another.
+table HostPageRequest { project:string; detached:bool; }
+// To the one page chosen to show a project.
+table PageShow { project:string (required); }
+// To every page: no page shows the project any more.
+table PageClosed { project:string (required); }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, TraceChanged:Tsugumi.Trace.TraceChanged, ConversationChanged, PageShow, PageClosed }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -509,7 +523,7 @@ union RequestPayload {
 
   ModelSelectionRequest,
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
-  HostTraceRequest:Tsugumi.Trace.HostTraceRequest,
+  HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostWebRequest, HostPageRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -522,7 +536,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
-  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,
+  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostWeb,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

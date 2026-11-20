@@ -40,6 +40,7 @@
 #include "host/store.hh"
 #include "host/templates.hh"
 #include "host/versions.hh"
+#include "host/web_pages.hh"
 #include "host/wire_helpers.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/crypto.hh"
@@ -352,6 +353,7 @@ struct Service::State {
   std::unique_ptr<host::Models> models;
   std::unique_ptr<host::Versions> versions;
   std::unique_ptr<host::HostEvents> events;
+  std::unique_ptr<host::WebPages> web;
   std::unique_ptr<host::ExecutionBroker> execution_broker;
   std::unique_ptr<host::Environments> environments;
   TransportServer* server = nullptr;
@@ -584,6 +586,10 @@ struct Service::State {
         return TraceTargets();
       });
       return wire::HostReply(request.request_id, std::move(result));
+    }
+    if (host::WebPages::Handles(r->value_type())) {
+      lock.unlock();
+      return web->Handle(request, *r);
     }
     if (r->value_as_HostActivityRequest()) {
       H::HostActivityT activity;
@@ -860,7 +866,14 @@ auto Service::Attach(TransportServer* server, TransportServer* host_server)
   state_->server = server;
   state_->events->host_server = host_server;
   state_->debug_trace.Attach(*host_server);
+  state_->web = std::make_unique<host::WebPages>(
+      host_server, server, state_->options.user_token,
+      [state = state_.get()](const std::string& bytes) {
+        std::lock_guard lock(state->mutex);
+        state->events->Publish(bytes);
+      });
 }
+auto Service::web() -> host::WebPages& { return *state_->web; }
 auto Service::Shutdown() -> void {
   if (!state_) return;
   std::vector<std::shared_ptr<std::jthread>> jobs;
@@ -875,6 +888,7 @@ auto Service::Shutdown() -> void {
     }
   }
   state_->access->changed.notify_all();
+  if (state_->web) state_->web->Stop();
   if (state_->environments) state_->environments->Shutdown();
   if (state_->execution_broker) state_->execution_broker->Stop();
   state_->requests.stop();
@@ -1033,6 +1047,7 @@ auto Service::disconnected(ConnId connection) -> void {
 }
 auto Service::host_disconnected(ConnId connection) -> void {
   state_->events->HostDisconnected(connection);
+  if (state_->web) state_->web->Disconnected(connection);
   if (trace::LaunchEnabled())
     state_->trace_requests.submit(
         [this, connection] { state_->debug_trace.Disconnect(connection); });
