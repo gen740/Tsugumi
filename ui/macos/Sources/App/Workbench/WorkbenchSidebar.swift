@@ -90,7 +90,7 @@ struct WorkbenchSidebar: View {
         }
         ForEach(ids, id: \.self) { id in
           let d = session.external(prefix)?.definitions[id]
-          row(symbol: d?.link != nil ? CardKind.subgraph.symbol : definitionKind(d?.card).symbol, title: session.displayName(key([id])),
+          row(symbol: definitionKind(d?.card).symbol, title: session.displayName(key([id])),
               drag: DefinitionDrag.externalDefinitionPrefix + prefix + "\n" + id,
               help: String(localized: "定義をこのプロジェクトの definitions にコピーして Card を置きます")) {
             Task { await placeCopy(prefix, id) }
@@ -169,6 +169,7 @@ struct WorkbenchSidebar: View {
 }
 
 func definitionKind(_ def: JSONValue?) -> CardKind {
+  if def?["external"] != nil { return .subgraph }
   if let t = def?["template"]?.string, let k = CardKind(rawValue: t) { return k }
   return def?["language"] == nil ? .draft : .code
 }

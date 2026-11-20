@@ -71,11 +71,11 @@ let
         symbol: value: "const char tsugumi_${symbol}[] = ${builtins.toJSON value};"
       ) paths
     )}
-    extern int tsugumi_card_invoke(const tsugumi_call*, tsugumi_buffer*);
-    int tsugumi_main(const tsugumi_call* call, tsugumi_buffer* outputs) {
+    extern int tsugumi_card_invoke(const tsugumi_call*);
+    int tsugumi_main(const tsugumi_call* call) {
       if (call->abi_version != TSUGUMI_ABI_VERSION || call->phase > TSUGUMI_RUN)
         return 1;
-      return tsugumi_card_invoke(call, outputs);
+      return tsugumi_card_invoke(call);
     }
     EOF
   '';

@@ -522,9 +522,8 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
       for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}}) {
-        // PutDefinition replaces all three documents; omission means removal.
+                                      {"meta_json", "_meta.json"}}) {
+        // PutDefinition replaces both documents; omission means removal.
         const auto bytes = json::Text(value, key);
         after[dir + file] = bytes.empty() ? std::nullopt : std::optional(bytes);
       }
@@ -563,7 +562,7 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
     std::string prefix;
     if (IsExternalDocument(path, "tsugumi.json"))
       prefix = path.substr(0, path.size() - 12);
-    else if (path.ends_with("/_card.json") || path.ends_with("/_link.json"))
+    else if (path.ends_with("/_card.json"))
       prefix = path.substr(0, path.size() - 10);
     if (!prefix.empty()) trees.insert(prefix);
   }
@@ -613,8 +612,7 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
                           IsExternalDocument(path, "tsugumi.json") ||
                           IsExternalDocument(path, "layout.json") ||
                           path.ends_with("/_card.json") ||
-                          path.ends_with("/_meta.json") ||
-                          path.ends_with("/_link.json");
+                          path.ends_with("/_meta.json");
     if (document && now && previous) {
       ReverseFields(path, now, previous, {}, result);
     } else {
@@ -774,8 +772,7 @@ auto PrepareProjectEdits(
       for (const auto& [path, bytes] : replacement) files[path] = bytes;
       if (tree->prefix.starts_with("definitions/") &&
           std::count(tree->prefix.begin(), tree->prefix.end(), '/') == 2 &&
-          !replacement.contains(tree->prefix + "_card.json") &&
-          !replacement.contains(tree->prefix + "_link.json")) {
+          !replacement.contains(tree->prefix + "_card.json")) {
         if (!replacement.empty())
           throw Failure("invalid_request",
                         tree->prefix + ": definition root is required");
@@ -854,7 +851,8 @@ auto PrepareProjectEdits(
   for (const auto& path : implemented) {
     const auto definition = json::Object(*files.at(path), path);
     const auto kind = json::Text(definition, "template");
-    if (!kind.empty() && kind != "none") continue;
+    if (definition.contains("external") || (!kind.empty() && kind != "none"))
+      continue;
     const auto inputs =
         json::Array(json::Get(definition, "inputs", "[]"), path + ".inputs");
     if (inputs.size() != 1) continue;
@@ -870,8 +868,7 @@ auto PrepareProjectEdits(
         mentioned_inputs[project_path].contains(id))
       continue;
     auto& project = file(project_path);
-    if (!project || file(path.substr(0, path.size() - 10) + "_link.json"))
-      continue;
+    if (!project) continue;
     auto root = json::Object(*project, project_path);
     auto canvas =
         json::Object(json::Get(root, "canvas", "{}"), project_path + ".canvas");
@@ -914,8 +911,7 @@ auto PrepareProjectEdits(
     } else if (path.starts_with("definitions/") &&
                std::count(path.begin(), path.end(), '/') == 2 &&
                (path.ends_with("/_card.json") ||
-                path.ends_with("/_meta.json") ||
-                path.ends_with("/_link.json"))) {
+                path.ends_with("/_meta.json"))) {
       if (!content && !path.ends_with("/_meta.json"))
         throw Failure("invalid_request",
                       "definition documents cannot be removed independently");
@@ -938,9 +934,8 @@ auto PrepareProjectEdits(
     (void)ignored;
     json::Members value{{"id", json::Quote(id)},
                         {"card_json", json::Quote("")}};
-    for (const auto& [name, key] : {std::pair{"_card.json", "card_json"},
-                                    {"_meta.json", "meta_json"},
-                                    {"_link.json", "link_json"}}) {
+    for (const auto& [name, key] :
+         {std::pair{"_card.json", "card_json"}, {"_meta.json", "meta_json"}}) {
       const auto path = "definitions/" + id + '/' + name;
       if (files.contains(path)) {
         if (files.at(path)) value[key] = json::Quote(*files.at(path));

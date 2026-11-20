@@ -121,10 +121,6 @@ def without_julia_and_r(dst):
     for name in gone:
         shutil.rmtree(dst / "definitions" / name)
         shutil.rmtree(dst / "externals" / name)
-    both = dst / "definitions" / "both" / "_card.json"
-    fork = json.loads(both.read_text())
-    set_param(fork, "branches", ["cpp", "python"])
-    both.write_text(json.dumps(fork))
     compare = dst / "definitions" / "compare"
     card = json.loads((compare / "_card.json").read_text())
     card["inputs"] = [i for i in card["inputs"] if i["name"] in ("cpp", "python")]

@@ -24,8 +24,11 @@ const char tsugumi_python_path[] = "";
 #include <assert.h>
 static int cancelled(void* host) { (void)host; return 0; }
 static int64_t remaining(void* host) { (void)host; return 123; }
-static int text(void* host, const char* text) { (void)host; (void)text; return 1; }
-static int scalar(void* host, double value, const char* label) { (void)host; (void)value; (void)label; return 1; }
+static int reject_display(void* host, uint32_t kind, const void* payload) {
+  (void)host;
+  assert(payload && (kind == TSUGUMI_DISPLAY_TEXT || kind == TSUGUMI_DISPLAY_SCALAR));
+  return 1;
+}
 static int failures = 0;
 static void fail(void* host, const char* kind, const char* message) {
   (void)host;
@@ -44,8 +47,7 @@ static PyObject* active(PyObject* self, PyObject* value) {
   static const tsugumi_host effects = {
     .cancelled = cancelled,
     .remaining_ms = remaining,
-    .display_text = text,
-    .display_scalar = scalar,
+    .display = reject_display,
     .fail = fail,
     .fail_at = fail_at,
   };

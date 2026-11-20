@@ -2,6 +2,7 @@
 
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <fstream>
 #include <iostream>
 #include <iterator>
@@ -34,8 +35,6 @@ auto Graph(const std::string& cards, const std::string& wires, Files files)
     if (path.ends_with("/_card.json")) {
       doc.definitions[id].card = parse_card_json(id, text);
       doc.definitions[id].card_json = text;
-    } else if (path.ends_with("/_link.json")) {
-      doc.definitions[id].link = parse_link_json(id, text).external->value();
     }
   }
   return resolve(doc, [files](const auto& path) -> std::optional<std::string> {
@@ -96,25 +95,26 @@ TEST(InputTypes, PlainWireDefaultLanguageFileAndNoSource) {
   EXPECT_NE(upstream.inputs[0]->definition.find("double noise_sd"),
             std::string::npos);
 }
-TEST(InputTypes, ForkAndDistinctUnnamedDraftEndsUseSynthesizedOutputs) {
+TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
-      R"([{"id":"src"},{"id":"fork"},{"id":"draft"},{"id":"other"}])",
-      R"([{"from":{"card":"src","port":"out"},"to":{"card":"fork","port":"in"}},
-          {"from":{"card":"fork","port":"out1"},"to":{"card":"draft","port":""}},
+      R"([{"id":"src"},{"id":"draft"},{"id":"other"}])",
+      R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}},
           {"from":{"card":"other","port":"out"},"to":{"card":"draft","port":""}}])",
       {{"definitions/src/_card.json", "{}"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/other/_card.json", R"({"template":"trigger"})"},
-       {"definitions/fork/_card.json", R"({"template":"fork"})"}});
+       {"definitions/other/_card.json", R"({"template":"trigger"})"}});
   const auto ends = input_types(*graph, {"draft"});
   ASSERT_EQ(ends.size(), 2u);
-  EXPECT_TRUE(ends[0].port.empty());
-  EXPECT_TRUE(ends[1].port.empty());
-  EXPECT_EQ(ends[0].source->path, (CardPath{"fork"}));
-  EXPECT_EQ(ends[0].source_port, "out1");
-  ASSERT_TRUE(ends[0].type);
-  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
-  EXPECT_EQ(ends[1].source->path, (CardPath{"other"}));
+  CardPath sources;
+  for (const auto& end : ends) {
+    EXPECT_TRUE(end.port.empty());
+    ASSERT_TRUE(end.source && end.type);
+    EXPECT_EQ(end.source_port, "out");
+    EXPECT_EQ(end.type->type, end.source->output("out")->type);
+    sources.push_back(end.source->path.front());
+  }
+  std::ranges::sort(sources);
+  EXPECT_EQ(sources, (CardPath{"other", "src"}));
   EXPECT_EQ(Present(*graph, {"draft"}, "python").inputs.size(), 2u);
 }
 TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
@@ -125,20 +125,24 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
       {{"definitions/src/_card.json", "{}"},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/dest/_card.json", R"({"inputs":[{"name":"data"}]})"},
-       {"definitions/container/_link.json", R"({"external":"outer"})"},
+       {"definitions/container/_card.json", R"({"external":"outer"})"},
        {"externals/outer/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"in"}},"outputs":{"out":{"card":"inner","port":"out"}}}})"},
-       {"externals/outer/definitions/inner/_link.json",
+       {"externals/outer/definitions/inner/_card.json",
         R"({"external":"nested"})"},
        {"externals/outer/externals/nested/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out1"}}}})"},
+        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out"}}}})"},
        {"externals/outer/externals/nested/definitions/leaf/_card.json",
-        R"({"template":"fork"})"}});
+        R"({"inputs":[{"name":"in"}]})"},
+       {"externals/outer/externals/nested/definitions/leaf/_outputs.fbs",
+        kSchema}});
   const auto ends = input_types(*graph, {"dest"});
   ASSERT_EQ(ends.size(), 1u);
   ASSERT_NE(ends[0].type, nullptr);
   EXPECT_EQ(ends[0].source->path, (CardPath{"container", "inner", "leaf"}));
-  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
+  ASSERT_TRUE(ends[0].type->type);
+  EXPECT_TRUE(types::compatible(*ends[0].type->type,
+                                *graph->find({"src"})->output("out")->type));
   const auto boundary = input_types(*graph, {"container"}, "out");
   ASSERT_EQ(boundary.size(), 1u);
   EXPECT_EQ(boundary[0].type->type, ends[0].type->type);

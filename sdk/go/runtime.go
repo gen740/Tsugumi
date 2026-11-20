@@ -156,6 +156,7 @@ func accepted(value C.int) error {
 	}
 	return nil
 }
+
 // WorkerCall bounds the input and params buffers well below the C.int limit.
 func copied(ptr *C.uchar, n C.size_t) []byte {
 	if ptr == nil {
@@ -163,15 +164,24 @@ func copied(ptr *C.uchar, n C.size_t) []byte {
 	}
 	return C.GoBytes(unsafe.Pointer(ptr), C.int(n))
 }
-func (scope *Scope) InputsBytes() ([]byte, error) {
+func (scope *Scope) InputBytes(port string) ([]byte, error) {
+	name := C.CString(port)
+	defer C.free(unsafe.Pointer(name))
 	var bytes []byte
 	err := scope.host(func(call *C.tsugumi_call) error {
 		var n C.size_t
-		p := C.tsugumi_go_inputs(call, &n)
+		p := C.tsugumi_go_input(call, name, &n)
 		bytes = copied(p, n)
 		return nil
 	})
 	return bytes, err
+}
+func (scope *Scope) Output(port string, bytes []byte) error {
+	name := C.CString(port)
+	defer C.free(unsafe.Pointer(name))
+	return scope.host(func(call *C.tsugumi_call) error {
+		return accepted(C.tsugumi_go_output(call, name, (*C.uint8_t)(unsafe.Pointer(unsafe.SliceData(bytes))), C.size_t(len(bytes))))
+	})
 }
 func (scope *Scope) ParamsBytes() ([]byte, error) {
 	var bytes []byte
@@ -351,7 +361,7 @@ func describe(err error) (kind, message string) {
 // Invoke is called only by the generated C entry points. The worker guarantees
 // raw remains valid until this function returns. The call pointer never survives
 // close, even if user code keeps a Scope or starts its own goroutine.
-func Invoke(raw unsafe.Pointer, body func(*Scope) error, packOutputs func()) (result int) {
+func Invoke(raw unsafe.Pointer, body func(*Scope) error, packOutputs func(*Scope) error) (result int) {
 	call := (*C.tsugumi_call)(raw)
 	if C.tsugumi_go_check(call) == 0 {
 		return 1
@@ -388,7 +398,7 @@ func Invoke(raw unsafe.Pointer, body func(*Scope) error, packOutputs func()) (re
 			return err
 		}
 		if packOutputs != nil {
-			packOutputs()
+			return packOutputs(scope)
 		}
 		return nil
 	})

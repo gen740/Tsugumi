@@ -381,11 +381,16 @@ enum ServiceWire {
     return result as? [String: Any] ?? ["value": result]
   }
 
-  static func decodeEvent(_ data: Data) throws -> [String: Any] {
+  static func hostEventValue(_ data: Data) throws -> NativeObject {
     var buffer = ByteBuffer(data: data)
     let root: Tsugumi_Host_Message = getRoot(byteBuffer: &buffer)
     guard let event = Tsugumi_Host_MessageT(root).payload?.value as? Tsugumi_Host_EventT,
           let value = event.value?.value else { throw RPCError.disconnected }
+    return value
+  }
+
+  static func decodeEvent(_ data: Data) throws -> [String: Any] {
+    let value = try hostEventValue(data)
     switch value {
     case let stopped as Tsugumi_Host_EnvironmentStoppedT: return ["type": "EnvironmentState", "value": try view(stopped.state)]
     case let progress as Tsugumi_Host_EnvironmentProgressT: return ["type": "EnvironmentProgress", "key": progress.key, "stage": progress.stage, "preparing": progress.preparing]

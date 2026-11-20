@@ -60,6 +60,8 @@ node docs/site/player/svg.mjs
 
 `harvest.py` produces `player-data/assets/ports.json`, each `<id>.run.json` and its images. `build.mjs` embeds the current Card sources, descriptions and narration in `player-data/<id>.json` and `index.json`, and rebuilds `site/js/player.js` and `site/player.css`. `svg.mjs` then refreshes the gallery SVGs and the README's scenes, including the source-code scene. Recording and SVG rendering need daemon sockets and headless Chrome; they cannot run in a sandbox that forbids listeners or app launches. The old records and SVGs remain evidence of their original runs until a person runs these commands. Finally regenerate and check the documentation with `nix run .#build-doc` and `nix run .#test-doc`.
 
+Each recording identifies the graph it ran, including port-to-port wires and child Workflow boundaries. When the graph differs, the player previews the Workflow in wire order. A successful harvest publishes the recording's images before replacing its JSON.
+
 ## Moving SVGs
 
 For places like GitHub's README, where scripts do not run and only images can be placed, the replay is made into SVGs. Run this on a Mac and commit the SVGs it makes (it uses Chrome without a screen, and shrinks the tiles' images with `sips`).

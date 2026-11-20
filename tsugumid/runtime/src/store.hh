@@ -35,8 +35,7 @@ struct ChangeIn {
     RemoveSource
   };
   Kind kind;
-  std::string id;  // definitions
-  std::optional<std::string> link_json;
+  std::string id;    // definitions
   std::string json;  // SetProject / SetLayout / card_json
   std::optional<std::string> meta_json;
   bool keep_meta =
@@ -110,17 +109,14 @@ class Store {
                   const std::optional<std::string>& expected_hash,
                   const std::function<void()>& check_cancelled) const
       -> std::shared_ptr<SourceFile>;
-  Staged stage_reload(const std::string& op_id,
-                      const std::string& origin) const;
+  Staged stage_reload(const std::string& op_id, const std::string& origin,
+                      const std::filesystem::path& checkout = {}) const;
   // The document as it would be after `changes`, resolved (nothing written).
   DocumentPtr preview(const std::vector<ChangeIn>& changes) const;
   // Resolves a staged document now (commit then reuses it).
   void resolve_staged(Staged& staged) const;
-  // Reads the files of `doc`, with the writes of a staged save still `pending`;
-  // nullopt for a file it does not have or whose bytes on disk are not its own.
-  // Keep `doc` and `pending` alive while using it.
-  SourceReader reader(const Document& doc,
-                      const std::vector<FileOp>* pending = nullptr) const;
+  // Resolves and assigns revisions before checking the encoded response.
+  void prepare_delta(Staged& staged) const;
 
   // Persists a staged transaction atomically with its receipt. The
   // `make_receipt` callback receives the delta (with final revision numbers)
@@ -132,7 +128,8 @@ class Store {
   // Stores a terminal receipt without changing the document.
   void record_receipt(const Receipt& r);
 
-  // Reads a confirmed source; throws Failed(external_change) on mismatch.
+  // Document sources come from the revision. Other source bytes are verified
+  // against it.
   std::string read_source(const Document& doc, const std::string& rel) const;
 
   // Snapshot + view storage helpers.
@@ -170,7 +167,6 @@ class Store {
 };
 
 // Size limits from the protocol.
-constexpr size_t kMaxDocumentJsonBytes = 8u << 20;
 constexpr size_t kMaxManifestEntries = 10000;
 constexpr size_t kMaxFrameBytes = 16u << 20;
 

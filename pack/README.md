@@ -93,7 +93,7 @@ and removes the run's temporary folder and scratch disk.
 - **Parameters, not rebuilt definitions.** The recipient can change the
   parameters of Code, input and switch Cards (`--set card.param=value`,
   `--params file.json`; `--help` lists them). Parameters marked `nix` change
-  the Card's build, and a fork's or branch's change the graph, so they are
+  the Card's build, and a branch's change the graph, so they are
   fixed at export; the app refuses them rather than attempting a build offline.
 - **Files through the input Card.** `--file CARD=PATH` replaces the file of
   an input Card whose output is a File. The core reads an input Card's file
@@ -138,7 +138,7 @@ it whenever `pack/` or the native runtime changes).
 
 ## First end-to-end check
 
-`demos/en/cell-count` (seven Python and Bash Cards, two forks), exported and
+`demos/en/cell-count` (seven Python and Bash Cards), exported and
 run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
 
 | | |
@@ -167,7 +167,7 @@ figures (PNG) and all seven Card logs are byte-identical to the app's. With a
 new input, `--set generate.seed=11 --set generate.cells=120 --set
 real.min_area=20`, the counts change (score: 96 by threshold, 117 by
 watershed) and are again byte-identical to the reference given the same
-values. Setting a `nix` parameter (`mitosis.hash`) or a fork's `branches` is
+values. Setting a `nix` parameter (`mitosis.hash`) is
 refused with its reason.
 
 **A recipient's file.** A three-Card Project (trigger, an input Card with a
