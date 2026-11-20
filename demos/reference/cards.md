@@ -170,7 +170,7 @@ and its sources in src/. You can use input_types to read the resolved input defi
       root_type Outputs;
   Use project:<path> for a file relative to the Card's own project root (also inside an external project).
   When it runs, the file is copied into the run and the next Card receives its path. Fixed values are params of
-  the same names as the fields of its output table (demos/en/report/definitions/settings). Other built-ins: fork,
+  the same names as the fields of its output table (demos/en/report/definitions/settings). Other built-ins:
   branch, merge.
 * Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
   "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",

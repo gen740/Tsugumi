@@ -235,7 +235,7 @@ auto canvas(const std::string& layout) -> H::VersionCanvasT {
   auto a = H::CreateVersionCanvasCard(b, b.CreateString("a"), 0, 0,
                                       b.CreateString("input"));
   auto c = H::CreateVersionCanvasCard(b, b.CreateString("b"), 0, 0,
-                                      b.CreateString("fork"), 3);
+                                      b.CreateString("merge"), 3);
   auto w =
       H::CreateVersionCanvasWire(b, b.CreateString("a"), b.CreateString("b"));
   auto req = H::CreateVersionCanvasRequest(b, b.CreateString(layout),
@@ -257,12 +257,26 @@ TEST(HostLayout, VersionCanvasGuessesFlowAndReadsCollapsedState) {
   EXPECT_EQ(result.flow, "leftToRight");
 }
 
+TEST(HostLayout, VersionCanvasCompletesOnlyMissingPositions) {
+  const auto result = canvas(
+      R"({"flow":"topToBottom","cards":{"a":{"x":407,"y":609,"collapsed":true},"b":{"collapsed":true}}})");
+  EXPECT_EQ(result.flow, "topToBottom");
+  const auto& a = *result.cards.at(0);
+  const auto& b = *result.cards.at(1);
+  EXPECT_DOUBLE_EQ(a.x, 407);
+  EXPECT_DOUBLE_EQ(a.y, 609);
+  EXPECT_TRUE(a.collapsed);
+  EXPECT_TRUE(b.collapsed);
+  EXPECT_TRUE(std::abs(a.x - b.x) >= 320 || std::abs(a.y - b.y) >= 120);
+}
+
 TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
-  for (const auto* layout :
-       {"{}", R"({"cards":{"a":{"x":7,"y":9}}})", R"({"future":true})"}) {
+  for (const auto* layout : {"{}", R"({"cards":[]})"}) {
     const auto result = canvas(layout);
     EXPECT_EQ(result.flow, "leftToRight");
-    EXPECT_LT(result.cards.at(0)->x, result.cards.at(1)->x);
+    const auto& a = *result.cards.at(0);
+    const auto& b = *result.cards.at(1);
+    EXPECT_TRUE(std::abs(a.x - b.x) >= 320 || std::abs(a.y - b.y) >= 120);
   }
 }
 
@@ -387,7 +401,7 @@ TEST(HostCardPlacement, ConnectedIsolatedAndBulkCardsGetFreePlaces) {
       }
   }
 }
-TEST(HostCardPlacement, APersonsDropAndNestedWorkflowAreKeptInTheTransaction) {
+TEST(HostCardPlacement, APersonsDropIsSavedWithoutAddingDerivedPositions) {
   namespace json = ::tsugumi::json;
   const auto args = json::Encode(json::Members{
       {"changes",
@@ -419,7 +433,7 @@ TEST(HostCardPlacement, APersonsDropAndNestedWorkflowAreKeptInTheTransaction) {
       json::Object(json::Object(json::Text(value, "bytes")).at("cards"));
   EXPECT_EQ(json::Object(positions.at("dropped")).at("x"), "17");
   EXPECT_EQ(json::Object(positions.at("dropped")).at("y"), "29");
-  EXPECT_TRUE(positions.contains("new"));
+  EXPECT_FALSE(positions.contains("new"));
 }
 }  // namespace
 }  // namespace tsugumi::host
@@ -500,66 +514,19 @@ TEST(HostCardPlacement, UnsavedFlowReservesEitherDefaultDisplay) {
 
 namespace tsugumi::host {
 namespace {
-TEST(HostLayoutSaving, AnySaveMaterializesDerivedPlacesAtEveryDepth) {
+TEST(HostLayoutSaving, SourceSaveLeavesEveryLayoutUntouched) {
   namespace json = ::tsugumi::json;
-  const std::string project =
-      R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})";
-  const std::map<std::string, LayoutFile> files{
-      {"tsugumi.json", {project, {}}},
-      {"layout.json", {"{}", {}}},
-      {"externals/one/externals/two/tsugumi.json", {project, "project-hash"}}};
-  const auto read = [&](const std::string& path) -> std::optional<LayoutFile> {
-    const auto found = files.find(path);
-    return found == files.end() ? std::nullopt : std::optional{found->second};
-  };
-  const auto saved = json::Object(PrepareLayoutSave(
-      R"({"base_rev":"7","changes":[{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"source"}}]})",
-      read, {"tsugumi.json", "externals/one/externals/two/tsugumi.json"}));
-  EXPECT_EQ(json::Text(saved, "base_rev"), "7");
-  const auto changes = json::Array(saved.at("changes"));
-  ASSERT_EQ(changes.size(), 3u);
-  for (size_t i = 1; i < changes.size(); ++i) {
-    const auto change = json::Object(changes[i]);
-    const auto value = json::Object(change.at("value"));
-    const bool root = json::Text(change, "value_type") == "SetLayout";
-    EXPECT_EQ(json::Text(value, root ? "json" : "bytes"),
-              CompleteLayout(project, "{}"));
-    if (!root)
-      EXPECT_EQ(json::Text(value, "path"),
-                "externals/one/externals/two/layout.json");
-  }
+  const auto args =
+      R"({"base_rev":"7","changes":[{"value_type":"PutSource","value":{"path":"externals/one/externals/two/definitions/a/code.py","bytes":"source"}}]})";
+  const auto saved = PrepareLayoutSave(
+      args, [](const std::string& path) -> std::optional<LayoutFile> {
+        ADD_FAILURE() << "Read an unrelated file: " << path;
+        return std::nullopt;
+      });
+  EXPECT_EQ(json::Object(saved), json::Object(args));
 }
 
-TEST(HostLayoutSaving, AddingAndPatchingKeepThePlacesAlreadyDerivedForDisplay) {
-  namespace json = ::tsugumi::json;
-  const std::string before =
-      R"({"canvas":{"cards":[{"id":"legacy"}],"connections":[]}})";
-  const std::string after =
-      R"({"canvas":{"cards":[{"id":"new"},{"id":"legacy"}],"connections":[]}})";
-  const auto read = [&](const std::string& path) -> std::optional<LayoutFile> {
-    if (path == "tsugumi.json") return LayoutFile{before, {}};
-    return std::nullopt;
-  };
-  const auto saved = json::Object(PrepareLayoutSave(
-      json::Encode(json::Members{
-          {"changes",
-           json::Encode(std::vector<std::string>{json::Encode(json::Members{
-               {"value_type", json::Quote("SetProject")},
-               {"value", json::Encode(json::Members{
-                             {"json", json::Quote(after)}})}})})}}),
-      read));
-  const auto layout = json::Object(json::Text(
-      json::Object(
-          json::Object(json::Array(saved.at("changes"))[1]).at("value")),
-      "json"));
-  const auto positions = json::Object(layout.at("cards"));
-  EXPECT_EQ(positions.at("legacy"),
-            json::Object(json::Object(CompleteLayout(before, "{}")).at("cards"))
-                .at("legacy"));
-  EXPECT_NE(positions.at("new"), positions.at("legacy"));
-}
-
-TEST(HostCardPlacement, DisplayRpcUsesTheSameDefinitionsAndGeometryAsSaving) {
+TEST(HostCardPlacement, DisplayRpcCompletesMissingPositions) {
   namespace json = ::tsugumi::json;
   const std::string project =
       R"({"canvas":{"cards":[{"id":"wide"},{"id":"new"}],"connections":[]}})";
@@ -597,42 +564,15 @@ TEST(HostLayoutSaving, RemovingAnExternalDoesNotRecreateItsLayout) {
   const auto args =
       R"({"changes":[{"value_type":"RemoveSource","value":{"path":"externals/child/tsugumi.json","base_hash":"project"}},{"value_type":"RemoveSource","value":{"path":"externals/child/layout.json","base_hash":"layout"}}]})";
   const auto prepared = json::Object(PrepareLayoutSave(
-      args,
-      [](const std::string& path) -> std::optional<LayoutFile> {
+      args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "externals/child/tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", "project"};
         if (path == "externals/child/layout.json")
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", "layout"};
         return std::nullopt;
-      },
-      {"externals/child/tsugumi.json"}));
+      }));
   EXPECT_EQ(prepared.at("changes"), json::Object(args).at("changes"));
 }
-}  // namespace
-}  // namespace tsugumi::host
-
-namespace tsugumi::host {
-namespace {
-TEST(HostLayoutSaving, RestrictedLayoutFileStaysDerived) {
-  const std::string project = R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}]}})";
-  const auto saved = ::tsugumi::json::Object(PrepareLayoutSave(
-      R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/code.py","bytes":"edit"}}]})",
-      [&](const std::string& path) -> std::optional<LayoutFile> {
-        if (path == "tsugumi.json") return LayoutFile{project, {}};
-        if (path == "layout.json") return LayoutFile{"{}", {}};
-        return std::nullopt;
-      },
-      {"tsugumi.json"}, [](const auto&, const auto&) { return false; }));
-  EXPECT_EQ(::tsugumi::json::Array(saved.at("changes")).size(), 1u);
-  EXPECT_EQ(
-      ::tsugumi::json::Object(
-          ::tsugumi::json::Object(CompleteLayout(project, "{}")).at("cards"))
-          .size(),
-      2u);
-}
-
-// Mac and Web both send LayoutCompleteRequest. Exercise that exact handler,
-// with separately serialized requests, rather than a UI stub's fixed answer.
 }  // namespace
 }  // namespace tsugumi::host
 
@@ -685,6 +625,27 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
       EXPECT_THROW(MeasuredScene(*scene), LayoutFailure);
     }
   }
+}
+
+TEST(HostLayout, MovingACardStartsAtItsDerivedPosition) {
+  namespace json = ::tsugumi::json;
+  const std::string project =
+      R"({"canvas":{"cards":[{"id":"fixed"},{"id":"new"}],"connections":[{"from":{"card":"fixed","port":"out"},"to":{"card":"new","port":"in"}}]}})";
+  const std::string saved = R"({"cards":{"fixed":{"x":500,"y":700}}})";
+  const auto position = [](const std::string& layout) {
+    return json::Object(
+        json::Object(json::Object(layout).at("cards")).at("new"));
+  };
+  const auto displayed = position(CompleteLayout(project, saved));
+  H::ProjectMoveT move;
+  move.cards = {"new"};
+  move.dx = 100;
+  move.dy = -20;
+  const auto moved = position(MoveProjectLayout(project, saved, {}, move));
+  EXPECT_DOUBLE_EQ(std::stod(moved.at("x")),
+                   std::stod(displayed.at("x")) + move.dx);
+  EXPECT_DOUBLE_EQ(std::stod(moved.at("y")),
+                   std::stod(displayed.at("y")) + move.dy);
 }
 
 TEST(HostLayout, MissingPlacesAndUnmeasuredCardsProduceFiniteCoordinates) {

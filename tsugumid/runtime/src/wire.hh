@@ -25,7 +25,8 @@ Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
 Off<R::SourceInfo> source_info(FBB& b, const std::string& path,
                                D::SourceKind kind, bool exists,
                                const std::optional<std::string>& hash,
-                               std::optional<uint64_t> size);
+                               std::optional<uint64_t> size,
+                               const std::string* document_json = nullptr);
 Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d);
 Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s);

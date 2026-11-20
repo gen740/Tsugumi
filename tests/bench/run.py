@@ -254,18 +254,19 @@ def stage_project(root, scenario):
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"template": "trigger"}, "sink": SINK,
-                       "input": {"template": "input", "params": [{"name": "value", "type": "uint64", "data": 1}]},
-                       "fork": {"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": ["out"]}]}}
+                       "input": {"template": "input", "params": [{"name": "value", "type": "uint64", "data": 1}],
+                                 "_outputs": "table Value { value:ulong; } "
+                                             "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]
         connections = []
         previous = "src"
         for index in range(40):
-            name = f"fork{index}"
-            cards.append(card(name, "fork"))
-            connections.append(conn(previous, "value" if previous == "src" else "out", name, "in"))
+            name = f"input{index}"
+            cards.append(card(name, "input"))
+            connections.append(conn(previous, "value", name, "start"))
             previous = name
         cards.append(card("sink", "sink"))
-        connections.append(conn(previous, "out", "sink", "in"))
+        connections.append(conn(previous, "value", "sink", "in"))
         write(root, definitions, cards, connections)
         return root
     # Keep the original Python -> C++ -> shell cross-language value workload.

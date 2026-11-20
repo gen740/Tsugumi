@@ -46,7 +46,7 @@ for (const c of contract.ports) {
     return c.flow === 'topToBottom' ? p.x : p.y
   })
   const edges = [along(c.inputs, false), along(c.outputs, true)]
-  if (c.kind === 'fork' || c.kind === 'merge') {
+  if (c.kind === 'merge') {
     const r = g.outlineRect
     for (const z of [1, 0.25]) {
       const pts = flatten(g.outline({ x: r.x * z, y: r.y * z, width: r.width * z, height: r.height * z }))
@@ -77,7 +77,7 @@ for (const c of contract.ports) {
       close(lines, Math.round(lines), `${name} on grid/${c.n}`)
       assert.ok(v >= 0 && v <= edge, `${name} on its edge`)
       // A triangle's apex takes everything on that side; elsewhere marks never touch.
-      const apex = (c.kind === 'fork' && list === edges[0]) || (c.kind === 'merge' && list === edges[1])
+      const apex = c.kind === 'merge' && list === edges[1]
       if (apex) close(v, edge / 2, `${name} at the apex`)
       else if (i > 0 && !c.collapsed || i > 0 && c.flow === 'topToBottom') assert.ok(v - list[i - 1] >= CardGeometry.minPortPitch, `${name} apart`)
     }

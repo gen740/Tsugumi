@@ -1,19 +1,22 @@
 #include "versions.hh"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <ctime>
 #include <map>
 #include <set>
 #include <sstream>
 #include <stdexcept>
-#include <tuple>
 
 #include "model.hh"
 #include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/document/schema.hh"
+#include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/git.hh"
 #include "tsugumi/util/log.hh"
@@ -104,15 +107,17 @@ std::optional<git_oid> head_oid(git_repository* r) {
 struct VersionFiles {
   std::vector<std::string> extra;
 
-  explicit VersionFiles(const stdfs::path& root) {
-    if (auto text = fs::read_file(root / "tsugumi.json")) {
-      schema::Project project;
-      if (auto error = schema::decode(*text, project))
-        throw Failed(FailureKind::invalid_document,
-                     "tsugumi.json: " + error->message);
-      if (const auto* paths = schema::get(project.version_paths))
-        extra = *paths;
-    }
+  explicit VersionFiles(const stdfs::path& root,
+                        const Document* accepted = nullptr) {
+    schema::Project project;
+    if (!accepted)
+      if (auto text = fs::read_file(root / "tsugumi.json"))
+        if (auto error = schema::decode(*text, project))
+          throw Failed(FailureKind::invalid_document,
+                       "tsugumi.json: " + error->message);
+    if (const auto* paths =
+            schema::get((accepted ? accepted->project : project).version_paths))
+      extra = *paths;
   }
 
   auto includes(const std::string& path) const -> bool {
@@ -140,8 +145,21 @@ struct VersionFiles {
 // inheriting unrelated files someone staged with Git. Ignore rules do not
 // override definitions or an explicit opt-in. Never follow symlinks.
 auto stage_project(git_repository* r, const stdfs::path& root,
-                   bool write_index = true) -> git_oid {
-  const VersionFiles files(root);
+                   bool write_index = true, const Document* accepted = nullptr)
+    -> git_oid {
+  const VersionFiles files(root, accepted);
+  std::map<std::string, std::string> expected;
+  if (accepted) {
+    expected = accepted->disk_hashes;
+    for (const auto& [path, source] : accepted->sources)
+      if (source.document_json || files.includes(path))
+        expected.emplace(path, source.hash);
+  }
+  const auto changed = [](const std::string& path) {
+    throw Failed(FailureKind::external_change,
+                 path + " changed outside Tsugumi; Reload before running",
+                 {{"path", path}});
+  };
   Index idx;
   check(git_repository_index(idx.out(), r), "index");
   check(git_index_clear(idx.get()), "clear index");
@@ -154,6 +172,13 @@ auto stage_project(git_repository* r, const stdfs::path& root,
       if (!files.descends(path)) it.disable_recursion_pending();
     } else if (stdfs::is_regular_file(status) && files.includes(path)) {
       const auto bytes = fs::read_beneath(root, path);
+      if (accepted && (Document::is_document_file(path) ||
+                       Document::is_source_area(path))) {
+        auto hash = expected.find(path);
+        if (hash == expected.end() || hash->second != crypto::sha256_hex(bytes))
+          changed(path);
+        expected.erase(hash);
+      }
       git_index_entry entry{};
       entry.path = path.c_str();
       entry.mode = (status.permissions() & stdfs::perms::owner_exec) !=
@@ -166,6 +191,7 @@ auto stage_project(git_repository* r, const stdfs::path& root,
       check(git_index_add(idx.get(), &entry), "add " + path);
     }
   }
+  if (!expected.empty()) changed(expected.begin()->first);
   if (write_index) check(git_index_write(idx.get()), "write index");
   git_oid tree;
   check(git_index_write_tree(&tree, idx.get()), "write tree");
@@ -280,28 +306,17 @@ auto document_fields(const std::optional<std::string>& text)
   return out;
 }
 
-// What a Card is in this version and, for a fork or merge, how many ports it
+// What a Card is in this version and, for a Merge, how many ports it
 // fans over: the same answers graph.cc gives from the same files.
 void read_definition(git_repository* r, git_tree* tree,
                      VersionCanvasData::Card& card) {
   const std::string dir = "definitions/" + card.id + "/";
-  const auto link = file_at(r, tree, (dir + "_link.json").c_str());
   const auto text = file_at(r, tree, (dir + "_card.json").c_str());
   DefinitionDoc def;
-  if (link) def.link = *link;
   if (text && schema::decode(*text, def.card)) def.card = {};
-  const Template kind = template_of(link || text ? &def : nullptr);
+  const Template kind = template_of(text ? &def : nullptr);
   card.kind = kind == Template::Code ? "code" : template_name(kind);
-  if (kind == Template::Fork) {
-    card.fan = 2;
-    if (const auto* params = schema::get(def.card.params))
-      for (const auto& p : *params) {
-        const auto* name = schema::get(p.name);
-        const auto* data = schema::get(p.data);
-        if (name && *name == "branches" && data)
-          card.fan = static_cast<uint32_t>(string_array_param(*data).size());
-      }
-  } else if (kind == Template::Merge) {
+  if (kind == Template::Merge) {
     if (const auto* inputs = schema::get(def.card.inputs))
       card.fan = static_cast<uint32_t>(inputs->size());
   }
@@ -498,29 +513,38 @@ std::string Versions::init() {
   return hex(&*h);
 }
 
-std::string Versions::commit_all(const std::string& message) {
-  std::lock_guard<std::mutex> l(mu_);
-  Repo r;
-  if (!open(r, root_)) return "";
-  auto tree = stage_project(r.get(), root_);
-  auto head = head_oid(r.get());
+namespace {
+auto commit_worktree(git_repository* repo, const stdfs::path& root,
+                     const std::string& message,
+                     const Document* accepted = nullptr) -> std::string {
+  auto tree = stage_project(repo, root, true, accepted);
+  auto head = head_oid(repo);
   if (head) {
     Commit c;
-    check(git_commit_lookup(c.out(), r.get(), &*head), "head");
+    check(git_commit_lookup(c.out(), repo, &*head), "head");
     if (git_oid_equal(git_commit_tree_id(c.get()), &tree)) return hex(&*head);
-    if (git_repository_head_detached(r.get()) == 1) {
+    if (git_repository_head_detached(repo) == 1) {
       // Started from an older version: the new commit opens a branch.
-      auto name = new_branch_name(r.get(), hex(&*head));
+      auto name = new_branch_name(repo, hex(&*head));
       Ref ref;
-      check(git_branch_create(ref.out(), r.get(), name.c_str(), c.get(), 0),
+      check(git_branch_create(ref.out(), repo, name.c_str(), c.get(), 0),
             "branch");
-      check(git_repository_set_head(r.get(), ("refs/heads/" + name).c_str()),
+      check(git_repository_set_head(repo, ("refs/heads/" + name).c_str()),
             "head");
     }
   }
   std::vector<git_oid> parents;
   if (head) parents.push_back(*head);
-  return commit_tree(r.get(), tree, parents, message, "HEAD");
+  return commit_tree(repo, tree, parents, message, "HEAD");
+}
+}  // namespace
+
+std::string Versions::commit_all(const std::string& message,
+                                 const Document* accepted) {
+  std::lock_guard<std::mutex> l(mu_);
+  Repo r;
+  if (!open(r, root_)) return "";
+  return commit_worktree(r.get(), root_, message, accepted);
 }
 
 void Versions::note_run(const std::string& commit, const VersionRunNote& run) {
@@ -578,8 +602,9 @@ std::string Versions::mark(const std::string& name,
   return id;
 }
 
-void Versions::checkout(const std::string& commit) {
-  commit_all(version_record::commit("checkout"));
+void Versions::checkout(
+    const std::string& commit,
+    const std::function<void(const stdfs::path&)>& validate) {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
   if (!open(r, root_))
@@ -588,29 +613,193 @@ void Versions::checkout(const std::string& commit) {
   git_oid oid;
   if (!resolve_commit(r.get(), commit, oid))
     throw Failed(FailureKind::invalid_request, "not a commit id: " + commit);
-  Object target;
-  if (git_object_lookup(target.out(), r.get(), &oid, GIT_OBJECT_COMMIT) != 0)
-    throw Failed(FailureKind::not_found, "no version " + commit);
-  git_checkout_options opts;
-  git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION);
-  opts.checkout_strategy = GIT_CHECKOUT_FORCE;
-  check(git_checkout_tree(r.get(), target.get(), &opts), "checkout");
-  // On a branch's tip, continue that branch.
+  Commit target;
+  check(git_commit_lookup(target.out(), r.get(), &oid), "checkout target");
+  Tree target_tree;
+  check(git_commit_tree(target_tree.out(), target.get()), "checkout tree");
+
+  // Stage the working project in memory, preserving the user's original index.
+  Index index;
+  check(git_repository_index(index.out(), r.get()), "checkout index");
+  const stdfs::path index_path = git_index_path(index.get());
+  const auto index_before = fs::read_file(index_path);
+  const stdfs::path head_path =
+      stdfs::path(git_repository_path(r.get())) / "HEAD";
+  const auto head_before = fs::read_file_or_throw(head_path);
+  const auto baseline_oid = stage_project(r.get(), root_, false);
+  Tree baseline;
+  check(git_tree_lookup(baseline.out(), r.get(), &baseline_oid),
+        "checkout baseline");
+
+  // Untracked and ignored paths survive an ordinary checkout. Give Git the
+  // same input here and install this exact tree after validation.
+  std::set<std::string> roots{"tsugumi.json", "layout.json", "definitions",
+                              "externals", "skills"};
+  for (auto* tree : {baseline.get(), target_tree.get()})
+    for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
+      const std::string name =
+          git_tree_entry_name(git_tree_entry_byindex(tree, i));
+      if (!Document::valid_version_path(name))
+        throw Failed(FailureKind::invalid_path,
+                     "invalid checkout path: " + name);
+      roots.insert(name);
+    }
+  auto scratch_path = (root_ / ".tsugumi" / "checkout-XXXXXX").string();
+  if (!::mkdtemp(scratch_path.data()))
+    throw Failed(FailureKind::persistence_failed,
+                 "could not create a checkout directory");
+  struct CheckoutScratch {
+    stdfs::path path;
+    bool keep = false;
+    ~CheckoutScratch() {
+      if (keep) return;
+      std::error_code error;
+      stdfs::remove_all(path, error);
+      if (error) log::error("remove checkout directory: " + error.message());
+    }
+  } scratch{scratch_path};
+  const auto preview = scratch.path / "target";
+  const auto backup = scratch.path / "original";
+  stdfs::create_directory(preview);
+  stdfs::create_directory(backup);
+  for (const auto& name : roots) {
+    const auto from = root_ / name;
+    if (stdfs::exists(stdfs::symlink_status(from)))
+      stdfs::copy(
+          from, preview / name,
+          stdfs::copy_options::recursive | stdfs::copy_options::copy_symlinks);
+  }
+  git_checkout_options opts{};
+  check(git_checkout_options_init(&opts, GIT_CHECKOUT_OPTIONS_VERSION),
+        "checkout options");
+  opts.checkout_strategy = GIT_CHECKOUT_FORCE | GIT_CHECKOUT_DONT_UPDATE_INDEX |
+                           GIT_CHECKOUT_NO_REFRESH;
+  opts.baseline = baseline.get();
+  opts.target_directory = preview.c_str();
+  Object treeish;
+  check(git_object_lookup(treeish.out(), r.get(), &oid, GIT_OBJECT_COMMIT),
+        "checkout object");
+  check(git_checkout_tree(r.get(), treeish.get(), &opts), "prepare checkout");
+  validate(preview);
+
+  // Build the outgoing version without changing the branch or HEAD. Advance
+  // that branch only after the worktree, index and new HEAD are installed.
+  const auto before = head_oid(r.get());
+  Ref head;
+  check(git_reference_lookup(head.out(), r.get(), "HEAD"), "checkout HEAD");
+  std::string source_branch;
+  std::optional<git_oid> saved;
+  Commit current;
+  if (before)
+    check(git_commit_lookup(current.out(), r.get(), &*before),
+          "checkout current version");
+  if (!before ||
+      !git_oid_equal(git_commit_tree_id(current.get()), &baseline_oid)) {
+    if (const auto* name = git_reference_symbolic_target(head.get()))
+      source_branch = name;
+    else
+      source_branch = "refs/heads/" + new_branch_name(r.get(), hex(&*before));
+    const auto id = commit_tree(
+        r.get(), baseline_oid,
+        before ? std::vector<git_oid>{*before} : std::vector<git_oid>{},
+        version_record::commit("checkout"), nullptr);
+    git_oid saved_oid;
+    check(git_oid_fromstr(&saved_oid, id.c_str()), "checkout saved version");
+    saved = saved_oid;
+  }
+
+  // A branch at the target stays attached, unless it is about to advance.
   RefIter it;
   check(git_reference_iterator_glob_new(it.out(), r.get(), "refs/heads/*"),
         "branches");
-  git_reference* ref = nullptr;
   std::string branch;
-  while (git_reference_next(&ref, it.get()) == 0) {
-    const git_oid* t = git_reference_target(ref);
-    if (branch.empty() && t && git_oid_equal(t, &oid))
-      branch = git_reference_name(ref);
-    git_reference_free(ref);
+  for (;;) {
+    Ref ref;
+    const int status = git_reference_next(ref.out(), it.get());
+    if (status == GIT_ITEROVER) break;
+    check(status, "iterate checkout branches");
+    const auto* target_id = git_reference_target(ref.get());
+    const std::string name = git_reference_name(ref.get());
+    if (target_id && name != source_branch && git_oid_equal(target_id, &oid)) {
+      branch = name;
+      break;
+    }
   }
-  if (!branch.empty())
-    check(git_repository_set_head(r.get(), branch.c_str()), "head");
-  else
-    check(git_repository_set_head_detached(r.get(), &oid), "head");
+
+  struct Move {
+    std::string name;
+    bool backed_up = false;
+    bool installed = false;
+  };
+  std::vector<Move> moves;
+  moves.reserve(roots.size());
+  bool index_written = false, head_written = false;
+  try {
+    for (const auto& name : roots) {
+      auto& move = moves.emplace_back(Move{name});
+      if (stdfs::exists(stdfs::symlink_status(root_ / name))) {
+        stdfs::rename(root_ / name, backup / name);
+        move.backed_up = true;
+      }
+      if (stdfs::exists(stdfs::symlink_status(preview / name))) {
+        stdfs::rename(preview / name, root_ / name);
+        move.installed = true;
+      }
+    }
+    check(git_index_read_tree(index.get(), target_tree.get()),
+          "set checkout index");
+    check(git_index_write(index.get()), "write checkout index");
+    index_written = true;
+    check(branch.empty() ? git_repository_set_head_detached(r.get(), &oid)
+                         : git_repository_set_head(r.get(), branch.c_str()),
+          "set checkout HEAD");
+    head_written = true;
+    if (saved) {
+      Ref ref;
+      const auto* expected = git_reference_symbolic_target(head.get()) && before
+                                 ? &*before
+                                 : nullptr;
+      check(git_reference_create_matching(
+                ref.out(), r.get(), source_branch.c_str(), &*saved,
+                expected != nullptr, expected, "save project before checkout"),
+            "save checkout branch");
+    }
+  } catch (const std::exception& error) {
+    // Keep original files available if a second I/O error prevents rollback.
+    std::string failures;
+    auto restore = [&](const auto& action) {
+      try {
+        action();
+      } catch (const std::exception& failure) {
+        failures += "; " + std::string(failure.what());
+      }
+    };
+    if (head_written)
+      restore([&] { fs::write_atomic(head_path, head_before); });
+    if (index_written)
+      restore([&] {
+        if (index_before)
+          fs::write_atomic(index_path, *index_before);
+        else
+          fs::remove_file_durable(index_path);
+      });
+    for (auto move = moves.rbegin(); move != moves.rend(); ++move) {
+      if (move->installed)
+        restore(
+            [&] { stdfs::rename(root_ / move->name, preview / move->name); });
+      if (move->backed_up)
+        restore(
+            [&] { stdfs::rename(backup / move->name, root_ / move->name); });
+    }
+    if (!failures.empty()) {
+      scratch.keep = true;
+      throw Failed(FailureKind::persistence_failed,
+                   std::string(error.what()) +
+                       "; checkout rollback failed (originals in " +
+                       backup.string() + ")" + failures);
+    }
+    throw Failed(FailureKind::persistence_failed, error.what());
+  }
 }
 
 VersionGraphData Versions::graph(size_t limit) {
@@ -823,8 +1012,7 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
     // Other files are opaque to the run definition (including _meta.json).
     const auto filename = stdfs::path(path).filename().string();
     if (!source && filename != "tsugumi.json" && filename != "_card.json" &&
-        filename != "_link.json" && filename != "_outputs.fbs" &&
-        filename != "default.nix")
+        filename != "_outputs.fbs" && filename != "default.nix")
       continue;
     auto card = card_of(path);
     if (!card) continue;

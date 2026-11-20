@@ -19,9 +19,6 @@
         "id": "cut"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "verify"
       },
       {
@@ -78,24 +75,14 @@
           "port": "cut"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "verify"
-        },
-        "to": {
           "card": "verify",
           "port": "cut"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "whatif"
+          "card": "cut",
+          "port": "cut"
         },
         "to": {
           "card": "whatif",
@@ -104,8 +91,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "sweep"
+          "card": "cut",
+          "port": "cut"
         },
         "to": {
           "card": "sweep",

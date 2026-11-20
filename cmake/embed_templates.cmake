@@ -1,6 +1,6 @@
 # Embed the one host catalog, assembled from the shared template sources.
 set(catalog "{}")
-foreach(group basic visualization reports)
+foreach(group basic input/Sources/InputTemplates/inputs visualization reports)
   file(READ ${INPUT_DIR}/${group}.json data)
   string(JSON count LENGTH "${data}")
   math(EXPR last "${count} - 1")

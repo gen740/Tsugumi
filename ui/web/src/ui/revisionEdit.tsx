@@ -23,9 +23,8 @@ export class RevisionEdit extends Observable {
     const definitions = (prefix: string, values: ProjectSession['definitionDrafts']) => {
       for (const [id, d] of values) {
         const dir = `${prefix}definitions/${id}/`
-        if (d.link === undefined) this.conflictDocuments.set(dir + '_card.json', clone(d.card))
+        this.conflictDocuments.set(dir + '_card.json', clone(d.card))
         this.conflictDocuments.set(dir + '_meta.json', clone(d.meta))
-        this.conflictDocuments.set(dir + '_link.json', clone(d.link))
       }
     }
     definitions('', session.definitionDrafts)
