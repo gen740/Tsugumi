@@ -442,3 +442,47 @@ def test_open_shows_the_project_without_taking_another_tab_away(plugin):
         text, error = mcp.call("tsugumi_open", {"folder": "c", "browser": False})
         assert not error, text
         assert told(on_a) == c
+
+
+def test_tool_subcommands_work_as_the_external_principal(tmp_path):
+    """`tsugumi <tool>` is the MCP server's catalog on the command line: the
+    same tools, typed options from their schemas, JSON out, and the same
+    access as Claude Code's (only the user answers access requests)."""
+    write_project(tmp_path / "proj")
+    env = isolated_environment(tmp_path)
+
+    def tsugumi(*arguments, cwd=tmp_path / "proj"):
+        return subprocess.run([str(CLI), *arguments], capture_output=True, text=True, env=env, cwd=cwd, timeout=300)
+
+    try:
+        listed = tsugumi("--help")
+        assert listed.returncode == 0, listed.stderr
+        assert "  run plan - " in listed.stdout and "  runs <action>" in listed.stdout
+        assert "  agent access resolve - " in listed.stdout
+        plan = tsugumi("run", "plan", "--help")
+        assert plan.returncode == 0 and "--card <object> (required)" in plan.stdout
+        assert tsugumi("project", "inspect", "--bogus", "1").returncode == 1
+        asked = tsugumi("project", "inspect")
+        assert asked.returncode == 1, asked.stderr
+        request = json.loads(asked.stdout)
+        assert request["code"] == "grant_required"
+        denied = tsugumi("agent", "access", "resolve", "--request-id", request["request_id"], "--allow")
+        assert denied.returncode == 1 and "authenticated user" in denied.stderr
+        raw = tsugumi("call", "AccessResolveRequest", json.dumps({"request_id": request["request_id"], "allow": True}))
+        assert raw.returncode == 1 and json.loads(raw.stdout)["code"] == "permission_denied"
+        user = UserAgent(tmp_path)
+        try:
+            user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
+        finally:
+            user.close()
+        inspected = tsugumi("project", "inspect")
+        assert inspected.returncode == 0, inspected.stdout
+        assert json.loads(inspected.stdout)["reply"] == "ProjectSnapshot"
+        # A family action: `tsugumi runs status`, typed from the project's `tools` listing.
+        status = tsugumi("runs", "status")
+        assert status.returncode == 0, status.stdout
+        assert json.loads(status.stdout)["reply"] == "RunStatus"
+        actions = tsugumi("runs", "--help")
+        assert actions.returncode == 0 and "  runs status - " in actions.stdout
+    finally:
+        stop_resident_services(tmp_path)

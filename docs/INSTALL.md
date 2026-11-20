@@ -47,7 +47,7 @@ Windows (PowerShell):
 irm https://github.com/gen740/Tsugumi/releases/latest/download/install.ps1 | iex
 ```
 
-This installs `~/.local/bin/tsugumi`, a command that talks to `tsugumi-hostd` (`tsugumi` alone lists what it does). Open the Web UI in the browser:
+This installs `~/.local/bin/tsugumi`, a command that talks to `tsugumi-hostd`: `tsugumi` alone lists what it does, including the Agent tools it offers as subcommands ([From a shell](claude-code.md#from-a-shell)). Open the Web UI in the browser:
 
 ```bash
 tsugumi web

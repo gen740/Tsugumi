@@ -41,6 +41,21 @@ Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) �
 | `TSUGUMI_HOST_STATE` | hostd's state folder. Use the same value as for `tsugumi web` |
 | `TSUGUMI_WEB_PORT` | The Web UI port of a host it starts (by default 8780, else a free port) |
 
+## From a shell
+
+The same tools are subcommands of the `tsugumi` command, generated from the catalog the MCP server offers (hostd's project tools and the `agent_*` operations of `agent.bfbs`), with the same external principal and access:
+
+```bash
+tsugumi --help                      # the tools and families
+tsugumi run plan --help             # one tool's options, from its schema
+tsugumi project inspect             # the project at or above this folder (or --project <folder>)
+tsugumi runs status --run-id <id>   # a family action (through the `tools` tool)
+tsugumi agent access --project-id <id> --access Read
+tsugumi call ConversationGetRequest '{"conversation_id":"…"}'   # one raw Agent request, for debugging
+```
+
+Options take each argument's name (`--run-id`); objects and lists of objects are JSON, and `--json '<object>'` gives all arguments at once. The result is printed as JSON; an error result exits with 1. A project tool first shows the project through `ShowRequest` without opening a browser.
+
 ## What is not supported
 
 - The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.

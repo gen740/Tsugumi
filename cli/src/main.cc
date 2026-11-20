@@ -1,8 +1,11 @@
 // The tsugumi command: a local client of hostd's RPC. A host it starts keeps
 // running after the command ends, like the desktop app's.
 //
+//   tsugumi <tool> [--option value ...]
+//                                one Agent tool (the MCP server's catalog), JSON out
+//   tsugumi call <Request> [json]  one raw Agent request (debugging)
 //   tsugumi web [--port N] [--no-browser] [project folder]
-//                                has hostd serve the Web UI and opens a page
+//                                shows the Web UI (hostd serves it)
 //   tsugumi mcp                  the Claude Code plugin's MCP server (stdio)
 //   tsugumi update               puts the latest release in place
 //   tsugumi uninstall [--yes]    previews removal; --yes removes the command
@@ -16,6 +19,7 @@
 #include <string>
 #include <vector>
 
+#include "commands.hh"
 #include "launch.hh"
 #include "rpc.hh"
 #include "maintenance.hh"
@@ -38,9 +42,12 @@ auto Executable(const char* argv0) -> f::path {
 }
 
 auto Usage() -> void {
-  std::cout << "Usage: tsugumi web [--port N] [--no-browser] [project folder]\n"
+  std::cout << "Usage: tsugumi <tool> [--option value ...] [--json '<object>'] [--project <folder>]\n"
+               "       tsugumi call <RequestName> ['<json>']\n"
+               "       tsugumi web [--port N] [--no-browser] [project folder]\n"
                "       tsugumi mcp\n"
-               "       tsugumi update | uninstall [--yes] | --version\n";
+               "       tsugumi update | uninstall [--yes] | --version\n"
+               "Tools work as the host's Agent principal, with the same access as Claude Code's.\n";
 }
 
 auto Open(const f::path& executable, const std::vector<std::string>& args) -> int {
@@ -92,12 +99,15 @@ auto main(int argc, char** argv) -> int {
     }
     if (command.empty() || command == "-h" || command == "--help") {
       Usage();
+      PrintTools(executable);
       return 0;
     }
     if (command == "mcp") return RunMcp(executable);
     if (command == "update") return Update(LaunchFromEnvironment(executable).root);
     if (command == "uninstall") return Uninstall({args.begin() + 1, args.end()});
     if (command == "web") return Open(executable, {args.begin() + 1, args.end()});
+    if (command == "call") return RunCall(executable, {args.begin() + 1, args.end()});
+    if (const auto status = RunTool(executable, args)) return *status;
     Usage();
     return 64;
   } catch (const std::exception& error) {
