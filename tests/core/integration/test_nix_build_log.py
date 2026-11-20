@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 
 from harness.real_cards import bash, log
-from projects import MSG_FBS, card, card_in_card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import MSG_FBS, card, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -62,10 +62,8 @@ in {
         assert "pre-run: \ufffd\n" in stderr
         assert "post-run: \ufffd\n" in stderr
 
-@pytest.mark.parametrize("early_card", [False, True], ids=["activation", "unclaimed-early-build"])
-def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path, early_card):
+def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
     monkeypatch.setenv("NIX_REMOTE", "daemon")
-    monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "") + "\nmax-jobs = 2")
     root = tmp_path / "project"
     with ExitStack() as stack:
         listener = stack.enter_context(socket.socket())
@@ -74,64 +72,44 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path, 
         # Bounds for reporting a missing fixture event or a deadlock.
         listener.settimeout(120)
         port = listener.getsockname()[1]
-        names = ["probe", "early"] if early_card else ["probe"]
-        defs = {name: blocked_builder(name, port) for name in names}
-        edges = []
-        if early_card:
-            # The early build runs while its Card is still waiting for input
-            # from the blocked probe. No activation will take over its build.
-            defs["early"]["inputs"] = [{"name": "in"}]
-            edges.append(conn("probe", "msg", "early", "in"))
+        defs = {"probe": blocked_builder("probe", port)}
         defs["warm"] = bash("true", outputs="table Outputs {} root_type Outputs;")
-        write(root, defs, [card(name, name) for name in defs], edges)
+        write(root, defs, [card(name, name) for name in defs], [])
         client = core_factory(project_root=root).connect()
         # Exercise a build on a later Run, using the existing evaluator.
         _, warm = run_and_wait(client, "warm", propagate=False)
         assert warm.state == RunState.succeeded
-        run_id = start_run(client, "probe", propagate=early_card)
+        run_id = start_run(client, "probe", propagate=False)
 
-        builders = {}
-        for _ in names:
-            peer, _ = listener.accept()
-            stack.enter_context(peer)
-            peer.settimeout(15)
-            marker = stack.enter_context(peer.makefile("rb"))
-            name = marker.readline().decode().strip()
-            builders[name] = marker
-        assert builders.keys() == set(names)
+        peer, _ = listener.accept()
+        stack.enter_context(peer)
+        peer.settimeout(15)
+        marker = stack.enter_context(peer.makefile("rb"))
+        assert marker.readline().decode().strip() == "probe"
         wait_for_log(client, run_id, "probe", LogStream.build,
                      lambda entry: "builder started" in (text(entry.text) or ""))
 
         assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
         assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
-        # Each blocked builder holds its socket open until the daemon ends it.
+        # The blocked builder holds its socket open until the daemon ends it.
         # This observes its exit independently of the core's Run status.
-        for name, marker in builders.items():
-            assert marker.read(1) == b"", f"the {name} builder is still alive"
+        assert marker.read(1) == b"", "the builder is still alive"
 
 
-def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, tmp_path):
+def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, tmp_path):
     root = tmp_path / "project"
-    external = root / "externals" / "nested"
     with ExitStack() as stack:
         proxy = stack.enter_context(socket.socket())
         proxy.bind(("127.0.0.1", 0))
         proxy.listen()
         proxy.settimeout(120)
         address = "http://127.0.0.1:" + str(proxy.getsockname()[1])
-        builder = stack.enter_context(socket.socket())
-        builder.bind(("127.0.0.1", 0))
-        builder.listen()
-        builder.settimeout(120)
 
-        # Probe holds the only input to the external project's Card. The
-        # external has its own pin, so its unclaimed early build is what fetches.
-        write(root, {"probe": blocked_builder("probe", builder.getsockname()[1])},
-              [card("probe", "probe"), card_in_card(
-                  "nested", [card("fetch", "probe", inputs=[{"name": "in"}])], [],
-                  {"inputs": {"in": {"card": "fetch", "port": "in"}}, "outputs": {}},
-              )], [conn("probe", "msg", "nested", "in")])
-        doc_file = external / "tsugumi.json"
+        # The project's pin names a tarball no store has, so the Card's
+        # evaluation fetches it through this proxy.
+        write(root, {"fetch": bash("true", outputs="table Outputs {} root_type Outputs;")},
+              [card("fetch", "fetch")], [])
+        doc_file = root / "tsugumi.json"
         doc = json.loads(doc_file.read_text())
         revision = uuid4().hex + "cafef00d"
         doc["pkgsPath"] = ("https://github.com/NixOS/nixpkgs/archive/" + revision
@@ -144,10 +122,9 @@ def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeyp
         monkeypatch.setenv("https_proxy", address)
         monkeypatch.setenv("no_proxy", "")
         client = core_factory(project_root=root).connect()
-        run_id = start_run(client, "probe", propagate=True)
+        run_id = start_run(client, "fetch", propagate=False)
 
-        # Nix downloads may precede the builder start, so capture the fetch
-        # first. This proxy keeps the evaluator in libnix's transfer wait.
+        # This proxy keeps the evaluator in libnix's transfer wait.
         peer, _ = proxy.accept()
         stack.enter_context(peer)
         peer.settimeout(15)
@@ -158,10 +135,6 @@ def test_stop_ends_an_early_evaluation_waiting_for_nixpkgs(core_factory, monkeyp
         assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
         assert wait_run(client, run_id, timeout=15).state == RunState.cancelled
         assert stream.read(1) == b"", "the stopped evaluator still has an open fetch"
-        recorded = client.call("RunInvocationsRequest", runId=run_id,
-                               card=path("nested", "fetch")).records or []
-        # History can record a cancelled Card that never had an activation.
-        assert all(row.startedAt is None and row.batchActivation is None for row in recorded)
 
 
 def blocked_builder(name, port):

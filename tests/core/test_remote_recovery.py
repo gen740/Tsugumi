@@ -251,7 +251,7 @@ def remote_gateway(monkeypatch):
                 server.join()
 
 
-def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
+def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox=True,
                    executionService="cluster")
@@ -259,10 +259,10 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
     rev = client.call("ProjectInspectRequest").rev
     remote_gateway.stall_operation = R.RequestBody.CatalogRequest
     # Accept queries the catalog once to validate the run. Hold the next lookup
-    # inside the accepted run's early-build selection.
+    # inside the accepted run's worker selection.
     remote_gateway.skip_stall = 1
     remote_gateway.stall = "blackhole"
-    early_catalog = remote_gateway.stalled
+    selection_catalog = remote_gateway.stalled
     try:
         start = client.send("RunRequest", make("RunRequest", baseRev=rev, opId=new_id(),
                                                origin="test", card=path("work"), propagate=False))
@@ -272,10 +272,10 @@ def test_stop_is_accepted_while_early_build_catalog_is_pending(project, remote_g
             timeout=10,
         )
         run_id = text(accepted.value.runId)
-        assert early_catalog.wait(10), "early build never requested the catalog"
+        assert selection_catalog.wait(10), "worker selection never requested the catalog"
         assert text(client.wait_reply(start).run.runId) == run_id
         remote_gateway.stalled = threading.Event()
-        # The early build holds the first Catalog. Block all six RPC readers as well.
+        # Worker selection holds the first Catalog. Block all six RPC readers as well.
         remote_gateway.stalls_expected = 7
         plans = [client.send("RunPlanRequest", make("RunPlanRequest", card=path("work"),
                                                    propagate=False)) for _ in range(6)]
