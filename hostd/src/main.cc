@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "host/service.hh"
+#include "host/web_edge.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -44,6 +45,7 @@ auto RunHost(int argc, char** argv) -> int {
     listener.allow_missing_origin = true;
     std::filesystem::path broker_dir;
     bool ensure = false;
+    std::optional<WebEdgeOptions> web;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       auto next = [&]() -> std::string {
@@ -76,7 +78,14 @@ auto RunHost(int argc, char** argv) -> int {
         options.environment.run_scratch_directory = next();
       else if (arg == "--demos-dir")
         options.demos_dir = next();
-      else if (arg == "--allow-origin")
+      else if (arg == "--web-root") {
+        if (!web) web.emplace();
+        web->root = next();
+      } else if (arg == "--web-port") {
+        if (!web) web.emplace();
+        web->port = std::stoi(next());
+        web->port_chosen = true;
+      } else if (arg == "--allow-origin")
         listener.allowed_origins.push_back(next());
       else if (arg == "--listen") {
         const auto address = next();
@@ -90,6 +99,8 @@ auto RunHost(int argc, char** argv) -> int {
       else
         throw std::runtime_error("unknown option " + arg);
     }
+    if (web && web->root.empty())
+      throw std::runtime_error("--web-port requires --web-root");
     if (options.state_dir.empty())
       throw std::runtime_error("--state-dir is required");
     std::filesystem::create_directories(options.state_dir);
@@ -165,6 +176,13 @@ auto RunHost(int argc, char** argv) -> int {
     host.Attach(&server, &host_server);
     server.start();
     host_server.start();
+    std::optional<WebEdge> edge;
+    if (web) {
+      web->key = crypto::random_token(32);
+      web->user_token = options.user_token;
+      edge.emplace(*web, &host_server, &server);
+      edge->start();
+    }
     const auto endpoint = listener.tcp_port < 0
                               ? ""
                               : "ws://" + listener.tcp_host + ":" +
@@ -187,6 +205,7 @@ auto RunHost(int argc, char** argv) -> int {
             {"user_token", json::Quote(options.user_token)},
             {"external_token", json::Quote(options.external_token)},
             {"server_id", json::Quote(options.server_id)},
+            {"web_url", json::Quote(edge ? edge->page_url() : "")},
             {"pid", std::to_string(::getpid())}}),
         0600);
     starting.reset();
@@ -194,6 +213,7 @@ auto RunHost(int argc, char** argv) -> int {
     int signal = 0;
     sigwait(&signals, &signal);
     fs::remove_file_durable(options.state_dir / "host.ready");
+    if (edge) edge->stop();
     host.Shutdown();
     server.stop();
     host_server.stop();
