@@ -12,8 +12,13 @@ function check(value: unknown, message: string): asserts value {
 async function test() {
   Object.assign(globalThis, { IS_REACT_ACT_ENVIRONMENT: true })
   const frames = new Map<number, FrameRequestCallback>()
+  const requesters = new Map<number, string>()
   let frameId = 0
-  window.requestAnimationFrame = (fn) => { frames.set(++frameId, fn); return frameId }
+  window.requestAnimationFrame = (fn) => {
+    frames.set(++frameId, fn)
+    requesters.set(frameId, new Error().stack?.split('\n').slice(2, 6).join('\n') ?? '')
+    return frameId
+  }
   window.cancelAnimationFrame = (id) => { frames.delete(id) }
   // Deliver resize notifications with the test's frames. Measurements come
   // from the styled element in Chromium.
@@ -69,10 +74,20 @@ async function test() {
       current.forEach((fn) => fn(0))
     })
   }
+  // The viewport after each frame, for a report when frames do not settle.
+  const snapshot = () => {
+    const element = document.querySelector<HTMLElement>('.log-text')
+    if (!element) return 'no viewport'
+    const blocks = Array.from(element.querySelectorAll<HTMLElement>('[data-log-block]'))
+      .map((block) => `${block.dataset.logBlock}:${block.offsetHeight}`)
+    return `width ${element.clientWidth} height ${element.clientHeight} scroll ${element.scrollTop}/${element.scrollHeight} blocks ${blocks.join(' ')}`
+  }
   async function settle() {
+    const states: string[] = []
     for (let i = 0; frames.size > 0; ++i) {
-      check(i < 20, 'frames did not settle')
+      check(i < 20, `frames did not settle; requested by:\n${[...frames.keys()].map((id) => requesters.get(id)).join('\n--\n')}\nlast frames:\n${states.slice(-6).join('\n')}`)
       await tick()
+      states.push(snapshot())
     }
   }
 

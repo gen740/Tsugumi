@@ -234,6 +234,8 @@ struct LogWindow {
   var visible: ClosedRange<LogRowID>?
   var truncatedAt: UInt64?
 
+  init(form: LogForm) { self.form = form }
+
   var start: UInt64 { pages.first?.offset ?? 0 }
   var end: UInt64 { pages.last?.end ?? 0 }
   var hasUnread: Bool { rawSize > displayedRawSize }
