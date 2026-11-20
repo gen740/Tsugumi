@@ -727,6 +727,10 @@ void Service::dispatch(RequestIn req) {
   switch (request->value_type()) {
     case P::CoreTraceRequest: {
       namespace T = Tsugumi::Trace;
+      if (!trace::LaunchEnabled())
+        return fail(req, FailureData::make(
+                             FailureKind::permission_denied,
+                             "Project core was started without RPC tracing"));
       const auto* debug = request->value_as_CoreTraceRequest();
       if (req.websocket) {
         const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
