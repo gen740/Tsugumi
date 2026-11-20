@@ -15,11 +15,20 @@
 
 namespace tsugumi::host {
 
+/** What Home shows of this host. */
+struct WebHome {
+  std::filesystem::path tsugumid;
+  std::filesystem::path worker;
+  std::filesystem::path sdk;
+  std::filesystem::path demos;
+  bool vm = false;
+};
+
 class WebPages {
  public:
-  // publish: to every Host connection. send: to one.
+  // publish: to every Host connection.
   WebPages(TransportServer* host, TransportServer* agent, std::string user_token,
-           std::function<void(const std::string&)> publish);
+           std::function<void(const std::string&)> publish, WebHome home);
   ~WebPages();
 
   static auto Handles(Tsugumi::Host::RequestPayload type) -> bool;
@@ -52,6 +61,7 @@ class WebPages {
   TransportServer* agent_;
   std::string user_token_;
   std::function<void(const std::string&)> publish_;
+  WebHome home_;
   std::mutex mutex_;
   std::unique_ptr<WebEdge> edge_;
   std::map<ConnId, Page> pages_;

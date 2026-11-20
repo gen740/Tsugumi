@@ -934,7 +934,11 @@ auto Service::Attach(TransportServer* server, TransportServer* host_server)
       [state = state_.get()](const std::string& bytes) {
         std::lock_guard lock(state->mutex);
         state->events->Publish(bytes);
-      });
+      },
+      host::WebHome{state_->options.environment.tsugumid,
+                    state_->options.environment.worker,
+                    state_->options.environment.sdk, state_->options.demos_dir,
+                    !state_->options.vm.binary.empty()});
 }
 auto Service::web() -> host::WebPages& { return *state_->web; }
 auto Service::Shutdown() -> void {

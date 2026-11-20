@@ -132,6 +132,23 @@ table HostWeb { url:string (required); page_url:string; }
 // hostd gives Claude Code's projects to a page on Home; a detached page (a
 // child workflow's) is never given another.
 table HostPageRequest { project:string; detached:bool; }
+// The Web UI's Home: this host's folders and the runtime hostd starts
+// (always in place with the shared VM). repo holds the bundled demos.
+table HostHomeRequest {}
+table RuntimeFile { path:string (required); ok:bool; }
+table HostHome {
+  home:string (required); documents:string (required); repo:string;
+  host_folders:bool; vm:bool; nix:bool;
+  tsugumid:RuntimeFile; worker:RuntimeFile; sdk:RuntimeFile;
+}
+// Shows a file or folder in Finder or the file manager.
+table HostRevealRequest { path:string (required); }
+// The page's folder picker: folders only, hidden ones left out. A folder
+// made with HostFolderCreateRequest is listed back.
+table HostFolderListRequest { path:string; }
+table HostFolderCreateRequest { parent:string (required); name:string (required); }
+table FolderEntry { name:string (required); project:bool; }
+table FolderListing { path:string (required); parent:string; project:bool; entries:[FolderEntry]; }
 // To the one page chosen to show a project.
 table PageShow { project:string (required); }
 // To every page: no page shows the project any more.
@@ -525,6 +542,7 @@ union RequestPayload {
   ModelSelectionRequest,
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostWebRequest, HostPageRequest,
+  HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -537,7 +555,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
-  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostWeb,
+  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostWeb, HostHome, FolderListing,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }
