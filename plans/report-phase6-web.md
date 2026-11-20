@@ -23,7 +23,6 @@
 
 `ui/web/server/*.ts` は 2,917 行から 2,464 行になった。
 
-
 - 編集要求と応答を JSON の `number[]` で往復させる処理と、対応する REST エンドポイント。64 bit の revision と逆操作データを FlatBuffers のまま扱う。
 - Node にあった二つの端末台帳と実行環境の複製。各端末は所有する Host 接続の寿命に従う。
 - `RemoteAgent` の 80/500 ms の会話ポーリング、キャンセル完了の 20 ms ポーリング、会話進捗の SSE 転送。接続を張り直したときも確定済みの連番を使って読む。
@@ -53,4 +52,4 @@ Phase 4 と Web の編集入口や `ui/web/src/model/session.ts` を共有する
 
 ## 未確認
 
-共有の `heavy.sh` で Nix 版 `check-fast.sh` と `nix build .#ci-core` を待機中。現行 hostd の環境一覧と会話通知の実行テスト、完全な Agent／アダプター検証、Swift の生成契約の確認が残っている。実機のアプリ・VM は起動していない。push は行っていない。
+共有の `heavy.sh` で Nix 版 `check-fast.sh` と `nix build .#ci-core` を待機中。約 50 分待った時点で、他の作業がロックを使っている。Agent・アダプター・Swift CoreTests は `ci-core` の完了後に同じラッパーで順に実行するよう登録した。現行 hostd の環境一覧・会話通知の実動結果と Swift の生成契約は未確認。ログは作業ツリーの `build-phase6-verification/` にある。実機のアプリ・VM は起動していない。push は行っていない。
