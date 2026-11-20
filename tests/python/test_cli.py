@@ -461,6 +461,11 @@ def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
 def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server):
     # Production hostd, VM process adapter and tsugumid; only the hypervisor is
     # replaced by the helper. No Card/worker is needed to expose the lost socket.
+    from contextlib import closing
+    from harness.remote_worker import string
+    from test_web_server import web_host
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
     from tsugumi_client import Client, new_id
 
     root, project, _, port, cookie = vm_server
@@ -469,14 +474,23 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
     def request(method, route, body=None):
         return api(port, cookie, method, route, body, timeout=240)
 
-    state = request("POST", "/api/env/start", {"path": str(project)})
-    assert state["state"] == "ready", state
-    assert state["endpoint"].startswith("ws://127.0.0.1:") and state["token"] and state["projectId"]
+    def start():
+        with closing(web_host(port, cookie)) as host:
+            # The VM adapter owns startup and rollback; a test watchdog only
+            # prevents a hung fixture from waiting indefinitely.
+            host.socket.settimeout(240)
+            state = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start,
+                              origins=[f"http://127.0.0.1:{port}"])
+        assert state.phase == EnvironmentPhase.Ready, state.message
+        return string(state.endpoint), string(state.token), string(state.projectId)
+
+    endpoint, token, project_id = start()
+    assert endpoint.startswith("ws://127.0.0.1:") and token and project_id
     launches = (json.loads(line) for line in (root / "log").read_text().splitlines())
     launch = next(event for event in launches if event["op"] == "run")
-    assert set(launch["origins"]) == {f"http://127.0.0.1:{port}", f"http://localhost:{port}"}
-    with Client(ws=state["endpoint"]) as client:
-        previous = client.hello(token=state["token"], project=state["projectId"]).serverInstanceId
+    assert set(launch["origins"]) == {f"http://127.0.0.1:{port}"}
+    with Client(ws=endpoint) as client:
+        previous = client.hello(token=token, project=project_id).serverInstanceId
         assert client.open(new_id()) is not None
     for index in range(3):
         folder = root / f"attached-{index}"
@@ -487,11 +501,10 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
         assert len(result["folders"]) == 1
         assert result["folders"][0]["folder"] == str(folder)
         resource = result["folders"][0]["resource"]
-        state = request("POST", "/api/env/start", {"path": str(project)})
-        assert state["state"] == "ready", state
+        endpoint, token, project_id = start()
         # A fresh project session must authenticate and read its snapshot.
-        with Client(ws=state["endpoint"]) as client:
-            hello = client.hello(token=state["token"], project=state["projectId"])
+        with Client(ws=endpoint) as client:
+            hello = client.hello(token=token, project=project_id)
             assert hello.serverInstanceId != previous
             previous = hello.serverInstanceId
             assert client.open(new_id()) is not None
@@ -499,9 +512,9 @@ def test_attach_restarts_the_guest_registers_and_reconnects_repeatedly(vm_server
         retry = request("POST", "/api/chat/folders",
                     {"path": str(project), "selected": [str(folder)]})
         assert retry["folders"] == result["folders"]
-        reused = request("POST", "/api/env/start", {"path": str(project)})
-        with Client(ws=reused["endpoint"]) as client:
-            assert client.hello(token=reused["token"], project=reused["projectId"]).serverInstanceId == previous
+        endpoint, token, project_id = start()
+        with Client(ws=endpoint) as client:
+            assert client.hello(token=token, project=project_id).serverInstanceId == previous
         for attempt in range(4):
             read = request("POST", "/api/agent/call", {"path": str(project),
                        "name": "attached_folder_read", "arguments": {"folder": str(folder), "path": "note.txt"}})
@@ -644,8 +657,17 @@ def test_settings_are_the_apps_and_only_what_changed_is_written(vm_server):
 def test_a_vm_start_failure_preserves_the_hosts_recovery_message(vm_server):
     tmp, project, _, port, cookie = vm_server
     (tmp / "busy").touch()
-    s = api(port, cookie, "POST", "/api/env/start", {"path": str(project)})
-    assert s["state"] == "failed" and s["message"] == "fixture VM failed" and s["recovery"] == "Retry the virtual machine"
+    from contextlib import closing
+    from harness.remote_worker import string
+    from test_web_server import web_host
+    from Tsugumi.Host.EnvironmentAction import EnvironmentAction
+    from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
+
+    with closing(web_host(port, cookie)) as host:
+        state = host.call("EnvironmentRequest", project=str(project), action=EnvironmentAction.Start)
+    assert state.phase == EnvironmentPhase.Failed
+    assert string(state.message) == "fixture VM failed"
+    assert string(state.recovery) == "Retry the virtual machine"
 
 
 # ---- Running the command again ---------------------------------------------------
