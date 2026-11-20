@@ -650,7 +650,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRevealRequest` | `path: string` (required) |
 | `HostFolderListRequest` | `path: string` |
 | `HostFolderCreateRequest` | `parent: string` (required), `name: string` (required) |
-| `CardSecretListRequest` | None |
-| `CardSecretSetRequest` | `name: string` (required), `value: string`, `remove: bool` |
+| `CardSecretListRequest` | `project_id: string` (required) |
+| `CardSecretSetRequest` | `project_id: string` (required), `name: string` (required), `value: string`, `remove: bool` |
 
 Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `DisplayGeometries`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`.

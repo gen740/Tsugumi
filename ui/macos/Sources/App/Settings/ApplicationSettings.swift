@@ -6,7 +6,7 @@ import TsugumiLauncher
 /// App-wide settings; the category on the left switches the content.
 struct ApplicationSettings: View {
   enum Category: String, CaseIterable, Identifiable {
-    case general, appearance, editor, shortcuts, skills, api, cardSecrets, connections, binaryCaches, executionServices
+    case general, appearance, editor, shortcuts, skills, api, connections, binaryCaches, executionServices
     var id: String { rawValue }
     var title: String {
       switch self {
@@ -16,7 +16,6 @@ struct ApplicationSettings: View {
       case .shortcuts: return String(localized: "ショートカット")
       case .skills: return "Skills"
       case .api: return "API"
-      case .cardSecrets: return String(localized: "Card シークレット")
       case .connections: return String(localized: "外部接続")
       case .binaryCaches: return String(localized: "バイナリキャッシュ")
       case .executionServices: return String(localized: "実行サービス")
@@ -30,7 +29,6 @@ struct ApplicationSettings: View {
       case .shortcuts: return "keyboard"
       case .skills: return "wand.and.stars"
       case .api: return "key"
-      case .cardSecrets: return "key.horizontal"
       case .connections: return "network"
       case .binaryCaches: return "shippingbox"
       case .executionServices: return "network"
@@ -41,7 +39,6 @@ struct ApplicationSettings: View {
       switch self {
       case .appearance: return String(localized: "この Mac の外観設定と、このホストの hostd の Agent 表示設定")
       case .api: return String(localized: "このホスト（設定と API キーは hostd）")
-      case .cardSecrets: return String(localized: "このホストの hostd（値は表示されません）")
       case .connections: return String(localized: "表示のみ（開いているプロジェクトの接続先）")
       case .binaryCaches: return String(localized: "この Mac の共有実行環境（全プロジェクト）")
       default: return String(localized: "このアプリ（この Mac のユーザー設定）")
@@ -119,7 +116,6 @@ struct ApplicationSettings: View {
             case .shortcuts: ShortcutSettings()
             case .skills: SkillSettings()
             case .api: APISettings()
-            case .cardSecrets: CardSecretsSettings()
             case .connections: ConnectionSettings()
             case .binaryCaches: BinaryCacheSettings()
             case .executionServices: ExecutionServicesSettings()
@@ -151,7 +147,7 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, canvas, history, cache
+  case general, canvas, history, cache, secrets
   var id: String { rawValue }
   /// The settings window's selection for this pane.
   var selection: String { "project." + rawValue }
@@ -161,6 +157,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return "Canvas"
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
+    case .secrets: return String(localized: "Card シークレット")
     }
   }
   var symbol: String {
@@ -169,6 +166,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return "rectangle.3.group"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
+    case .secrets: return "key.horizontal"
     }
   }
   func storage(_ s: ProjectSession) -> String {
@@ -178,6 +176,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
     case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
+    case .secrets: return String(localized: "このホストの hostd（このプロジェクト用、値は表示されません）")
     }
   }
 

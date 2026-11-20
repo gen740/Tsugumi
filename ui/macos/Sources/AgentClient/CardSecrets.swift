@@ -2,23 +2,26 @@ import Foundation
 import TsugumiRPC
 
 /// Settings adapter only: Card secrets live in hostd's secret store, beside the
-/// API keys. The app sets, replaces and deletes them; hostd never sends a
-/// value back, only the names that are set.
+/// API keys, bound to one project id. The app sets, replaces and deletes a
+/// project's values; hostd never sends a value back, only the names that are set.
 public enum CardSecrets {
-  public static func names() async throws -> [String] {
-    let reply: Tsugumi_Host_CardSecretListT = try await CoreHostClient.shared.hostCall(
-      .cardsecretlistrequest, Tsugumi_Host_CardSecretListRequestT())
+  public static func names(project: String) async throws -> [String] {
+    let request = Tsugumi_Host_CardSecretListRequestT()
+    request.projectId = project
+    let reply: Tsugumi_Host_CardSecretListT = try await CoreHostClient.shared.hostCall(.cardsecretlistrequest, request)
     return reply.names.compactMap { $0 }
   }
-  public static func set(_ name: String, value: String) async throws -> [String] {
+  public static func set(project: String, _ name: String, value: String) async throws -> [String] {
     let request = Tsugumi_Host_CardSecretSetRequestT()
+    request.projectId = project
     request.name = name
     request.value = value
     let reply: Tsugumi_Host_CardSecretListT = try await CoreHostClient.shared.hostCall(.cardsecretsetrequest, request)
     return reply.names.compactMap { $0 }
   }
-  public static func remove(_ name: String) async throws -> [String] {
+  public static func remove(project: String, _ name: String) async throws -> [String] {
     let request = Tsugumi_Host_CardSecretSetRequestT()
+    request.projectId = project
     request.name = name
     request.remove = true
     let reply: Tsugumi_Host_CardSecretListT = try await CoreHostClient.shared.hostCall(.cardsecretsetrequest, request)

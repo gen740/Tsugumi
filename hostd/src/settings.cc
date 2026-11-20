@@ -286,6 +286,13 @@ auto Defaults() -> j::Members {
           {"app.language", j::Quote("ja")}};
 }
 constexpr std::string_view kCardSecret = "card-secret/";
+// One project's Card secrets: card-secret/<project id>/<name>. A project id
+// is a short identifier, so it never contains '/'.
+auto CardSecretPrefix(const std::string& project) -> std::string {
+  if (!crypto::is_short_id(project))
+    throw std::runtime_error("Invalid project id");
+  return std::string(kCardSecret) + project + "/";
+}
 // The same rule as a Card's `secrets` entries: [a-z][a-z0-9_]{0,63}.
 auto ValidCardSecretName(std::string_view name) -> bool {
   return !name.empty() && name.size() <= 64 && name[0] >= 'a' &&
@@ -430,10 +437,11 @@ struct Settings::State {
     if (!out.configured) out.message = "No API key configured";
     return out;
   }
-  auto CardSecretList() -> H::CardSecretListT {
+  auto CardSecretList(const std::string& project) -> H::CardSecretListT {
+    const auto prefix = CardSecretPrefix(project);
     H::CardSecretListT out;
-    for (const auto& key : secrets->Keys(std::string(kCardSecret)))
-      out.names.push_back(key.substr(kCardSecret.size()));
+    for (const auto& key : secrets->Keys(prefix))
+      out.names.push_back(key.substr(prefix.size()));
     return out;
   }
   auto Status(const std::string& profile, const std::string& attempt)
@@ -952,22 +960,26 @@ auto Settings::Handle(const H::Request& request, uint64_t id) -> std::string {
       }
       case H::RequestPayload::CardSecretSetRequest: {
         const auto& p = *request.value_as_CardSecretSetRequest();
-        const auto name = p.name()->str();
+        const auto project = p.project_id()->str(), name = p.name()->str();
+        const auto prefix = CardSecretPrefix(project);
         if (!ValidCardSecretName(name))
           throw std::runtime_error("Invalid Card secret name");
         if (p.remove()) {
-          s.secrets->Erase(std::string(kCardSecret) + name);
+          s.secrets->Erase(prefix + name);
         } else {
           const auto value = Text(p.value());
           if (value.empty() || value.size() > 65536 ||
               value.find('\0') != value.npos)
             throw std::runtime_error("Invalid Card secret value");
-          s.secrets->Put(std::string(kCardSecret) + name, value);
+          s.secrets->Put(prefix + name, value);
         }
-        return agent::wire::HostReply(id, s.CardSecretList());
+        return agent::wire::HostReply(id, s.CardSecretList(project));
       }
       case H::RequestPayload::CardSecretListRequest:
-        return agent::wire::HostReply(id, s.CardSecretList());
+        return agent::wire::HostReply(
+            id,
+            s.CardSecretList(
+                request.value_as_CardSecretListRequest()->project_id()->str()));
       case H::RequestPayload::ProviderStatusRequest: {
         const auto& p = *request.value_as_ProviderStatusRequest();
         return agent::wire::HostReply(
@@ -1051,14 +1063,16 @@ auto Settings::Redact(std::string text) -> std::string {
   while (rows.step()) remove(s.secrets->Get(rows.text(0) + ":" + rows.text(1)));
   return text;
 }
-auto Settings::CardSecretValues(const std::vector<std::string>& names)
+auto Settings::CardSecretValues(const std::string& project,
+                                const std::vector<std::string>& names)
     -> std::vector<std::pair<std::string, std::string>> {
   auto& s = *state_;
   std::lock_guard lock(s.mutex);
+  const auto prefix = CardSecretPrefix(project);
   std::vector<std::pair<std::string, std::string>> out;
   for (const auto& name : names) {
     if (!ValidCardSecretName(name)) continue;
-    auto value = s.secrets->Get(std::string(kCardSecret) + name);
+    auto value = s.secrets->Get(prefix + name);
     if (!value.empty()) out.emplace_back(name, std::move(value));
   }
   return out;

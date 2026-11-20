@@ -32,8 +32,9 @@ table ReleaseRequest { fingerprint:string (required); }
 // Broker-local; never forwarded to the remote listener.
 table CatalogRequest {}
 // Broker-local: the values of the Card secrets one invocation declares, read
-// from hostd's secret store just before the call. The reply lists only the
-// names that are set; the core fails the invocation for any other.
+// from hostd's secret store just before the call, within the project the
+// capability authorizes. The reply lists only the names that are set; the
+// core fails the invocation for any other.
 table CardSecretsRequest { names:[string] (required); }
 union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest }
 table Request {

@@ -176,7 +176,7 @@ Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGui
 
 ### Card secrets
 
-A Card declares the names of the credentials it needs (`"secrets": ["database_password"]` in `_card.json`); people set the values under **Settings > Card secrets** (Mac app and Web UI), kept by hostd beside the API keys and never shown again. Each invocation's process receives them as environment variables of the same names; the run history records only which names were provided. See [Card secrets](security.md#card-secrets) and the [Card guide](CardGuide.md#card-secrets).
+A Card declares the names of the credentials it needs (`"secrets": ["database_password"]` in `_card.json`); people set the values for each project in its **Settings > Card secrets** (Mac app and Web UI), kept by hostd beside the API keys, bound to that project and never shown again. Each invocation's process receives them as environment variables of the same names; the run history records only which names were provided. See [Card secrets](security.md#card-secrets) and the [Card guide](CardGuide.md#card-secrets).
 
 ### Outside access (Experimental)
 

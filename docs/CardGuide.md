@@ -921,7 +921,7 @@ Omit `executionService` for local execution, or select a host-registered service
 
 ### Card secrets
 
-A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value under **Settings > Card secrets** in the Mac app or the Web UI; it is kept by this host's hostd and is never shown again. At each invocation the Card's process receives it as an environment variable of the same name, the same way in every language:
+A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value in the project's **Settings > Card secrets** in the Mac app or the Web UI; this host's hostd keeps it for that project only and never shows it again. At each invocation the Card's process receives it as an environment variable of the same name, the same way in every language:
 
 ```python
 import os

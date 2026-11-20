@@ -24,7 +24,6 @@ auto PermissionKinds(const std::string& language)
       "shippingbox");
   add("execution_service", "実行サービスに処理とデータを送る",
       "Send computation and data to an execution service", "network");
-  add("secret", "Card シークレットを受け取る", "Receive a Card secret", "key");
   return result;
 }
 }  // namespace tsugumi::host

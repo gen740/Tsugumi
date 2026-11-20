@@ -15,12 +15,13 @@ namespace tsugumi::host {
 // capability through their private control share, never worker credentials.
 class ExecutionBroker {
  public:
-  // Reads the values of the named Card secrets that are set, from hostd's
-  // secret store. An authorized project core asks for the secrets one
-  // invocation declares, just before the call.
+  // Reads the values of the named Card secrets that are set for a hostd
+  // project id, from hostd's secret store. An authorized project core asks for
+  // the secrets one invocation declares, just before the call; the broker
+  // passes the project its capability was issued to.
   using CardSecrets =
       std::function<std::vector<std::pair<std::string, std::string>>(
-          const std::vector<std::string>& names)>;
+          const std::string& project, const std::vector<std::string>& names)>;
   ExecutionBroker(std::filesystem::path state, std::string socket,
                   CardSecrets card_secrets = {});
   ~ExecutionBroker();

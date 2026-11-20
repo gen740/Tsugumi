@@ -640,20 +640,36 @@ TEST_F(BrokerFixture, CancelReachesWorkerWhileOtherRepliesAreBlocked) {
   EXPECT_TRUE(worker->WaitForHeldStatus(pending.size() + 1));
 }
 
-TEST_F(BrokerFixture, CardSecretsAreWriteOnlyAndReachOnlyAuthorizedCores) {
+TEST_F(BrokerFixture, CardSecretsAreWriteOnlyAndBoundToTheProject) {
   const std::string sentinel = "CARD_SECRET_SENTINEL_5b1e9c";
-  const auto set = [&](const std::string& name, const std::string& value,
-                       bool remove) {
+  const std::string other = "CARD_SECRET_OTHER_PROJECT_7d24";
+  const auto set = [&](const std::string& project, const std::string& name,
+                       const std::string& value, bool remove) {
     return Call(
         *host, H::RequestPayload::CardSecretSetRequest, [&](Builder& b) {
           const auto v = value.empty()
                              ? flatbuffers::Offset<flatbuffers::String>()
                              : b.CreateString(value);
-          return H::CreateCardSecretSetRequest(b, b.CreateString(name), v,
-                                               remove)
+          return H::CreateCardSecretSetRequest(b, b.CreateString(project),
+                                               b.CreateString(name), v, remove)
               .Union();
         });
   };
+  const auto list = [&](const std::string& project) {
+    return Call(
+        *host, H::RequestPayload::CardSecretListRequest, [&](Builder& b) {
+          return H::CreateCardSecretListRequest(b, b.CreateString(project))
+              .Union();
+        });
+  };
+  // Two project folders hostd registered as a2b3c4 and d5e6f7.
+  for (const auto& [identity, id] :
+       {std::pair{"first", "a2b3c4"}, std::pair{"second", "d5e6f7"}}) {
+    const auto folder =
+        directory.path / ("project-" + std::string(identity)) / ".tsugumi";
+    std::filesystem::create_directories(folder);
+    Write(folder / "project-id", id);
+  }
   const auto names = [](const Reply& reply) {
     std::vector<std::string> out;
     const auto* list = reply.HostValue()->value_as_CardSecretList();
@@ -661,49 +677,65 @@ TEST_F(BrokerFixture, CardSecretsAreWriteOnlyAndReachOnlyAuthorizedCores) {
       for (const auto* name : *list->names()) out.push_back(name->str());
     return out;
   };
-  const auto saved = set("database_password", sentinel, false);
+  const auto saved = set("a2b3c4", "database_password", sentinel, false);
   ASSERT_TRUE(saved.Code().empty()) << saved.View();
   EXPECT_EQ(names(saved), std::vector<std::string>{"database_password"});
   EXPECT_EQ(std::string(saved.bytes.begin(), saved.bytes.end()).find(sentinel),
             std::string::npos);
-  const auto listed = Call(
-      *host, H::RequestPayload::CardSecretListRequest,
-      [](Builder& b) { return H::CreateCardSecretListRequest(b).Union(); });
+  ASSERT_TRUE(set("d5e6f7", "database_password", other, false).Code().empty());
+  const auto listed = list("a2b3c4");
   EXPECT_EQ(names(listed), std::vector<std::string>{"database_password"});
   EXPECT_EQ(
       std::string(listed.bytes.begin(), listed.bytes.end()).find(sentinel),
       std::string::npos);
-  // Names follow the Card definition's rule; a value is required.
-  EXPECT_FALSE(set("Database", "x", false).Code().empty());
-  EXPECT_FALSE(set("anthropic:key", "x", false).Code().empty());
-  EXPECT_FALSE(set("token", "", false).Code().empty());
+  EXPECT_TRUE(names(list("z9y8x7")).empty());
+  // Names follow the Card definition's rule; a value and a project id are
+  // required.
+  EXPECT_FALSE(set("a2b3c4", "Database", "x", false).Code().empty());
+  EXPECT_FALSE(set("a2b3c4", "anthropic:key", "x", false).Code().empty());
+  EXPECT_FALSE(set("a2b3c4", "token", "", false).Code().empty());
+  EXPECT_FALSE(set("../a2b3c4", "token", "x", false).Code().empty());
+  EXPECT_FALSE(list("").Code().empty());
 
-  const auto capability = Authorize("project");
-  R::CardSecretsRequestT ask;
-  ask.names = {"database_password", "not_set"};
-  const auto values = Broker(ask, capability);
-  const auto* secrets = values->payload.AsReply()->body.AsCardSecrets();
-  ASSERT_NE(secrets, nullptr);
-  ASSERT_EQ(secrets->secrets.size(), 1u);
-  EXPECT_EQ(secrets->secrets[0]->name, "database_password");
-  EXPECT_EQ(secrets->secrets[0]->value, sentinel);
+  using Values = std::vector<std::pair<std::string, std::string>>;
+  const auto value = [&](const std::string& capability) {
+    R::CardSecretsRequestT ask;
+    ask.names = {"database_password", "not_set"};
+    auto reply = Broker(ask, capability);
+    const auto* secrets = reply->payload.AsReply()->body.AsCardSecrets();
+    EXPECT_NE(secrets, nullptr);
+    Values out;
+    if (secrets)
+      for (const auto& secret : secrets->secrets)
+        out.emplace_back(secret->name, secret->value);
+    return out;
+  };
+  const auto first = Authorize("first-core", "first");
+  const auto second = Authorize("second-core", "second");
+  // Project A cannot obtain project B's value under the same name: each core
+  // receives only its own project's value.
+  EXPECT_EQ(value(first), (Values{{"database_password", sentinel}}));
+  EXPECT_EQ(value(second), (Values{{"database_password", other}}));
   // Provider keys share the store but are not Card secrets.
   R::CardSecretsRequestT provider;
   provider.names = {"desktop:fixture"};
-  EXPECT_TRUE(Broker(provider, capability)
+  EXPECT_TRUE(Broker(provider, first)
                   ->payload.AsReply()
                   ->body.AsCardSecrets()
                   ->secrets.empty());
+  R::CardSecretsRequestT ask;
+  ask.names = {"database_password"};
   const auto denied = Broker(ask, "not-a-capability");
   const auto* failure = denied->payload.AsReply()->body.AsFailure();
   ASSERT_NE(failure, nullptr);
   EXPECT_EQ(failure->code, R::ErrorCode::Unauthorized);
+  // A project folder without a hostd project id receives nothing.
+  const auto unregistered = Broker(ask, Authorize("third-core", "third"));
+  EXPECT_NE(unregistered->payload.AsReply()->body.AsFailure(), nullptr);
 
-  EXPECT_TRUE(set("database_password", "", true).Code().empty());
-  EXPECT_TRUE(Broker(ask, capability)
-                  ->payload.AsReply()
-                  ->body.AsCardSecrets()
-                  ->secrets.empty());
+  EXPECT_TRUE(set("a2b3c4", "database_password", "", true).Code().empty());
+  EXPECT_TRUE(value(first).empty());
+  EXPECT_EQ(value(second), (Values{{"database_password", other}}));
 }
 
 TEST_F(BrokerFixture, FragmentedFramesWaitForTheCompleteRequest) {

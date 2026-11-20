@@ -185,6 +185,13 @@ auto ProjectIdentity(const std::string& path) -> std::string {
   return std::to_string(st.st_dev) + ":" + std::to_string(st.st_ino) + ":" +
          std::to_string(seconds) + ":" + std::to_string(nanos);
 }
+// The hostd project id of a project folder: the one hostd reserved for that
+// folder when starting its environment (.tsugumi/project-id; the registry
+// refuses an id registered to another folder). "" when there is none.
+auto RegisteredProject(const std::filesystem::path& root) -> std::string {
+  const auto id = fs::read_file(root / ".tsugumi" / "project-id");
+  return id && crypto::is_short_id(*id) ? *id : std::string{};
+}
 struct Entry {
   std::string id, name, endpoint, worker_public_key;
   R::CapabilitiesT capabilities;
@@ -253,7 +260,11 @@ struct ExecutionBroker::State {
         "scope TEXT NOT NULL,capability TEXT NOT NULL UNIQUE);"
         "CREATE TABLE IF NOT EXISTS project_services(project TEXT NOT NULL,"
         "service TEXT NOT NULL,generation TEXT NOT NULL,PRIMARY "
-        "KEY(project,service))");
+        "KEY(project,service));"
+        // The hostd project id each authorized core belongs to; Card secrets
+        // are resolved only within it.
+        "CREATE TABLE IF NOT EXISTS project_registry(project TEXT PRIMARY "
+        "KEY,registry TEXT NOT NULL)");
     const auto file = state / "execution-scope-key";
     key = ReadKey(file);
     if (key.empty()) {
@@ -438,6 +449,7 @@ struct ExecutionBroker::State {
       Entry entry;
       std::optional<R::CatalogT> catalog_reply;
       std::optional<std::vector<std::string>> secret_names;
+      std::string secret_project;
       {
         std::lock_guard lock(mutex);
         auto q = db.prepare("SELECT scope,id FROM projects WHERE capability=?");
@@ -450,6 +462,14 @@ struct ExecutionBroker::State {
         if (auto* asked = request->body.AsCardSecretsRequest()) {
           Require(card_secrets != nullptr, "Card secrets are unavailable");
           Require(asked->names.size() <= 256, "Too many Card secret names");
+          // Only the project this capability was issued to, never one the
+          // request names.
+          auto registered = db.prepare(
+              "SELECT registry FROM project_registry WHERE project=?");
+          registered.bind(1, q.text(1));
+          Require(registered.step() && !registered.text(0).empty(),
+                  "This project has no hostd project id for Card secrets");
+          secret_project = registered.text(0);
           secret_names = std::move(asked->names);
         } else if (request->body.AsCatalogRequest()) {
           R::CatalogT catalog;
@@ -502,7 +522,8 @@ struct ExecutionBroker::State {
       // Read outside the broker lock: the store has its own.
       if (secret_names) {
         R::CardSecretsT secrets;
-        for (auto& [name, value] : card_secrets(*secret_names)) {
+        for (auto& [name, value] :
+             card_secrets(secret_project, *secret_names)) {
           auto secret = std::make_unique<R::CardSecretT>();
           secret->name = std::move(name);
           secret->value = std::move(value);
@@ -582,6 +603,9 @@ auto ExecutionBroker::Authorize(const std::string& project,
   if (identity.empty()) {
     auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
     q.bind(1, project).run();
+    state_->db.prepare("DELETE FROM project_registry WHERE project=?")
+        .bind(1, project)
+        .run();
     state_->db.prepare("DELETE FROM project_services WHERE project=?")
         .bind(1, project)
         .run();
@@ -610,6 +634,10 @@ auto ExecutionBroker::Authorize(const std::string& project,
         state_->db.prepare("INSERT INTO project_services VALUES(?,?,?)");
     grant.bind(1, project).bind(2, entry.id).bind(3, entry.generation).run();
   }
+  state_->db.prepare("INSERT OR REPLACE INTO project_registry VALUES(?,?)")
+      .bind(1, project)
+      .bind(2, RegisteredProject(path))
+      .run();
   transaction.commit();
   fs::write_atomic(control / "execution-broker-capability", capability,
                    guest ? 0644 : 0600);
@@ -623,6 +651,9 @@ auto ExecutionBroker::Revoke(const std::string& project) -> void {
   std::lock_guard lock(state_->mutex);
   auto q = state_->db.prepare("DELETE FROM projects WHERE id=?");
   q.bind(1, project).run();
+  state_->db.prepare("DELETE FROM project_registry WHERE project=?")
+      .bind(1, project)
+      .run();
   state_->db.prepare("DELETE FROM project_services WHERE project=?")
       .bind(1, project)
       .run();

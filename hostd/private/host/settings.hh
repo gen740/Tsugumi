@@ -15,7 +15,7 @@ namespace tsugumi::host {
 struct Credentials;
 // The one store of host secrets, independent of platform UI and OAuth. It
 // holds provider API keys ("<profile>:<provider>") and Card secrets
-// ("card-secret/<name>"); the two key forms never overlap.
+// ("card-secret/<project id>/<name>"); the two key forms never overlap.
 class SecretStore {
  public:
   virtual ~SecretStore() = default;
@@ -42,10 +42,11 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
-  // The values of these Card secret names that are set, for one invocation.
-  // Only the execution broker calls this; no Host or Agent request returns a
-  // value.
-  auto CardSecretValues(const std::vector<std::string>& names)
+  // The values of these Card secret names that are set for one project, for
+  // one invocation. Only the execution broker calls this, with the project its
+  // capability authorizes; no Host or Agent request returns a value.
+  auto CardSecretValues(const std::string& project,
+                        const std::vector<std::string>& names)
       -> std::vector<std::pair<std::string, std::string>>;
   auto AllowUnscopedHelpers() -> bool;
   // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
