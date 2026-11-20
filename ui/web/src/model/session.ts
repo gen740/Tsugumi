@@ -3,7 +3,7 @@ import { projectOperation, operationInverse } from './projectOperation'
 import { connectionsOf, SavePresence } from './presence'
 import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
-import { VersionCommentT } from '../../shared/gen/tsugumi/host/version-comment'
+import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
 import { registerModuleClient, ModuleBlobs } from './moduleSources'
 // One open project: shared by every view showing it. Owns the RPC

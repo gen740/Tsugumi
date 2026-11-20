@@ -436,24 +436,8 @@ table VersionCanvasRequest {
   wires:[VersionCanvasWire];
 }
 
-/// A comment on a Card that a version or a save changed.
-table VersionComment {
-  card:string (id: 0, required);
-  text:string (id: 1, required);
-  /// added, edited, resolved, reopened or removed. A comment written and
-  /// resolved within one version is resolved.
-  change:string (id: 2, required);
-  resolution:string (id: 3);
-  /// Who did it, as the comment records it: agent or user. Absent when it is
-  /// not recorded, as for a comment that is gone.
-  by:string (id: 4);
-  /// The Cards the save that resolved it changed.
-  cards:[string] (id: 5);
-}
-
-// The host reads comment records from the registered project repository.
+/// Read the project version’s comment changes from its first parent.
 table VersionCommentsRequest { project:string (required); commit:string (required); }
-table VersionComments { comments:[VersionComment]; }
 
 /// -> InputTypes. Read each incoming wire's source, kind and complete input
 /// definition as Card code sees it. May help when writing a Card; routing types
@@ -484,7 +468,6 @@ table FileFormatRequest { path:string (required); text:string (required); langua
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
 // Language applies on every read, including commits/runs created by another client.
 table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }
-table VersionDiff { text:string (required); truncated:bool; }
 table HostVersionGraphRequest { project:string (required); language:string; limit:uint = 500; }
 
 // Reference demos and version notes do not depend on a conversation.
@@ -516,12 +499,12 @@ union RequestPayload {
 table Request { value:RequestPayload; }
 union ReplyPayload {
   ProjectOperationResult, ProjectPermissionList,
-  VersionComments,
+  VersionComments:Tsugumi.RPC.VersionComments,
   HelloResult:Tsugumi.Service.HelloResult, Acknowledgement:Tsugumi.Service.Acknowledgement,
   BinaryCaches, GuideState, EnvironmentState, AttachedFolders, HostRuntime, HostTerminal, ExecutionServices, ExecutionAuthorization, Settings, ProviderStatus, SignInBegin, SignInStatus, ProjectDefaults, ProjectInfo, ProjectLocation, RecentProject,
   RecentList, DemoList, SkillsList, ProjectTrust, ModelList, Failure:Tsugumi.Service.Failure,
   LayoutValidated, VersionCanvas,
-  FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
+  FileFormatResult, VersionDiff:Tsugumi.RPC.VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,

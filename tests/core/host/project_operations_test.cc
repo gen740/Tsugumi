@@ -35,7 +35,7 @@ TEST(ProjectOperations, CoreRejectsInvalidOperationIdentity) {
       Failure);
   EXPECT_EQ(calls, 1);
 }
-TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
+TEST(ProjectOperations, RevisionConflictReturnsBeforeAnotherSave) {
   H::ProjectTextEditT edit;
   edit.file_path = "definitions/a/main.py";
   edit.old_string = "old";
@@ -102,6 +102,12 @@ TEST(ProjectOperations, RevisionConflictReReadsAndReAppliesTheSameOperation) {
         {}};
   };
   ProjectOperations operations;
+  const auto rejected = operations.Execute(request, {"ui", {}, {}, {}}, call);
+  const auto reply = json::Object(rejected.json);
+  EXPECT_EQ(json::Text(reply, "reply"), "Failure");
+  EXPECT_EQ(json::Text(json::Object(reply.at("value")), "kind"),
+            "revision_conflict");
+  ASSERT_EQ(saves, 1);
   const auto result = operations.Execute(request, {"ui", {}, {}, {}}, call);
   EXPECT_EQ(json::Text(json::Object(result.json), "reply"), "SaveResult");
   EXPECT_EQ(saves, 2);
@@ -913,6 +919,16 @@ TEST(ProjectOperationCutover,
   project.files[form.file_path] = R"({"template":"draft","symbol":"other"})";
   project.ExpectConflict(body, "value_conflict");
   EXPECT_FALSE(project.files.contains(put.file_path));
+}
+TEST(ProjectOperationCutover, EmptyNestedSelectionLeavesBothProjectsIntact) {
+  TransformationProject project;
+  const auto before = project.files;
+  H::ProjectSelectionT body;
+  body.project_path = "externals/inner";
+  body.action = H::ProjectSelectionAction::Place;
+  const auto undo = project.Apply(body);
+  EXPECT_TRUE(undo.edits.empty());
+  EXPECT_EQ(project.files, before);
 }
 TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
   TransformationProject project;

@@ -179,12 +179,6 @@ void remove_file_durable(const stdfs::path& p) {
   fsync_dir(p.parent_path());
 }
 
-std::optional<std::string> file_sha256(const stdfs::path& p) {
-  std::error_code error;
-  if (!stdfs::exists(p, error) && !error) return std::nullopt;
-  return sha256_file(p);
-}
-
 bool resolves_inside(const stdfs::path& root, const stdfs::path& p) {
   std::error_code ec;
   auto r = stdfs::weakly_canonical(root, ec);

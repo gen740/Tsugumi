@@ -6,7 +6,6 @@
 
 #include "agent/context.hh"
 #include "agent/providers.hh"
-#include "agent/save_policy.hh"
 #include "agent/tool_images.hh"
 #include "agent/turns.hh"
 #include "agent/wire.hh"
@@ -78,15 +77,6 @@ auto Tools::Specs(bool guide) -> std::vector<ToolSpec> {
   return catalog.ModelSpecs(guide ? ModelRole::Guide : ModelRole::Main);
 }
 
-auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
-  if (call.name != "tools") return call;
-  const auto args = json::Object(call.arguments);
-  const auto action = json::Text(args, "action");
-  if (action.empty()) return call;
-  return {call.id, catalog.FamilyTool(json::Text(args, "family"), action, role),
-          json::Get(args, "arguments", "{}")};
-}
-
 // Read the exact revision being saved; never clean up a newer client's layout.
 auto Tools::PrepareLayoutSave(const std::string& project,
                               const std::string& args, std::stop_token stop)
@@ -146,14 +136,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                         const std::function<void(const host::SaveBase&)>& check)
     -> std::string {
   std::lock_guard save_lock(save_mutex);
-  auto read = [&](const std::string& method, const json::Members& query) {
-    const auto reply = json::Object(
-        RawProjectCall(project, method, json::Encode(query), stop));
-    const auto value = json::Object(json::Get(reply, "value", "{}"));
-    if (json::Text(reply, "reply") == "Failure")
-      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
-    return value;
-  };
   try {
     // A whole-document save keeps its original revision and input. Never merge
     // or issue another operation id when another writer has moved the document.
@@ -169,30 +151,32 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     policy.CheckSave(original, latest, patches);
     if (check) check(latest);
     original.erase("save_intent");
-    auto prepared = PrepareAgentSave(
-        original, latest, read,
-        [&](const auto& card, const auto& occupied) {
-          std::lock_guard lock(mutex);
-          return host::ReserveOrdinal(
-              db, "annotation:" + project + ":comment:" + card, "", occupied);
+    const host::SavePreparation preparation{
+        .stamp_agent = true,
+        .reserve_comment =
+            [&](const auto& card, const auto& occupied) {
+              std::lock_guard lock(mutex);
+              return host::ReserveOrdinal(
+                  db, "annotation:" + project + ":comment:" + card, "",
+                  occupied);
+            },
+        .finish =
+            [&](auto& prepared) {
+              policy.CheckSave(prepared, latest, patches);
+              host::RestrictAgentRequest("project_save", prepared);
+            }};
+    auto submitted = host::SubmitProjectSave(
+        std::move(original), latest, patches,
+        [&](const auto& method, const auto& arguments) {
+          return host::OperationReply{
+              RawProjectCall(project, method, json::Encode(arguments), stop),
+              {}};
         },
-        patches);
-    prepared.arguments = json::Object(host::PrepareLayoutSave(
-        json::Encode(prepared.arguments),
-        [&](const std::string& path) -> std::optional<host::LayoutFile> {
-          const auto file = latest.files.find(path);
-          if (file == latest.files.end()) return std::nullopt;
-          return host::LayoutFile{file->second,
-                                  crypto::sha256_hex(file->second)};
-        },
-        patches));
-    policy.CheckSave(prepared.arguments, latest, patches);
-    host::RestrictAgentRequest("project_save", prepared.arguments);
-    auto result = json::Object(RawProjectCall(
-        project, "project_save", json::Encode(prepared.arguments), stop));
+        preparation);
+    auto result = json::Object(submitted.reply.json);
     if (json::Text(result, "reply") == "SaveResult") {
       auto value = json::Object(json::Get(result, "value"));
-      value["comments"] = prepared.comments;
+      value["comments"] = submitted.comments;
       result["value"] = json::Encode(value);
     } else if (json::Text(json::Object(json::Get(result, "value", "{}")),
                           "kind") == "revision_conflict") {
@@ -442,7 +426,10 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
                       {"diagnostics", json::Encode(diagnostics)}})}});
   }
   const bool english = json::Text(args, "language") == "en";
-  if (name == "version_graph") args.erase("language");
+  if (name == "version_graph") {
+    args.erase("language");
+    args["include_comments"] = "true";
+  }
   if (name == "card_id") {
     args["stem"] = json::Quote(host::CardStem(json::Text(args, "name")));
     args.erase("name");
@@ -493,14 +480,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
   if (name == "version_graph") {
     auto envelope = json::Object(result);
     if (json::Text(envelope, "reply") == "VersionGraph") {
-      std::string root;
-      {
-        std::lock_guard lock(mutex);
-        auto path = db.prepare("SELECT path FROM project_paths WHERE id=?");
-        path.bind(1, project);
-        if (path.step()) root = path.text(0);
-      }
-      namespace R = Tsugumi::RPC;
       const auto* reply = R::GetMessage(raw_reply.data())->payload_as_Reply();
       auto typed = std::unique_ptr<R::VersionGraphT>(
           reply->value_as_VersionGraph()->UnPack());
@@ -512,22 +491,9 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
       R::FinishMessageBuffer(
           builder,
           R::CreateMessage(builder, 1, R::Payload::Reply, response.Union()));
-      auto presented = json::Object(catalog.Reply(
+      result = catalog.Reply(
           {reinterpret_cast<const char*>(builder.GetBufferPointer()),
-           builder.GetSize()}));
-      auto graph = json::Object(json::Get(presented, "value", "{}"));
-      if (!root.empty()) {
-        auto commits = json::Array(json::Get(graph, "commits", "[]"));
-        for (auto& raw : commits) {
-          auto commit = json::Object(raw);
-          commit["comments"] = host::comments::record_json(
-              host::comments::version(root, json::Text(commit, "id")));
-          raw = json::Encode(commit);
-        }
-        graph["commits"] = json::Encode(commits);
-      }
-      envelope["value"] = json::Encode(graph);
-      result = json::Encode(envelope);
+           builder.GetSize()});
     }
   }
   return result;
@@ -807,9 +773,9 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
 auto Tools::ScopedResult(HelperScope& scope, const ToolCall& requested_call,
                          ToolResult result, const HelperScope::Reader& read)
     -> ToolResult {
-  const auto call =
-      ResolveCall(requested_call,
-                  scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
+  const auto call = catalog.ResolveCall(
+      requested_call,
+      scope.scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
   if (!scope.scoped() || call.name == "tool_result_read") return result;
   if (result.is_error) {
     if (catalog.Find(call.name))
@@ -874,7 +840,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                     : boundary && boundary->scoped() ? ModelRole::ScopedHelper
                     : helper                         ? ModelRole::Helper
                                                      : ModelRole::Main;
-  const auto call = ResolveCall(requested_call, role);
+  const auto call = catalog.ResolveCall(requested_call, role);
   if (c.role == "guide" && call.name != "tools" &&
       !catalog.Allows(call.name, role))
     throw Failure("permission_denied", "Tool unavailable for the guide role");
@@ -1268,7 +1234,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
         .run();
   }
   // Keep the original scoped request across permission approval. Expansion and
-  // binding checks are identical on the initial send, resend and CAS retries.
+  // binding checks are identical on the initial send and after approval.
   auto project_call = [&]() {
     if (!boundary || !boundary->scoped() || call.name != "project_save")
       return ProjectCall(
@@ -1581,7 +1547,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
                       : boundary && boundary->scoped() ? ModelRole::ScopedHelper
                       : helper                         ? ModelRole::Helper
                                                        : ModelRole::Main;
-    const auto call = ResolveCall(requested_call, role);
+    const auto call = catalog.ResolveCall(requested_call, role);
     if (call.name == "delegate") {
       conversations->AuthorizeHistory(id);
       auto helpers = conversations->ConversationDatabase(id).prepare(
@@ -1636,7 +1602,7 @@ auto Tools::Hooks(const std::string& id, bool helper,
             const ToolCall& requested_call) -> std::optional<ToolResult> {
       try {
         RequireHelperPermission(id, *boundary);
-        const auto call = ResolveCall(
+        const auto call = catalog.ResolveCall(
             requested_call,
             boundary->scoped() ? ModelRole::ScopedHelper : ModelRole::Helper);
         if (call.name == "tools") return std::nullopt;
@@ -1696,7 +1662,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       A::CallIdT result;
       const auto* input = r->value_as_CallIdRequest();
       if (input->name() && input->arguments_json()) {
-        const auto call = ResolveCall(
+        const auto call = catalog.ResolveCall(
             {"", input->name()->str(), input->arguments_json()->str()},
             ModelRole::Main);
         if (const auto* spec = catalog.Find(call.name)) {
@@ -1748,7 +1714,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       const auto id = p->conversation_id()->str(),
                  project = Text(p->project_id());
       conversations->OwnConversation(id, human);
-      const auto call = ResolveCall(
+      const auto call = catalog.ResolveCall(
           {p->op_id()->str(), p->name()->str(), p->arguments_json()->str()},
           conversations->GetConversation(id).role == "guide" ? ModelRole::Guide
                                                              : ModelRole::Main);

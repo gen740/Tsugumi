@@ -1,5 +1,5 @@
 import { H } from '../wire/hostLayout'
-import { VersionCommentT } from '../../shared/gen/tsugumi/host/version-comment'
+import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 // The project's versions as a tree (tsugumid/runtime/src/versions.cc): each commit with its
 // branches, tags, runs (from its note) and changed Cards; hovering one shows
 // what it changed and a minimap of its Cards. A version can be named, and the

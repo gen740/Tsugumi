@@ -1,5 +1,6 @@
 #include "versions.hh"
 
+#include <git2.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -18,8 +19,8 @@
 #include "tsugumi/document/schema.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/git.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/text.hh"
 #include "version_record.hh"
 
 namespace tsugumi {
@@ -35,8 +36,24 @@ constexpr const char* kIgnore = ".tsugumi/\n.DS_Store\n";
 // ---- libgit2 handles
 // ---------------------------------------------------------
 
-using git::init_once;
-using git::Ptr;
+struct Init {
+  Init() { git_libgit2_init(); }
+};
+inline auto init_once() -> void { static Init i; }
+
+template <class T, void (*F)(T*)>
+struct Ptr {
+  T* p = nullptr;
+  Ptr() = default;
+  Ptr(const Ptr&) = delete;
+  Ptr& operator=(const Ptr&) = delete;
+  ~Ptr() {
+    if (p) F(p);
+  }
+  auto out() -> T** { return &p; }
+  auto get() const -> T* { return p; }
+  explicit operator bool() const { return p != nullptr; }
+};
 
 using Repo = Ptr<git_repository, git_repository_free>;
 using Index = Ptr<git_index, git_index_free>;
@@ -241,6 +258,86 @@ std::optional<std::string> file_at(git_repository* r, git_tree* tree,
     return std::nullopt;
   return std::string(static_cast<const char*>(git_blob_rawcontent(b.get())),
                      git_blob_rawsize(b.get()));
+}
+
+// Version presentation accepts object IDs rather than revspecs.
+auto lookup_version(git_repository* repo, const std::string& name, Commit& out)
+    -> void {
+  if (name.size() < 7 || name.size() > GIT_OID_HEXSZ ||
+      name.find_first_not_of("0123456789abcdefABCDEF") != std::string::npos)
+    throw Failed(FailureKind::invalid_request,
+                 "Use a Git version object ID or unambiguous abbreviation");
+  git_oid oid;
+  check(git_oid_fromstrn(&oid, name.c_str(), name.size()), "version id");
+  const auto status = git_commit_lookup_prefix(out.out(), repo, &oid, name.size());
+  if (status == GIT_ENOTFOUND || status == GIT_EAMBIGUOUS)
+    throw Failed(FailureKind::not_found, "no unambiguous version " + name);
+  check(status, "version lookup");
+}
+
+auto parent_tree(git_commit* commit, Tree& tree) -> void {
+  if (git_commit_parentcount(commit) == 0) return;
+  Commit parent;
+  check(git_commit_parent(parent.out(), commit, 0), "parent");
+  check(git_commit_tree(tree.out(), parent.get()), "parent tree");
+}
+
+auto comment_files(git_repository* repo, git_tree* tree) -> comments::Files {
+  comments::Files files;
+  if (!tree) return files;
+  struct WalkData {
+    git_repository* repo;
+    comments::Files& files;
+  } data{repo, files};
+  check(git_tree_walk(
+            tree, GIT_TREEWALK_PRE,
+            [](const char* prefix, const git_tree_entry* entry, void* payload) {
+              auto& walk = *static_cast<WalkData*>(payload);
+              if (git_tree_entry_type(entry) != GIT_OBJECT_BLOB) return 0;
+              const std::string path =
+                  std::string(prefix) + git_tree_entry_name(entry);
+              if (!comments::is_meta(path) &&
+                  !(path.ends_with("/_card.json") && comments::card_of(path)))
+                return 0;
+              Blob blob;
+              const auto status =
+                  git_blob_lookup(blob.out(), walk.repo, git_tree_entry_id(entry));
+              if (status != 0) return status;
+              walk.files[path] = std::string(
+                  static_cast<const char*>(git_blob_rawcontent(blob.get())),
+                  git_blob_rawsize(blob.get()));
+              return 0;
+            },
+            &data),
+        "comment trees");
+  return files;
+}
+
+auto compare_comments(git_repository* repo, git_tree* before, git_tree* after)
+    -> std::vector<comments::Change> {
+  return comments::changes(comments::of(comment_files(repo, before)),
+                           comments::of(comment_files(repo, after)));
+}
+
+auto summary_reads(const std::string& path) -> bool {
+  if (path == "tsugumi.json")
+    return true;  // layout.json is where things sit, not what they do
+  std::vector<std::string> parts;
+  for (const auto& p : stdfs::path(path)) parts.push_back(p.string());
+  if (parts.empty()) return false;
+  size_t i = 0;
+  while (i + 1 < parts.size() && parts[i] == "externals") i += 2;
+  if (i == parts.size() - 1) return parts[i] == "tsugumi.json";
+  if (i + 2 >= parts.size() || parts[i] != "definitions") return false;
+  const std::string& file = parts[i + 2];
+  if (i + 3 == parts.size())
+    return file == "_card.json" || file == "_meta.json" ||
+           file == "_outputs.fbs" || file == "default.nix";
+  static const std::set<std::string> code = {".py",  ".cc",  ".cpp", ".cxx",
+                                             ".c",   ".h",   ".hh",  ".hpp",
+                                             ".nix", ".fbs", ".sh"};
+  return file == "src" &&
+         code.count(stdfs::path(path).extension().string()) > 0;
 }
 
 // Every file supplied through a Card's src/ is a source input, including
@@ -762,7 +859,7 @@ void Versions::checkout(
   }
 }
 
-VersionGraphData Versions::graph(size_t limit) {
+VersionGraphData Versions::graph(size_t limit, bool include_comments) {
   std::lock_guard<std::mutex> l(mu_);
   VersionGraphData g;
   Repo r;
@@ -832,12 +929,10 @@ VersionGraphData Versions::graph(size_t limit) {
     // What changed from the first parent, by Card.
     Tree mine;
     Tree theirs;
-    git_commit_tree(mine.out(), c.get());
-    if (git_commit_parentcount(c.get()) > 0) {
-      Commit p;
-      if (git_commit_parent(p.out(), c.get(), 0) == 0)
-        git_commit_tree(theirs.out(), p.get());
-    }
+    check(git_commit_tree(mine.out(), c.get()), "tree");
+    parent_tree(c.get(), theirs);
+    if (include_comments)
+      vc.comments = compare_comments(r.get(), theirs.get(), mine.get());
     Diff d;
     if (git_diff_tree_to_tree(d.out(), r.get(), theirs.get(), mine.get(),
                               nullptr) == 0) {
@@ -900,20 +995,16 @@ VersionCanvasData Versions::canvas(const std::string& commit) {
 auto Versions::note(const std::string& commit) -> VersionNoteData {
   std::lock_guard<std::mutex> l(mu_);
   Repo r;
-  git_oid oid;
-  if (!open(r, root_) || !resolve_commit(r.get(), commit, oid))
-    throw Failed(FailureKind::not_found, "no version " + commit);
+  if (!open(r, root_))
+    throw Failed(FailureKind::not_found, "Project has no version repository");
   Commit c;
-  if (git_commit_lookup(c.out(), r.get(), &oid) != 0)
-    throw Failed(FailureKind::not_found, "no version " + commit);
+  lookup_version(r.get(), commit, c);
+  const auto oid = *git_commit_id(c.get());
   Tree mine, theirs;
   check(git_commit_tree(mine.out(), c.get()), "tree");
-  if (git_commit_parentcount(c.get()) > 0) {
-    Commit parent;
-    check(git_commit_parent(parent.out(), c.get(), 0), "parent");
-    check(git_commit_tree(theirs.out(), parent.get()), "parent tree");
-  }
+  parent_tree(c.get(), theirs);
   VersionNoteData out;
+  out.commit = hex(&oid);
   Note record;
   if (git_note_read(record.out(), r.get(), kRecordRef, &oid) == 0) {
     out.record_json = git_note_message(record.get());
@@ -1038,6 +1129,108 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
                         &oid, out.record_json.c_str(), 0),
         "record note");
   return out;
+}
+
+auto Versions::diff(const std::string& commit, const std::string& from)
+    -> VersionDiffData {
+  std::lock_guard lock(mu_);
+  Repo repo;
+  if (!open(repo, root_))
+    throw Failed(FailureKind::not_found, "Project has no version repository");
+  Commit target;
+  lookup_version(repo.get(), commit, target);
+  Tree mine, theirs;
+  check(git_commit_tree(mine.out(), target.get()), "tree");
+  if (from.empty()) {
+    parent_tree(target.get(), theirs);
+  } else {
+    Commit base;
+    lookup_version(repo.get(), from, base);
+    check(git_commit_tree(theirs.out(), base.get()), "base tree");
+  }
+  git_diff_options options;
+  check(git_diff_options_init(&options, GIT_DIFF_OPTIONS_VERSION),
+        "diff options");
+  options.context_lines = 2;
+  Diff changes;
+  check(git_diff_tree_to_tree(changes.out(), repo.get(), theirs.get(), mine.get(),
+                             &options),
+        "diff");
+  // Bound model input and keep one file from using the full patch budget.
+  constexpr size_t kDiffLimit = 12000;
+  constexpr size_t kDiffFileLimit = 4000;
+  VersionDiffData out;
+  for (size_t i = 0; i < git_diff_num_deltas(changes.get()); ++i) {
+    const auto* delta = git_diff_get_delta(changes.get(), i);
+    const char* path =
+        delta->new_file.path ? delta->new_file.path : delta->old_file.path;
+    if (!path || !summary_reads(path)) continue;
+    Patch patch;
+    check(git_patch_from_diff(patch.out(), changes.get(), i), "file patch");
+    if (!patch) continue;
+    struct Buffer {
+      git_buf value = GIT_BUF_INIT;
+      ~Buffer() { git_buf_dispose(&value); }
+    } buf;
+    check(git_patch_to_buf(&buf.value, patch.get()), "patch text");
+    if (!buf.value.size) continue;
+    auto patch_text = text::replace_invalid_utf8(
+        std::string(buf.value.ptr, buf.value.size));
+    if (patch_text.size() > kDiffFileLimit) {
+      auto end = kDiffFileLimit;
+      while ((static_cast<unsigned char>(patch_text[end]) & 0xc0) == 0x80) --end;
+      patch_text.resize(end);
+      out.truncated = true;
+    }
+    if (patch_text.back() != '\n') patch_text += '\n';
+    if (out.text.size() + patch_text.size() > kDiffLimit) {
+      out.truncated = true;
+      break;
+    }
+    out.text += patch_text;
+  }
+  return out;
+}
+
+auto Versions::comment_changes(const std::string& commit)
+    -> std::vector<comments::Change> {
+  std::lock_guard lock(mu_);
+  Repo repo;
+  if (!open(repo, root_))
+    throw Failed(FailureKind::not_found, "Project has no version repository");
+  Commit target;
+  lookup_version(repo.get(), commit, target);
+  Tree mine, theirs;
+  check(git_commit_tree(mine.out(), target.get()), "tree");
+  parent_tree(target.get(), theirs);
+  return compare_comments(repo.get(), theirs.get(), mine.get());
+}
+
+auto Versions::summary(const std::string& commit, bool english,
+                       const std::optional<std::string>& text) -> std::string {
+  std::lock_guard lock(mu_);
+  Repo repo;
+  if (!open(repo, root_))
+    throw Failed(FailureKind::not_found, "Project has no version repository");
+  Commit target;
+  lookup_version(repo.get(), commit, target);
+  const auto* oid = git_commit_id(target.get());
+  const auto* ref =
+      english ? "refs/notes/tsugumi-summary-en" : "refs/notes/tsugumi-summary-ja";
+  if (text) {
+    Sig sig;
+    signature(sig, repo.get());
+    git_oid result;
+    check(git_note_create(&result, repo.get(), ref, sig.get(), sig.get(), oid,
+                          text->c_str(), 1),
+          "store version summary");
+    return *text;
+  }
+  Note note;
+  const auto status = git_note_read(note.out(), repo.get(), ref, oid);
+  if (status == GIT_ENOTFOUND) return "";
+  check(status, "read version summary");
+  return git_note_message(note.get());
 }
 
 }  // namespace tsugumi

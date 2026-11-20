@@ -80,10 +80,8 @@ TEST(SchemaEncode, NonFiniteNumbersNameTheTypeAndNestedField) {
 }
 
 TEST(SchemaEncode, InvalidUtf8EmptyOptionalAndUnassignedDomAreIdentified) {
-  JournalRecord record;
-  JournalFile file;
-  *file.path = std::string(1, static_cast<char>(0xff));
-  record.files->push_back(file);
+  StartupError record;
+  *record.message = std::string(1, static_cast<char>(0xff));
   const auto utf8 = failure(record);
   EXPECT_FALSE(utf8.empty());
   const auto optional = failure(InvocationDetailJson{});

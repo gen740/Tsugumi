@@ -212,7 +212,7 @@ struct Service::State {
         db, *host_settings, shutdown.get_token(),
         [this](std::string raw) { return Scrub(std::move(raw)); });
     versions = std::make_unique<host::Versions>(
-        db, registry, *host_settings, *tools, *turns,
+        *host_settings, *tools, *turns,
         [this](std::string raw) { return Scrub(std::move(raw)); });
     events = std::make_unique<host::HostEvents>(
         state_gate, terminal_closes, [this](uint64_t session) {

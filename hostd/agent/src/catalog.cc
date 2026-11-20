@@ -8,6 +8,7 @@
 #include <optional>
 #include <set>
 
+#include "agent/runtime.hh"
 #include "host/agent_policy.hh"
 #include "host/failure.hh"
 #include "tsugumi/protocol/host_generated.h"
@@ -491,6 +492,16 @@ auto Catalog::FamilyTool(std::string_view family, std::string_view action,
     throw host::Failure("permission_denied",
                         "Tool action unavailable for this role");
   return name;
+}
+
+auto Catalog::ResolveCall(const ToolCall& call, ModelRole role) const
+    -> ToolCall {
+  if (call.name != "tools") return call;
+  const auto args = json::Object(call.arguments);
+  const auto action = json::Text(args, "action");
+  if (action.empty()) return call;
+  return {call.id, FamilyTool(json::Text(args, "family"), action, role),
+          json::Get(args, "arguments", "{}")};
 }
 
 auto Catalog::ModelSpecs(ModelRole role, bool can_delegate) const

@@ -318,7 +318,7 @@ table ProjectSaveRequest {
   /// Local file references; source bytes never travel through the RPC frame.
   transfers:[SourceTransfer] (id: 6);
   /// Opaque host intent for the existing op_id digest, before concrete expansion.
-  /// A revision-conflicted attempt with an intent is retryable under the same id.
+  /// A caller can explicitly retry a revision conflict with the same intent and id.
   save_intent:string (id: 7);
   /// Carried unchanged in SaveResult, including a replay of this operation id.
   /// The project core does not interpret host editing metadata.
@@ -434,7 +434,11 @@ table VersionCheckoutRequest {
 }
 
 /// -> VersionGraph, newest first.
-table VersionGraphRequest { limit:uint32 = null (id: 0); }
+table VersionGraphRequest {
+  limit:uint32 = null (id: 0);
+  /// Include the comment changes of each commit relative to its first parent.
+  include_comments:bool (id: 1);
+}
 
 /// -> VersionCanvas. Read a version's layout, definition kinds and connections.
 table VersionCanvasRequest { commit:string (id: 0, required); }
@@ -442,6 +446,24 @@ table VersionCanvasRequest { commit:string (id: 0, required); }
 /// -> VersionNote. Neutral facts, cached in refs/notes/tsugumi-record.
 table VersionNoteRequest {
   commit:string (id: 0, required);
+}
+
+/// -> VersionDiff. Read a bounded patch of workflow, definitions and code.
+table VersionDiffRequest {
+  commit:string (id: 0, required);
+  /// Compare with this commit when present, or with the first parent.
+  from_commit:string (id: 1);
+}
+
+/// -> VersionComments. Read a version’s comment changes from its first parent.
+table VersionCommentsRequest { commit:string (id: 0, required); }
+
+/// -> VersionSummary. Read or store a generated summary in the language’s Git notes.
+table VersionSummaryRequest {
+  commit:string (id: 0, required);
+  english:bool (id: 1);
+  /// When present, store this text before returning it.
+  text:string (id: 2);
 }
 
 /// -> OperationResult.
@@ -802,6 +824,9 @@ union RequestPayload {
   ProjectActivityRequest = 55,
   CoreTraceRequest:Tsugumi.Trace.CoreTraceRequest = 56,
   RunDefinitionPathsRequest = 57,
+  VersionDiffRequest = 58,
+  VersionCommentsRequest = 59,
+  VersionSummaryRequest = 60,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -858,6 +883,7 @@ table VersionCommit {
   /// project's own documents).
   changed:[string] (id: 9);
   facts:VersionCommitFacts (id: 10);
+  comments:[VersionComment] (id: 11);
 }
 
 // Raw version definition data. Presentation is interpreted by the host.
@@ -878,7 +904,27 @@ table VersionCanvas {
 
 table VersionNote {
   changes:VersionChanges (id: 0, required);
+  commit:string (id: 1, required);
 }
+
+/// A comment on a Card that a version or a save changed.
+table VersionComment {
+  card:string (id: 0, required);
+  text:string (id: 1, required);
+  /// added, edited, resolved, reopened or removed. A comment written and
+  /// resolved within one version is resolved.
+  change:string (id: 2, required);
+  resolution:string (id: 3);
+  /// Who did it, as the comment records it: agent or user. Absent when it is
+  /// not recorded, as for a comment that is gone.
+  by:string (id: 4);
+  /// The Cards the save that resolved it changed.
+  cards:[string] (id: 5);
+}
+
+table VersionDiff { text:string (required); truncated:bool; }
+table VersionComments { comments:[VersionComment] (required); }
+table VersionSummary { text:string (required); }
 
 table VersionGraph {
   enabled:bool (id: 0);
@@ -1181,6 +1227,9 @@ union ReplyPayload {
   ProjectActivity = 43,
   TraceSnapshot:Tsugumi.Trace.Snapshot = 44,
   RunDefinitionPaths = 45,
+  VersionDiff = 46,
+  VersionComments = 47,
+  VersionSummary = 48,
 }
 
 // ---- Notifications -----------------------------------------------------------

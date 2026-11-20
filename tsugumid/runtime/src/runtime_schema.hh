@@ -12,25 +12,6 @@ struct StartupError {
   t::String<"message"> message;
 };
 
-struct JournalFile {
-  t::String<"p"> path;
-  t::Bool<"delete"> remove;
-  t::String<"c"> content_b64;
-  t::String<"blob"> blob;
-  t::String<"hash"> hash;
-};
-
-struct JournalRecord {
-  t::String<"t"> type;  // "txn" | "commit" | "receipt"
-  t::Uint64<"rev"> rev;
-  t::Uint64<"execution_rev"> execution_rev;
-  t::String<"op"> op;
-  t::String<"kind"> kind;
-  t::String<"digest"> digest;
-  t::String<"receipt"> receipt_b64;
-  t::Array<"files", Obj<JournalFile>> files;
-};
-
 struct ViewEntry {
   t::Uint64<"rev"> rev;
   t::String<"view"> view;

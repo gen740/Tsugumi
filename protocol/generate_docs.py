@@ -19,9 +19,9 @@ GROUPS = [
     ("Card SDKs and types", ["CardSDKPrepare", "CardSDKStatus", "InputTypes", "OutputTypes", "NixSourceResolve"]),
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunHistoryDelete",
-                 "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
+                 "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
     ("Views", ["ViewSetVisible", "ViewSave", "ModuleRead"]),
-    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote"]),
+    ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments", "VersionSummary"]),
 ]
 
 
@@ -136,7 +136,7 @@ def render() -> str:
     common = tables((ROOT / "protocol/service_common.fbs").read_text())
     for service, identifier, principals in [("agent", "TSA1", "user and external"), ("host", "TSH1", "user only")]:
         schema = (ROOT / f"protocol/{service}.fbs").read_text()
-        definitions = common | trace | tables(schema)
+        definitions = all_tables | common | tables(schema)
         out += [f"### {service.title()} service", "",
                 f"Separate listener: `{identifier}`, WebSocket subprotocol `tsugumi.{service}.v1`; authenticated principals: {principals}.", "",
                 "| Request | Fields |", "| --- | --- |"]

@@ -37,7 +37,7 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
 TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
   const Catalog catalog;
   for (const auto* name :
-       {"version_note", "version_note_store", "version_summary"}) {
+       {"version_note", "version_diff", "version_comments", "version_summary"}) {
     EXPECT_EQ(catalog.Find(name), nullptr);
     EXPECT_THROW(catalog.Request(name, "{}", 1), std::runtime_error);
   }
@@ -48,12 +48,14 @@ TEST(AgentCatalog, InternalVersionNoteRequestsAreNotTools) {
                 ->payload_as_Request()
                 ->value_as_VersionNoteRequest(),
             nullptr);
-  EXPECT_THROW(EncodeProjectRequest("version_note_store", "{}", 8),
-               std::runtime_error);
   EXPECT_THROW(EncodeProjectRequest("project_file_format", "{}", 8),
                std::runtime_error);
-  EXPECT_THROW(EncodeProjectRequest("version_summary", "{}", 1),
-               std::runtime_error);
+  const auto summary = EncodeProjectRequest(
+      "version_summary", R"({"commit":"abc","english":true})", 8);
+  EXPECT_NE(Tsugumi::RPC::GetMessage(summary.data())
+                ->payload_as_Request()
+                ->value_as_VersionSummaryRequest(),
+            nullptr);
 }
 
 TEST(AgentCatalog, ExposesPublicToolsWithTheExpectedApprovalPolicy) {
