@@ -52,24 +52,12 @@ assert.equal(session.nodeData('source').state, D.CardState.failed)
 assert.equal(new Scene(session, []).wires[0].count, undefined, 'failed batch does not publish an empty list')
 
 for (const count of [1, 0]) {
-  const provisional = Object.assign(new R.RunEventT(), {
-    runId: 'run', valueType: R.RunEventValue.RunCardChanged,
-    value: Object.assign(new R.RunCardChangedT(), { invocation: Object.assign(new R.InvocationSummaryT(), {
-      card: Object.assign(new D.CardPathT(), { segments: ['source'] }), invocation: 7n,
-      batchActivation: 3n, phase: D.Phase.evaluate, state: D.CardState.running,
-    }) }),
-  })
-  if (count === 0) {
-    listener.applyRunEvent(provisional)
-    assert.ok(session.timeline.some((entry) => entry.invocation === 7n))
-  }
   batch(BigInt(3 - count), count, true)
   if (count === 0) {
-    listener.applyRunEvent(provisional)
+    assert.equal(session.nodeData('source').state, D.CardState.succeeded)
     assert.equal(session.nodeData('source').invocation, 0n)
     assert.equal(session.nodeData('source').stage, undefined)
-    assert.ok(!session.timeline.some((entry) => entry.invocation === 7n), 'empty list preparation leaves no phantom invocation')
-    assert.ok(session.timeline.some((entry) => entry.invocation === 1n), 'an earlier activation keeps its invocation')
+    assert.deepEqual(session.timeline.map((entry) => entry.invocation), [1n])
   }
   const [list, collected] = new Scene(session, []).wires
   assert.equal(list.executionList, true)

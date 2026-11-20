@@ -200,7 +200,7 @@ def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factor
 #include <stdlib.h>
 #include <string.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char data[4096], next[4096], padding[4096], json[8192];
   snprintf(data, sizeof data, "%s/data", c->output_directory);
@@ -231,8 +231,8 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     }
     _exit(0);
   }
-  snprintf(json, sizeof json, "{\"doc\":{\"value\":\"%s\"}}", c->output_directory);
-  return c->effects->outputs_json(c->host, json, outputs);
+  snprintf(json, sizeof json, "{\"value\":\"%s\"}", c->output_directory);
+  return c->effects->output_json(c->host, "doc", json);
 }
 '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = {

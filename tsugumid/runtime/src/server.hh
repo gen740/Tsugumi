@@ -36,6 +36,10 @@ class Server {
   void subscribe(ConnId conn, std::string sub_id, std::string open_reply);
   void set_visible(ConnId conn, std::string sub_id, std::set<std::string> cards,
                    bool enabled, std::string ack, std::vector<Note> initial);
+  static auto notification(flatbuffers::FlatBufferBuilder& b,
+                           std::string_view subscription, uint64_t seq,
+                           Tsugumi::RPC::NotificationPayload type,
+                           flatbuffers::Offset<void> value) -> std::string;
   void broadcast(Note note);
   void close(ConnId conn);
 

@@ -90,7 +90,8 @@ static auto TransformLayout(
   for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
     const auto id = json::Text(json::Object(raw), "id");
     const auto position = json::Object(json::Get(positions, id, "{}"));
-    if (!positions.contains(id)) missing.push_back(id);
+    if (!position.contains("x") || !position.contains("y"))
+      missing.push_back(id);
     // A host reservation is independent of a window's zoom and grid. Leave
     // room for the normal expanded Card; Arrange uses measured UI geometry.
     size_t params = 0, ports = 0;
@@ -186,6 +187,16 @@ static auto TransformLayout(
     scene.notes.push_back({json::Text(b, "id"), number(b, "x", 0),
                            number(b, "y", 0), number(b, "width", 240),
                            number(b, "height", 160)});
+  }
+  if (action == 1) {
+    // Moves and port sorting use the same positions as the displayed canvas.
+    for (const auto& placed : layout::place_missing(scene, missing).cards)
+      for (auto& card : scene.cards)
+        if (card.id == placed.id) {
+          card.x = placed.x;
+          card.y = placed.y;
+          break;
+        }
   }
   if (measurements) {
     const auto measured = MeasuredScene(*measurements);
@@ -412,8 +423,6 @@ auto MoveProjectLayout(const std::string& project, const std::string& text,
 }
 
 auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
-                       const std::vector<std::string>& documents,
-                       const LayoutWrite& may_write,
                        const SourcePatches& patches) -> std::string {
   auto args = json::Object(arguments);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
@@ -421,26 +430,14 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     size_t index;
     std::string text;
     bool source;
+    bool validated = false;
   };
   std::map<std::string, Edit> projects, layouts;
-  std::map<std::string, LayoutFile> pending;
   std::set<std::string> deleted_projects;
   for (size_t i = 0; i < changes.size(); ++i) {
     const auto change = json::Object(changes[i]);
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
-    if (type == "PutDefinition" && !json::Text(value, "card_json").empty())
-      pending["definitions/" + json::Text(value, "id") + "/_card.json"] = {
-          json::Text(value, "card_json"), {}};
-    if (json::Text(value, "path").ends_with("/_card.json")) {
-      const auto path = json::Text(value, "path");
-      if (type == "PutSource")
-        pending[path] = {Bytes(json::Get(value, "bytes")), {}};
-      else if (type == "PatchSource") {
-        if (const auto file = read(path))
-          pending[path] = {Patched(*file, value, patches), {}};
-      }
-    }
     if (type == "SetProject")
       projects[""] = {i, json::Text(value, "json"), false};
     if (type == "SetLayout")
@@ -467,19 +464,9 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     (layout ? layouts : projects)[prefix] = {i, std::move(text), true};
   }
   for (const auto& prefix : deleted_projects) layouts.erase(prefix);
-  // Existing unplaced Cards are materialized by the next save of any kind,
-  // including a source-only edit, at every external document depth.
-  for (const auto& path : documents) {
-    const auto prefix = path.substr(0, path.size() - 12);
-    if (deleted_projects.contains(prefix) || projects.contains(prefix))
-      continue;
-    if (const auto file = read(path))
-      projects[prefix] = {0, file->text, !prefix.empty()};
-  }
   for (const auto& [prefix, project] : projects) {
     if (deleted_projects.contains(prefix)) continue;
     const auto layout_path = prefix + "layout.json";
-    if (may_write && !may_write(layout_path, "")) continue;
     const auto previous = read(prefix + "tsugumi.json");
     const auto before = previous
                             ? CardIds(previous->text, prefix + "tsugumi.json")
@@ -488,76 +475,30 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
     std::set<std::string> removed;
     for (const auto& id : before)
       if (!after.contains(id)) removed.insert(id);
-    const auto file = read(prefix + "layout.json");
+    if (removed.empty()) continue;
+    const auto file = read(layout_path);
     const auto old = layouts.contains(prefix) ? layouts.at(prefix).text
                      : file                   ? file->text
                                               : "{}";
-    auto seeded = ValidateLayout(old, removed);
-    if (previous) {
-      const auto stored = file ? file->text : "{}";
-      const auto derived = json::Object(CompleteLayout(
-          previous->text, stored,
-          [&](const std::string& path) { return read(prefix + path); }));
-      const auto stored_positions =
-          json::Object(json::Get(json::Object(stored), "cards", "{}"));
-      auto doc = json::Object(seeded);
-      auto positions = json::Object(json::Get(doc, "cards", "{}"));
-      bool changed = false;
-      for (const auto& [id, position] :
-           json::Object(json::Get(derived, "cards", "{}"))) {
-        if (after.contains(id) && !stored_positions.contains(id) &&
-            !positions.contains(id)) {
-          positions[id] = position;
-          changed = true;
-        }
-      }
-      if (changed) {
-        doc["cards"] = json::Encode(positions);
-        seeded = json::Encode(doc);
-      }
-    }
-    auto completed = CompleteLayout(
-        project.text, seeded,
-        [&](const std::string& path) -> std::optional<LayoutFile> {
-          const auto file = prefix + path;
-          if (pending.contains(file)) return pending.at(file);
-          return read(file);
-        });
-    // Derive with the entire scene so filtering cannot change anyone's place.
-    // Only materialize the part of that proposal the saver is allowed to write.
-    if (may_write) {
-      auto doc = json::Object(completed);
-      auto positions = json::Object(json::Get(doc, "cards", "{}"));
-      const auto original =
-          json::Object(json::Get(json::Object(old), "cards", "{}"));
-      std::erase_if(positions, [&](const auto& entry) {
-        return !original.contains(entry.first) &&
-               !may_write(layout_path, entry.first);
-      });
-      if (positions == original && seeded == old)
-        completed = old;
-      else {
-        doc["cards"] = json::Encode(positions);
-        completed = json::Encode(doc);
-      }
-    }
+    const auto cleaned = ValidateLayout(old, removed);
     if (layouts.contains(prefix)) {
-      layouts.at(prefix).text = completed;
-    } else if (completed != old) {
+      layouts.at(prefix).text = cleaned;
+      layouts.at(prefix).validated = true;
+    } else if (cleaned != old) {
       const auto i = changes.size();
       const auto value =
           project.source
               ? json::Members{{"path", json::Quote(prefix + "layout.json")},
-                              {"bytes", json::Quote(completed)},
+                              {"bytes", json::Quote(cleaned)},
                               {"base_hash", file && file->hash
                                                 ? json::Quote(*file->hash)
                                                 : "null"}}
-              : json::Members{{"json", json::Quote(completed)}};
+              : json::Members{{"json", json::Quote(cleaned)}};
       changes.push_back(json::Encode(json::Members{
           {"value_type",
            json::Quote(project.source ? "PutSource" : "SetLayout")},
           {"value", json::Encode(value)}}));
-      layouts[prefix] = {i, completed, project.source};
+      layouts[prefix] = {i, cleaned, project.source, true};
     }
   }
   for (const auto& [prefix, layout] : layouts) {
@@ -567,7 +508,7 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
         layout.text == "{}")
       continue;
     value[layout.source ? "bytes" : "json"] = json::Quote(
-        projects.contains(prefix) ? layout.text : ValidateLayout(layout.text));
+        layout.validated ? layout.text : ValidateLayout(layout.text));
     if (layout.source) {
       change["value_type"] = json::Quote("PutSource");
       value.erase("patches");

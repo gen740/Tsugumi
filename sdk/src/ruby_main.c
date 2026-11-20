@@ -49,6 +49,14 @@ static VALUE host_inputs(VALUE self) {
   return string(json);
 }
 
+static VALUE host_output(VALUE self, VALUE port, VALUE json) {
+  require_call();
+  return current->effects->output_json(current->host, StringValueCStr(port),
+                                       StringValueCStr(json))
+             ? Qfalse
+             : Qtrue;
+}
+
 static VALUE host_input_kind(VALUE self, VALUE name) {
   require_call();
   return UINT2NUM(current->effects->input_kind(current->host, StringValueCStr(name)));
@@ -67,32 +75,31 @@ static void check_display(int status) {
 
 static VALUE host_text(VALUE self, VALUE value) {
   require_call();
-  check_display(current->effects->display_text(current->host, StringValueCStr(value)));
+  check_display(tsugumi_display_text(current, StringValueCStr(value), 0));
   return Qnil;
 }
 static VALUE host_markdown(VALUE self, VALUE value) {
   require_call();
-  check_display(
-      current->effects->display_markdown(current->host, StringValueCStr(value)));
+  check_display(tsugumi_display_text(current, StringValueCStr(value), 1));
   return Qnil;
 }
 static VALUE host_scalar(VALUE self, VALUE value, VALUE label) {
   require_call();
-  check_display(current->effects->display_scalar(current->host, NUM2DBL(value),
-                                        StringValueCStr(label)));
+  check_display(
+      tsugumi_display_scalar(current, NUM2DBL(value), StringValueCStr(label)));
   return Qnil;
 }
 static VALUE host_module(VALUE self, VALUE name, VALUE json) {
   require_call();
-  check_display(current->effects->display_module(current->host, StringValueCStr(name),
-                                        StringValueCStr(json), NULL, 0));
+  check_display(tsugumi_display_module(current, StringValueCStr(name),
+                                       StringValueCStr(json), NULL, 0));
   return Qnil;
 }
 static VALUE host_image(VALUE self, VALUE media, VALUE bytes, VALUE alt) {
   require_call();
   StringValue(bytes);
-  check_display(current->effects->display_image(
-      current->host, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
+  check_display(tsugumi_display_image(
+      current, StringValueCStr(media), (const uint8_t*)RSTRING_PTR(bytes),
       (size_t)RSTRING_LEN(bytes), StringValueCStr(alt)));
   return Qnil;
 }
@@ -131,8 +138,8 @@ static VALUE host_table(VALUE self, VALUE columns, VALUE rows) {
   for (long i = 0; i < count; ++i)
     for (long j = 0; j < n; ++j)
       cells[i * n + j] = RSTRING_PTR(rb_ary_entry(rb_ary_entry(rows, i), j));
-  const int status = current->effects->display_table(current->host, names, (size_t)n,
-                                            cells, (size_t)count);
+  const int status =
+      tsugumi_display_table(current, names, (size_t)n, cells, (size_t)count);
   free(names);
   free(cells);
   check_display(status);
@@ -185,8 +192,7 @@ static VALUE host_line_chart(VALUE self, VALUE rows) {
       memcpy(next, RSTRING_PTR(rb_ary_entry(row, 3)), count * sizeof(double));
     next += count;
   }
-  const int status =
-      current->effects->display_line_chart(current->host, series, (size_t)n);
+  const int status = tsugumi_display_chart(current, series, (size_t)n);
   free(series);
   free(numbers);
   check_display(status);
@@ -218,8 +224,8 @@ static VALUE host_points(VALUE self, VALUE x, VALUE y, VALUE z, VALUE colors) {
     memcpy(p + 2 * count, RSTRING_PTR(z), (size_t)bytes);
     if (c) memcpy(c, RSTRING_PTR(colors), (size_t)bytes);
   }
-  const int status = current->effects->display_points(current->host, p, p + count,
-                                             p + 2 * count, c, count);
+  const int status =
+      tsugumi_display_points(current, p, p + count, p + 2 * count, c, count);
   free(p);
   free(c);
   check_display(status);
@@ -250,6 +256,7 @@ static VALUE initialize(VALUE ignored) {
   rb_define_singleton_method(host, name, function, count)
   METHOD("info", host_info, 0);
   METHOD("inputs", host_inputs, 0);
+  METHOD("output", host_output, 2);
   METHOD("params", host_params, 0);
   METHOD("input_kind", host_input_kind, 1);
   METHOD("display_text", host_text, 1);
@@ -335,7 +342,7 @@ static int ensure_ruby(void) {
 
 static VALUE invoke(VALUE name) { return rb_funcall(sdk, SYM2ID(name), 0); }
 
-static int call_ruby(const tsugumi_call* call, const char* method, tsugumi_buffer* outputs) {
+static int call_ruby(const tsugumi_call* call, const char* method) {
   current = call;
   int state = 0;
   VALUE result = rb_protect(invoke, ID2SYM(rb_intern(method)), &state);
@@ -345,14 +352,8 @@ static int call_ruby(const tsugumi_call* call, const char* method, tsugumi_buffe
       call->effects->fail(call->host, "worker_failed",
                  "Ruby host bridge raised an exception");
   }
-  int rc = state || result == Qfalse;
-  if (!rc && outputs) {
-    rc = !RB_TYPE_P(result, T_STRING) ||
-         current->effects->outputs_json(current->host, RSTRING_PTR(result), outputs);
-    RB_GC_GUARD(result);
-  }
   current = NULL;
-  return rc;
+  return state || result == Qfalse;
 }
 
 static VALUE load_card(VALUE ignored) {
@@ -371,12 +372,14 @@ static int load(const tsugumi_call* call) {
   current = NULL;
   return state || result == Qfalse;
 }
-int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* outputs) {
+int tsugumi_card_invoke(const tsugumi_call* call) {
   switch (call->phase) {
     case TSUGUMI_PREPARE: return ensure_ruby() ? 0 : 1;
     case TSUGUMI_LOAD: return load(call);
-    case TSUGUMI_RUN_START: return call_ruby(call, "_run_start", NULL);
-    case TSUGUMI_RUN: return call_ruby(call, "_invoke", outputs);
+    case TSUGUMI_RUN_START:
+      return call_ruby(call, "_run_start");
+    case TSUGUMI_RUN:
+      return call_ruby(call, "_invoke");
   }
   return 1;
 }

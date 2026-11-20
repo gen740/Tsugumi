@@ -13,9 +13,6 @@
         "id": "forward"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "spectrum"
       },
       {
@@ -61,24 +58,14 @@
           "port": "measurement"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "spectrum"
-        },
-        "to": {
           "card": "spectrum",
           "port": "measurement"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "naive"
+          "card": "forward",
+          "port": "measurement"
         },
         "to": {
           "card": "naive",
@@ -87,8 +74,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "tikhonov"
+          "card": "forward",
+          "port": "measurement"
         },
         "to": {
           "card": "tikhonov",
@@ -97,8 +84,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "reconstruct"
+          "card": "forward",
+          "port": "measurement"
         },
         "to": {
           "card": "reconstruct",
@@ -107,8 +94,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "horizon"
+          "card": "forward",
+          "port": "measurement"
         },
         "to": {
           "card": "horizon",
@@ -117,8 +104,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "check"
+          "card": "forward",
+          "port": "measurement"
         },
         "to": {
           "card": "check",

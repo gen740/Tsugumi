@@ -124,8 +124,8 @@ auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
   auto l = decode_layout(text);
   if (const auto* cards = schema::get(l.cards))
     for (const auto& [key, pos] : cards->entries())
-      if (!pos.x->has_value() || !pos.y->has_value())
-        invalid_layout("layout.json: card " + key + " needs x and y");
+      if (pos.x->has_value() != pos.y->has_value())
+        invalid_layout("layout.json: card " + key + " needs both x and y");
   if (const auto* notes = schema::get(l.notes))
     for (const auto& n : *notes)
       if (!n.id->has_value() || !n.text->has_value() || !n.x->has_value() ||
@@ -219,97 +219,77 @@ auto ValidateLayout(const std::string& text,
 }
 
 auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
-  struct Card {
-    std::string id;
-    double x = 0, y = 0;
-    std::string kind;
-    uint32_t fan = 0;
-    bool collapsed = false;
-  };
-  struct Canvas {
-    std::vector<Card> cards;
-    std::vector<std::pair<std::string, std::string>> wires;
-    std::string flow = "leftToRight";
-  } out;
-  std::map<std::string, size_t> index;
-  if (in.cards())
-    for (const auto* card : *in.cards()) {
-      index[card->id()->str()] = out.cards.size();
-      out.cards.push_back(
-          {card->id()->str(), 0, 0, card->kind()->str(), card->fan(), false});
-    }
-  if (in.wires())
-    for (const auto* wire : *in.wires())
-      if (index.contains(wire->from()->str()) &&
-          index.contains(wire->to()->str()))
-        out.wires.emplace_back(wire->from()->str(), wire->to()->str());
-  auto place = [&]() -> void {
-    // Saved positions, when every Card has one.
-    std::map<std::string, layout_schema::Position> saved;
-    layout_schema::Layout layout;
-    auto layout_text = in.layout_json()->str();
-    if (!schema::decode(layout_text, layout))
-      if (const auto* positions = schema::get(layout.cards))
-        for (const auto& [key, position] : positions->entries())
-          if (schema::get(position.x) && schema::get(position.y))
-            saved[key] = position;
-    bool placed = !out.cards.empty();
-    for (const auto& card : out.cards) placed = placed && saved.count(card.id);
-    if (placed) {
-      for (auto& card : out.cards) {
-        const auto& position = saved[card.id];
-        card.x = *schema::get(position.x);
-        card.y = *schema::get(position.y);
-        const auto* collapsed = schema::get(position.collapsed);
-        card.collapsed = collapsed && *collapsed;
-      }
-      // The saved direction; without one, read from where the wired Cards sit,
-      // as the clients do for the canvas.
-      const auto* flow = schema::get(layout.flow);
-      if (flow && (*flow == "topToBottom" || *flow == "leftToRight")) {
-        out.flow = *flow;
-      } else {
-        double across = 0;
-        double down = 0;
-        for (const auto& [a, b] : out.wires) {
-          across += std::abs(out.cards[index[b]].x - out.cards[index[a]].x);
-          down += std::abs(out.cards[index[b]].y - out.cards[index[a]].y);
-        }
-        if (down > 0 && down >= across) out.flow = "topToBottom";
-      }
-      return;
-    }
-    // Columns by depth (a wire back in a loop does not push a Card further).
-    std::vector<size_t> depth(out.cards.size(), 0);
-    for (size_t round = 0; round < out.cards.size(); ++round)
-      for (const auto& [a, b] : out.wires)
-        depth[index[b]] =
-            std::max(depth[index[b]],
-                     std::min(depth[index[a]] + 1, out.cards.size() - 1));
-    std::map<size_t, int> rows;
-    for (size_t i = 0; i < out.cards.size(); ++i) {
-      out.cards[i].x = static_cast<double>(depth[i]) * 300;
-      out.cards[i].y = rows[depth[i]]++ * 120.0;
-    }
-  };
-  place();
   R::VersionCanvasT result;
-  result.flow = out.flow;
-  for (const auto& c : out.cards) {
-    auto card = std::make_unique<R::VersionCanvasCardT>();
-    card->id = c.id;
-    card->x = c.x;
-    card->y = c.y;
-    card->kind = c.kind;
-    card->fan = c.fan;
-    card->collapsed = c.collapsed;
-    result.cards.push_back(std::move(card));
-  }
-  for (const auto& [a, b] : out.wires) {
-    auto wire = std::make_unique<R::VersionCanvasWireT>();
-    wire->from = a;
-    wire->to = b;
-    result.wires.push_back(std::move(wire));
+  layout_schema::Layout saved;
+  if (schema::decode(in.layout_json()->str(), saved)) saved = {};
+  std::map<std::string, const layout_schema::Position*> positions;
+  if (const auto* entries = schema::get(saved.cards))
+    for (const auto& [id, position] : entries->entries())
+      positions.emplace(id, &position);
+  layout::Scene scene;
+  std::vector<std::string> missing;
+  std::map<std::string, size_t> index;
+  std::set<std::string> placed;
+  if (in.cards())
+    for (const auto* entry : *in.cards()) {
+      auto card = std::make_unique<R::VersionCanvasCardT>();
+      card->id = entry->id()->str();
+      card->kind = entry->kind()->str();
+      card->fan = entry->fan();
+      const auto at = positions.find(card->id);
+      const auto* position = at != positions.end() ? at->second : nullptr;
+      const auto* x = position ? schema::get(position->x) : nullptr;
+      const auto* y = position ? schema::get(position->y) : nullptr;
+      const auto* collapsed = position ? schema::get(position->collapsed)
+                                       : nullptr;
+      card->collapsed = collapsed && *collapsed;
+      if (x && y) {
+        card->x = *x;
+        card->y = *y;
+        placed.insert(card->id);
+      } else {
+        missing.push_back(card->id);
+      }
+      index[card->id] = result.cards.size();
+      result.cards.push_back(std::move(card));
+    }
+  double across = 0, down = 0;
+  if (in.wires())
+    for (const auto* entry : *in.wires()) {
+      const auto from = entry->from()->str(), to = entry->to()->str();
+      if (!index.contains(from) || !index.contains(to)) continue;
+      auto wire = std::make_unique<R::VersionCanvasWireT>();
+      wire->from = from;
+      wire->to = to;
+      result.wires.push_back(std::move(wire));
+      scene.wires.push_back({from, {}, to, {}});
+      if (placed.contains(from) && placed.contains(to)) {
+        const auto& a = *result.cards[index.at(from)];
+        const auto& b = *result.cards[index.at(to)];
+        across += std::abs(b.x - a.x);
+        down += std::abs(b.y - a.y);
+      }
+    }
+  const auto* flow = schema::get(saved.flow);
+  scene.top_to_bottom = flow && (*flow == "topToBottom" || *flow == "leftToRight")
+                            ? *flow == "topToBottom"
+                            : down > 0 && down >= across;
+  result.flow = scene.top_to_bottom ? "topToBottom" : "leftToRight";
+  if (!missing.empty()) {
+    // Reserve room for the preview's Card and any ports shown on its outline.
+    for (const auto& card : result.cards) {
+      const double port_span = 64.0 * card->fan + 24;
+      scene.cards.push_back(
+          {card->id, card->x, card->y,
+           scene.top_to_bottom ? std::max(320.0, port_span) : 320.0,
+           scene.top_to_bottom ? 120.0 : std::max(120.0, port_span),
+           {}, {}, false});
+    }
+    for (const auto& p : layout::place_missing(scene, missing).cards) {
+      auto& card = *result.cards[index.at(p.id)];
+      card.x = p.x;
+      card.y = p.y;
+    }
   }
   return result;
 }

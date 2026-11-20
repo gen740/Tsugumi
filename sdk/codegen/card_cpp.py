@@ -40,7 +40,7 @@ def main(contract_path, out):
         t = cxx(p["type"]) + "T"
         hh.append(f"  {t if p['required'] else 'std::optional<' + t + '>'} {member(p['name'])};"
                   + (f"  // {p['kind']}: .value is the path" if p["kind"] != "flatbuffer" else ""))
-    hh += ["  ::params::ParamsT params;", "};", "", "// Outputs to send: set the ports this invocation produces.", "struct Output {"]
+    hh += ["  ::parameters::ParamsT params;", "};", "", "// Outputs to send: set the ports this invocation produces.", "struct Output {"]
     for p in c["outputs"]:
         hh.append(f"  std::optional<{cxx(p['type'])}T> {member(p['name'])};"
                   + ("" if p["required"] else "  // optional")
@@ -55,7 +55,7 @@ def main(contract_path, out):
             hh += [f"    case {t}::{m}: return f(*u.As{m}());" for m in members]
             hh += ["    default: break;", "  }",
                    f'  throw ::tsugumi::Failure("output_invalid", "{p["name"]}.{u["field"]} holds no member");', "}"]
-    hh += ["", "using Params = ::params::ParamsT;", "", "}  // namespace Card", "",
+    hh += ["", "using Params = ::parameters::ParamsT;", "", "}  // namespace Card", "",
            "// Implement one overload; omit trailing roles when unused."]
     signatures = ["const Card::Inputs& inputs", "const Card::Inputs& inputs, tsugumi::Report& report",
                   "const Card::Inputs& inputs, tsugumi::Report& report, const tsugumi::Run& run"]
@@ -67,20 +67,17 @@ def main(contract_path, out):
     for function, result in [("run", "Card::Output"), ("onRunStart", "void")]:
         cc += [f"TSUGUMI_OPTIONAL auto {function}({args}) -> {result};" for args in signatures]
     cc += ["#undef TSUGUMI_OPTIONAL", "namespace {", "auto read(tsugumi::card::Call& c) -> Card::Inputs {", "  Card::Inputs inputs;"]
-    if c["inputs"]:
-        cc.append("  const auto* in = ::inputs::GetInputs(c.inputs());")
     for p in c["inputs"]:
-        m = member(p["name"])
+        name = p["name"]
+        m = member(name)
+        cc.append(f'  if (const auto* value = c.input<{cxx(p["type"])}>("{name}"))')
+        cc.append(f'    value->UnPackTo(&inputs.{m}{"" if p["required"] else ".emplace()"});')
         if p["required"]:
-            cc.append(f"  in->{m}()->UnPackTo(&inputs.{m});")
-        else:
-            cc.append(f"  if (auto* value = in->{m}()) {{")
-            cc.append(f"    value->UnPackTo(&inputs.{m}.emplace());")
-            cc.append("  }")
-    cc += ["  c.unpack_params<::params::Params>(inputs.params);", "  return inputs;", "}", "}",
-           'extern "C" int tsugumi_card_invoke(const tsugumi_call* call, tsugumi_buffer* result) {',
+            cc.append(f'  else throw tsugumi::Failure("input_missing", "{name}");')
+    cc += ["  c.unpack_params<::parameters::Params>(inputs.params);", "  return inputs;", "}", "}",
+           'extern "C" int tsugumi_card_invoke(const tsugumi_call* call) {',
            "  if (call->phase == TSUGUMI_PREPARE || call->phase == TSUGUMI_LOAD) return 0;",
-           "  return tsugumi::card::invoke(call, [call, result](tsugumi::card::Call& c) {",
+           "  return tsugumi::card::invoke(call, [call](tsugumi::card::Call& c) {",
            "    const auto inputs = read(c);", "    tsugumi::Report report;"]
     args_list = ["const Card::Inputs&", "const Card::Inputs&, tsugumi::Report&",
                  "const Card::Inputs&, tsugumi::Report&, const tsugumi::Run&"]
@@ -93,15 +90,15 @@ def main(contract_path, out):
     for i, (args, actual) in enumerate(zip(args_list, actual_list)):
         prefix = "if" if i == 0 else "else if"
         cc.append(f"    {prefix} (auto f = static_cast<Card::Output(*)({args})>(run)) output = f({actual});")
-    cc += ['    else throw tsugumi::Failure("worker_failed", "define run(inputs[, report[, run]])");',
-           "    ::outputs::OutputsT packed;"]
+    cc += ['    else throw tsugumi::Failure("worker_failed", "define run(inputs[, report[, run]])");']
     for p in c["outputs"]:
         m = member(p["name"])
-        cc.append(f'    if (output.{m}) packed.{m} = std::make_unique<{cxx(p["type"])}T>(std::move(*output.{m}));')
-    cc += ["    flatbuffers::FlatBufferBuilder builder;",
-           "    builder.Finish(::outputs::Outputs::Pack(builder, &packed));",
-           "    if (tsugumi_copy_outputs(result, builder.GetBufferPointer(), builder.GetSize())) throw std::bad_alloc();",
-           "  });", "}", ""]
+        cc += [f'    if (output.{m}) {{',
+               '      flatbuffers::FlatBufferBuilder builder;',
+               f'      builder.Finish({cxx(p["type"])}::Pack(builder, &*output.{m}));',
+               f'      c.output("{p["name"]}", builder);',
+               '    }']
+    cc += ["  });", "}", ""]
     open(os.path.join(out, "include", "card.hh"), "w").write("\n".join(hh))
     open(os.path.join(out, "src", "card_adapter.cc"), "w").write("\n".join(cc))
 

@@ -7,13 +7,7 @@
         "id": "start"
       },
       {
-        "id": "branches"
-      },
-      {
         "id": "penguins"
-      },
-      {
-        "id": "share"
       },
       {
         "id": "correlate"
@@ -38,24 +32,14 @@
           "port": "out"
         },
         "to": {
-          "card": "branches",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "branches",
-          "port": "penguins"
-        },
-        "to": {
           "card": "penguins",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "branches",
-          "port": "admissions"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "admissions",
@@ -68,24 +52,14 @@
           "port": "penguins"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "correlate"
-        },
-        "to": {
           "card": "correlate",
           "port": "penguins"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "survey"
+          "card": "penguins",
+          "port": "penguins"
         },
         "to": {
           "card": "survey",

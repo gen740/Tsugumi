@@ -9,12 +9,7 @@ namespace {
 TEST(LayoutBoundary, OnlyExternalProjectLayoutIsExcludedFromExecutionIdentity) {
   Document doc;
   doc.project_json = "{}";
-  const auto fingerprint = [&] {
-    return execution_fingerprint(
-        doc, [](const std::string&) -> std::optional<std::string> {
-          return std::nullopt;
-        });
-  };
+  const auto fingerprint = [&] { return execution_fingerprint(doc); };
   const auto empty = fingerprint();
   doc.layout_json = R"({"future":true})";
   doc.sources["externals/child/layout.json"] = {"one", 1};

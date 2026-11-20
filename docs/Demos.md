@@ -35,9 +35,8 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), fork (distribution), branch (conditional branching), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
-A fork Card only hands values out as the arrows show, so it is left out of each demo's table.
-Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, fork, merge and branch) and in the Card's settings.
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
+Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
 
 ## The basics
 
@@ -145,7 +144,7 @@ Each classifier Card shows its accuracy, single-thread CPU time (training and pr
 
 - Run it as it is. The seven branches run at the same time (how many at once is "Parallel runs" in the settings, default 4). Inspect accuracy, errors and the uncertainty of pairwise differences in `compare`.
 - Set `max_depth` of `forest` to 3 and run just that Card. No other branch runs; inspect how restricting tree depth changes its errors.
-- To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `share`. The branches you did not change do not run, so their accuracy is the same.
+- To compare again, run from `forest` onwards ("Run from Here Downstream"). Only `forest` and what follows `compare` run, and `compare` compares the new `forest` result with the saved inputs of the other branches and `prepare`. The branches you did not change do not run, so their accuracy is the same.
 - Change `k` of `knn`, `gamma` of `svm` or `epochs` of `cnn`.
 - Increase `train_size` of `prepare` and see which classifiers benefit from more images and whose time grows (`svm`'s and `knn`'s prediction times grow).
 

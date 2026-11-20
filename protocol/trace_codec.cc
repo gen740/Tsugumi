@@ -58,16 +58,11 @@ auto Failure(const Reply& reply) -> std::string_view {
 template <class Message, class RequestName, class ReplyName>
 auto Envelope(const Message* message, std::optional<uint64_t> id,
               RequestName request_name, ReplyName reply_name) -> Metadata {
-  if (const auto* request = message->payload_as_Request()) {
-    const std::string_view name = request_name(request->value_type());
-    if (name != "HostTraceRequest" && name != "CoreTraceRequest")
-      return {Direction::Request, name, id};
-  }
-  if (const auto* reply = message->payload_as_Reply()) {
-    const std::string_view name = reply_name(reply->value_type());
-    if (name != "HostTrace" && name != "TraceSnapshot")
-      return {Direction::Reply, name, id, Failure(*reply)};
-  }
+  if (const auto* request = message->payload_as_Request())
+    return {Direction::Request, request_name(request->value_type()), id};
+  if (const auto* reply = message->payload_as_Reply())
+    return {Direction::Reply, reply_name(reply->value_type()), id,
+            Failure(*reply)};
   return {};
 }
 
@@ -76,16 +71,20 @@ auto Describe(std::string_view bytes, bool outgoing) -> Metadata {
   const auto* data = bytes.data();
   if (R::MessageBufferHasIdentifier(data)) {
     const auto* message = R::GetMessage(data);
-    if (const auto* note = message->payload_as_Notification())
+    if (const auto* note = message->payload_as_Notification()) {
+      if (note->value_as_TraceChanged()) return {};
       return {Direction::Notification,
               R::EnumNameNotificationPayload(note->value_type())};
+    }
     return Envelope(message, message->request_id(), R::EnumNameRequestPayload,
                     R::EnumNameReplyPayload);
   }
   if (H::MessageBufferHasIdentifier(data)) {
     const auto* message = H::GetMessage(data);
-    if (const auto* event = message->payload_as_Event())
+    if (const auto* event = message->payload_as_Event()) {
+      if (event->value_as_TraceChanged()) return {};
       return {Direction::Event, H::EnumNameEventPayload(event->value_type())};
+    }
     return Envelope(message, RequestId(message->request_id()),
                     H::EnumNameRequestPayload, H::EnumNameReplyPayload);
   }
@@ -279,6 +278,8 @@ auto ClientName(Tsugumi::Trace::Client client) -> const char* {
       return "Web client";
     case C::Host:
       return "hostd";
+    case C::Trace:
+      return "RPC trace";
     default:
       return nullptr;
   }
@@ -288,6 +289,9 @@ auto ToWire(Snapshot snapshot) -> Tsugumi::Trace::SnapshotT {
   namespace T = Tsugumi::Trace;
   T::SnapshotT result;
   result.mode = static_cast<T::Mode>(snapshot.mode);
+  result.first_sequence = snapshot.first_sequence;
+  result.cleared_through = snapshot.cleared_through;
+  result.evicted_through = snapshot.evicted_through;
   for (auto& entry : snapshot.entries) {
     auto value = std::make_unique<T::EntryT>();
     value->sequence = entry.sequence;
