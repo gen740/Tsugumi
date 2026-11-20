@@ -121,7 +121,6 @@ export interface CardRunState {
   state: D.CardState
   /** Number of the latest invocation in this run (1, 2, …); 0 = not run. */
   invocation: bigint
-  batchActivation?: bigint
   phase: D.Phase
   failure?: string
   executionState?: D.RemoteExecutionState | null
@@ -159,7 +158,6 @@ export const runStateStage = (st: CardRunState): Stage | undefined =>
 export interface TimelineEntry {
   card: CardKey
   invocation: bigint
-  batchActivation?: bigint
   state: D.CardState
   startedAt?: number
   endedAt?: number
@@ -775,7 +773,7 @@ export class ProjectSession extends Observable {
     if (!prev || prev.invocation <= n) {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
-        state: inv.state, invocation: n, batchActivation: inv.batchActivation ?? undefined, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
         executionState: inv.executionState,
         transfer: (inv.state === D.CardState.running || inv.state === D.CardState.preparing) && inv.transferDirection && inv.transferDone < inv.transferTotal
           ? L('ファイル転送: {0} ({1}/{2} bytes)', s(inv.transferName), String(inv.transferDone), String(inv.transferTotal)) : undefined,
@@ -794,11 +792,6 @@ export class ProjectSession extends Observable {
     if (current && (batch.activation < current.activation ||
       (batch.activation === current.activation && current.complete && !batch.complete))) return
     this.runBatches.set(card, batch)
-    if (batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) {
-      // Nix preparation can use a provisional invocation before it finds an empty list.
-      if (this.cardStates.get(card)?.batchActivation === batch.activation) this.cardStates.delete(card)
-      this.timeline = this.timeline.filter((item) => item.card !== card || item.batchActivation !== batch.activation)
-    }
   }
 
   /** The Cards of the last run, for a project just opened: their notifications were sent before it was. */
@@ -986,8 +979,6 @@ export class ProjectSession extends Observable {
         if (inv.batchActivation != null) {
           this.batchHistoryRevision++
           if (s(e.runId) !== this.currentRunId) break
-          const batch = this.runBatches.get(key(segs(inv.card)))
-          if (batch?.activation === inv.batchActivation && batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) break
         }
         if (inv.executionState !== D.RemoteExecutionState.unspecified) {
           this.remoteHistoryRevision++
@@ -1048,7 +1039,7 @@ export class ProjectSession extends Observable {
       this.timeline[i] = { ...e, state: inv.state, startedAt: st ?? e.startedAt, endedAt: en ?? e.endedAt, stages: stages.length ? stages : e.stages }
       this.timeline = [...this.timeline]
     } else {
-      this.timeline = [...this.timeline, { card: k, invocation: n, batchActivation: inv.batchActivation ?? undefined, state: inv.state, startedAt: st, endedAt: en, stages }]
+      this.timeline = [...this.timeline, { card: k, invocation: n, state: inv.state, startedAt: st, endedAt: en, stages }]
     }
   }
 
