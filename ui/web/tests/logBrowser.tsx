@@ -74,10 +74,20 @@ async function test() {
       current.forEach((fn) => fn(0))
     })
   }
+  // The viewport after each frame, for a report when frames do not settle.
+  const snapshot = () => {
+    const element = document.querySelector<HTMLElement>('.log-text')
+    if (!element) return 'no viewport'
+    const blocks = Array.from(element.querySelectorAll<HTMLElement>('[data-log-block]'))
+      .map((block) => `${block.dataset.logBlock}:${block.offsetHeight}`)
+    return `width ${element.clientWidth} height ${element.clientHeight} scroll ${element.scrollTop}/${element.scrollHeight} blocks ${blocks.join(' ')}`
+  }
   async function settle() {
+    const states: string[] = []
     for (let i = 0; frames.size > 0; ++i) {
-      check(i < 20, `frames did not settle; requested by:\n${[...frames.keys()].map((id) => requesters.get(id)).join('\n--\n')}`)
+      check(i < 20, `frames did not settle; requested by:\n${[...frames.keys()].map((id) => requesters.get(id)).join('\n--\n')}\nlast frames:\n${states.slice(-6).join('\n')}`)
       await tick()
+      states.push(snapshot())
     }
   }
 
