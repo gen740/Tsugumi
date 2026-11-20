@@ -84,7 +84,7 @@ def test_completed_save_can_be_replayed_after_restart(daemon):
     assert saved.rev == replay.rev and project_json(saved)["name"] == "persisted"
 
 
-@pytest.mark.parametrize("existing", [None, "parent", "child"])
+@pytest.mark.parametrize("existing", [None, "parent", "child", "external-parent"])
 def test_save_rejects_file_directory_conflicts_before_writing(daemon, existing):
     client = daemon.connect()
     revision = client.call("ProjectInspectRequest").rev
@@ -93,12 +93,20 @@ def test_save_rejects_file_directory_conflicts_before_writing(daemon, existing):
     def put(which):
         return change("PutSource", path=paths[which], bytes=which.encode())
 
-    if existing:
+    if existing == "external-parent":
+        parent = daemon.project / paths["parent"]
+        parent.parent.mkdir(exist_ok=True)
+        parent.write_bytes(b"external")
+        requested = ["child"]
+        expected = {paths["parent"]: b"external"}
+    else:
+        requested = [which for which in paths if which != existing]
+        expected = {paths[existing]: existing.encode()} if existing else {}
+    if existing in paths:
         revision = client.call("ProjectSaveRequest", baseRev=revision, opId=new_id(),
                                origin="ui:test", changes=[put(existing)]).rev
     request = dict(baseRev=revision, opId=new_id(), origin="ui:test",
-                   changes=[put(which) for which in paths if which != existing])
-    expected = {paths[existing]: existing.encode()} if existing else {}
+                   changes=[put(which) for which in requested])
 
     def files_on_disk():
         return {str(file.relative_to(daemon.project)): file.read_bytes()
@@ -106,7 +114,7 @@ def test_save_rejects_file_directory_conflicts_before_writing(daemon, existing):
 
     with pytest.raises(RpcFailure) as error:
         client.call("ProjectSaveRequest", **request)
-    assert error.value.kind == "invalid_path"
+    assert error.value.kind == ("external_change" if existing == "external-parent" else "invalid_path")
     assert client.call("ProjectInspectRequest").rev == revision
     assert files_on_disk() == expected
 

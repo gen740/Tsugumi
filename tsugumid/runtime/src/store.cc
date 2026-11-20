@@ -451,7 +451,16 @@ void Store::check_disk_unchanged(const Document& base,
       auto it = base.sources.find(op.path);
       if (it != base.sources.end()) expected = it->second.hash;
     }
-    if (stdfs::is_directory(target) || fs::file_sha256(target) != expected)
+    std::error_code error;
+    const auto status = stdfs::status(target, error);
+    if (error && error != std::errc::no_such_file_or_directory &&
+        error != std::errc::not_a_directory)
+      throw stdfs::filesystem_error("checking save destination", target, error);
+    const bool regular = stdfs::is_regular_file(status);
+    if (error == std::errc::not_a_directory ||
+        (stdfs::exists(status) && !regular) ||
+        (regular ? std::optional(fs::sha256_file(target)) : std::nullopt) !=
+            expected)
       throw Failed(FailureKind::external_change,
                    op.path + " changed outside Tsugumi; Reload before saving",
                    {{"path", op.path}});

@@ -44,7 +44,6 @@ void write_atomic(const stdfs::path& p, std::string_view data,
                   unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
 void remove_file_durable(const stdfs::path& p);
-std::optional<std::string> file_sha256(const stdfs::path& p);
 
 // True when `p` resolves (following symlinks) to somewhere inside `root`.
 bool resolves_inside(const stdfs::path& root, const stdfs::path& p);
