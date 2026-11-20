@@ -156,14 +156,15 @@ def test_unexpected_save_failure_does_not_leave_a_retry_waiting(core_factory):
 
 
 @pytest.mark.parametrize("large_source", [True, False], ids=["large-source", "large-document"])
-def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(daemon, large_source):
-    """Many large saves retain the latest document, source and replay result across restart."""
+def test_many_large_saves_keep_their_content_and_recent_receipts_after_restart(daemon, large_source):
+    """Recent saves remain replayable, while old large receipts are evicted."""
     client = daemon.connect()
     snapshot = client.call("ProjectInspectRequest")
     revision = snapshot.rev
     source_hash = None
     document = project_json(snapshot)
     body = bytes(range(256)) * 4096
+    operations = []
     for index in range(12 if large_source else 80):
         if large_source:
             expected = body[index:] + body[:index]
@@ -173,7 +174,9 @@ def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(da
         else:
             document["name"] = "x" * 200000 + str(index)
             changes = [change("SetProject", json=json.dumps(document))]
-        latest = dict(baseRev=revision, opId=new_id(), origin="ui:test", changes=changes)
+        operation = new_id()
+        operations.append(operation)
+        latest = dict(baseRev=revision, opId=operation, origin="ui:test", changes=changes)
         revision = client.call("ProjectSaveRequest", **latest).rev
 
     daemon.restart()
@@ -187,9 +190,48 @@ def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(da
         assert text(reply.hash) == source_hash
     else:
         assert project_json(saved) == document
+        assert recovered.call("OperationGetRequest", opId=operations[0]).state == OperationState.unknown
+        assert recovered.call("OperationGetRequest", opId=operations[-2]).state == OperationState.completed
     replay = recovered.call("ProjectSaveRequest", **latest)
     assert replay.replayed is True and replay.rev == revision
     assert recovered.call("ProjectInspectRequest").rev == revision
+
+
+def test_save_receipt_count_is_bounded_after_restart(daemon):
+    client = daemon.connect()
+    snapshot = client.call("ProjectInspectRequest")
+    revision = snapshot.rev
+    operations = [new_id() for _ in range(2001)]
+    document = project_json(snapshot)
+    for operation in operations:
+        result = save_name(client, revision, "unchanged after first save", operation, document)
+        revision = result.rev
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("OperationGetRequest", opId=operations[0]).state == OperationState.unknown
+    assert recovered.call("OperationGetRequest", opId=operations[1]).state == OperationState.completed
+    result = save_name(recovered, revision, "unchanged after first save", operations[-1], document)
+    assert result.replayed is True and result.rev == revision == snapshot.rev + 1
+
+
+def test_oversized_latest_save_receipt_can_be_replayed_after_restart(daemon):
+    client = daemon.connect()
+    saved = save_name(client, client.call("ProjectInspectRequest").rev, "large receipt")
+    previous = new_id()
+    save_name(client, saved.rev, "large receipt", previous)
+    request = dict(baseRev=saved.rev, opId=new_id(), origin="ui:test",
+                   changes=[change("SetProject", json=json.dumps(project_json(
+                       client.call("ProjectInspectRequest"))))],
+                   operationData=b"x" * (3 << 20))
+    client.call("ProjectSaveRequest", **request)
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("OperationGetRequest", opId=previous).state == OperationState.unknown
+    replay = recovered.call("ProjectSaveRequest", **request)
+    assert replay.replayed is True and replay.rev == saved.rev
+    assert bytes(replay.operationData) == request["operationData"]
 
 
 def test_operation_conflict_and_required_fields(client):

@@ -57,6 +57,29 @@ auto put_receipt(sql::Db& db, const Receipt& receipt) -> void {
       .run();
 }
 
+auto trim_receipts(sql::Db& db) -> void {
+  // Keep a recent suffix for resend. A single valid reply can exceed the
+  // byte budget, so retain the newest completed receipt even if it does.
+  constexpr int kReceiptCount = 2000;
+  constexpr int kReceiptBytes = 2 << 20;
+  db.prepare(R"sql(
+    DELETE FROM receipt WHERE seq IN (
+      SELECT seq FROM (
+        SELECT seq, row_number() OVER recent AS count,
+          sum(length(bytes) + length(CAST(op_id AS BLOB)) +
+              length(kind) + length(digest)) OVER recent AS size
+        FROM receipt
+        WHERE op_id IS NOT (SELECT pending_op FROM document_state)
+        WINDOW recent AS (ORDER BY seq DESC ROWS UNBOUNDED PRECEDING)
+      )
+      WHERE count > ? OR (count > 1 AND size > ?)
+    )
+  )sql")
+      .bind(1, kReceiptCount)
+      .bind(2, kReceiptBytes)
+      .run();
+}
+
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
@@ -288,6 +311,8 @@ auto Store::recover_pending() -> void {
   // Saved bytes and receipts can contain private project data.
   if (!stdfs::exists(path)) fs::write_atomic(path, "", 0600);
   db_ = std::make_unique<sql::Db>(path.string());
+  // Return pages freed by the receipt budget to the filesystem on commit.
+  db_->exec("PRAGMA auto_vacuum=FULL");
   // Sync the parent directory when deleting SQLite's rollback journal too.
   db_->exec("PRAGMA synchronous=EXTRA");
   db_->exec(R"sql(
@@ -299,7 +324,8 @@ auto Store::recover_pending() -> void {
     );
     INSERT OR IGNORE INTO document_state(id, rev, execution_rev) VALUES(1,0,0);
     CREATE TABLE IF NOT EXISTS receipt(
-      op_id TEXT PRIMARY KEY,
+      seq INTEGER PRIMARY KEY,
+      op_id TEXT NOT NULL UNIQUE,
       kind TEXT NOT NULL,
       digest TEXT NOT NULL,
       bytes BLOB NOT NULL
@@ -368,8 +394,16 @@ auto Store::persist_pending(const Document& doc, const Receipt& receipt,
 
 auto Store::finish_pending() -> void {
   sql::Transaction transaction(*db_);
-  db_->exec(
-      "DELETE FROM pending_file; UPDATE document_state SET pending_op=NULL");
+  // If other saves were rejected while persistence was halted, publish the
+  // recovered receipt as the newest so those failures cannot evict it.
+  db_->exec(R"sql(
+    UPDATE receipt SET seq=(SELECT max(seq)+1 FROM receipt)
+      WHERE op_id=(SELECT pending_op FROM document_state)
+        AND seq < (SELECT max(seq) FROM receipt);
+    DELETE FROM pending_file;
+    UPDATE document_state SET pending_op=NULL;
+  )sql");
+  trim_receipts(*db_);
   transaction.commit();
 }
 
@@ -890,7 +924,10 @@ void Store::commit(Staged& st, const std::string& kind,
 void Store::record_receipt(const Receipt& r) {
   std::lock_guard lock(mu_);
   try {
+    sql::Transaction transaction(*db_);
     put_receipt(*db_, r);
+    trim_receipts(*db_);
+    transaction.commit();
   } catch (const sql::Error& e) {
     throw Failed(FailureKind::persistence_failed, e.what());
   }
