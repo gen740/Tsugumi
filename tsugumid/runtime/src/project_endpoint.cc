@@ -22,8 +22,11 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
         r->value_type() > R::RequestPayload::MAX)
       return std::nullopt;
     const auto* hello = r->value_as_SessionHelloRequest();
-    return FrameInfo{*m->request_id(), hello != nullptr,
-                     hello ? trace::ClientName(hello->client()) : nullptr};
+    return FrameInfo{
+        *m->request_id(), hello != nullptr,
+        hello ? trace::ClientName(hello->client()) : nullptr,
+        r->value_type() != R::RequestPayload::CoreTraceRequest &&
+            (!hello || hello->client() != Tsugumi::Trace::Client::Trace)};
   };
   options.codec.completed = [](std::string_view bytes) {
     return R::GetMessage(bytes.data())->request_id().value_or(0);

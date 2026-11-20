@@ -10,6 +10,8 @@ import json
 import shutil
 import subprocess
 
+import pytest
+
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
 from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
@@ -96,6 +98,83 @@ def test_runs_commit_note_and_branch(tmp_path, core_factory):
     assert text(g.branch) != original_branch and {original_branch, text(g.branch)} <= branches, branches
     third = next(x for x in g.commits if text(x.id) == text(st3.commit))
     assert [text(p) for p in third.parents] == [first]
+
+
+def test_checkout_rejects_removed_definition_format_before_committing(tmp_path, core_factory):
+    root = tmp_path / "p"
+    builtin_project(root)
+    c = core_factory(project_root=root).connect()
+    head = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    branch = text(graph(c).branch)
+    git(root, "switch", "-c", "legacy")
+    definition = root / "definitions/src/_card.json"
+    definition.unlink()
+    legacy_link = definition.with_name("_link.json")
+    legacy_link.write_text('{"external":"old"}')
+    git(root, "add", "-A")
+    git(root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "legacy")
+    legacy = git(root, "rev-parse", "HEAD").strip()
+    git(root, "switch", branch)
+
+    set_text(c, "saved but uncommitted")
+    before = definition.read_bytes()
+    snapshot = c.call("ProjectInspectRequest")
+    with pytest.raises(RpcFailure) as error:
+        c.call("VersionCheckoutRequest", baseRev=snapshot.rev, opId=new_id(),
+               origin="test", commit=legacy)
+    assert error.value.kind == "invalid_document"
+    assert git(root, "rev-parse", "HEAD").strip() == head
+    assert git(root, "branch", "--show-current").strip() == branch
+    assert definition.read_bytes() == before and not legacy_link.exists()
+    assert c.call("ProjectInspectRequest").rev == snapshot.rev
+
+
+@pytest.mark.parametrize("blocker", ["untracked-link", "index.lock", "HEAD.lock"])
+def test_checkout_failure_preserves_the_project(tmp_path, core_factory, blocker):
+    root = tmp_path / "p"
+    builtin_project(root, text="target")
+    daemon = core_factory(project_root=root)
+    c = daemon.connect()
+    target = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
+    set_text(c, "current")
+    before = c.call("ProjectInspectRequest")
+    head = (root / ".git/HEAD").read_bytes()
+    definition = root / "definitions/src/_card.json"
+    current = definition.read_bytes()
+    # The user's index is distinct from the saved worktree.
+    staged = root / "staged.txt"
+    staged.write_text("stage only")
+    git(root, "add", "staged.txt")
+    index = (root / ".git/index").read_bytes()
+    if blocker == "untracked-link":
+        obstacle = definition.with_name("untracked-link")
+        obstacle.symlink_to("_card.json")
+    else:
+        obstacle = root / ".git" / blocker
+        obstacle.touch()
+
+    with pytest.raises(RpcFailure) as error:
+        c.call("VersionCheckoutRequest", baseRev=before.rev, opId=new_id(),
+               origin="test", commit=target)
+    assert error.value.kind == (
+        "invalid_path" if blocker == "untracked-link" else "persistence_failed"
+    )
+    assert (root / ".git/HEAD").read_bytes() == head
+    assert git(root, "rev-parse", "HEAD").strip() == target
+    assert (root / ".git/index").read_bytes() == index
+    assert definition.read_bytes() == current
+    assert staged.read_text() == "stage only"
+    assert c.call("ProjectInspectRequest").rev == before.rev
+
+    obstacle.unlink()
+    daemon.close()
+    reopened = core_factory(project_root=root).connect()
+    assert src_text(reopened) == "current"
+    reopened.call("VersionCheckoutRequest",
+                  baseRev=reopened.call("ProjectInspectRequest").rev,
+                  opId=new_id(), origin="test", commit=target)
+    assert src_text(reopened) == "target"
+    assert staged.read_text() == "stage only"
 
 
 def test_runs_version_definitions_and_explicit_paths_only(tmp_path, core_factory):

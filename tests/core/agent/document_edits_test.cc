@@ -187,7 +187,7 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{},"link":{"external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"template":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"template":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/x/_meta.json",
@@ -202,7 +202,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   EXPECT_EQ(
       json::Text(json::Object(
                      json::Object(defs.at("externals/target/definitions/copy/"))
-                         .at("link")),
+                         .at("card")),
                  "external"),
       "copy");
   const auto exts = json::Object(patch.at("externals"));
@@ -228,9 +228,8 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
-      CopyDocuments(
-          R"({"definitions":{"a":{"card":{},"link":{"external":"missing"}}}})",
-          {}, "definitions/a/", "definitions/b/", ""),
+      CopyDocuments(R"({"definitions":{"a":{"card":{"external":"missing"}}}})",
+                    {}, "definitions/a/", "definitions/b/", ""),
       std::runtime_error);
   EXPECT_THROW(
       CopyDocuments("{}", {}, "externals/missing/", "externals/copy/", ""),

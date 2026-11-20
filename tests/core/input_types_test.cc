@@ -35,8 +35,6 @@ auto Graph(const std::string& cards, const std::string& wires, Files files)
     if (path.ends_with("/_card.json")) {
       doc.definitions[id].card = parse_card_json(id, text);
       doc.definitions[id].card_json = text;
-    } else if (path.ends_with("/_link.json")) {
-      doc.definitions[id].link = parse_link_json(id, text).external->value();
     }
   }
   return resolve(doc, [files](const auto& path) -> std::optional<std::string> {
@@ -127,10 +125,10 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
       {{"definitions/src/_card.json", "{}"},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/dest/_card.json", R"({"inputs":[{"name":"data"}]})"},
-       {"definitions/container/_link.json", R"({"external":"outer"})"},
+       {"definitions/container/_card.json", R"({"external":"outer"})"},
        {"externals/outer/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"in"}},"outputs":{"out":{"card":"inner","port":"out"}}}})"},
-       {"externals/outer/definitions/inner/_link.json",
+       {"externals/outer/definitions/inner/_card.json",
         R"({"external":"nested"})"},
        {"externals/outer/externals/nested/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out"}}}})"},

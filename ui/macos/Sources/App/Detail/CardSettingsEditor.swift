@@ -123,7 +123,7 @@ final class CardEditorModel {
   /// Source files of the definition (documents excluded), with local changes.
   var files: [String] {
     guard !prefix.isEmpty else { return [] }
-    let docs: Set<String> = [prefix + "_card.json", prefix + "_meta.json", prefix + "_link.json"]
+    let docs: Set<String> = [prefix + "_card.json", prefix + "_meta.json"]
     return Set(session.sourcePaths.filter { $0.hasPrefix(prefix) && !docs.contains($0) }).union(created).subtracting(removed).sorted()
   }
 

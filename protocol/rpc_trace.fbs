@@ -2,7 +2,7 @@
 namespace Tsugumi.Trace;
 attribute "trace_secret";
 enum Mode:ubyte { Off, Trace, Capture }
-enum Client:ubyte { Unspecified, MacOS, Web, Host }
+enum Client:ubyte { Unspecified, MacOS, Web, Host, Trace }
 enum Direction:ubyte { Request, Reply, Event, Notification }
 table Entry {
   sequence:ulong;
@@ -18,19 +18,35 @@ table Entry {
   content_json:string;
   content_omission:string;
 }
-table Snapshot { mode:Mode; entries:[Entry]; }
+table Snapshot {
+  mode:Mode;
+  entries:[Entry];
+  first_sequence:ulong;
+  // Clear all capture status through the first cursor. Eviction after that
+  // cursor removes bodies that were captured successfully.
+  cleared_through:ulong;
+  evicted_through:ulong;
+  // Host-assigned connection generation. A changed generation resets a source.
+  generation:ulong;
+}
+// Reading the current snapshot arms a one-shot TraceChanged notification.
 table CoreTraceRequest {
   // Required on the guest WebSocket route. Native Unix sockets are private.
   capability:string (trace_secret);
   // Optional Mode ordinal. A missing value leaves the recorder as it is.
   mode:ubyte = null;
+  after:ulong;
 }
+// The connection owns the subscription. Each read arms its next change.
 table HostTraceRequest {
   // Optional Mode ordinal. A missing value leaves the recorder as it is.
   mode:ubyte = null;
   // Omitted lists recorders; an empty source retrieves hostd.
   source:string;
+  after:ulong;
+  generation:ulong;
 }
+table TraceChanged { source:string; catalog:bool; }
 table Recorder { id:string (required); available:bool; }
 table HostTrace {
   snapshot:Snapshot (required);

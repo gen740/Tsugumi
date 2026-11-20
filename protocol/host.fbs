@@ -116,7 +116,7 @@ table HostRuntime { vm_state:string (required); store_path:string; store_exists:
 /// CPUs, memory (GiB) and store disk (GiB) of the shared VM.
 table VMResources { cpus:uint; memory_gib:uint; store_gib:uint; }
 table SettingsChanged { profile:string (required); revision:ulong; }
-union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged }
+union EventPayload { EnvironmentState, EnvironmentProgress, EnvironmentStopped, HostRuntime, HostTerminalData, SettingsChanged, ProviderChanged, TraceChanged:Tsugumi.Trace.TraceChanged }
 table Event { value:EventPayload; }
 table RegisterProjectRequest { project_id:string (required); endpoint:string (required); token:string (trace_secret); title:string; path:string; }
 // One host operation: validate the batch, update shares, await the new core,
@@ -420,9 +420,6 @@ table LayoutValidated { json:string (required); }
 /// their _card.json text. Same document yields the same places on every client.
 /// The returned layout is presentation only; opening never saves it.
 table LayoutCompleteRequest { project_json:string (required); layout_json:string (required); definitions_json:string (required); }
-/// Add missing places and deletion cleanup to the caller's exact CAS save.
-/// No write, retry or merge occurs here. The caller sends the returned save to
-/// the core as its single transaction. Agent saves use the same implementation.
 /// -> VersionCanvas. Draw the raw definition data and layout returned by the
 /// project's VersionCanvasRequest; no document is changed.
 table VersionCanvasRequest {

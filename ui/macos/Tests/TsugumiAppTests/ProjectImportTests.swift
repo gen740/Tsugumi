@@ -59,7 +59,7 @@ extension ChatResumeTests {
       #expect(s.cardDescription("a") == "logs the value")
       #expect(s.cardDefinition("a")?["description"] == nil)
 
-      // A Card in Card has no _card.json, and its summary is saved all the same.
+      // Saving the summary preserves the external reference in _card.json.
       let k = try await s.importProject(from: other, in: [], at: CGPoint(x: 400, y: 0))
       await s.save()
       #expect(s.saveError == nil)
@@ -70,6 +70,7 @@ extension ChatResumeTests {
       #expect(await link.apply())
       #expect(try written(name) == "the imported graph")
       #expect(s.nodeData(k).summary == "the imported graph")
+      #expect(s.cardExternal(k) == "externals/\(name)/")
 
       let child = try await s.addCard(template: .draft, in: [name], at: .zero)
       #expect(s.instance(child) != nil)

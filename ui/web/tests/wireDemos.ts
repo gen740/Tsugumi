@@ -15,7 +15,6 @@ const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync
 /** The Card's ports as the core gives them (tsugumid/document/src/graph.cc), read from its files. */
 function node(dir: string, id: string): CardNodeData {
   const base = path.join(dir, 'definitions', id)
-  const link = read(path.join(base, '_link.json'))
   const def = read(path.join(base, '_card.json'))
   const meta = read(path.join(base, '_meta.json'))
   const named = (list?: { name?: string }[]) => (list ?? []).flatMap((p) => (p.name ? [{ name: p.name }] : []))
@@ -24,8 +23,8 @@ function node(dir: string, id: string): CardNodeData {
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
   const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false, title: id }
-  if (link) {
-    const b = read(path.join(dir, 'externals', link.external, 'tsugumi.json'))?.boundary ?? {}
+  if (def?.external) {
+    const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: Object.keys(b.inputs ?? {}).map((name) => ({ name })), outputs: Object.keys(b.outputs ?? {}).map((name) => ({ name })) }
   }
   const declared = named(def?.inputs)

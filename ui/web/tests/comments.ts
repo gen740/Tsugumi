@@ -91,10 +91,10 @@ const session = () => {
   // A Card in Card has a _meta.json too, though its settings are not edited here.
   const { s } = session()
   const k = await s.addCard('python', [], { x: 0, y: 0 })
-  s.setCardDefinition(k, { card: parse('{}'), link: parse('{"external":"inner"}') })
+  s.setCardDefinition(k, { card: parse('{"external":"inner"}') })
   await s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
-  assert.equal(str(get(s.cardDefinitionDraft(k)?.link, 'external')), 'inner', 'it stays a Card in Card')
+  assert.equal(str(get(s.cardDefinitionDraft(k)?.card, 'external')), 'inner', 'it stays a Card in Card')
 }
 
 

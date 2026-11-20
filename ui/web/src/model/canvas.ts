@@ -6,7 +6,7 @@ import { D } from '../wire/rpc'
 import { Camera, CardGeometry, CardNodeData, displayLink, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import { ShortcutAction } from './prefs'
-import { CardKey, DefinitionTemplate, key, ProjectSession } from './session'
+import { CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
 
@@ -487,11 +487,12 @@ export class CanvasController extends Observable implements CanvasOverlay {
   }
 
   /** Starts writing a Draft on its Card, at a zoom where the text can be read. */
-  writeDraft(k: CardKey) {
-    void this.session.startDraftEdit(k)
+  async writeDraft(k: CardKey) {
+    if (!await this.session.waitForPlacement(k) || key(path(k).slice(0, -1)) !== this.scopeKey) return
     const r = this.scene().cardRect(k)
     if (this.camera.zoom < 0.8) this.setZoom(1, this.screen({ x: r.x + r.width / 2, y: r.y + r.height / 2 }))
     this.reveal(k)
+    await this.session.startDraftEdit(k)
   }
 
   /** Where a new item lands at the middle of the view. */
