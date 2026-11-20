@@ -267,7 +267,7 @@ class Daemon {
       return [offset, range = std::move(range)](R::JobStatusT status) {
         status.log_offset = offset;
         status.log_size = range.first;
-        status.log.assign(range.second.begin(), range.second.end());
+        status.log_bytes.assign(range.second.begin(), range.second.end());
         return status;
       };
     };

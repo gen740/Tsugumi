@@ -416,7 +416,7 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     def log_slice(job, offset, limit=1 << 20):
         reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
-        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.log or b"")
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes or b"")
 
     # Like the invocation, append a flushed JSONL entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'

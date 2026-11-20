@@ -189,7 +189,7 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   std::ranges::transform(state, state.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
-  if (j->log.size() > workerd::kLogChunkBytes)
+  if (j->log_bytes.size() > workerd::kLogChunkBytes)
     throw BrokerDisconnected("remote log slice exceeds its limit");
   return {state,
           j->fingerprint,
@@ -201,7 +201,7 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->log_truncated,
           j->log_offset,
           j->log_size,
-          std::string(j->log.begin(), j->log.end())};
+          std::string(j->log_bytes.begin(), j->log_bytes.end())};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())

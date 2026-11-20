@@ -205,7 +205,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.log_offsets.append(body.logOffset)
             status.logOffset = body.logOffset
             status.logSize = len(log)
-            status.log = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
+            status.logBytes = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
         return R.reply(R.ReplyBody.JobStatus, status)
 
 

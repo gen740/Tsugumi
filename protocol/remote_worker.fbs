@@ -59,7 +59,7 @@ table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ub
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
   // Echo of the requested cursor, the log's current size, and its bytes from
   // log_offset. Bytes may end inside a JSONL entry. Status and Cancel replies.
-  log_offset:ulong; log_size:ulong; log:[ubyte]; }
+  log_offset:ulong; log_size:ulong; log_bytes:[ubyte]; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
