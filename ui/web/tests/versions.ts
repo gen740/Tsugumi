@@ -118,10 +118,6 @@ globalThis.fetch = async (url, init) => {
     if (body?.versionNoteMode) mode = body.versionNoteMode
     return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
   }
-  if (path === '/api/layout/version-canvas') {
-    assert.deepEqual(body, rawCanvas, 'opaque layout and Card ids reach the host unchanged')
-    return new Response(JSON.stringify(hostCanvas))
-  }
   if (path === '/api/versions/comments') return new Response(JSON.stringify({ comments: [{ card: 'plan', text: 'Ask', change: 'resolved', by: 'agent', cards: ['plan'] }] }))
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
@@ -129,7 +125,10 @@ globalThis.fetch = async (url, init) => {
 try {
   // Avoid connecting a project: only the presentation methods under test run.
   const session = Object.create(ProjectSession.prototype) as InstanceType<typeof ProjectSession>
-  Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
+  Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost: { ...layoutHost, versionCanvas: async (input) => {
+    assert.deepEqual(input, rawCanvas)
+    return hostCanvas
+  } }, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
   await session.loadVersionNoteMode()
   assert.equal(session.versionNoteMode, 'mechanical')
   await session.loadVersionCanvas('version')
