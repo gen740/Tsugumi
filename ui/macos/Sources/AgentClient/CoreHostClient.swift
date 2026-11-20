@@ -88,7 +88,7 @@ public actor CoreHostClient {
   public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
     let token = UUID(); hostObservers[token] = handler; return token
   }
-  func signInChanges(profile: String) -> AsyncStream<Void> {
+  func signInChanges(profile: String) async -> AsyncStream<Void> {
     let (events, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
     let token = observeHost { event in
       switch event["type"] as? String {

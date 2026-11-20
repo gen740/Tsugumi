@@ -135,7 +135,7 @@ public actor ChatGPTAuth {
       }
     } catch {
       // Send from an uncancelled task, and keep the attempt alive until its reply.
-      do { _ = try await Task { try await self.request("cancel", attempt: attempt) }.value }
+      do { try await Task { _ = try await self.request("cancel", attempt: attempt) }.value }
       catch let cancelError { throw ChatGPTError.failed("\(error). Sign-in cancellation failed: \(cancelError)") }
       throw error
     }
