@@ -177,6 +177,10 @@ import Testing
     let delegate = AppDelegate()
     delegate.activityBeforeQuit = { false }
     delegate.localActivityBeforeQuit = { false }
+    // AppModel.shared belongs to the whole test process: Quit would end the
+    // sessions other tests have open there, or ask about their unsaved edits
+    // in a modal alert that nobody answers.
+    delegate.openSessions = { [] }
     delegate.stopRuntime = {}
     let replies = Counter()
     delegate.terminationReply = { allowed in #expect(allowed); replies.value += 1 }

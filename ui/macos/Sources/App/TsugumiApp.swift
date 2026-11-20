@@ -163,6 +163,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
   private var signalSources: [DispatchSourceSignal] = []
   @MainActor var terminationReply: (Bool) -> Void = { NSApp.reply(toApplicationShouldTerminate: $0) }
   @MainActor var activityBeforeQuit: () async throws -> Bool = { try await AppModel.shared.environments.activityBeforeQuit() }
+  /// The open projects Quit asks about, saves and ends.
+  @MainActor var openSessions: () -> [ProjectSession] = { Array(AppModel.shared.sessions.values) }
   @MainActor var localActivityBeforeQuit: () -> Bool = {
     AppModel.shared.sessions.values.contains { $0.runActive || $0.saving || $0.draftFinishTask != nil }
       || AppModel.shared.openChats.contains { $0.busy }
@@ -196,7 +198,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         },
         settleEdits: { self.signalled ? true : await self.settleEdits() },
         stop: {
-          for session in AppModel.shared.sessions.values { session.endForQuit() }
+          for session in self.openSessions() { session.endForQuit() }
           await ChatGPTSignInModel.cancelPendingSignIns()
           await self.stopRuntime()
         },
@@ -210,7 +212,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
   /// Keep the ordinary unsaved-editor choice when no operation is in flight.
   @MainActor private func settleEdits() async -> Bool {
-    let dirty = AppModel.shared.sessions.values.filter(\.hasUnsavedEdits)
+    let dirty = openSessions().filter(\.hasUnsavedEdits)
     if dirty.isEmpty { return true }
     let alert = NSAlert()
     alert.messageText = String(localized: "保存されていない変更があります")

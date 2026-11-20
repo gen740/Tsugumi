@@ -15,7 +15,9 @@
 #include <chrono>
 #include <map>
 #include <mutex>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "agent/wire.hh"
 #include "host/models.hh"
@@ -587,45 +589,55 @@ struct Settings::State {
         for (auto fd : wake.fds) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
         std::stop_callback cancelled(
             stop, [&] { (void)::write(wake.fds[1], "x", 1); });
-        const auto readable = [&](int fd) {
-          pollfd fds[] = {{fd, POLLIN, 0}, {wake.fds[0], POLLIN, 0}};
-          int result;
-          do {
-            result = ::poll(fds, 2, -1);
-          } while (result < 0 && errno == EINTR);
-          return result > 0 && !stop.stop_requested() &&
-                 (fds[0].revents & POLLIN);
+        // A browser may open a connection it never uses (a preconnect): read
+        // every connection as its bytes arrive, so none holds up the one that
+        // carries the callback.
+        struct Peer {
+          int fd;
+          std::string input;
         };
-        while (!stop.stop_requested()) {
-          if (!readable(a->socket)) break;
-          const int fd = ::accept(a->socket, nullptr, nullptr);
-          if (fd < 0) {
+        struct Peers : std::vector<Peer> {
+          ~Peers() {
+            for (auto& peer : *this) ::close(peer.fd);
+          }
+        } peers;
+        bool done = false;
+        while (!done && !stop.stop_requested()) {
+          std::vector<pollfd> fds{{a->socket, POLLIN, 0},
+                                  {wake.fds[0], POLLIN, 0}};
+          for (const auto& peer : peers) fds.push_back({peer.fd, POLLIN, 0});
+          if (::poll(fds.data(), fds.size(), -1) < 0) {
             if (errno == EINTR) continue;
             break;
           }
-          ::fcntl(fd, F_SETFD, FD_CLOEXEC);
-          std::string input;
-          char buffer[2048];
-          // Bound the memory a loopback peer can claim for callback headers.
-          while (input.size() < 16384 && input.find("\r\n\r\n") == input.npos &&
-                 readable(fd)) {
-            auto n = ::recv(fd, buffer, sizeof buffer, 0);
-            if (n <= 0) break;
-            input.append(buffer, n);
-          }
-          bool valid = false;
-          try {
-            const auto end = input.find(" HTTP/");
-            if (!stop.stop_requested() && input.size() < 16384 &&
-                input.find("\r\n\r\n") != input.npos &&
-                input.starts_with("GET /auth/callback?") && end != input.npos) {
-              cb = Query(std::string_view(input).substr(19, end - 19));
-              valid = cb["state"] == a->oauth_state;
+          if (stop.stop_requested() || fds[1].revents) break;
+          if (fds[0].revents & (POLLERR | POLLHUP | POLLNVAL)) break;
+          for (size_t i = peers.size(); i-- > 0;) {
+            if (!fds[i + 2].revents) continue;
+            auto& peer = peers[i];
+            char buffer[2048];
+            const auto n = ::recv(peer.fd, buffer, sizeof buffer, 0);
+            if (n > 0) peer.input.append(buffer, n);
+            const bool complete =
+                peer.input.find("\r\n\r\n") != peer.input.npos;
+            // Bound the memory a loopback peer can claim for callback headers.
+            if (!complete && n > 0 && peer.input.size() < 16384) continue;
+            bool valid = false;
+            try {
+              const auto end = peer.input.find(" HTTP/");
+              if (complete && peer.input.size() < 16384 &&
+                  peer.input.starts_with("GET /auth/callback?") &&
+                  end != peer.input.npos) {
+                auto query =
+                    Query(std::string_view(peer.input).substr(19, end - 19));
+                valid = query["state"] == a->oauth_state;
+                if (valid) cb = std::move(query);
+              }
+            } catch (...) {
             }
-          } catch (...) {
-          }
-          const std::string response =
-              valid ? "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
+            const std::string response =
+                valid
+                    ? "HTTP/1.1 200 OK\r\nContent-Type: text/html; "
                       "charset=utf-8\r\nCache-Control: "
                       "no-store\r\nReferrer-Policy: no-referrer\r\nConnection: "
                       "close\r\n\r\n<!doctype "
@@ -634,10 +646,21 @@ struct Settings::State {
                       "Check the result in Tsugumi. Close this tab and return."
                     : "HTTP/1.1 404 Not Found\r\nConnection: "
                       "close\r\nContent-Length: 0\r\n\r\n";
-          ::send(fd, response.data(), response.size(), 0);
-          ::close(fd);
-          if (valid) break;
-          cb.clear();
+            if (complete || n > 0)
+              ::send(peer.fd, response.data(), response.size(), 0);
+            ::close(peer.fd);
+            peers.erase(peers.begin() + static_cast<ptrdiff_t>(i));
+            if (valid) done = true;
+          }
+          if (!done && (fds[0].revents & POLLIN)) {
+            const int fd = ::accept(a->socket, nullptr, nullptr);
+            if (fd >= 0) {
+              ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+              peers.push_back({fd, {}});
+            } else if (errno != EINTR && errno != ECONNABORTED) {
+              break;
+            }
+          }
         }
         ::close(a->socket);
         a->socket = -1;
