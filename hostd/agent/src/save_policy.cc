@@ -8,10 +8,6 @@
 namespace tsugumi::agent {
 namespace {
 namespace comments = host::comments;
-// Project RPC exposes 64-bit integers as decimal strings to the Agent.
-auto Integer(const std::string& raw) -> uint64_t {
-  return json::UInt(json::String(raw, raw));
-}
 auto Blank(const std::string& text) -> bool {
   return text.find_first_not_of(" \t\r\n") == std::string::npos;
 }
@@ -21,12 +17,6 @@ auto Object(const std::string& text) -> json::Members {
   } catch (const std::exception&) {
     return {};
   }
-}
-auto DefinitionFile(const std::string& path) -> bool {
-  if (path.size() < 10) return false;
-  if (!path.ends_with("/_card.json") && !path.ends_with("/_meta.json"))
-    return false;
-  return comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
 }
 auto Bytes(const std::string& raw) -> std::string {
   if (raw.starts_with('"')) return json::String(raw);
@@ -43,34 +33,17 @@ auto Bytes(const std::string& raw) -> std::string {
 }
 }  // namespace
 
-auto PrepareAgentSave(json::Members args, const ProjectRead& read,
+auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
+                      const host::SaveRead& read,
                       const host::comments::ReserveComment& reserve,
                       const host::SourcePatches& patches) -> AgentSave {
-  const auto snapshot = read("project_inspect", {});
-  if (Integer(json::Get(snapshot, "rev")) !=
-      Integer(json::Get(args, "base_rev")))
-    throw SaveRevisionConflict("The document changed since base_rev");
-  const auto rev = json::Get(snapshot, "rev");
-  comments::Files before;
+  const auto rev = json::Get(base.snapshot, "rev");
+  auto before = base.files;
   std::map<std::string, std::string> hashes;
   for (const auto& raw :
-       json::Array(json::Get(snapshot, "definitions", "[]"))) {
-    auto d = json::Object(raw);
-    auto dir = "definitions/" + json::Text(d, "id") + "/";
-    for (const auto& [field, file] :
-         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
-      if (!json::Text(d, field).empty())
-        before[dir + file] = json::Text(d, field);
-  }
-  for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {
+       json::Array(json::Get(base.snapshot, "sources", "[]"))) {
     const auto source = json::Object(raw);
-    const auto path = json::Text(source, "path");
-    hashes[path] = json::Text(source, "hash");
-    if (path.starts_with("externals/") && DefinitionFile(path))
-      before[path] =
-          Bytes(json::Get(read("project_file_read",
-                               {{"path", json::Quote(path)}, {"at_rev", rev}}),
-                          "bytes"));
+    hashes[json::Text(source, "path")] = json::Text(source, "hash");
   }
   auto after = before;
   auto encoded_changes = json::Array(json::Get(args, "changes", "[]"));

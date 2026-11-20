@@ -43,13 +43,6 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
     return false;
   return !shell || !kProtected.contains(file);
 }
-auto Value(const std::string& result) -> json::Members {
-  const auto envelope = json::Object(result);
-  const auto value = json::Object(json::Get(envelope, "value", "{}"));
-  if (json::Text(envelope, "reply") == "Failure")
-    throw Failure(json::Text(value, "kind"), json::Text(value, "message"));
-  return value;
-}
 }  // namespace
 
 // Shape only the provider view. The saved transcript keeps the original bytes.
@@ -172,9 +165,10 @@ auto Tools::FileOperation(const std::string& conversation,
       throw Failure("invalid_request",
                     "base_rev must be an unsigned decimal integer");
   }
-  const auto policy = Exclusions(project, stop);
-  const auto snapshot =
-      Value(ProjectCall(project, "project_inspect", "{}", stop));
+  const auto inspected = host::CaptureSaveBase(InspectProject(project, stop));
+  const auto policy = ExclusionsFor(project, inspected);
+  policy.Check("tsugumi.json");
+  const auto snapshot = json::Object(policy.Filter(json::Encode(inspected.snapshot)));
   const auto revision = json::Get(snapshot, "rev");
   if (args.contains("base_rev") &&
       json::UInt(json::String(args.at("base_rev"), args.at("base_rev"))) !=
@@ -237,12 +231,13 @@ auto Tools::FileOperation(const std::string& conversation,
         boundary->CheckCurrentSave(
             plan,
             HelperReader(conversation, stop, json::Get(base.snapshot, "rev"),
-                         boundary->authorization()));
+                         boundary->authorization(), &base));
     };
     return OperateProject(request, context, stop).json;
   }
   const auto read_scope = HelperReader(
-      conversation, stop, revision, boundary ? boundary->authorization() : "");
+      conversation, stop, revision, boundary ? boundary->authorization() : "",
+      &inspected);
   auto check = [&](const std::string& path, bool writing) {
     policy.Check(path);
     if (!boundary || !boundary->scoped()) return;

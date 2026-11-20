@@ -6,6 +6,7 @@
 #include <vector>
 
 #include "host/project_operations.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -49,9 +50,11 @@ class ProjectFixture {
             continue;
           }
         }
-        sources.push_back(json::Encode(
-            json::Members{{"path", json::Quote(path)},
-                          {"hash", json::Quote(crypto::sha256_hex(bytes))}}));
+        json::Members source{{"path", json::Quote(path)},
+                             {"hash", json::Quote(crypto::sha256_hex(bytes))}};
+        if (tsugumi::Document::is_external_document_file(path))
+          source["document_json"] = json::Quote(bytes);
+        sources.push_back(json::Encode(source));
       }
       std::vector<std::string> list;
       for (const auto& [id, raw] : definitions) {

@@ -10,6 +10,7 @@
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -404,9 +405,11 @@ class TransformationProject {
             continue;
           }
         }
-        sources.push_back(json::Encode(
-            json::Members{{"path", json::Quote(path)},
-                          {"hash", json::Quote(crypto::sha256_hex(bytes))}}));
+        json::Members source{{"path", json::Quote(path)},
+                             {"hash", json::Quote(crypto::sha256_hex(bytes))}};
+        if (Document::is_external_document_file(path))
+          source["document_json"] = json::Quote(bytes);
+        sources.push_back(json::Encode(source));
       }
       std::vector<std::string> list;
       for (const auto& [id, raw] : definitions) {

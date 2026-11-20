@@ -91,66 +91,27 @@ auto Tools::ResolveCall(const ToolCall& call, ModelRole role) -> ToolCall {
 auto Tools::PrepareLayoutSave(const std::string& project,
                               const std::string& args, std::stop_token stop)
     -> std::string {
-  struct StaleRevision {};
-  std::optional<json::Members> snapshot;
+  std::optional<host::SaveBase> base;
   const auto fields = json::Object(args);
   const auto expected =
       json::Get(fields, fields.contains("base_rev") ? "base_rev" : "at_rev");
+  struct StaleRevision {};
   auto read = [&](const std::string& path) -> std::optional<host::LayoutFile> {
-    if (!snapshot) {
+    if (!base) {
       const auto response =
           json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
-      snapshot = json::Object(json::Get(response, "value", "{}"));
-      const auto revision = json::Get(*snapshot, "rev");
+      const auto snapshot = json::Object(json::Get(response, "value", "{}"));
+      if (json::Text(response, "reply") == "Failure")
+        throw Failure(json::Text(snapshot, "kind"),
+                      json::Text(snapshot, "diagnostic"));
+      const auto revision = json::Get(snapshot, "rev");
       if (json::String(expected, expected) != json::String(revision, revision))
         throw StaleRevision{};
+      base = host::CaptureSaveBase(snapshot);
     }
-    if (path == "tsugumi.json")
-      return host::LayoutFile{json::Text(*snapshot, "project_json"),
-                              std::nullopt};
-    if (path == "layout.json")
-      return host::LayoutFile{json::Text(*snapshot, "layout_json", "{}"),
-                              std::nullopt};
-    std::string hash;
-    for (const auto& raw : json::Array(json::Get(*snapshot, "sources", "[]"))) {
-      const auto source = json::Object(raw);
-      if (json::Text(source, "path") == path) hash = json::Text(source, "hash");
-    }
-    if (hash.empty()) return std::nullopt;
-    std::string text;
-    uint64_t offset = 0;
-    for (;;) {
-      const auto response = json::Object(ProjectCall(
-          project, "project_file_read",
-          json::Encode(json::Members{{"path", json::Quote(path)},
-                                     {"at_rev", expected},
-                                     {"if_hash", json::Quote(hash)},
-                                     {"offset", std::to_string(offset)},
-                                     {"limit_bytes", "1048576"}}),
-          stop));
-      if (json::Text(response, "reply") == "Failure") {
-        const auto failure = json::Object(json::Get(response, "value", "{}"));
-        if (json::Text(failure, "kind") == "revision_conflict")
-          throw StaleRevision{};
-        throw Failure(json::Text(failure, "kind"),
-                      json::Text(failure, "diagnostic"));
-      }
-      const auto chunk = json::Object(json::Get(response, "value", "{}"));
-      const auto bytes = json::Get(chunk, "bytes");
-      if (!bytes.empty() && bytes.front() == '"')
-        text += json::String(bytes);
-      else {
-        std::string decoded;
-        if (!crypto::base64_decode(json::Text(json::Object(bytes), "base64"),
-                                   decoded))
-          throw Failure("invalid_request", "Invalid layout source bytes");
-        text += decoded;
-      }
-      if (json::Bool(json::Get(chunk, "eof"))) break;
-      const auto next = json::Get(chunk, "next_offset");
-      offset = json::UInt(json::String(next, next));
-    }
-    return host::LayoutFile{std::move(text), hash};
+    const auto file = base->files.find(path);
+    if (file == base->files.end()) return std::nullopt;
+    return host::LayoutFile{file->second, crypto::sha256_hex(file->second)};
   };
   try {
     return host::PrepareLayoutSave(args, read);
@@ -185,7 +146,7 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                         const std::function<void(const host::SaveBase&)>& check)
     -> std::string {
   std::lock_guard save_lock(save_mutex);
-  auto read = [&](const auto& method, const auto& query) {
+  auto read = [&](const std::string& method, const json::Members& query) {
     const auto reply = json::Object(
         RawProjectCall(project, method, json::Encode(query), stop));
     const auto value = json::Object(json::Get(reply, "value", "{}"));
@@ -196,19 +157,20 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
   try {
     // A whole-document save keeps its original revision and input. Never merge
     // or issue another operation id when another writer has moved the document.
-    const auto latest = host::InspectForSave(read);
+    const auto latest = host::CaptureSaveBase(InspectProject(project, stop));
     if (json::String(json::Get(original, "base_rev"),
                      json::Get(original, "base_rev")) !=
         json::Text(latest.snapshot, "rev"))
       return LayoutToolFailure("revision_conflict",
                                "The project changed; read the project again "
                                "and re-apply your input.");
+    const auto policy = ExclusionsFor(project, latest);
     const host::SourcePatches patches;
-    Exclusions(project, stop).CheckSave(original, latest.base, patches);
-    if (check) check(latest.base);
+    policy.CheckSave(original, latest, patches);
+    if (check) check(latest);
     original.erase("save_intent");
     auto prepared = PrepareAgentSave(
-        original, read,
+        original, latest, read,
         [&](const auto& card, const auto& occupied) {
           std::lock_guard lock(mutex);
           return host::ReserveOrdinal(
@@ -218,14 +180,13 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
     prepared.arguments = json::Object(host::PrepareLayoutSave(
         json::Encode(prepared.arguments),
         [&](const std::string& path) -> std::optional<host::LayoutFile> {
-          const auto file = latest.base.files.find(path);
-          if (file == latest.base.files.end()) return std::nullopt;
+          const auto file = latest.files.find(path);
+          if (file == latest.files.end()) return std::nullopt;
           return host::LayoutFile{file->second,
                                   crypto::sha256_hex(file->second)};
         },
         patches));
-    Exclusions(project, stop)
-        .CheckSave(prepared.arguments, latest.base, patches);
+    policy.CheckSave(prepared.arguments, latest, patches);
     host::RestrictAgentRequest("project_save", prepared.arguments);
     auto result = json::Object(RawProjectCall(
         project, "project_save", json::Encode(prepared.arguments), stop));
@@ -240,10 +201,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
                                "and re-apply your input.");
     }
     return json::Encode(result);
-  } catch (const SaveRevisionConflict&) {
-    return LayoutToolFailure(
-        "revision_conflict",
-        "The project changed; read the project again and re-apply your input.");
   } catch (const host::LayoutFailure& e) {
     return LayoutToolFailure("invalid_document", e.what());
   } catch (const Cancelled&) {
@@ -278,37 +235,141 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
   return host::InputTypes(*reply->value_as_InputTypesResult(), language);
 }
 
-auto Tools::Exclusions(const std::string& project, std::stop_token stop)
-    -> host::AgentExclude {
-  if (project.empty())
-    return host::AgentExclude(std::filesystem::current_path(), "{}");
+auto Tools::InspectProject(const std::string& project, std::stop_token stop)
+    -> json::Members {
   const auto reply =
       json::Object(RawProjectCall(project, "project_inspect", "{}", stop));
-  const auto value = json::Object(json::Get(reply, "value", "{}"));
+  auto value = json::Object(json::Get(reply, "value", "{}"));
   if (json::Text(reply, "reply") == "Failure")
     throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
-  std::lock_guard lock(mutex);
-  return host::AgentExclude(registry.Root(project),
-                            json::Text(value, "project_json", "{}"));
+  return value;
 }
+
+auto Tools::ExclusionsFor(const std::string& project,
+                          const host::SaveBase& base) -> host::AgentExclude {
+  const auto document = base.files.find("tsugumi.json");
+  const auto json = document == base.files.end() ? "{}" : document->second;
+  if (project.empty())
+    return host::AgentExclude(std::filesystem::current_path(), json);
+  std::lock_guard lock(mutex);
+  return host::AgentExclude(registry.Root(project), json, base.files);
+}
+
+auto Tools::Exclusions(const std::string& project, std::stop_token stop)
+    -> host::AgentExclude {
+  return ExclusionsFor(
+      project, project.empty()
+                   ? host::SaveBase{}
+                   : host::CaptureSaveBase(InspectProject(project, stop)));
+}
+
+namespace {
+auto UsesRecordedDefinitions(const std::string& name) -> bool {
+  return (name.starts_with("run_") && name != "run_plan" &&
+          name != "run_history_delete") ||
+         name.starts_with("artifact_") || name == "log_range";
+}
+}  // namespace
 
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
                         const std::string& arguments, std::stop_token stop)
     -> std::string {
-  const auto policy = Exclusions(project, stop);
-  const auto args = json::Object(arguments);
-  policy.CheckRequest(name, args);
-  if (name == "project_inspect") policy.Check("tsugumi.json");
+  const auto inspected = InspectProject(project, stop);
+  const auto policy = ExclusionsFor(project, host::CaptureSaveBase(inspected));
+  auto args = json::Object(arguments);
+  const bool recorded = UsesRecordedDefinitions(name);
+  policy.CheckRequest(name, args, recorded);
+  if (name == "project_inspect") {
+    policy.Check("tsugumi.json");
+    return policy.Filter(
+        json::Encode(json::Members{{"reply", json::Quote("ProjectSnapshot")},
+                                   {"value", json::Encode(inspected)}}));
+  }
+  if (name == "run_plan" || name.starts_with("project_file_")) {
+    const auto revision = json::Get(inspected, "rev");
+    const auto number = [](const std::string& value) {
+      return json::UInt(json::String(value, value));
+    };
+    if (args.contains("at_rev") &&
+        number(args.at("at_rev")) != number(revision))
+      throw Failure("revision_conflict", "The project changed; read it again");
+    if (name != "project_file_format") args["at_rev"] = revision;
+  }
+  auto check_recorded = [&](const std::string& run, const std::string& card) {
+    policy.Check(".tsugumi/runs/" + run);
+    json::Members query{{"run_id", json::Quote(run)}};
+    if (!card.empty()) query["card"] = card;
+    const auto envelope = json::Object(RawProjectCall(
+        project, "run_definition_paths", json::Encode(query), stop));
+    const auto value = json::Object(json::Get(envelope, "value", "{}"));
+    if (json::Text(envelope, "reply") == "Failure")
+      throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
+    for (const auto& path : json::Array(value.at("paths")))
+      policy.Check(json::String(path));
+  };
+  if (recorded && args.contains("run_id"))
+    check_recorded(json::Text(args, "run_id"), json::Get(args, "card"));
+  if (name == "run_environment_paths" && args.contains("excluding_run_id"))
+    check_recorded(json::Text(args, "excluding_run_id"), "");
+  if (name == "artifact_read") {
+    const auto id = json::Text(args, "artifact_id");
+    const auto first = id.find('/'), last = id.rfind('/');
+    const auto invocation = last == id.npos ? id.npos : id.rfind('/', last - 1);
+    if (first == id.npos || invocation == id.npos || invocation <= first)
+      throw Failure("not_found", "Artifact not found");
+    std::vector<std::string> segments;
+    for (size_t start = first + 1; start < invocation;) {
+      const auto end = id.find('/', start);
+      segments.push_back(json::Quote(id.substr(start, end - start)));
+      start = end + 1;
+    }
+    check_recorded(
+        id.substr(0, first),
+        json::Encode(json::Members{{"segments", json::Encode(segments)}}));
+  }
   if (name == "run") {
     json::Members plan;
     for (const auto* key : {"card", "propagate"})
       if (args.contains(key)) plan[key] = args.at(key);
-    if (args.contains("base_rev")) plan["at_rev"] = args.at("base_rev");
+    plan["at_rev"] = json::Get(inspected, "rev");
+    const auto base = json::Get(args, "base_rev");
+    if (json::String(base, base) !=
+        json::String(plan.at("at_rev"), plan.at("at_rev")))
+      throw Failure("revision_conflict", "The project changed; read it again");
     const auto full_plan =
         RawProjectCall(project, "run_plan", json::Encode(plan), stop);
+    const auto answer = json::Object(full_plan);
+    if (json::Text(answer, "reply") == "Failure")
+      return policy.Filter(full_plan);
     policy.CheckContent(full_plan);
   }
-  auto result = UnfilteredProjectCall(project, name, arguments, stop);
+  auto result = UnfilteredProjectCall(project, name, json::Encode(args), stop);
+  if (name == "run_history" ||
+      (name == "run_status" && !args.contains("run_id"))) {
+    auto envelope = json::Object(result);
+    const auto reply = json::Text(envelope, "reply");
+    auto value = json::Object(json::Get(envelope, "value", "{}"));
+    if (name == "run_history" && reply == "RunPage") {
+      auto runs = json::Array(json::Get(value, "runs", "[]"));
+      std::erase_if(runs, [&](const std::string& run) {
+        const auto summary = json::Object(run);
+        const auto status = json::Object(summary.at("status"));
+        try {
+          check_recorded(json::Text(status, "run_id"), "");
+          return false;
+        } catch (const Failure& error) {
+          if (error.code != "not_found") throw;
+          return true;
+        }
+      });
+      value["runs"] = json::Encode(runs);
+      envelope["value"] = json::Encode(value);
+      result = json::Encode(envelope);
+    } else if (name == "run_status" && reply == "RunStatus" &&
+               value.contains("run_id")) {
+      check_recorded(json::Text(value, "run_id"), "");
+    }
+  }
   const auto file_path = json::Text(args, "path");
   const bool project_document =
       file_path == "tsugumi.json" ||
@@ -327,15 +388,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
       if (!json::Bool(json::Get(value, "eof")))
         throw Failure("invalid_request",
                       "Read the project document in one page");
-      const auto path = json::Text(args, "path");
-      const auto text =
-          path.ends_with("tsugumi.json")
-              ? policy.ProjectText(json::Text(value, "bytes"),
-                                   path.substr(0, path.size() - 12))
-              : json::Text(
-                    json::Object(policy.Filter(json::Encode(json::Members{
-                        {"layout_json", json::Get(value, "bytes")}}))),
-                    "layout_json");
+      const auto text = policy.FileText(file_path, json::Text(value, "bytes"));
       value["bytes"] = json::Quote(text);
       value["size_bytes"] = value["next_offset"] =
           json::Quote(std::to_string(text.size()));
@@ -343,7 +396,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
       result = json::Encode(envelope);
     }
   }
-  return policy.Filter(result);
+  return policy.Filter(result, "", recorded);
 }
 
 auto Tools::UnfilteredProjectCall(const std::string& project,
@@ -395,21 +448,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
     args.erase("name");
   }
   host::RestrictAgentRequest(name, args);
-  if (name == "project_inspect") {
-    const auto inspection =
-        host::InspectForSave([&](const auto& method, const auto& query) {
-          const auto reply = json::Object(
-              RawProjectCall(project, method, json::Encode(query), stop));
-          const auto value = json::Object(json::Get(reply, "value", "{}"));
-          if (json::Text(reply, "reply") == "Failure")
-            throw Failure(json::Text(value, "kind"),
-                          json::Text(value, "diagnostic"));
-          return value;
-        });
-    return json::Encode(
-        json::Members{{"reply", json::Quote("ProjectSnapshot")},
-                      {"value", json::Encode(inspection.snapshot)}});
-  }
   std::string raw_reply;
   auto result =
       RawProjectCall(project, name, json::Encode(args), stop, &raw_reply);
@@ -691,42 +729,61 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
 
 auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
                          const std::string& revision,
-                         const std::string& authorization)
+                         const std::string& authorization,
+                         const host::SaveBase* inspected)
     -> HelperScope::Reader {
   std::string project;
   {
     std::lock_guard lock(mutex);
     project = conversations->GetConversation(conversation).project;
   }
-  auto cache = std::make_shared<std::map<std::string, std::string>>();
-  return [this, project, conversation, stop, revision, authorization,
-          cache](const std::string& path) {
+  struct Context {
+    std::optional<host::SaveBase> inspected;
+    std::optional<host::AgentExclude> policy;
+    std::map<std::string, std::string> files;
+  };
+  auto context = std::make_shared<Context>();
+  return [this, project, conversation, stop, revision, authorization, inspected,
+          context](const std::string& path) {
     access_service.Require(project, conversation,
                            Tsugumi::Service::Access::Read, true, stop,
                            "Read helper Card context", authorization);
-    if (const auto found = cache->find(path); found != cache->end())
+    if (!inspected && !context->inspected)
+      context->inspected = host::CaptureSaveBase(InspectProject(project, stop));
+    const auto& base = inspected ? *inspected : *context->inspected;
+    const auto at_rev = json::Get(base.snapshot, "rev");
+    if (!revision.empty() &&
+        json::UInt(json::String(revision, revision)) !=
+            json::UInt(json::String(at_rev, at_rev)))
+      throw Failure("revision_conflict",
+                    "The project changed; read the project again and "
+                    "re-apply your input.");
+    if (!context->policy) context->policy = ExclusionsFor(project, base);
+    context->policy->Check(path);
+    auto& cache = context->files;
+    if (const auto found = cache.find(path); found != cache.end())
       return found->second;
-    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"}};
-    if (!revision.empty()) args["at_rev"] = revision;
+    if (const auto found = base.files.find(path); found != base.files.end())
+      return cache.emplace(path, context->policy->FileText(path, found->second))
+          .first->second;
+    json::Members args{{"path", json::Quote(path)}, {"limit_bytes", "1048576"},
+                       {"at_rev", at_rev}};
     std::string bytes;
     for (;;) {
       args["offset"] = std::to_string(bytes.size());
       const auto reply = json::Object(
-          ProjectCall(project, "project_file_read", json::Encode(args), stop));
-      if (json::Text(reply, "reply") != "FileContent") {
+          RawProjectCall(project, "project_file_read", json::Encode(args), stop));
+      if (json::Text(reply, "reply") == "Failure") {
         const auto failure = json::Object(json::Get(reply, "value", "{}"));
-        if (json::Text(failure, "kind") == "revision_conflict")
-          throw Failure("revision_conflict",
-                        "The project changed; read the project again and "
-                        "re-apply your input.");
-        if (json::Text(reply, "reply") == "Failure" &&
-            json::Text(failure, "kind") == "not_found") {
-          cache->emplace(path, "");
+        const auto kind = json::Text(failure, "kind");
+        if (kind == "not_found") {
+          cache.emplace(path, "");
           return std::string{};
         }
-        throw Failure("permission_denied",
-                      "Helper scope cannot resolve Card file " + path);
+        throw Failure(kind, json::Text(failure, "diagnostic"));
       }
+      if (json::Text(reply, "reply") != "FileContent")
+        throw Failure("internal_error", "Expected a helper file page");
       const auto value = json::Object(json::Get(reply, "value", "{}"));
       // Catalog replies expose byte vectors as UTF-8 text or base64 objects.
       const auto raw = json::Get(value, "bytes");
@@ -742,7 +799,7 @@ auto Tools::HelperReader(const std::string& conversation, std::stop_token stop,
         throw Failure("unavailable",
                       "Helper scope metadata read made no progress");
     }
-    cache->emplace(path, bytes);
+    cache.emplace(path, bytes);
     return bytes;
   };
 }
@@ -1040,6 +1097,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
                          wait, stop, "Read project content", authorization);
   if (boundary) {
     RequireHelperPermission(conversation, *boundary);
+    std::optional<host::SaveBase> inspected;
     std::string revision = json::Get(args, "base_rev", "");
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
@@ -1047,17 +1105,16 @@ auto Tools::ExecuteTool(const std::string& conversation,
          call.name == "run_plan" || call.name == "card_s_d_k_prepare")) {
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
-        const auto snapshot = json::Object(
-            RawProjectCall(project, "project_inspect", "{}", stop));
-        revision =
-            json::Get(json::Object(json::Get(snapshot, "value", "{}")), "rev");
+        inspected = host::CaptureSaveBase(InspectProject(project, stop));
+        revision = json::Get(inspected->snapshot, "rev");
       }
       args["at_rev"] = revision;
     }
     // Resolve nested file ownership and read the file at one revision. If
     // the parent changes a container link in between, the project rejects
     // the stale at_rev/base_rev instead of reading a different Card.
-    const auto read = HelperReader(conversation, stop, revision, authorization);
+    const auto read = HelperReader(conversation, stop, revision, authorization,
+                                   inspected ? &*inspected : nullptr);
     if (call.name != "project_edit" && call.name != "project_connect" &&
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
@@ -1318,7 +1375,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       result = json::Encode(page);
     }
   }
-  result = Exclusions(project, stop).Filter(result);
+  if (!UsesRecordedDefinitions(call.name))
+    result = Exclusions(project, stop).Filter(result);
   const auto envelope = json::Object(result);
   bool error = json::Text(envelope, "reply") == "Failure";
   if (error) {

@@ -2684,8 +2684,8 @@ TEST_F(AgentProjectFixture, ChangedApprovalTargetsNeedANewApproval) {
 TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
   StartProject();
   const auto conversation = Conversation("unlisted-tools");
-  for (const auto* name :
-       {"view_save", "view_set_visible", "project_open", "session_hello"})
+  for (const auto* name : {"view_save", "view_set_visible", "project_open",
+                           "session_hello", "run_definition_paths"})
     EXPECT_EQ(Tool(conversation, name, "{}").Code(), "not_found");
 }
 

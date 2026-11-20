@@ -905,14 +905,12 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                  {"changes", "[]"}});
   for (int attempt = 0; attempt < 8; ++attempt) {
     try {
-      const auto inspection =
-          InspectForSave([&](const auto& method, const auto& query) {
-            return Value(call(method, query));
-          });
+      const auto snapshot = Value(call("project_inspect", {}));
+      const auto base = CaptureSaveBase(snapshot);
       auto read = [&](const std::string& path) -> std::optional<std::string> {
         std::string hash;
         for (const auto& raw :
-             json::Array(json::Get(inspection.snapshot, "sources", "[]"))) {
+             json::Array(json::Get(snapshot, "sources", "[]"))) {
           const auto source = json::Object(raw);
           if (json::Text(source, "path") == path)
             hash = json::Text(source, "hash");
@@ -921,13 +919,12 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         std::string bytes;
         uint64_t offset = 0;
         for (;;) {
-          const auto page =
-              Value(call("project_file_read",
-                         {{"path", json::Quote(path)},
-                          {"at_rev", json::Get(inspection.snapshot, "rev")},
-                          {"if_hash", json::Quote(hash)},
-                          {"offset", std::to_string(offset)},
-                          {"limit_bytes", "1048576"}}));
+          const auto page = Value(
+              call("project_file_read", {{"path", json::Quote(path)},
+                                         {"at_rev", json::Get(snapshot, "rev")},
+                                         {"if_hash", json::Quote(hash)},
+                                         {"offset", std::to_string(offset)},
+                                         {"limit_bytes", "1048576"}}));
           const auto chunk = Bytes(json::Get(page, "bytes"));
           bytes += chunk;
           if (json::Bool(json::Get(page, "eof"))) break;
@@ -937,42 +934,40 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         return bytes;
       };
       auto plan = Prepare(
-          operation.body, inspection.base, read,
+          operation.body, base, read,
           [&](const auto& path) {
-            if (context.authorize_file)
-              context.authorize_file(path, inspection.base);
+            if (context.authorize_file) context.authorize_file(path, base);
           },
           context.demo);
       if (json::Array(plan.at("changes")).empty())
         plan["changes"] = json::Encode(std::vector<std::string>{
-            Change("SetProject", {{"json", json::Quote(inspection.base.files.at(
-                                               "tsugumi.json"))}})});
-      const auto authored = Authored(plan, inspection.base);
+            Change("SetProject",
+                   {{"json", json::Quote(base.files.at("tsugumi.json"))}})});
+      const auto authored = Authored(plan, base);
       plan["op_id"] = json::Quote(operation.op_id);
       plan["origin"] = json::Quote(context.origin);
       if (context.origin == "agent" && operation.body.AsProjectEdits())
-        plan = agent::PrepareAgentSave(plan, [&](const auto& method,
-                                                 const auto& args) {
-                 return Value(call(method, args));
-               }).arguments;
+        plan =
+            agent::PrepareAgentSave(plan, base,
+                                    [&](const auto& method, const auto& args) {
+                                      return Value(call(method, args));
+                                    })
+                .arguments;
       auto layout_read =
           [&](const std::string& path) -> std::optional<LayoutFile> {
-        const auto bytes = inspection.base.files.contains(path)
-                               ? std::optional(inspection.base.files.at(path))
-                               : read(path);
-        return bytes ? std::optional<LayoutFile>{{*bytes,
-                                                  crypto::sha256_hex(*bytes)}}
-                     : std::nullopt;
+        const auto bytes = base.files.find(path);
+        if (bytes == base.files.end()) return std::nullopt;
+        return LayoutFile{bytes->second, crypto::sha256_hex(bytes->second)};
       };
       plan = Preserve(
           json::Object(PrepareLayoutSave(json::Encode(plan), layout_read)),
           authored);
-      if (context.authorize) context.authorize(plan, inspection.base);
+      if (context.authorize) context.authorize(plan, base);
       plan["check_permissions"] = context.origin == "agent" ? "true" : "false";
       plan["save_intent"] = json::Quote(intent);
       if (context.origin == "ui") {
         // Opaque to the core: carried in its existing save reply and replay.
-        const auto inverse = ReverseProjectChanges(plan, inspection.base, read);
+        const auto inverse = ReverseProjectChanges(plan, base, read);
         flatbuffers::FlatBufferBuilder undo_builder;
         undo_builder.Finish(H::ProjectEdits::Pack(undo_builder, &inverse));
         plan["operation_data"] = json::Encode(json::Members{
@@ -988,8 +983,6 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
           json::Text(json::Object(json::Get(envelope, "value", "{}")),
                      "kind") != "revision_conflict")
         return result;
-    } catch (const agent::SaveRevisionConflict&) {
-      continue;
     } catch (const Failure& failure) {
       if (context.origin == "ui" && (failure.code == "value_conflict" ||
                                      failure.code == "source_changed")) {

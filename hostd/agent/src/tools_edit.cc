@@ -159,11 +159,27 @@ auto Tools::EditProjectTool(const std::string& conversation,
     }
     const auto authorization =
         boundary ? boundary->authorization() : std::string{};
+    std::string revision;
+    std::optional<host::AgentExclude> policy;
+    HelperScope::Reader read;
+    std::optional<host::SaveBase> scoped_base;
+    auto use_inspection = [&](const host::SaveBase& base) {
+      const auto current = json::Get(base.snapshot, "rev");
+      if (policy && current == revision) return;
+      revision = current;
+      policy = ExclusionsFor(project, base);
+      if (boundary && boundary->scoped()) {
+        scoped_base = base;
+        read = HelperReader(conversation, stop, revision, authorization,
+                            &*scoped_base);
+      }
+    };
     host::OperationContext context;
     context.origin = "agent";
     context.authorize_file = [&](const std::string& path,
                                  const host::SaveBase& base) {
-      Exclusions(project, stop).Check(path);
+      use_inspection(base);
+      policy->Check(path);
       if (std::filesystem::path(path).is_absolute()) return;
       if (!boundary || !boundary->scoped()) return;
       // Project documents are read by the host only; the expanded graph diff is
@@ -171,8 +187,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       if (path == "tsugumi.json" ||
           host::IsExternalDocument(path, "tsugumi.json"))
         return;
-      const auto read = HelperReader(
-          conversation, stop, json::Get(base.snapshot, "rev"), authorization);
       boundary->Check("project_file_read", {{"path", json::Quote(path)}}, read);
     };
     context.authorize = [&](json::Members& plan, const host::SaveBase& base) {
@@ -180,12 +194,9 @@ auto Tools::EditProjectTool(const std::string& conversation,
         std::lock_guard lock(mutex);
         if (boundary) RequireHelperPermission(conversation, *boundary);
       }
-      if (boundary && boundary->scoped()) {
-        const auto read = HelperReader(
-            conversation, stop, json::Get(base.snapshot, "rev"), authorization);
-        boundary->CheckCurrentSave(plan, read);
-      }
-      Exclusions(project, stop).CheckSave(plan, base);
+      use_inspection(base);
+      if (read) boundary->CheckCurrentSave(plan, read);
+      policy->CheckSave(plan, base);
       if (args.contains("approved_permissions"))
         plan["approved_permissions"] = args.at("approved_permissions");
     };

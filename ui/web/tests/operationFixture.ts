@@ -61,7 +61,8 @@ export function operationFixture<T extends ProjectSession>(s: T): T {
       return Object.assign(new R.ResolvedCardT(), { card: cardPath([id]), inputs })
     })
     delta.sourcesUpsert = [...files].filter(([path]) => path !== 'tsugumi.json' && path !== 'layout.json' && !/^definitions\/[^/]+\/_(card|meta)\.json$/.test(path))
-      .map(([path, bytes]) => Object.assign(new R.SourceInfoT(), { path, hash: createHash('sha256').update(bytes).digest('hex'), sizeBytes: BigInt(bytes.length) }))
+      .map(([path, bytes]) => Object.assign(new R.SourceInfoT(), { path, hash: createHash('sha256').update(bytes).digest('hex'), sizeBytes: BigInt(bytes.length),
+        documentJson: /^(externals\/[^/]+\/)+(tsugumi\.json|layout\.json|definitions\/[^/]+\/_(card|meta)\.json)$/.test(path) ? decode(path) : null }))
     delta.sourcesRemoved = [...before.keys()].filter(path => !files.has(path))
     return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...Buffer.from(value.operation_data.base64, 'base64')] })
   }

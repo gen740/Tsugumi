@@ -6,6 +6,7 @@
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/text.hh"
 
 namespace tsugumi {
 
@@ -62,11 +63,6 @@ auto local_document_path(std::string_view path) -> std::string_view {
 }
 }  // namespace
 
-auto Document::is_card_definition_file(const std::string& path) -> bool {
-  const auto rel = local_document_path(path);
-  return rel.ends_with("/_card.json") && is_document_file(std::string(rel));
-}
-
 auto Document::is_card_meta_file(const std::string& path) -> bool {
   const auto rel = local_document_path(path);
   return rel.ends_with("/_meta.json") && is_document_file(std::string(rel));
@@ -80,6 +76,41 @@ bool Document::is_document_file(const std::string& rel) {
   if (slash == std::string::npos) return false;
   auto file = rest.substr(slash + 1);
   return file == "_card.json" || file == "_meta.json";
+}
+
+auto Document::is_external_document_file(std::string_view path) -> bool {
+  return path.starts_with("externals/") &&
+         is_document_file(std::string(local_document_path(path)));
+}
+
+auto external_document_source(const std::string& path, std::string bytes)
+    -> SourceEntry {
+  if (!text::valid_utf8(bytes))
+    throw DocumentError("invalid_document", path + ": expected UTF-8 JSON text",
+                        {{"path", path}});
+  const auto local = local_document_path(path);
+  if (local.ends_with("/_card.json"))
+    parse_card_json(stdfs::path(path).parent_path().filename().string(), bytes);
+  if (local.ends_with("/_meta.json")) check_meta_json(bytes);
+  return {crypto::sha256_hex(bytes), bytes.size(),
+          std::make_shared<const std::string>(std::move(bytes))};
+}
+
+auto Document::check_document_size() const -> void {
+  size_t json_bytes = project_json.size() + layout_json.size();
+  for (const auto& [_, definition] : definitions)
+    json_bytes += definition.card_json.size() +
+                  (definition.meta_json ? definition.meta_json->size() : 0);
+  for (const auto& [_, source] : sources)
+    if (source.document_json) json_bytes += source.size;
+  // Snapshot and save replies must leave room in the RPC frame for manifests,
+  // graph resolution and operation metadata in addition to document text.
+  if (json_bytes > kMaxDocumentJsonBytes)
+    throw DocumentError(
+        "resource_limit",
+        "document JSON has " + std::to_string(json_bytes) +
+            " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
+            "folder and read it through hostFolders (/host/<name>).");
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -361,9 +392,7 @@ auto execution_json(const std::string& text, const char* omitted)
 }
 }  // namespace
 
-std::string execution_fingerprint(
-    const Document& doc,
-    const std::function<std::optional<std::string>(const std::string&)>& read) {
+std::string execution_fingerprint(const Document& doc) {
   crypto::Sha256 h;
   h.update(execution_json(doc.project_json, "name"));
   for (const auto& [id, def] : doc.definitions) {
@@ -376,27 +405,15 @@ std::string execution_fingerprint(
       continue;
     // External projects carry layout as a source file; it never identifies a
     // run.
-    auto relative = path;
-    while (relative.starts_with("externals/")) {
-      const auto slash = relative.find('/', 10);
-      if (slash == std::string::npos) break;
-      relative.erase(0, slash + 1);
-    }
+    const auto relative = local_document_path(path);
     if (relative == "layout.json") continue;
     h.update("\0src\0", 5);
     h.update(path);
-    const char* omitted = relative == "tsugumi.json" ? "name"
-                          : Document::is_document_file(relative) &&
-                                  relative.ends_with("/_card.json")
-                              ? "displayMode"
-                              : nullptr;
-    if (omitted) {
-      if (auto text = read(path))
-        h.update(execution_json(*text, omitted));
-      else
-        h.update(src.hash);  // Unavailable source: resolution reports it; never
-                             // substitute empty content.
-    } else
+    if (src.document_json)
+      h.update(execution_json(*src.document_json, relative == "tsugumi.json"
+                                                      ? "name"
+                                                      : "displayMode"));
+    else
       h.update(src.hash);
   }
   return h.finish_hex();
@@ -404,15 +421,26 @@ std::string execution_fingerprint(
 
 std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   auto doc = std::make_shared<Document>();
+  size_t remaining = kMaxDocumentJsonBytes;
+  const auto consume = [&](const std::string& path, size_t bytes) {
+    if (bytes > remaining)
+      throw DocumentError(
+          "resource_limit",
+          path + " exceeds the remaining 8 MiB document JSON budget",
+          {{"path", path}});
+    remaining -= bytes;
+  };
   auto project_text = fs::read_file(root / "tsugumi.json");
   if (!project_text)
     throw DocumentError("invalid_document", "tsugumi.json is missing");
+  consume("tsugumi.json", project_text->size());
   doc->project = parse_project_json(*project_text);
   doc->project_json = *project_text;
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
 
   auto layout_text = fs::read_file(root / "layout.json");
   doc->layout_json = layout_text ? *layout_text : kEmptyLayout;
+  consume("layout.json", doc->layout_json.size());
   if (layout_text)
     doc->disk_hashes["layout.json"] = crypto::sha256_hex(*layout_text);
 
@@ -429,16 +457,17 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       if (!card_text)
         throw DocumentError("invalid_document",
                             "definitions/" + id + " needs _card.json");
+      const auto prefix = "definitions/" + id + '/';
+      consume(prefix + "_card.json", card_text->size());
       DefinitionDoc d;
       d.card = parse_card_json(id, *card_text);
       d.card_json = *card_text;
-      doc->disk_hashes["definitions/" + id + "/_card.json"] =
-          crypto::sha256_hex(*card_text);
+      doc->disk_hashes[prefix + "_card.json"] = crypto::sha256_hex(*card_text);
       if (auto meta = fs::read_file(entry.path() / "_meta.json")) {
+        consume(prefix + "_meta.json", meta->size());
         check_meta_json(*meta);
         d.meta_json = *meta;
-        doc->disk_hashes["definitions/" + id + "/_meta.json"] =
-            crypto::sha256_hex(*meta);
+        doc->disk_hashes[prefix + "_meta.json"] = crypto::sha256_hex(*meta);
       }
       doc->definitions.emplace(id, std::move(d));
     }
@@ -454,8 +483,16 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
       if (!Document::is_source_area(rel)) continue;
-      if (Document::is_card_meta_file(rel))
-        check_meta_json(fs::read_file_or_throw(root / rel));
+      if (Document::is_external_document_file(rel)) {
+        std::string bytes;
+        fs::stream_beneath(root, rel, UINT64_MAX, [&](std::string_view chunk) {
+          consume(rel, chunk.size());
+          bytes.append(chunk);
+        });
+        doc->sources.emplace(rel,
+                             external_document_source(rel, std::move(bytes)));
+        continue;
+      }
       crypto::Sha256 hash;
       const auto size = fs::stream_beneath(
           root, rel, UINT64_MAX,
@@ -464,9 +501,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
     }
   }
   check_structure(*doc);
-  doc->execution_fingerprint = execution_fingerprint(
-      *doc,
-      [&](const std::string& path) { return fs::read_file(root / path); });
+  doc->execution_fingerprint = execution_fingerprint(*doc);
   return doc;
 }
 

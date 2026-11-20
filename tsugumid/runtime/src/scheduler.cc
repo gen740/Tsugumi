@@ -2474,6 +2474,22 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     receipt.assign(reinterpret_cast<const char*>(b.GetBufferPointer()),
                    b.GetSize());
     History::insert_run(db, s, p.op_id);
+    std::set<CardPath> cards;
+    const auto include = [&](CardPath path) {
+      while (!path.empty() && cards.insert(path).second) path.pop_back();
+    };
+    include(p.card);
+    for (const auto& target : plan.targets) include(target);
+    auto write = db.prepare(
+        "INSERT INTO run_definition_paths (run_id,card,path) VALUES(?,?,?)");
+    for (const auto& card : cards) {
+      const auto& definition = doc->resolution->find(card)->def_dir;
+      write.reset();
+      write.bind(1, *s.status.run_id)
+          .bind(2, path_key(card))
+          .bind(3, definition + "_card.json")
+          .run();
+    }
     if (svc_.options().fault == "run_acceptance")
       throw sql::Error("injected: run acceptance write failed");
     History::put_substituters(db, *s.status.run_id, svc_.substituters());

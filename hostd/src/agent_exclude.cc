@@ -3,7 +3,6 @@
 #include <algorithm>
 
 #include "host/comments.hh"
-
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
@@ -47,11 +46,16 @@ auto AgentExclude::Entries(const std::string& document)
   return entries;
 }
 AgentExclude::AgentExclude(std::filesystem::path root,
-                           const std::string& document)
+                           const std::string& document, const j::Members& files)
     : root_(Resolve(std::filesystem::absolute(root))) {
   for (const auto& entry : Entries(document)) {
     const std::filesystem::path path(entry);
     paths_.push_back(Resolve(path.is_absolute() ? path : root_ / path));
+  }
+  for (const auto& [path, raw] : files) {
+    if (!path.ends_with("/_card.json")) continue;
+    const auto external = j::Text(j::Object(raw), "external");
+    if (!external.empty()) links_.emplace(path, external);
   }
 }
 auto AgentExclude::Contains(const std::filesystem::path& path) const -> bool {
@@ -71,24 +75,15 @@ auto AgentExclude::Card(const std::string& id, const std::string& prefix) const
   if (Contains(definition)) return false;
   if (Contains(definition + "/_card.json")) return false;
   if (slash == std::string::npos) return true;
-  // A Card's id and its linked external folder need not have the same name.
-  // Follow the actual definition, as the resolver and the helper boundary do.
-  std::string external;
-  try {
-    external =
-        j::Text(j::Object(fs::read_beneath(root_, definition + "/_card.json")),
-                "external");
-  } catch (const std::exception&) {
-    return false;
-  }
-  if (!fs::valid_relative_path(external) ||
-      external.find('/') != std::string::npos)
-    return false;
+  // The logical path follows the confirmed definition in this revision.
+  const auto link = links_.find(definition + "/_card.json");
+  if (link == links_.end()) return false;
+  const auto& external = link->second;
   const auto nested = prefix + "externals/" + external + '/';
   return !Contains(nested) && Card(id.substr(slash + 1), nested);
 }
-auto AgentExclude::CheckRequest(const std::string& name,
-                                const j::Members& args) const -> void {
+auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
+                                bool recorded) const -> void {
   if (name.starts_with("project_file_")) Check(j::Text(args, "path"));
   if (name.starts_with("version_")) Check(".git");
   if (name.starts_with("run_") || name.starts_with("artifact_") ||
@@ -108,11 +103,8 @@ auto AgentExclude::CheckRequest(const std::string& name,
   if (name == "artifact_read") {
     // Artifacts use run/Card-path/invocation/output as their canonical id.
     const auto id = j::Text(args, "artifact_id");
-    const auto first = id.find('/'), last = id.rfind('/');
-    const auto invocation = last == id.npos ? id.npos : id.rfind('/', last - 1);
-    if (first != id.npos && invocation != id.npos && invocation > first) {
-      if (!Card(id.substr(first + 1, invocation - first - 1)))
-        throw Failure("not_found", "Artifact not found");
+    const auto first = id.find('/');
+    if (first != id.npos) {
       const auto artifact =
           ".tsugumi/runs/" + id.substr(0, first) + "/artifacts/" + id;
       Check(artifact);
@@ -120,16 +112,19 @@ auto AgentExclude::CheckRequest(const std::string& name,
         Check(std::filesystem::path(artifact) / j::Text(args, "member"));
     }
   }
-  for (const auto* key : {"card", "source_card", "trigger", "target"}) {
-    if (!args.contains(key) || !args.at(key).starts_with('{')) continue;
+  if (recorded) return;
+  const auto check_card = [&](const j::Members& card) {
     std::string id;
-    for (const auto& segment :
-         j::Array(j::Get(j::Object(args.at(key)), "segments", "[]"))) {
+    for (const auto& segment : j::Array(j::Get(card, "segments", "[]"))) {
       if (!id.empty()) id += '/';
       id += j::String(segment);
     }
     if (!id.empty() && !Card(id)) throw Failure("not_found", "Card not found");
-  }
+  };
+  if (args.contains("segments")) check_card(args);
+  for (const auto* key : {"card", "source_card", "trigger", "target"})
+    if (args.contains(key) && args.at(key).starts_with('{'))
+      check_card(j::Object(args.at(key)));
 }
 auto AgentExclude::CheckContent(const std::string& raw) const -> void {
   if (raw.starts_with('[')) {
@@ -178,8 +173,20 @@ auto AgentExclude::ProjectText(const std::string& raw,
   }
   return j::Encode(project);
 }
-auto AgentExclude::Filter(const std::string& raw,
-                          const std::string& prefix) const -> std::string {
+auto AgentExclude::FileText(const std::string& path,
+                            const std::string& raw) const -> std::string {
+  if (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json"))
+    return ProjectText(raw, path.substr(0, path.size() - 12));
+  if (path == "layout.json" || IsExternalDocument(path, "layout.json"))
+    return j::Text(
+        j::Object(Filter(j::Encode(j::Members{{"layout_json", j::Quote(raw)}}),
+                         path.substr(0, path.size() - 11))),
+        "layout_json");
+  return raw;
+}
+
+auto AgentExclude::Filter(const std::string& raw, const std::string& prefix,
+                          bool recorded) const -> std::string {
   if (raw.starts_with('[')) {
     std::vector<std::string> values;
     for (const auto& value : j::Array(raw)) {
@@ -193,17 +200,18 @@ auto AgentExclude::Filter(const std::string& raw,
             !Card(j::Text(object, "id"), prefix))
           continue;
         try {
-          CheckRequest("", object);
+          CheckRequest("", object, recorded);
         } catch (const Failure&) {
           continue;
         }
       }
-      values.push_back(Filter(value, prefix));
+      values.push_back(Filter(value, prefix, recorded));
     }
     return j::Encode(values);
   }
   if (!raw.starts_with('{')) return raw;
   auto object = j::Object(raw);
+  object.erase("document_json");
   if (object.contains("id") && object.contains("card_json")) {
     const auto dir = prefix + "definitions/" + j::Text(object, "id") + '/';
     if (Contains(dir + "_meta.json")) object.erase("meta_json");
@@ -225,7 +233,7 @@ auto AgentExclude::Filter(const std::string& raw,
     } else if (key != "bytes" && key != "text" && key != "record_json" &&
                key != "card_json" && key != "meta_json" &&
                key != "stdout_bytes" && key != "stderr_bytes")
-      value = Filter(value, prefix);
+      value = Filter(value, prefix, recorded);
   }
   return j::Encode(object);
 }
@@ -315,17 +323,8 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
       }
       return full;
     };
-    const auto project_view = [&](const auto& text) {
-      return project_document
-                 ? ProjectText(text, prefix)
-                 : j::Text(
-                       j::Object(Filter(j::Encode(j::Members{
-                                            {"layout_json", j::Quote(text)}}),
-                                        prefix)),
-                       "layout_json");
-    };
-    if (!DocumentsEqual(difference(difference, before, project_view(before)),
-                        difference(difference, bytes, project_view(bytes))))
+    if (!DocumentsEqual(difference(difference, before, FileText(path, before)),
+                        difference(difference, bytes, FileText(path, bytes))))
       throw Failure("not_found", "Card not found");
   };
   for (const auto& raw : j::Array(j::Get(plan, "changes", "[]"))) {

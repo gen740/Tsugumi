@@ -257,52 +257,38 @@ import TsugumiTestSupport
     calls.continuation.finish()
   }
 
-  @Test func internalDocumentsFinishBeforeTheNextGesture() async throws {
+  @Test func internalDocumentsApplyInRevisionOrder() async throws {
     for echoFirst in [false, true] {
       let (session, dir) = try session()
       defer { try? FileManager.default.removeItem(at: dir) }
       let prefix = "externals/sub/"
       let project = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
       func card(_ value: UInt64) -> String { #"{"template":"input","params":[{"name":"value","type":"int","data":\#(value)}]}"# }
-      let reads = AsyncStream<CheckedContinuation<Void, Never>>.makeStream()
-      var iterator = reads.stream.makeAsyncIterator()
-      session.readExternalFile = { path, revision in
-        if path.hasSuffix("/_card.json") && revision == 1 {
-          await withCheckedContinuation { reads.continuation.yield($0) }
-        }
-        return Data((path.hasSuffix("/tsugumi.json") ? project : card(revision + 1)).utf8)
-      }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
       snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
       let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"external":"sub"}"#
       snapshot.definitions = [link]
-      func sources(_ value: UInt64) -> [Tsugumi_RPC_SourceInfoT?] {
-        [prefix + "tsugumi.json", prefix + "definitions/a/_card.json"].map { path in
-          let source = Tsugumi_RPC_SourceInfoT(); source.path = path; source.hash = String(value); return source
-        }
+      func source(_ file: String, _ text: String) -> Tsugumi_RPC_SourceInfoT {
+        let value = Tsugumi_RPC_SourceInfoT(); value.path = prefix + file; value.documentJson = text
+        return value
       }
-      snapshot.sources = sources(0)
+      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", card(1))]
       session.receiveProjectSnapshot(snapshot, projectId: "p")
-      await session.refreshExternals()?.value
       var calls = 0
       session.operateProject = { request in
         calls += 1
         let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
         let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
         #expect(try field.oldValue.json.map(JSONValue.parse) == .number(String(calls)))
-        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = sources(UInt64(calls))
+        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = [source("definitions/a/_card.json", card(UInt64(calls + 1)))]
         if echoFirst { session.applyDelta(d) }
         return self.result(d)
       }
       session.setParam("sub/a", "value", .number("2"))
       session.setParam("sub/a", "value", .number("3"))
-      let release = try #require(await iterator.next())
-      #expect(calls == 1)
-      release.resume()
       await session.save()
       #expect(calls == 2 && session.saveError == nil)
       #expect(session.cardDefinition("sub/a")?["params"]?.array?.first?["data"] == .number("3"))
-      reads.continuation.finish()
     }
   }
 

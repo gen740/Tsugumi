@@ -15,6 +15,8 @@
 
 namespace tsugumi {
 
+struct Document;
+
 struct VersionRunNote {
   std::string run_id;
   std::string state;  // succeeded, failed, cancelled
@@ -78,7 +80,9 @@ class Versions {
   // Commits saved definitions and versionPaths opt-ins when they differ from
   // HEAD (on a detached HEAD a branch is made first, so nothing is left
   // unreachable). Returns HEAD; "" when the folder is not a repository.
-  std::string commit_all(const std::string& message);
+  // A run supplies the accepted document to verify the bytes before staging.
+  std::string commit_all(const std::string& message,
+                         const Document* accepted = nullptr);
   void note_run(const std::string& commit, const VersionRunNote& run);
   // commit_all(message), then an annotated tag `name` on it.
   std::string mark(const std::string& name, const std::string& message);
