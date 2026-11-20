@@ -25,6 +25,7 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
   ui/web/scripts/build.mjs ui/web/scripts/build-client.sh ui/web/scripts/gen.sh ui/web/scripts/check-boundaries.mjs \
   ui/web/src ui/web/shared ui/web/third-party ui/shared/modules 'ui/shared/templates/*.json' \
+  ui/shared/i18n/en.json \
   demos docs/CardGuide.md docs/site/player/build.mjs docs/site/player/narration.json \
   docs/site/player-data/assets docs/assets/tsugumi-icon.svg | tar -xf - -C "$stage"
 # Repository-only generators and their template inputs are already represented

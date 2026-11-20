@@ -8,6 +8,7 @@
 #include <chrono>
 #include <functional>
 #include <optional>
+#include <span>
 #include <string>
 #include <vector>
 
@@ -34,6 +35,11 @@ void kill_group(pid_t pid, int sig);
 std::optional<int> try_wait(pid_t pid);
 int wait(pid_t pid);
 
+struct LineChunk {
+  std::span<const std::string> lines;
+  bool truncated = false;
+};
+
 struct Result {
   int status = -1;  // raw wait status
   bool cancelled = false;
@@ -41,12 +47,16 @@ struct Result {
   std::string out;  // stdout (captured)
 };
 
-// Runs a command to completion. stderr lines are forwarded to `on_stderr`.
+// Runs a command to completion. Each stderr read delivers its complete lines
+// together. At EOF, any final unterminated line is delivered too. With a line
+// limit, an oversized line ends delivery after sending the accepted prefix
+// with truncated=true. The pipe is still drained and the child reaped.
 // Cancellation and deadline terminate the whole process group (TERM, then
 // KILL after `grace`).
 Result run(const Spec& spec, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
-           const std::function<void(const std::string&)>& on_stderr,
+           const std::function<void(LineChunk)>& on_stderr,
+           std::optional<size_t> stderr_line_limit = std::nullopt,
            std::chrono::milliseconds grace = std::chrono::milliseconds(1000));
 
 bool exited_ok(int status);

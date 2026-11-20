@@ -1,17 +1,12 @@
 #include "store.hh"
 
-#include <fcntl.h>
 #include <unistd.h>
 
-#include <cstring>
 #include <set>
-#include <sstream>
 #include <thread>
 
-#include "runtime_schema.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/log.hh"
 #include "tsugumi/util/text.hh"
 
 namespace tsugumi {
@@ -19,16 +14,6 @@ namespace tsugumi {
 namespace stdfs = std::filesystem;
 
 namespace {
-
-constexpr char kMagic[4] = {'T', 'S', 'J', '1'};
-// The journal is compacted past this size, keeping the latest receipts (a
-// client retrying an operation within them gets its answer again): at most
-// this many, and at most this many bytes of them, the newest always, so a
-// compacted journal is well under the size and the next compaction waits
-// for megabytes of new records (receipts of large saves are large).
-constexpr uintmax_t kCompactBytes = 8u << 20;
-constexpr size_t kKeepReceipts = 2000;
-constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
 auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
   try {
@@ -52,37 +37,52 @@ bool writable(const stdfs::path& root, const std::string& rel) {
          fs::resolves_inside(root, root / rel);
 }
 
-std::string journal_payload(const char* type, uint64_t rev, uint64_t exec_rev,
-                            const std::string& op, const std::string& kind,
-                            const std::string& digest,
-                            const std::string& receipt,
-                            const std::vector<FileOp>& ops) {
-  schema::JournalRecord r;
-  *r.type = type;
-  *r.rev = rev;
-  *r.execution_rev = exec_rev;
-  *r.op = op;
-  *r.kind = kind;
-  *r.digest = digest;
-  *r.receipt_b64 = crypto::base64(receipt);
-  for (const auto& o : ops) {
-    schema::JournalFile f;
-    *f.path = o.path;
-    *f.remove = !o.content && !o.file;
-    *f.content_b64 = o.content ? crypto::base64(*o.content) : "";
-    *f.blob = o.file ? o.file->path.filename().string() : "";
-    *f.hash = o.file ? o.file->hash : "";
-    r.files->push_back(std::move(f));
+auto conflicts_with_file(const auto& files, const std::string& path) -> bool {
+  const auto prefix = path + '/';
+  const auto child = files.lower_bound(prefix);
+  if (child != files.end() && child->first.starts_with(prefix)) return true;
+  for (auto slash = path.find('/'); slash != std::string::npos;
+       slash = path.find('/', slash + 1)) {
+    if (files.contains(path.substr(0, slash))) return true;
   }
-  return schema::encode(r);
+  return false;
+}
+
+auto put_receipt(sql::Db& db, const Receipt& receipt) -> void {
+  db.prepare("INSERT INTO receipt(op_id, kind, digest, bytes) VALUES(?,?,?,?)")
+      .bind(1, receipt.op_id)
+      .bind(2, receipt.kind)
+      .bind(3, receipt.digest)
+      .bind_blob(4, receipt.bytes)
+      .run();
+}
+
+auto trim_receipts(sql::Db& db) -> void {
+  // Keep a recent suffix for resend. A single valid reply can exceed the
+  // byte budget, so retain the newest completed receipt even if it does.
+  constexpr int kReceiptCount = 2000;
+  constexpr int kReceiptBytes = 2 << 20;
+  db.prepare(R"sql(
+    DELETE FROM receipt WHERE seq IN (
+      SELECT seq FROM (
+        SELECT seq, row_number() OVER recent AS count,
+          sum(length(bytes) + length(CAST(op_id AS BLOB)) +
+              length(kind) + length(digest)) OVER recent AS size
+        FROM receipt
+        WHERE op_id IS NOT (SELECT pending_op FROM document_state)
+        WINDOW recent AS (ORDER BY seq DESC ROWS UNBOUNDED PRECEDING)
+      )
+      WHERE count > ? OR (count > 1 AND size > ?)
+    )
+  )sql")
+      .bind(1, kReceiptCount)
+      .bind(2, kReceiptBytes)
+      .run();
 }
 
 }  // namespace
 
 Store::Store(StoreOptions opts) : opts_(std::move(opts)) {}
-Store::~Store() {
-  if (journal_fd_ >= 0) ::close(journal_fd_);
-}
 
 auto Store::stage_file(const stdfs::path& root, const std::string& from,
                        const std::optional<std::string>& expected_hash,
@@ -225,9 +225,13 @@ DocumentPtr Store::current() const {
 
 std::optional<Receipt> Store::receipt(const std::string& op_id) const {
   std::lock_guard<std::mutex> l(mu_);
-  auto it = receipts_.find(op_id);
-  if (it == receipts_.end()) return std::nullopt;
-  return it->second;
+  auto statement = db_->prepare(
+      "SELECT kind, digest, bytes FROM receipt WHERE op_id=? AND NOT EXISTS "
+      "(SELECT 1 FROM document_state WHERE pending_op=receipt.op_id)");
+  statement.bind(1, op_id);
+  if (!statement.step()) return std::nullopt;
+  return Receipt{op_id, statement.text(0), statement.text(1),
+                 statement.blob(2)};
 }
 
 void Store::open() {
@@ -241,19 +245,13 @@ void Store::open() {
     project_id_ = crypto::short_id();
     fs::write_atomic(id_path, project_id_, 0600);
   }
-  recover_journal();
-  // Recovery has completed every durable intent. Remaining private files
-  // belong to completed transactions or staging interrupted before journaling.
+  recover_pending();
+  // Remaining private files belong to completed changes or interrupted staging.
   stdfs::remove_all(state_dir() / "document-files");
-  uint64_t rev = 0;
-  uint64_t exec_rev = 0;
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    if (doc_) {
-      rev = doc_->rev;
-      exec_rev = doc_->execution_rev;
-    }
-  }
+  auto state = db_->prepare("SELECT rev, execution_rev FROM document_state");
+  state.step();
+  const auto rev = state.u64(0);
+  const auto exec_rev = state.u64(1);
   auto loaded = load_document(opts_.root);
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
@@ -308,206 +306,105 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
   return doc;
 }
 
-// Journal record: magic(4) | len(u32 LE) | crc32(u32 LE) | payload (compact
-// JSON).
-void Store::recover_journal() {
-  auto path = state_dir() / "document.journal";
-  journal_fd_ =
-      ::open(path.c_str(), O_RDWR | O_CREAT | O_CLOEXEC | O_APPEND, 0600);
-  if (journal_fd_ < 0)
-    throw fs::Error("open journal: " + std::string(std::strerror(errno)));
-  auto data = fs::read_file_or_throw(path);
-  size_t pos = 0;
-  size_t good = 0;
-  struct Txn {
-    schema::JournalRecord rec;
-    bool committed = false;
-  };
-  std::vector<Txn> txns;
-  std::map<std::string, Receipt> receipts;
-  std::deque<std::string> order;
-  uint64_t rev = 0;
-  uint64_t exec_rev = 0;
-  auto to_receipt = [](const schema::JournalRecord& r) {
-    Receipt rc;
-    rc.op_id = *r.op;
-    rc.kind = *r.kind;
-    rc.digest = *r.digest;
-    crypto::base64_decode(*r.receipt_b64, rc.bytes);
-    return rc;
-  };
-  while (pos + 12 <= data.size()) {
-    if (std::memcmp(data.data() + pos, kMagic, 4) != 0) break;
-    uint32_t len;
-    uint32_t crc;
-    std::memcpy(&len, data.data() + pos + 4, 4);
-    std::memcpy(&crc, data.data() + pos + 8, 4);
-    if (pos + 12 + len > data.size()) break;
-    std::string_view payload(data.data() + pos + 12, len);
-    if (crypto::crc32(payload.data(), payload.size()) != crc) break;
-    schema::JournalRecord rec;
-    if (schema::decode(payload, rec)) break;
-    pos += 12 + len;
-    good = pos;
-    if (*rec.type == "base") {
-      // A compacted journal starts from these revisions.
-      rev = *rec.rev;
-      exec_rev = *rec.execution_rev;
-    } else if (*rec.type == "txn") {
-      txns.push_back({rec, false});
-    } else if (*rec.type == "commit") {
-      for (auto& tx : txns)
-        if (*tx.rec.rev == *rec.rev) tx.committed = true;
-    } else if (*rec.type == "receipt") {
-      if (!receipts.count(*rec.op)) order.push_back(*rec.op);
-      receipts[*rec.op] = to_receipt(rec);
-    }
-  }
-  if (good != data.size()) {
-    // Torn tail from a crash during append: drop it.
-    if (::ftruncate(journal_fd_, static_cast<off_t>(good)) != 0)
-      throw fs::Error("truncate journal: " + std::string(std::strerror(errno)));
-    ::fsync(journal_fd_);
-  }
-  for (auto& tx : txns) {
-    const auto& rec = tx.rec;
-    // The journal is a file in the project: a record that writes outside
-    // what a save may write was not made here, and is not applied.
-    bool foreign = false;
-    for (const auto& f : *rec.files) foreign |= !writable(opts_.root, *f.path);
-    if (foreign) {
-      log::warn("journal: a record of revision " + std::to_string(*rec.rev) +
-                " writes outside the project's documents and sources; ignored");
-      continue;
-    }
-    if (!tx.committed) {
-      // Redo: the txn record holds every file's final content.
-      std::vector<FileOp> ops;
-      for (const auto& f : *rec.files) {
-        FileOp op;
-        op.path = *f.path;
-        if (!f.blob->empty()) {
-          if (!crypto::is_uuid(*f.blob))
-            throw fs::Error("invalid journal blob");
-          op.file = std::make_shared<SourceFile>();
-          op.file->journaled = true;
-          op.file->path = state_dir() / "document-files" / *f.blob;
-          op.file->hash = *f.hash;
-          if (fs::sha256_file(op.file->path) != op.file->hash)
-            throw fs::Error("journal blob hash mismatch");
-        } else if (!*f.remove) {
-          std::string bytes;
-          crypto::base64_decode(*f.content_b64, bytes);
-          op.content = std::move(bytes);
-        }
-        ops.push_back(std::move(op));
-      }
-      apply_ops(ops, false);
-      append_record(journal_payload("commit", *rec.rev, *rec.execution_rev,
-                                    *rec.op, "", "", "", {}));
-    }
-    rev = *rec.rev;
-    exec_rev = *rec.execution_rev;
-    if (!receipts.count(*rec.op)) order.push_back(*rec.op);
-    receipts[*rec.op] = to_receipt(rec);
-  }
-  auto doc = std::make_shared<Document>();
-  doc->rev = rev;
-  doc->execution_rev = exec_rev;
-  std::lock_guard<std::mutex> l(mu_);
-  doc_ = doc;  // placeholder carrying only the revision numbers
-  receipts_ = std::move(receipts);
-  receipt_order_ = std::move(order);
-}
-
-void Store::remember_receipt(Receipt r) {
-  if (!receipts_.count(r.op_id)) receipt_order_.push_back(r.op_id);
-  receipts_[r.op_id] = std::move(r);
-}
-
-void Store::compact_journal() {
-  std::error_code ec;
-  auto path = state_dir() / "document.journal";
-  if (stdfs::file_size(path, ec) < kCompactBytes || ec) return;
-  std::vector<Receipt> keep;
-  uint64_t rev = 0;
-  uint64_t exec_rev = 0;
+auto Store::recover_pending() -> void {
+  const auto path = state_dir() / "document.sqlite";
+  // Saved bytes and receipts can contain private project data.
+  if (!stdfs::exists(path)) fs::write_atomic(path, "", 0600);
+  db_ = std::make_unique<sql::Db>(path.string());
+  // Return pages freed by the receipt budget to the filesystem on commit.
+  db_->exec("PRAGMA auto_vacuum=FULL");
+  // Sync the parent directory when deleting SQLite's rollback journal too.
+  db_->exec("PRAGMA synchronous=EXTRA");
+  db_->exec(R"sql(
+    CREATE TABLE IF NOT EXISTS document_state(
+      id INTEGER PRIMARY KEY CHECK(id=1),
+      rev INTEGER NOT NULL,
+      execution_rev INTEGER NOT NULL,
+      pending_op TEXT
+    );
+    INSERT OR IGNORE INTO document_state(id, rev, execution_rev) VALUES(1,0,0);
+    CREATE TABLE IF NOT EXISTS receipt(
+      seq INTEGER PRIMARY KEY,
+      op_id TEXT NOT NULL UNIQUE,
+      kind TEXT NOT NULL,
+      digest TEXT NOT NULL,
+      bytes BLOB NOT NULL
+    );
+    CREATE TABLE IF NOT EXISTS pending_file(
+      seq INTEGER PRIMARY KEY,
+      path TEXT NOT NULL,
+      content BLOB,
+      staged_file TEXT,
+      hash TEXT
+    );
+  )sql");
   {
-    std::lock_guard<std::mutex> l(mu_);
-    size_t kept = 0;
-    size_t bytes = 0;
-    for (auto it = receipt_order_.rbegin(); it != receipt_order_.rend();
-         ++it, ++kept) {
-      const auto& r = receipts_.at(*it);
-      size_t size =
-          r.op_id.size() + r.kind.size() + r.digest.size() + r.bytes.size();
-      if (kept > 0 &&
-          (kept == kKeepReceipts || bytes + size > kKeepReceiptBytes))
-        break;
-      bytes += size;
-    }
-    while (receipt_order_.size() > kept) {
-      receipts_.erase(receipt_order_.front());
-      receipt_order_.pop_front();
-    }
-    for (const auto& id : receipt_order_) keep.push_back(receipts_.at(id));
-    if (doc_) {
-      rev = doc_->rev;
-      exec_rev = doc_->execution_rev;
-    }
+    auto pending = db_->prepare(
+        "SELECT pending_op FROM document_state WHERE pending_op IS NOT NULL");
+    if (!pending.step()) return;
   }
-  auto record = [](const std::string& payload) {
-    std::string r(kMagic, 4);
-    uint32_t len = static_cast<uint32_t>(payload.size());
-    uint32_t crc = crypto::crc32(payload.data(), payload.size());
-    r.append(reinterpret_cast<const char*>(&len), 4);
-    r.append(reinterpret_cast<const char*>(&crc), 4);
-    return r + payload;
-  };
-  std::string data =
-      record(journal_payload("base", rev, exec_rev, "", "", "", "", {}));
-  for (const auto& r : keep)
-    data += record(journal_payload("receipt", rev, exec_rev, r.op_id, r.kind,
-                                   r.digest, r.bytes, {}));
-  // One rename: a crash leaves the old journal or the new one, both complete.
-  fs::write_atomic(path, data, 0600);
-  int fd = ::open(path.c_str(), O_RDWR | O_CLOEXEC | O_APPEND);
-  if (fd < 0) {
-    halted_ = true;
-    throw Failed(FailureKind::persistence_failed,
-                 "reopening the compacted journal failed");
+
+  std::vector<FileOp> ops;
+  auto files = db_->prepare(
+      "SELECT path, content, staged_file, hash FROM pending_file ORDER BY seq");
+  while (files.step()) {
+    FileOp op;
+    op.path = files.text(0);
+    if (!files.is_null(2)) {
+      const auto name = files.text(2);
+      if (!crypto::is_uuid(name)) throw fs::Error("invalid staged source name");
+      op.file = std::make_shared<SourceFile>();
+      op.file->journaled = true;
+      op.file->path = state_dir() / "document-files" / name;
+      op.file->hash = files.text(3);
+      if (fs::sha256_file(op.file->path) != op.file->hash)
+        throw fs::Error("staged source hash mismatch");
+    } else if (!files.is_null(1)) {
+      op.content = files.blob(1);
+    }
+    ops.push_back(std::move(op));
   }
-  ::close(journal_fd_);
-  journal_fd_ = fd;
-  log::info("journal: compacted to " + std::to_string(data.size()) +
-            " bytes (" + std::to_string(keep.size()) + " receipts)");
+  apply_ops(ops, false);
+  finish_pending();
 }
 
-void Store::append_record(const std::string& payload) {
-  std::string rec(kMagic, 4);
-  uint32_t len = static_cast<uint32_t>(payload.size());
-  uint32_t crc = crypto::crc32(payload.data(), payload.size());
-  rec.append(reinterpret_cast<const char*>(&len), 4);
-  rec.append(reinterpret_cast<const char*>(&crc), 4);
-  rec += payload;
-  const char* p = rec.data();
-  size_t n = rec.size();
-  while (n > 0) {
-    ssize_t w = ::write(journal_fd_, p, n);
-    if (w < 0) {
-      if (errno == EINTR) continue;
-      halted_ = true;
-      throw Failed(
-          FailureKind::persistence_failed,
-          "journal write failed: " + std::string(std::strerror(errno)));
-    }
-    p += w;
-    n -= static_cast<size_t>(w);
+auto Store::persist_pending(const Document& doc, const Receipt& receipt,
+                            const std::vector<FileOp>& ops) -> void {
+  std::lock_guard lock(mu_);
+  sql::Transaction transaction(*db_);
+  put_receipt(*db_, receipt);
+  db_->prepare("UPDATE document_state SET rev=?, execution_rev=?, pending_op=?")
+      .bind(1, doc.rev)
+      .bind(2, doc.execution_rev)
+      .bind(3, receipt.op_id)
+      .run();
+  auto row = db_->prepare(
+      "INSERT INTO pending_file(path, content, staged_file, hash) "
+      "VALUES(?,?,?,?)");
+  for (const auto& op : ops) {
+    row.bind(1, op.path);
+    if (op.content) row.bind_blob(2, *op.content);
+    if (op.file)
+      row.bind(3, op.file->path.filename().string()).bind(4, op.file->hash);
+    row.run();
+    row.reset();
   }
-  if (::fsync(journal_fd_) != 0) {
-    halted_ = true;
-    throw Failed(FailureKind::persistence_failed, "journal fsync failed");
-  }
+  transaction.commit();
+}
+
+auto Store::finish_pending() -> void {
+  sql::Transaction transaction(*db_);
+  // If other saves were rejected while persistence was halted, publish the
+  // recovered receipt as the newest so those failures cannot evict it.
+  db_->exec(R"sql(
+    UPDATE receipt SET seq=(SELECT max(seq)+1 FROM receipt)
+      WHERE op_id=(SELECT pending_op FROM document_state)
+        AND seq < (SELECT max(seq) FROM receipt);
+    DELETE FROM pending_file;
+    UPDATE document_state SET pending_op=NULL;
+  )sql");
+  trim_receipts(*db_);
+  transaction.commit();
 }
 
 void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
@@ -545,7 +442,7 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
 void Store::check_disk_unchanged(const Document& base,
                                  const std::vector<FileOp>& ops) const {
   for (const auto& op : ops) {
-    auto disk = fs::file_sha256(opts_.root / op.path);
+    const auto target = opts_.root / op.path;
     std::optional<std::string> expected;
     if (Document::is_document_file(op.path)) {
       auto it = base.disk_hashes.find(op.path);
@@ -554,7 +451,16 @@ void Store::check_disk_unchanged(const Document& base,
       auto it = base.sources.find(op.path);
       if (it != base.sources.end()) expected = it->second.hash;
     }
-    if (disk != expected)
+    std::error_code error;
+    const auto status = stdfs::status(target, error);
+    if (error && error != std::errc::no_such_file_or_directory &&
+        error != std::errc::not_a_directory)
+      throw stdfs::filesystem_error("checking save destination", target, error);
+    const bool regular = stdfs::is_regular_file(status);
+    if (error == std::errc::not_a_directory ||
+        (stdfs::exists(status) && !regular) ||
+        (regular ? std::optional(fs::sha256_file(target)) : std::nullopt) !=
+            expected)
       throw Failed(FailureKind::external_change,
                    op.path + " changed outside Tsugumi; Reload before saving",
                    {{"path", op.path}});
@@ -721,14 +627,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
               throw hash_conflict(c.path, *c.base_hash, it->second.hash);
           } else if (c.base_hash) {
             throw hash_conflict(c.path, *c.base_hash, "");
-          } else {
-            std::error_code ec;
-            if (stdfs::exists(opts_.root / c.path, ec))
-              throw Failed(
-                  FailureKind::external_change,
-                  c.path +
-                      " exists on disk but not in the document; Reload first",
-                  {{"path", c.path}});
           }
           if (c.file) {
             doc->sources[c.path] = SourceEntry{c.file->hash, c.file->size};
@@ -891,6 +789,18 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     else
       doc->disk_hashes.erase(op.path);
   }
+  // Applying an intent must also work from a partially applied tree. A save
+  // can change a path's file/directory role only after a separate removal.
+  for (const auto& op : st.ops) {
+    if (!op.content && !op.file) continue;
+    if (conflicts_with_file(base->disk_hashes, op.path) ||
+        conflicts_with_file(base->sources, op.path) ||
+        conflicts_with_file(doc->disk_hashes, op.path) ||
+        conflicts_with_file(doc->sources, op.path))
+      throw Failed(FailureKind::invalid_path,
+                   op.path + " conflicts with a file above or below it",
+                   {{"path", op.path}});
+  }
   wrap([&] { doc->execution_fingerprint = execution_fingerprint(*doc); });
   st.doc = doc;
   return st;
@@ -981,6 +891,7 @@ void Store::commit(Staged& st, const std::string& kind,
   if (!st.effective) {
     Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
     check_cancelled();
+    record_receipt(r);
     // Receipt only: no revision change, no notification. A reload may still
     // learn new on-disk bytes (e.g. reformatted JSON with the same content).
     if (st.doc && st.doc->disk_hashes != base->disk_hashes) {
@@ -990,56 +901,45 @@ void Store::commit(Staged& st, const std::string& kind,
       doc_ = refreshed;
     }
     st.doc = nullptr;
-    record_receipt(r);
     return;
   }
   check_disk_unchanged(*base, st.ops);
   prepare_delta(st);
   auto doc = st.doc;
-  std::string receipt = make_receipt(&st.delta);
-
-  auto intent = journal_payload("txn", doc->rev, doc->execution_rev,
-                                st.delta.op_id, kind, digest, receipt, st.ops);
+  Receipt receipt{st.delta.op_id, kind, digest, make_receipt(&st.delta)};
   check_cancelled();
-  // Mark before appending: even a failed append/fsync may have persisted the
-  // intent. Recovery owns these files until the commit marker is durable.
+  // A failed commit can leave the intent durable. Recovery owns the staged
+  // files from this point until the receipt is published.
   for (const auto& op : st.ops)
     if (op.file) op.file->journaled = true;
-  append_record(intent);
-  fault("after_journal");
   try {
+    persist_pending(*doc, receipt, st.ops);
+    fault("after_prepare");
     apply_ops(st.ops, true);
     fault("before_commit");
-    append_record(journal_payload("commit", doc->rev, doc->execution_rev,
-                                  st.delta.op_id, "", "", "", {}));
+    {
+      std::lock_guard lock(mu_);
+      finish_pending();
+      doc_ = doc;
+    }
     for (const auto& op : st.ops)
       if (op.file) op.file->journaled = false;
-  } catch (const Failed&) {
-    throw;
   } catch (const std::exception& e) {
-    // The journal holds the transaction; recovery on restart completes it.
     halted_ = true;
-    throw Failed(FailureKind::persistence_failed,
-                 std::string("applying the transaction failed: ") + e.what());
+    throw Failed(FailureKind::persistence_failed, e.what());
   }
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    doc_ = doc;
-    remember_receipt(Receipt{st.delta.op_id, kind, digest, receipt});
-  }
-  compact_journal();
 }
 
 void Store::record_receipt(const Receipt& r) {
-  auto base = current();
-  append_record(journal_payload("receipt", base ? base->rev : 0,
-                                base ? base->execution_rev : 0, r.op_id, r.kind,
-                                r.digest, r.bytes, {}));
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    remember_receipt(r);
+  std::lock_guard lock(mu_);
+  try {
+    sql::Transaction transaction(*db_);
+    put_receipt(*db_, r);
+    trim_receipts(*db_);
+    transaction.commit();
+  } catch (const sql::Error& e) {
+    throw Failed(FailureKind::persistence_failed, e.what());
   }
-  compact_journal();
 }
 
 }  // namespace tsugumi

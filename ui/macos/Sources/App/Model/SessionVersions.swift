@@ -14,7 +14,7 @@ extension ProjectSession {
     } catch { versionGraph = nil }
   }
 
-  func versionDiff(commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+  func versionDiff(commit: String, from: String?) async throws -> Tsugumi_RPC_VersionDiffT {
     guard let project = try await RPCToolTransport(session: self).project() else { throw RPCError.disconnected }
     return try await CoreHostClient.shared.versionDiff(project: project.id, commit: commit, from: from)
   }

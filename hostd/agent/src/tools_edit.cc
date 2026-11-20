@@ -137,7 +137,6 @@ auto Tools::EditProjectTool(const std::string& conversation,
       value.from_port = json::Text(args, "from_port");
       value.to_card = json::Text(args, "to_card");
       value.to_port = json::Text(args, "to_port");
-      value.fork_id = json::Text(args, "fork_id");
       request.body.Set(std::move(value));
     } else if (call.name == "project_make_subgraph") {
       H::ProjectMakeSubgraphT value;
@@ -159,20 +158,13 @@ auto Tools::EditProjectTool(const std::string& conversation,
     }
     const auto authorization =
         boundary ? boundary->authorization() : std::string{};
-    std::string revision;
     std::optional<host::AgentExclude> policy;
     HelperScope::Reader read;
-    std::optional<host::SaveBase> scoped_base;
     auto use_inspection = [&](const host::SaveBase& base) {
-      const auto current = json::Get(base.snapshot, "rev");
-      if (policy && current == revision) return;
-      revision = current;
+      if (policy) return;
       policy = ExclusionsFor(project, base);
-      if (boundary && boundary->scoped()) {
-        scoped_base = base;
-        read = HelperReader(conversation, stop, revision, authorization,
-                            &*scoped_base);
-      }
+      if (boundary && boundary->scoped())
+        read = HelperReader(conversation, stop, {}, authorization, &base);
     };
     host::OperationContext context;
     context.origin = "agent";

@@ -235,7 +235,7 @@ auto canvas(const std::string& layout) -> H::VersionCanvasT {
   auto a = H::CreateVersionCanvasCard(b, b.CreateString("a"), 0, 0,
                                       b.CreateString("input"));
   auto c = H::CreateVersionCanvasCard(b, b.CreateString("b"), 0, 0,
-                                      b.CreateString("fork"), 3);
+                                      b.CreateString("merge"), 3);
   auto w =
       H::CreateVersionCanvasWire(b, b.CreateString("a"), b.CreateString("b"));
   auto req = H::CreateVersionCanvasRequest(b, b.CreateString(layout),

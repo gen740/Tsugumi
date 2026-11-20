@@ -35,7 +35,13 @@ TEST(HostSettingsStore,
       directory.path, [](const auto&, const auto&) {},
       [](const auto&, auto) { return ""; }, [](const auto&) { return true; },
       std::make_unique<MemorySecrets>(), {},
-      [&](const auto& profile) { changed.push_back(profile); });
+      [&](const std::string& bytes) {
+        const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
+        ASSERT_NE(event, nullptr);
+        const auto* provider = event->value_as_ProviderChanged();
+        ASSERT_NE(provider, nullptr);
+        changed.push_back(provider->profile()->str());
+      });
   const auto put = [&](bool remove) {
     H::ProviderSetRequestT value;
     value.profile = "desktop";

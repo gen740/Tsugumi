@@ -89,7 +89,10 @@ export function onServerEvent(fn: Listener): () => void {
         lost = true
         // Events sent while the socket was down are lost: once it is back,
         // every listener reads its state again ({ type: 'reconnected' }).
-        const retry = () => void core.connectHost().catch(() => setTimeout(retry, 1000))
+        const retry = () => void core.connectHost().catch((error) => {
+          emit({ type: 'hostUnavailable', message: (error as Error).message })
+          setTimeout(retry, 1000)
+        })
         setTimeout(retry, 200)
       } else if (type === 'Connected' && lost) {
         lost = false

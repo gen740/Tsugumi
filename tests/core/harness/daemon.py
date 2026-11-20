@@ -25,7 +25,7 @@ SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
 # Adapter to existing crash points, not a contract asserted by test cases.
 FAULTS = {
     "save_before_commit": "before_commit",
-    "save_after_prepare": "after_journal",
+    "save_after_prepare": "after_prepare",
     "save_during_apply": "partial_apply",
     "invocation_record": "history_invocation",
     "run_acceptance": "run_acceptance",

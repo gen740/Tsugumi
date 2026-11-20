@@ -595,10 +595,8 @@ final class ChatController {
     }
   }
 
-  /// The user's answer; `always` are kinds allowed without asking from now on.
-  func answerPermissions(id: UUID, allow: Bool, always: Set<CardPermission>, selected: Set<String>? = nil) {
+  func answerPermissions(id: UUID, allow: Bool, selected: Set<String>? = nil) {
     guard let p = permissionPrompt, p.id == id else { return }
-    if allow && p.operation == nil { AppPreferences.shared.allowedPermissions.formUnion(always.filter { $0.known }.map(\.rawValue)) }
     permissionQueue.answer(id, allow: allow, selected: selected)
   }
 

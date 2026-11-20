@@ -199,9 +199,6 @@ final class AppPreferences {
     case .off: return true
     }
   }
-  /// What the Agent may give Cards without asking (CardPermission raw
-  /// values); everything else waits for the user. Nothing by default.
-  var allowedPermissions: Set<String> { didSet { CorePreferences.shared.set(Array(allowedPermissions).sorted(), forKey: "agent.permissions.allowed") } }
   var shortcuts: [ShortcutAction: KeyBinding] { didSet { saveShortcuts() } }
   var skillFolders: [SkillFolder] { didSet { saveSkills() } }
 
@@ -223,7 +220,6 @@ final class AppPreferences {
     editorTheme = EditorTheme(rawValue: d.string(forKey: "editor.theme") ?? "") ?? .standard
     flowDirection = FlowDirection(rawValue: d.string(forKey: "canvas.flow") ?? "") ?? .topToBottom
     tsugumiMotion = Motion(rawValue: d.string(forKey: "app.tsugumiMotion") ?? "") ?? .system
-    allowedPermissions = Set(CorePreferences.shared.stringArray(forKey: "agent.permissions.allowed") ?? [])
     if let data = d.data(forKey: "app.shortcuts"), let s = try? JSONDecoder().decode([String: KeyBinding].self, from: data) {
       shortcuts = Dictionary(uniqueKeysWithValues: s.compactMap { k, v in ShortcutAction(rawValue: k).map { ($0, v) } })
     } else {
@@ -244,8 +240,6 @@ final class AppPreferences {
   func syncHostSettings() {
     let core = CorePreferences.shared
     if let value = core.string(forKey: "app.language"), let next = Language(rawValue: value), language != next { language = next }
-    let permissions = Set(core.stringArray(forKey: "agent.permissions.allowed") ?? [])
-    if allowedPermissions != permissions { allowedPermissions = permissions }
     if let data = core.data(forKey: "agent.skillFolders"), let folders = try? JSONDecoder().decode([SkillFolder].self, from: data), skillFolders != folders { skillFolders = folders }
   }
 

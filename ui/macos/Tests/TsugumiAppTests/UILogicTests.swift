@@ -119,31 +119,31 @@ import TsugumiTestSupport
     let o = g.outlineRect
     return g.outline(in: CGRect(x: box.minX + o.minX * k, y: box.minY + o.minY * k, width: o.width * k, height: o.height * k), cornerScale: k)
   }
-  // A graph laid out on the canvas does not overlap here: start -> fork -> two Cards.
-  let start = canvas(.trigger), fork = canvas(.fork, fan: 2)
-  let forked = VersionMiniMapLayout([
+  // A graph laid out on the canvas does not overlap here: start and two Cards feeding a Merge.
+  let start = canvas(.trigger), merge = canvas(.merge, fan: 2)
+  let placed = VersionMiniMapLayout([
     .init(id: "start", x: 0, y: 30, kind: .trigger),
-    .init(id: "fork", x: start.size.width + 10, y: 20, kind: .fork, fan: 2),
-    .init(id: "load", x: start.size.width + fork.size.width + 40, y: -30),
-    .init(id: "draft", x: start.size.width + fork.size.width + 40, y: 60, kind: .draft),
+    .init(id: "merge", x: start.size.width + 10, y: 20, kind: .merge, fan: 2),
+    .init(id: "load", x: start.size.width + merge.size.width + 40, y: -30),
+    .init(id: "draft", x: start.size.width + merge.size.width + 40, y: 60, kind: .draft),
   ], flow: .leftToRight, width: 284, height: 132)
-  let at = forked.cards
-  #expect(at["start"]!.shape == .start && at["fork"]!.shape == .fork && at["load"]!.shape == .card && at["draft"]!.shape == .card)
+  let at = placed.cards
+  #expect(at["start"]!.shape == .start && at["merge"]!.shape == .merge && at["load"]!.shape == .card && at["draft"]!.shape == .card)
   #expect(at["draft"]!.draft && !at["load"]!.draft)
   let boxes = Array(at.values.map(\.box))
   for (i, a) in boxes.enumerated() {
     for b in boxes[(i + 1)...] { #expect(!a.intersects(b)) }
   }
   // The shapes are those of the canvas, scaled and at their place.
-  let k = at["fork"]!.box.width / fork.size.width
+  let k = at["merge"]!.box.width / merge.size.width
   #expect(k > 0 && k <= 0.3)
-  #expect(abs(at["fork"]!.box.height - fork.size.height * k) < 1e-9 && abs(at["start"]!.box.width - start.size.width * k) < 1e-9)
-  #expect(at["fork"]!.outline == outline(fork, in: at["fork"]!.box, k))
+  #expect(abs(at["merge"]!.box.height - merge.size.height * k) < 1e-9 && abs(at["start"]!.box.width - start.size.width * k) < 1e-9)
+  #expect(at["merge"]!.outline == outline(merge, in: at["merge"]!.box, k))
   #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
-  #expect(abs(at["fork"]!.outline.boundingRect.minX - (at["fork"]!.box.minX + fork.outlineRect.minX * k)) < 1)
+  #expect(abs(at["merge"]!.outline.boundingRect.minX - (at["merge"]!.box.minX + merge.outlineRect.minX * k)) < 1)
 
   // A branch is a diamond whose corners shrink with it; a merge is a triangle that
-  // grows with its inputs, and a fork with its outputs; both follow the flow.
+  // grows with its inputs.
   let diamond = VersionMiniMapLayout([.init(id: "b", x: 0, y: 0, kind: .branch)], flow: .leftToRight, width: 284, height: 132).cards["b"]!
   #expect(diamond.shape == .branch && abs(diamond.box.width - canvas(.branch).size.width * 0.3) < 1e-9)
   #expect(diamond.outline == outline(canvas(.branch), in: diamond.box, 0.3))
@@ -155,7 +155,6 @@ import TsugumiTestSupport
   #expect(single(.merge, 6).box.height > single(.merge, 2).box.height)
   #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
   #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
-  #expect(single(.fork, 6).box.height > single(.fork, 2).box.height)
 
   // A loop is a merge and a branch with a wire back: they keep their shapes and do not overlap.
   let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .branch)],
@@ -295,7 +294,7 @@ import TsugumiTestSupport
   func geometry(_ kind: CardKind) -> CardGeometry {
     CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
   }
-  for kind in [CardKind.trigger, .fork, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
+  for kind in [CardKind.trigger, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
   #expect(geometry(.code).summary)
   #expect(geometry(.subgraph).summary)
 }
@@ -330,14 +329,6 @@ import TsugumiTestSupport
   for p in [v, c, a, b] {
     #expect(outline.strokedPath(StrokeStyle(lineWidth: 2)).contains(p))
   }
-  let fork = CardGeometry(CardNodeData(title: "f", kind: .fork, summary: nil, inputs: [PortData(name: "in")],
-                                       outputs: [PortData(name: "o1"), PortData(name: "o2"), PortData(name: "o3")]), flow: .topToBottom)
-  let top = fork.port("in", output: false)
-  let outs = ["o1", "o2", "o3"].map { fork.port($0, output: true) }
-  // Narrow top with one input, wide bottom edge with the outputs spread.
-  #expect(abs(top.x - fork.size.width / 2) < 0.5 && top.y == fork.outlineRect.minY)
-  #expect(outs.allSatisfy { $0.y == fork.outlineRect.maxY } && outs[0].x < outs[1].x && outs[1].x < outs[2].x)
-  #expect(outs[2].x - outs[0].x > fork.size.width * 0.4)
   let merge = CardGeometry(CardNodeData(title: "m", kind: .merge, summary: nil,
                                         inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]), flow: .topToBottom)
   #expect(abs(merge.port("out", output: true).x - merge.size.width / 2) < 0.5)
@@ -587,7 +578,7 @@ import TsugumiTestSupport
     let g = CardGeometry(d, flow: flow)
     #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
     let edge = flow == .topToBottom ? g.size.width : g.size.height
-    if d.kind == .fork || d.kind == .merge {
+    if d.kind == .merge {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
         // What is drawn: every port is on it, and rounding takes only a little off the wide edge.
@@ -611,7 +602,7 @@ import TsugumiTestSupport
         let p = g.port("p\(i)", output: output)
         return flow == .topToBottom ? p.x : p.y
       }
-      let apex = (d.kind == .fork && !output) || (d.kind == .merge && output)
+      let apex = d.kind == .merge && output
       for (i, v) in list.enumerated() {
         guard let grid, let n = c["n"] as? Double else { continue }
         // A Card's corner is on a grid line, so this is its place on the canvas too.
@@ -664,28 +655,6 @@ private final class CountingRuler: LineNumberRuler {
   #expect(ChatSplit.chatWidth(wanted, in: room) == 0)
 }
 
-@MainActor @Test func theAddCardMenuSelectsLanguageAndFigureTemplates() throws {
-  var chosen: DefinitionTemplate?
-  let menu = NSHostingMenu(rootView: BuiltinCardItems { chosen = $0 })
-
-  func find(_ title: String, in menu: NSMenu) -> (NSMenu, Int)? {
-    menu.update()
-    for (index, item) in menu.items.enumerated() {
-      if item.title == title && item.submenu == nil { return (menu, index) }
-      if let submenu = item.submenu, let found = find(title, in: submenu) { return found }
-    }
-    return nil
-  }
-
-  let templates: [DefinitionTemplate] = [.go, .rust, .ruby, .csharp, .matplotlib, .plotly, .altair]
-  for template in templates {
-    let (parent, index) = try #require(find(template.label, in: menu))
-    parent.performActionForItem(at: index)
-    #expect(chosen == template)
-    chosen = nil
-  }
-}
-
 @MainActor @Test func draftImplementationListsWiresWithoutInventingPorts() throws {
   let dir = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: dir) }
@@ -702,8 +671,8 @@ private final class CountingRuler: LineNumberRuler {
   let editor = CardEditorModel(session: session, cardKey: "plan")
   #expect(session.portData("plan").inputs.isEmpty && session.portData("plan").outputs.isEmpty)
   #expect(editor.draftEnds.isEmpty)
-  editor.implementAs("fork")
-  #expect(editor.kind == .fork)
+  editor.implementAs("collect")
+  #expect(editor.kind == .collect)
   let input = try #require(editor.draftEnds.first { $0.side == "to" })
   let output = try #require(editor.draftEnds.first { $0.side == "from" })
   #expect(editor.rebindings.isEmpty)

@@ -49,6 +49,36 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->nodes.front().diags.empty());
   EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
 }
+TEST_F(OpaqueMetadata, ExecutionFingerprintKeepsCanonicalBytes) {
+  Document document;
+  document.project_json =
+      R"( { "name": "presentation", "value": {"z": [1, 1.0, -0, 2e+1], "\u0061": "\u0062\n"}, "agentExclude": [] } )";
+  EXPECT_EQ(execution_fingerprint(document),
+            crypto::sha256_hex(
+                R"({"value":{"a":"b\n","z":[1,1.0,-0,2e+1]}})"));
+}
+
+TEST_F(OpaqueMetadata, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
+  fs::write_atomic(
+      root / "tsugumi.json",
+      R"({
+        "pkgsPath": "tsugumi:default",
+        "canvas": {"cards": [{"id": "start"}], "connections": []},
+        "nixSources": [{
+          "name": "science",
+          "type": "flake",
+          "ref": "github:org/science/revision?narHash=sha256-pin",
+          "overrides": {"tool": {"override": {"z": [1.0, 1, null], "\u0061": "\u0062"}}}
+        }]
+      })");
+  Store store({root, ""});
+  store.open();
+  const auto& sources = store.current()->resolution->nodes.front().nix_sources;
+  ASSERT_EQ(sources.size(), 1u);
+  EXPECT_EQ(sources.front().overrides,
+            R"({"tool":{"override":{"a":"b","z":[1.0,1,null]}}})");
+}
+
 TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
   // A wire to an undeclared input of a code Card and an unknown param type:
   // each message carries the fix (the inputs entry, the valid types) on one
@@ -212,7 +242,10 @@ TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
     {"from":{"card":"next","port":""},"to":{"card":"collect","port":"in"}}
   ]}})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"switch"})");
+                   R"({"template":"input"})");
+  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
+                   "table Condition { value:bool; } table Outputs { "
+                   "value:Condition; } root_type Outputs;");
   fs::write_atomic(root / "definitions/plan/_card.json",
                    R"({"template":"draft","inputs":[{"name":"ignored"}]})");
   fs::write_atomic(root / "definitions/next/_card.json",
@@ -261,23 +294,30 @@ TEST_F(OpaqueMetadata, DraftEmptyCannotMaskARealTypeDerivedSeveralStepsLater) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"plan"},{"id":"sink"},{"id":"relay"},{"id":"condition"}],"connections":[
-    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"in"}},
-    {"from":{"card":"relay","port":"out1"},"to":{"card":"sink","port":"in"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"in"}}
+    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"value"}},
+    {"from":{"card":"relay","port":"a"},"to":{"card":"sink","port":"value"}},
+    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"value"}},
+    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"condition"}},
+    {"from":{"card":"condition","port":"value"},"to":{"card":"sink","port":"condition"}}
   ]}})");
   fs::write_atomic(root / "definitions/plan/_card.json",
                    R"({"template":"draft"})");
   fs::write_atomic(root / "definitions/sink/_card.json",
-                   R"({"template":"fork"})");
+                   R"({"template":"branch"})");
   fs::write_atomic(root / "definitions/relay/_card.json",
-                   R"({"template":"fork"})");
+                   R"({"template":"branch"})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"switch"})");
+                   R"({"template":"input"})");
+  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
+                   "table Condition { value:bool; } table Outputs { "
+                   "value:Condition; } root_type Outputs;");
   Store store({root, ""});
   store.open();
   const auto* sink = store.current()->resolution->find({"sink"});
-  EXPECT_EQ(sink->input("in")->type, types::bool_condition_type());
-  EXPECT_EQ(sink->output("out1")->type, types::bool_condition_type());
+  const auto* source = store.current()->resolution->find({"condition"});
+  ASSERT_TRUE(source->output("value")->type);
+  EXPECT_EQ(sink->input("value")->type, source->output("value")->type);
+  EXPECT_EQ(sink->output("a")->type, source->output("value")->type);
   EXPECT_TRUE(sink->diags.empty());
 }
 
@@ -299,7 +339,7 @@ TEST_F(OpaqueMetadata,
   ChangeIn implementation{};
   implementation.kind = ChangeIn::Kind::PutDefinition;
   implementation.id = "plan";
-  implementation.json = R"({"template":"fork"})";
+  implementation.json = R"({"template":"collect"})";
   try {
     commit(store, {implementation});
     FAIL() << "Even the only input must be stated";
@@ -323,10 +363,10 @@ TEST_F(OpaqueMetadata,
   }
   const auto output = wiring.json.find(R"("card":"plan","port":"")");
   wiring.json.replace(output, std::string(R"("card":"plan","port":"")").size(),
-                      R"("card":"plan","port":"out1")");
+                      R"("card":"plan","port":"out")");
   auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
-  EXPECT_EQ(after->resolution->find({"plan"})->kind, Template::Fork);
+  EXPECT_EQ(after->resolution->find({"plan"})->kind, Template::Collect);
   EXPECT_TRUE(after->resolution->find({"next"})->inputs.empty());
 }
 
@@ -354,7 +394,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
   implementation.path = "externals/child/definitions/plan/_card.json";
   implementation.base_hash =
       store.current()->sources.at(implementation.path).hash;
-  implementation.bytes = R"({"template":"fork"})";
+  implementation.bytes = R"({"template":"collect"})";
   try {
     commit(store, {implementation});
     FAIL();
@@ -368,10 +408,11 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
   wiring.path = "externals/child/tsugumi.json";
   wiring.base_hash = store.current()->sources.at(wiring.path).hash;
   wiring.bytes =
-      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"plan","port":"in"}},"outputs":{"out":{"card":"plan","port":"out1"}}}})";
+      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"plan","port":"in"}},"outputs":{"out":{"card":"plan","port":"out"}}}})";
   const auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
-  EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind, Template::Fork);
+  EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind,
+            Template::Collect);
 }
 
 TEST_F(OpaqueMetadata, NamedDraftEndIsRejectedAndIdentifiesTheWire) {

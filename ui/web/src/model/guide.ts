@@ -439,8 +439,8 @@ export class GuideController extends Observable {
   }
 
   /** Called only after sign-in with plan permission and its welcome. */
-  async finishChatGPTSetup() {
-    await api('/api/settings', { provider: 'chatgpt' })
+  async finishChatGPTSetup(clientId: string) {
+    await api('/api/settings', { provider: 'chatgpt', chatGPTAccount: clientId })
     await this.finishSetup(true)
   }
 

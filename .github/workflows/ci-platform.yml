@@ -23,6 +23,10 @@ defaults:
 env:
   TSUGUMI_PYTEST_WORKERS: auto
   CORE_TEST_ENV: ${{ github.workspace }}/build-ci/bin/tsugumi-test-env
+  # The log is a pipe, so Foundation processes (XCTest and Swift Testing in
+  # `swift test`) buffer stdout in 16 KB blocks and a hanging test never shows.
+  # Foundation reads this to leave stdout unbuffered.
+  NSUnbufferedIO: 'YES'
 
 jobs:
   native:
@@ -147,4 +151,4 @@ jobs:
         run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path vm/macos/runtime'
       - name: Application behavior
         if: matrix.job == 'swift'
-        run: '"$CORE_TEST_ENV" /usr/bin/swift test --package-path ui/macos'
+        run: '"$CORE_TEST_ENV" bash ui/macos/tools/test-app.sh'

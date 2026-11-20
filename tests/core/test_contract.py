@@ -84,6 +84,47 @@ def test_completed_save_can_be_replayed_after_restart(daemon):
     assert saved.rev == replay.rev and project_json(saved)["name"] == "persisted"
 
 
+@pytest.mark.parametrize("existing", [None, "parent", "child", "external-parent"])
+def test_save_rejects_file_directory_conflicts_before_writing(daemon, existing):
+    client = daemon.connect()
+    revision = client.call("ProjectInspectRequest").rev
+    paths = {"parent": "skills/entry", "child": "skills/entry/body.txt"}
+
+    def put(which):
+        return change("PutSource", path=paths[which], bytes=which.encode())
+
+    if existing == "external-parent":
+        parent = daemon.project / paths["parent"]
+        parent.parent.mkdir(exist_ok=True)
+        parent.write_bytes(b"external")
+        requested = ["child"]
+        expected = {paths["parent"]: b"external"}
+    else:
+        requested = [which for which in paths if which != existing]
+        expected = {paths[existing]: existing.encode()} if existing else {}
+    if existing in paths:
+        revision = client.call("ProjectSaveRequest", baseRev=revision, opId=new_id(),
+                               origin="ui:test", changes=[put(existing)]).rev
+    request = dict(baseRev=revision, opId=new_id(), origin="ui:test",
+                   changes=[put(which) for which in requested])
+
+    def files_on_disk():
+        return {str(file.relative_to(daemon.project)): file.read_bytes()
+                for file in (daemon.project / "skills").rglob("*") if file.is_file()}
+
+    with pytest.raises(RpcFailure) as error:
+        client.call("ProjectSaveRequest", **request)
+    assert error.value.kind == ("external_change" if existing == "external-parent" else "invalid_path")
+    assert client.call("ProjectInspectRequest").rev == revision
+    assert files_on_disk() == expected
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("ProjectInspectRequest").rev == revision
+    assert files_on_disk() == expected
+    assert save_name(recovered, revision, "after rejection").rev == revision + 1
+
+
 def test_session_requires_hello_and_matching_project(daemon):
     """Hello authenticates a session and checks project identity."""
     with ExitStack() as connections:
@@ -123,14 +164,15 @@ def test_unexpected_save_failure_does_not_leave_a_retry_waiting(core_factory):
 
 
 @pytest.mark.parametrize("large_source", [True, False], ids=["large-source", "large-document"])
-def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(daemon, large_source):
-    """Many large saves retain the latest document, source and replay result across restart."""
+def test_many_large_saves_keep_their_content_and_recent_receipts_after_restart(daemon, large_source):
+    """Recent saves remain replayable, while old large receipts are evicted."""
     client = daemon.connect()
     snapshot = client.call("ProjectInspectRequest")
     revision = snapshot.rev
     source_hash = None
     document = project_json(snapshot)
     body = bytes(range(256)) * 4096
+    operations = []
     for index in range(12 if large_source else 80):
         if large_source:
             expected = body[index:] + body[:index]
@@ -140,7 +182,9 @@ def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(da
         else:
             document["name"] = "x" * 200000 + str(index)
             changes = [change("SetProject", json=json.dumps(document))]
-        latest = dict(baseRev=revision, opId=new_id(), origin="ui:test", changes=changes)
+        operation = new_id()
+        operations.append(operation)
+        latest = dict(baseRev=revision, opId=operation, origin="ui:test", changes=changes)
         revision = client.call("ProjectSaveRequest", **latest).rev
 
     daemon.restart()
@@ -154,9 +198,48 @@ def test_many_large_saves_keep_their_content_and_latest_receipt_after_restart(da
         assert text(reply.hash) == source_hash
     else:
         assert project_json(saved) == document
+        assert recovered.call("OperationGetRequest", opId=operations[0]).state == OperationState.unknown
+        assert recovered.call("OperationGetRequest", opId=operations[-2]).state == OperationState.completed
     replay = recovered.call("ProjectSaveRequest", **latest)
     assert replay.replayed is True and replay.rev == revision
     assert recovered.call("ProjectInspectRequest").rev == revision
+
+
+def test_save_receipt_count_is_bounded_after_restart(daemon):
+    client = daemon.connect()
+    snapshot = client.call("ProjectInspectRequest")
+    revision = snapshot.rev
+    operations = [new_id() for _ in range(2001)]
+    document = project_json(snapshot)
+    for operation in operations:
+        result = save_name(client, revision, "unchanged after first save", operation, document)
+        revision = result.rev
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("OperationGetRequest", opId=operations[0]).state == OperationState.unknown
+    assert recovered.call("OperationGetRequest", opId=operations[1]).state == OperationState.completed
+    result = save_name(recovered, revision, "unchanged after first save", operations[-1], document)
+    assert result.replayed is True and result.rev == revision == snapshot.rev + 1
+
+
+def test_oversized_latest_save_receipt_can_be_replayed_after_restart(daemon):
+    client = daemon.connect()
+    saved = save_name(client, client.call("ProjectInspectRequest").rev, "large receipt")
+    previous = new_id()
+    save_name(client, saved.rev, "large receipt", previous)
+    request = dict(baseRev=saved.rev, opId=new_id(), origin="ui:test",
+                   changes=[change("SetProject", json=json.dumps(project_json(
+                       client.call("ProjectInspectRequest"))))],
+                   operationData=b"x" * (3 << 20))
+    client.call("ProjectSaveRequest", **request)
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("OperationGetRequest", opId=previous).state == OperationState.unknown
+    replay = recovered.call("ProjectSaveRequest", **request)
+    assert replay.replayed is True and replay.rev == saved.rev
+    assert bytes(replay.operationData) == request["operationData"]
 
 
 def test_operation_conflict_and_required_fields(client):
@@ -444,11 +527,50 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert isinstance(json.loads(line), dict)
 
 
+def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):
+    import os
+
+    client = core_factory(mocked_builds=True).connect()
+    enter, redraw = tmp_path / "enter", tmp_path / "redraw"
+    os.mkfifo(enter)
+    os.mkfifo(redraw)
+    body = f"""
+        printf 'first\\nabcdef'
+        read -r gate < {shlex.quote(str(enter))}
+        printf '\\r'
+        read -r gate < {shlex.quote(str(redraw))}
+        printf '%s' '雪Y'
+        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
+    """
+    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+                          manifest={"run": {"bash": body}}).save(client)
+    run_id = start_run(client, "work", propagate=False)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 12)
+    initial = client.call("LogRangeRequest", **args, terminal=True, tail=True)
+    assert text(initial.text) == "first\nabcdef"
+    with enter.open("w") as gate:
+        gate.write("start redraw\n")
+    wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 13)
+    cursor = client.call("LogRangeRequest", **args, terminal=True, offset=initial.nextOffset,
+                         terminalSince=initial.rawSizeBytes)
+    assert not cursor.reset and cursor.nextOffset == initial.nextOffset
+    with redraw.open("w") as gate:
+        gate.write("write replacement\n")
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+    replaced = client.call("LogRangeRequest", **args, terminal=True, offset=cursor.nextOffset,
+                           terminalSince=cursor.rawSizeBytes)
+    assert replaced.reset and replaced.nextOffset == initial.nextOffset
+    assert text(replaced.text) == "first\n雪Ycdef"
+    assert text(client.call("LogRangeRequest", **args).text) == "first\nabcdef\r雪Y"
+
+
 def test_card_log_ui_page_sizes(project, core_factory):
     tail_limit = 1 << 20
     forward_limit = 256 << 10
-    prefix, end = "日本", "\nend\n"
-    fill = tail_limit - len(prefix.encode())
+    prefix, end = "first\n日本", "\nend\n"
+    fill = tail_limit - len("日本".encode())
     expected = prefix.encode() + b"x" * fill + end.encode()
     client = core_factory(mocked_builds=True).connect()
     body = f"""
@@ -469,6 +591,7 @@ def test_card_log_ui_page_sizes(project, core_factory):
     assert tail.text == expected[tail.offset:]
     assert tail.nextOffset == tail.sizeBytes == len(expected)
     assert tail.truncated
+    assert tail.lineNumber == 2 and not tail.startsLine
 
     offset = tail.nextOffset - forward_limit
     forward = client.call("LogRangeRequest", **args, offset=offset, limitBytes=forward_limit)
@@ -476,6 +599,28 @@ def test_card_log_ui_page_sizes(project, core_factory):
     assert forward.text == expected[offset:]
     assert forward.nextOffset == forward.sizeBytes == len(expected)
     assert not forward.truncated
+    assert forward.lineNumber == 2 and not forward.startsLine
+
+    # Rebuild the tail in reverse pages. A nominal start inside 日 must
+    # leave that character in the preceding page without duplicating bytes.
+    before = tail.offset
+    reverse = client.call("LogRangeRequest", **args, before=before, limitBytes=5)
+    assert reverse.text == "本".encode()
+    assert reverse.nextOffset == before
+    assert reverse.lineNumber == 2 and not reverse.startsLine
+    start = client.call("LogRangeRequest", **args, before=reverse.offset, limitBytes=16)
+    assert start.offset == 0 and start.nextOffset == reverse.offset
+    assert start.lineNumber == 1 and start.startsLine
+    assert start.text + reverse.text + tail.text == expected
+
+    for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
+        last = client.call("LogRangeRequest", runId=run_id, stream=LogStream.standard_output,
+                           offset=len(expected) - len(b"end\n"), **scope)
+        assert last.lineNumber == 3 and last.startsLine and last.text == b"end\n"
+
+    with pytest.raises(RpcFailure) as e:
+        client.call("LogRangeRequest", **args, before=reverse.offset - 1, limitBytes=16)
+    assert e.value.kind == "invalid_range"
 
 
 def test_run_logs_and_display(project, tmp_path, core_factory):

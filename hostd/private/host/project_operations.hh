@@ -4,6 +4,7 @@
 #include <functional>
 #include <string>
 
+#include "host/comments.hh"
 #include "host/layout_saving.hh"
 #include "host/project_edit.hh"
 
@@ -14,6 +15,19 @@ struct OperationReply {
 };
 using OperationCall = std::function<OperationReply(
     const std::string&, const ::tsugumi::json::Members&)>;
+struct SavePreparation {
+  bool stamp_agent = false;
+  comments::ReserveComment reserve_comment;
+  std::function<void(::tsugumi::json::Members&)> finish;
+};
+struct SubmittedSave {
+  OperationReply reply;
+  std::string comments;
+};
+auto SubmitProjectSave(::tsugumi::json::Members plan, const SaveBase& base,
+                       const SourcePatches& patches, const OperationCall& call,
+                       const SavePreparation& preparation) -> SubmittedSave;
+
 struct OperationContext {
   std::string origin;
   std::function<void(const std::string&, const SaveBase&)> authorize_file;

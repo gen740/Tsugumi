@@ -1,4 +1,4 @@
-// Run behavioral regression tests without a browser.
+// Run behavioral regression tests and, with a configured Chromium, the log viewport test.
 import * as esbuild from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
@@ -31,12 +31,17 @@ try {
     process.env.TSUGUMI_SITE_PLAYER_DIR = player
   }
   preparePlayer()
+  await import('../tests/demoRecording.mjs')
   await esbuild.build({
     entryPoints: [path.join(web, 'tests', 'behavior.ts')], outfile: out,
     bundle: true, platform: 'node', format: 'esm', target: 'node22', loader: { '.md': 'text' }, logLevel: 'warning',
   })
   process.argv = [process.argv[0], out, path.resolve(web, '../..'), ...process.argv.slice(2)]
   await import(pathToFileURL(out).href)
+  if (process.env.TSUGUMI_CHROMIUM) {
+    const { checkLogInChromium } = await import('../tests/logBrowser.mjs')
+    await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
+  }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true })
 }

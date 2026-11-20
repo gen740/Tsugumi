@@ -6,8 +6,9 @@ import path from 'node:path'
 import { chatRoutes, type ChatContext } from '../src/host/chat'
 import { CoreHost } from '../src/host/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
+import { permissionCatalog } from '../src/model/permissions'
 import { projectAccessNeededNow } from '../shared/agentShared'
-import { create } from 'react-test-renderer'
+import { act, create } from 'react-test-renderer'
 import { createElement } from 'react'
 
 // The HTTP adapter must scope lists/search and adopt host edits and the
@@ -22,6 +23,7 @@ const original = { settings: CoreHost.prototype.getSettings,
   project: CoreHost.prototype.project }
 let model = 'gpt-6.1-sol'
 let busy = false
+let signInState = 'idle'
 const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
 const write = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Write', needed_now: false })
 const run = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Run', needed_now: false })
@@ -38,6 +40,18 @@ try {
     host = this
     this.user.call = async <T>(method: string, fields: any = {}): Promise<T> => {
       calls.push({ method, fields })
+      if (method === 'SignInBeginRequest') {
+        signInState = 'pending'
+        return { url: 'https://fixture.invalid/authorize', attempt_id: 'attempt-a' } as T
+      }
+      if (method === 'SignInStatusRequest') {
+        return { accounts: [], attempt_id: 'attempt-a', state: signInState } as T
+      }
+      if (method === 'SignInActionRequest' && fields.action === 'cancel') {
+        assert.equal(fields.attempt_id, 'attempt-a')
+        signInState = 'cancelled'
+        return {} as T
+      }
       if (method === 'AccessResolveRequest') return {} as T
       if (method === 'ModelSelectionRequest') return { provider: { providerId: 'chatgpt', model: 'gpt-6.1-luna' } } as T
       if (method === 'ModelsListRequest') return [] as T
@@ -68,6 +82,24 @@ try {
   assert.deepEqual(events, [{ type: 'settingsChanged' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'another-profile', revision: 2 } })
   assert.equal(events.length, 1, 'unrelated profiles do not refresh this client')
+  const oauth = async (route: string, fields?: object) =>
+    routes[fields ? `POST /api/chatgpt/${route}` : 'GET /api/chatgpt'](fields, new URL(`http://fixture/${route}`)) as Promise<any>
+  const begin = await oauth('signin', {})
+  assert.equal(begin.attemptId, 'attempt-a')
+  assert.equal((await oauth('')).signingIn, true)
+  assert.equal((await oauth('?attemptId=attempt-a')).signingIn, true)
+  assert.equal(calls.at(-1)?.fields.attempt_id, 'attempt-a')
+  // One profile per host: the app's sign-ins and provider changes are this page's too.
+  host!.event({ type: 'SignInChanged', value: { profile: 'another-profile' } })
+  assert.equal(events.length, 1)
+  host!.event({ type: 'SignInChanged', value: { profile: 'desktop' } })
+  assert.deepEqual(events.at(-1), { type: 'chatgptChanged' })
+  host!.event({ type: 'ProviderChanged', value: { profile: 'desktop' } })
+  assert.deepEqual(events.slice(-2), [{ type: 'providerChanged' }, { type: 'chatgptChanged' }])
+  await oauth('cancel', { attemptId: begin.attemptId })
+  const cancelled = await oauth('')
+  assert.equal(cancelled.signingIn, false)
+  assert.equal(cancelled.outcome?.ok, false)
   assert.deepEqual(await call('sessions', { path: folders[1] }), [])
   await call('search', { path: folders[1], text: 'Only A' })
   assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')
@@ -110,6 +142,28 @@ const groups = [{ title: 'Collatz', path: folders[0], displayPath: folders[0], l
   return { request, operation: fields.access, neededNow: fields.needed_now }
 }) }]
 const selections: string[] = []
+const originalRead = permissionCatalog.read
+const sandboxRequest = 'sandbox_off Collatz'
+const sandboxLabel = 'Run outside the sandbox'
+try {
+  permissionCatalog.read = async () => { throw new Error('Host unavailable at startup') }
+  await permissionCatalog.load()
+  let requested = false
+  permissionCatalog.read = async () => {
+    requested = true
+    return [{ kind: 'sandbox_off', label: sandboxLabel, icon: 'hand.raised' }]
+  }
+  const props = { asked: [sandboxRequest], selected: [], onSelect() {} }
+  const refreshed = Promise.withResolvers<void>()
+  const unsubscribe = permissionCatalog.subscribe(refreshed.resolve)
+  let prompt!: ReturnType<typeof create>
+  act(() => { prompt = create(createElement(PermissionRequests, props)) })
+  try {
+    assert.ok(requested)
+    await refreshed.promise
+    assert.ok(prompt.root.findByType('input').props['aria-label'].includes(sandboxLabel))
+  } finally { unsubscribe(); prompt.unmount() }
+} finally { permissionCatalog.read = originalRead }
 const view = create(createElement(PermissionRequests, {
   asked: choices, groups, selected: [asked], onSelect(request, on) { if (on) selections.push(request) },
 }))

@@ -1,7 +1,6 @@
 // These policies moved from the project's comment/Draft RPC suites to hostd.
 #include "agent/save_policy.hh"
 
-#include <git2.h>
 #include <gtest/gtest.h>
 
 #include "../agent_fixture_server.hh"
@@ -264,89 +263,6 @@ TEST(AgentPresentation, StemDerivationIsOwnedByTheCaller) {
   EXPECT_EQ(CardStem("集計"), "card");
   EXPECT_EQ(CardStem("---A___B---"), "a-b");
   EXPECT_LE(CardStem(std::string(500, 'a')).size(), 123u);
-}
-}  // namespace
-}  // namespace tsugumi::host
-
-#include <git2.h>
-
-#include "../agent_fixture_server.hh"
-
-namespace tsugumi::host {
-using agent::AgentSave;
-using agent::PrepareAgentSave;
-namespace {
-TEST(HostVersionComments,
-     RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {
-  test::TemporaryDirectory directory;
-  git_libgit2_init();
-  git_repository* repo = nullptr;
-  ASSERT_EQ(git_repository_init(&repo, directory.path.c_str(), false), 0);
-  struct Cleanup {
-    git_repository* repo;
-    ~Cleanup() {
-      git_repository_free(repo);
-      git_libgit2_shutdown();
-    }
-  } cleanup{repo};
-  auto commit = [&](const char* message, const git_oid* parent) {
-    git_index* index = nullptr;
-    EXPECT_EQ(git_repository_index(&index, repo), 0);
-    EXPECT_EQ(git_index_add_all(index, nullptr, 0, nullptr, nullptr), 0);
-    EXPECT_EQ(git_index_write(index), 0);
-    git_oid tree_id;
-    EXPECT_EQ(git_index_write_tree(&tree_id, index), 0);
-    git_index_free(index);
-    git_tree* tree = nullptr;
-    EXPECT_EQ(git_tree_lookup(&tree, repo, &tree_id), 0);
-    git_signature* signature = nullptr;
-    EXPECT_EQ(git_signature_now(&signature, "Test", "test@example.com"), 0);
-    git_commit* previous = nullptr;
-    if (parent) EXPECT_EQ(git_commit_lookup(&previous, repo, parent), 0);
-    git_oid id;
-    EXPECT_EQ(git_commit_create(
-                  &id, repo, "HEAD", signature, signature, nullptr, message,
-                  tree, parent ? 1 : 0,
-                  parent ? const_cast<const git_commit**>(&previous) : nullptr),
-              0);
-    git_commit_free(previous);
-    git_signature_free(signature);
-    git_tree_free(tree);
-    return id;
-  };
-  test::Write(directory.path / "definitions/outer-id/_card.json",
-              R"({"external":"library"})");
-  const auto meta =
-      directory.path / "externals/library/definitions/inner-id/_meta.json";
-  test::Write(
-      meta,
-      R"({"future":1,"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
-  auto first = commit("First", nullptr);
-  char id[GIT_OID_HEXSZ + 1];
-  git_oid_tostr(id, sizeof id, &first);
-  auto changes = comments::version(directory.path, id);
-  ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(changes[0].card, "outer-id/inner-id");
-  EXPECT_EQ(changes[0].change, "added");
-  EXPECT_EQ(changes[0].by, "user");
-  test::Write(
-      meta,
-      R"({"name":false,"comments":[{"id":"c1","text":"Ask","author":"user","resolved":true,"stateBy":"agent","resolution":"Done","cards":["outer-id/inner-id"]}]})");
-  auto next = commit("Resolve", &first);
-  git_oid_tostr(id, sizeof id, &next);
-  changes = comments::version(directory.path, id);
-  ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(changes[0].change, "resolved");
-  EXPECT_EQ(changes[0].by, "agent");
-  EXPECT_EQ(changes[0].resolution, "Done");
-  EXPECT_EQ(changes[0].cards, (std::vector<std::string>{"outer-id/inner-id"}));
-  std::filesystem::remove(meta);
-  next = commit("Remove", &next);
-  git_oid_tostr(id, sizeof id, &next);
-  changes = comments::version(directory.path, id);
-  ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(changes[0].change, "removed");
-  EXPECT_TRUE(changes[0].by.empty());
 }
 }  // namespace
 }  // namespace tsugumi::host

@@ -227,7 +227,7 @@ struct RunComparisonView: View {
   @State private var source: EnvironmentHistorySource?
   @State private var rows: [ComparedRunRow]?
   @State private var error: String?
-  @State private var diff: Tsugumi_Host_VersionDiffT?
+  @State private var diff: Tsugumi_RPC_VersionDiffT?
   @State private var diffError: String?
   @State private var attempt = 0
 

@@ -28,15 +28,20 @@
 #include <nix/store/indirect-root-store.hh>
 #include <nix/store/store-api.hh>
 #include <nix/store/store-open.hh>
+#include <nix/util/current-process.hh>
+#include <nix/util/environment-variables.hh>
+#include <nix/util/file-descriptor.hh>
 #include <nix/util/logging.hh>
 #include <nix/util/serialise.hh>
 #include <nix/util/signals.hh>
 #include <nix/util/terminal.hh>
+#include <nlohmann/json.hpp>
 #include <set>
 #include <sstream>
 #include <thread>
 
 #include "nix_eval.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/store.hh"
 
 namespace tsugumi {
@@ -232,9 +237,13 @@ bool interrupted(const NixCall& c, bool* timed_out) {
 
 class CallScope {
  public:
-  explicit CallScope(const NixCall& c) : call_(c) {
+  explicit CallScope(const NixCall& c)
+      : call_(c), log_line_([&c](const std::string& line) {
+          c.log({std::span(&line, 1)});
+        }) {
     t_call = &c;
-    g_logger->set_thread(c.log ? &c.log : nullptr);
+    g_logger->set_thread(c.log ? &log_line_ : nullptr);
+    g_logger->set_thread_builds(c.on_build ? &c.on_build : nullptr);
     std::lock_guard l(g_calls_mu);
     g_calls.emplace_back(pthread_self(), &c);
   }
@@ -247,6 +256,7 @@ class CallScope {
       });
     }
     g_logger->set_thread(nullptr);
+    g_logger->set_thread_builds(nullptr);
     t_call = nullptr;
   }
   CallScope(const CallScope&) = delete;
@@ -254,6 +264,7 @@ class CallScope {
 
  private:
   const NixCall& call_;
+  const std::function<void(const std::string&)> log_line_;
 };
 
 // Nix's errors as NixEvaluator promises them.
@@ -295,6 +306,48 @@ void NixEvaluator::init_process() {
                             // checks for interrupts
   sigemptyset(&sa.sa_mask);
   ::sigaction(SIGUSR1, &sa, nullptr);
+}
+
+auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
+  if (argc < 2 || std::string_view(argv[1]) != "--nix-build-client")
+    return std::nullopt;
+  if (argc != 5) return 2;
+
+  try {
+    NixStore::init_process();
+    if (*argv[3])
+      nix::settings.getWorkerSettings().maxBuildJobs.set(argv[3], false);
+    if (*argv[4])
+      nix::settings.getLocalSettings().buildCores.set(argv[4], false);
+    // A JSON string retains embedded newlines in a single log entry. The
+    // parent can discard an oversized frame without trying to decode it.
+    nix::logger = std::make_unique<NixLogSink>(
+        [truncated = false](const std::string& line) mutable {
+          if (truncated) return;
+          if (line.size() >= kInvocationLogLimitBytes) {
+            nix::writeFull(STDERR_FILENO, "null\n");
+            truncated = true;
+            return;
+          }
+          auto frame = nlohmann::json(line).dump();
+          frame += '\n';
+          nix::writeFull(STDERR_FILENO, frame);
+        });
+    auto store = nix::openStore();
+    store->buildPaths({nix::DerivedPath::Built{
+        .drvPath =
+            nix::makeConstantStorePathRef(store->parseStorePath(argv[2])),
+        .outputs = nix::OutputsSpec::All{}}});
+    return 0;
+  } catch (const std::exception& error) {
+    auto diagnostic = tsugumi::text::replace_invalid_utf8(
+        nix::filterANSIEscapes(error.what(), true));
+    nix::logger->log(nix::lvlError, diagnostic);
+    // Keep the build diagnostic available even if the history log filled up.
+    if (diagnostic.size() < kInvocationLogLimitBytes)
+      nix::writeFull(STDOUT_FILENO, diagnostic);
+    return 1;
+  }
 }
 
 struct NixEvaluator::Impl {
@@ -714,11 +767,54 @@ struct NixEvaluator::Impl {
     return r;
   }
 
-  // On the caller's thread, with a daemon connection of its own: nix-daemon
-  // decides how many builds run at a time, and evaluation goes on meanwhile.
+  // The Nix client sends these options with its own daemon connection. The
+  // evaluator and the other builds can keep using their own settings.
+  static auto build(const NixCall& c, const std::string& drv) -> void {
+    const auto executable = nix::getSelfExe();
+    if (!executable)
+      throw std::runtime_error("cannot locate the Nix build client");
+    proc::Spec spec;
+    spec.argv = {executable->string(), "--nix-build-client", drv,
+                 c.jobs ? std::to_string(*c.jobs) : "",
+                 c.cores ? std::to_string(*c.cores) : ""};
+    // Use the same store, Nix configuration and environment as the evaluator.
+    for (const auto& [key, value] : nix::getEnv())
+      spec.env.push_back(key + "=" + value);
+
+    const auto result = proc::run(
+        spec, c.cancel, c.deadline,
+        [&](proc::LineChunk chunk) {
+          if (!c.log) return;
+          std::vector<std::string> output;
+          for (const auto& line : chunk.lines) {
+            if (line == "null\n") {
+              chunk.truncated = true;
+              break;
+            }
+            if (line.starts_with('"')) {
+              auto entry = nlohmann::json::parse(line, nullptr, false);
+              if (auto* text = entry.get_ptr<std::string*>()) {
+                output.push_back(std::move(*text));
+                continue;
+              }
+            }
+            // Keep diagnostics printed before the child installs its logger.
+            output.push_back(tsugumi::text::replace_invalid_utf8(line));
+          }
+          c.log({output, chunk.truncated});
+        },
+        kInvocationLogLimitBytes);
+    if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
+    if (result.timed_out)
+      throw NixInterrupted(true, "Nix exceeded buildTimeoutSeconds");
+    if (!proc::exited_ok(result.status))
+      throw std::runtime_error(result.out.empty()
+                                   ? "Nix build failed: " +
+                                         proc::describe(result.status)
+                                   : result.out);
+  }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
-    const auto drv_path = store->parseStorePath(r.derivation.path);
     const auto out = store->parseStorePath(r.derivation.output);
     // Held by this connection from here: a concurrent GC never removes it
     // between the check, the build and the permanent root. The evaluator's
@@ -726,9 +822,7 @@ struct NixEvaluator::Impl {
     store->addTempRoot(out);
     if (!store->isValidPath(out)) {
       if (c.on_phase) c.on_phase(true);
-      store->buildPaths({nix::DerivedPath::Built{
-          .drvPath = nix::makeConstantStorePathRef(drv_path),
-          .outputs = nix::OutputsSpec::All{}}});
+      build(c, r.derivation.path);
       r.built = true;
     }
     nix::StorePathSet closure;

@@ -19,7 +19,7 @@ await import("./environmentHost")
 await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
-await import("./switchCard")
+await import("./booleanInput")
 await import("./reports")
 
 await import("./table")
@@ -43,7 +43,7 @@ await import("./providerKeys")
 await import('./thoughts')
 
 await import("./chatFollow")
-await import("./terminalText")
+await import("./logWindow")
 
 await import("./projectActions")
 

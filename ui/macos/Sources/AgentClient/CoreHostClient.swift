@@ -88,6 +88,21 @@ public actor CoreHostClient {
   public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
     let token = UUID(); hostObservers[token] = handler; return token
   }
+  func signInChanges(profile: String) async -> AsyncStream<Void> {
+    let (events, continuation) = AsyncStream<Void>.makeStream(bufferingPolicy: .bufferingNewest(1))
+    let token = observeHost { event in
+      switch event["type"] as? String {
+      case "SignInChanged" where event["profile"] as? String == profile, "Disconnected":
+        continuation.yield(())
+      default: break
+      }
+    }
+    continuation.onTermination = { [weak self] _ in
+      Task { await self?.removeHostObserver(token) }
+    }
+    return events
+  }
+
   /// A new identity restarts a panel even if SwiftUI coalesces a disconnect
   /// and a reconnect into one update.
   public func hostConnectionChanges() -> AsyncStream<UUID?> {
@@ -394,7 +409,7 @@ public actor CoreHostClient {
     return try await hostCall(.hostversiongraphrequest, request)
   }
 
-  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_Host_VersionDiffT {
+  public func versionDiff(project: String, commit: String, from: String?) async throws -> Tsugumi_RPC_VersionDiffT {
     let request = Tsugumi_Host_HostVersionDiffRequestT(); request.project = project; request.commit = commit; request.fromCommit = from
     return try await hostCall(.hostversiondiffrequest, request)
   }
@@ -422,9 +437,9 @@ public actor CoreHostClient {
     return (reply.configured, reply.code)
   }
 
-  public func versionComments(project: String, commit: String) async throws -> [Tsugumi_Host_VersionCommentT] {
+  public func versionComments(project: String, commit: String) async throws -> [Tsugumi_RPC_VersionCommentT] {
     let request = Tsugumi_Host_VersionCommentsRequestT(); request.project = project; request.commit = commit
-    let result: Tsugumi_Host_VersionCommentsT = try await hostCall(.versioncommentsrequest, request)
+    let result: Tsugumi_RPC_VersionCommentsT = try await hostCall(.versioncommentsrequest, request)
     return result.comments.compactMap { $0 }
   }
 

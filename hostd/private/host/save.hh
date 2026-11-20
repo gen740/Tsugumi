@@ -23,6 +23,10 @@ class SourcePatches {
 };
 
 auto DecodeSourceBytes(const std::string& raw) -> std::string;
+// Keep only the Cards, wires and boundary ports visible to the caller.
+auto FilterProjectGraph(::tsugumi::json::Members project,
+                        const std::function<bool(const std::string&)>& visible)
+    -> ::tsugumi::json::Members;
 auto CardStem(const std::string& name) -> std::string;
 // Only definition documents and source hashes; never execution records.
 struct SaveBase {

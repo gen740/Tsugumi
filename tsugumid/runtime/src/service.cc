@@ -54,8 +54,6 @@ const std::map<std::string, std::string>& digest_defaults() {
       {"Tsugumi.RPC.RunPlanRequest.propagate", "1"},
       {"Tsugumi.RPC.RunRequest.propagate", "1"},
       {"Tsugumi.RPC.RunRequest.max_concurrency", "4"},
-      {"Tsugumi.RPC.RunRequest.nix_jobs", "1"},
-      {"Tsugumi.RPC.RunRequest.nix_cores", "1"},
   };
   return d;
 }
@@ -599,7 +597,10 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionCheckout",
                                    "VersionGraph",
                                    "VersionCanvas",
-                                   "VersionNote"};
+                                   "VersionNote",
+                                   "VersionDiff",
+                                   "VersionComments",
+                                   "VersionSummary"};
   // Every Display kind of the protocol.
   for (auto v : D::EnumValuesDisplayValue())
     if (v != D::DisplayValue::NONE)
@@ -798,6 +799,12 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::version_canvas);
     case P::VersionNoteRequest:
       return on_lane(m, std::move(req), &Service::version_note);
+    case P::VersionDiffRequest:
+      return on_lane(r, std::move(req), &Service::version_diff);
+    case P::VersionCommentsRequest:
+      return on_lane(r, std::move(req), &Service::version_comments);
+    case P::VersionSummaryRequest:
+      return on_lane(m, std::move(req), &Service::version_summary);
     case P::ProjectInspectRequest:
       return on_lane(r, std::move(req), &Service::inspect);
     case P::ProjectValidateRequest:
@@ -1518,8 +1525,8 @@ void Service::save(RequestIn& req) {
     complete_save(req, op_id, "save", digest, *base, staged, response,
                   check_cancelled);
   } catch (const Failed& f) {
-    // A host operation re-reads and re-applies after a failed CAS. No write
-    // happened, so keep this same op id available for its next save attempt.
+    // The caller can explicitly retry a host operation after a revision
+    // conflict. No write happened, so the operation ID remains available.
     if (r->save_intent() && f.failure.kind == FailureKind::revision_conflict)
       finish_op(op_id, failure_receipt(op_id, f.failure));
     else
@@ -1701,9 +1708,23 @@ void Service::version_checkout(RequestIn& req) {
   }
 }
 
+namespace {
+auto pack_comments(FBB& b, const std::vector<comments::Change>& changes) {
+  std::vector<flatbuffers::Offset<R::VersionComment>> entries;
+  for (const auto& c : changes)
+    entries.push_back(R::CreateVersionComment(
+        b, b.CreateString(c.card), b.CreateString(c.text),
+        b.CreateString(c.change),
+        c.resolution.empty() ? 0 : b.CreateString(c.resolution),
+        c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVectorOfStrings(c.cards)));
+  return b.CreateVector(entries);
+}
+}  // namespace
+
 void Service::version_graph(RequestIn& req) {
   const auto* r = project_request(req)->value_as_VersionGraphRequest();
-  auto g = versions_->graph(std::min<uint32_t>(r->limit().value_or(500), 5000));
+  auto g = versions_->graph(std::min<uint32_t>(r->limit().value_or(500), 5000),
+                            r->include_comments());
   FBB b(1 << 16);
   auto strings = [&](const std::vector<std::string>& v) {
     std::vector<flatbuffers::Offset<flatbuffers::String>> o;
@@ -1727,13 +1748,16 @@ void Service::version_graph(RequestIn& req) {
         b.CreateString(facts ? "" : c.message), b.CreateString(c.author),
         c.time_ms, strings(c.branches), strings(c.tags), b.CreateVector(runs),
         strings(c.changed),
-        facts ? R::VersionCommitFacts::Pack(b, facts.get()) : 0));
+        facts ? R::VersionCommitFacts::Pack(b, facts.get()) : 0,
+        r->include_comments() ? pack_comments(b, c.comments) : 0));
   }
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head),
                                   b.CreateString(g.branch), g.dirty,
                                   b.CreateVector(commits));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph,
-                         vg.Union()));
+  auto bytes = wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph,
+                           vg.Union());
+  check_frame(bytes.size(), "the version graph");
+  reply(req, std::move(bytes));
 }
 
 void Service::version_canvas(RequestIn& req) {
@@ -1760,9 +1784,43 @@ void Service::version_note(RequestIn& req) {
   auto note = versions_->note(r->commit()->str());
   FBB b;
   auto facts = version_facts::changes(note.record_json);
-  auto n = R::CreateVersionNote(b, R::VersionChanges::Pack(b, &facts));
+  auto n = R::CreateVersionNote(b, R::VersionChanges::Pack(b, &facts),
+                                b.CreateString(note.commit));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote,
                          n.Union()));
+}
+
+void Service::version_diff(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_VersionDiffRequest();
+  const auto diff = versions_->diff(
+      r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
+  FBB b;
+  const auto value = R::CreateVersionDiff(b, b.CreateString(diff.text),
+                                         diff.truncated);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff,
+                         value.Union()));
+}
+
+void Service::version_comments(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_VersionCommentsRequest();
+  FBB b;
+  const auto value = R::CreateVersionComments(
+      b, pack_comments(b, versions_->comment_changes(r->commit()->str())));
+  auto bytes = wire::reply(b, req.request_id, R::ReplyPayload::VersionComments,
+                           value.Union());
+  check_frame(bytes.size(), "the version comments");
+  reply(req, std::move(bytes));
+}
+
+void Service::version_summary(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_VersionSummaryRequest();
+  const auto text = versions_->summary(
+      r->commit()->str(), r->english(),
+      r->text() ? std::optional(r->text()->str()) : std::nullopt);
+  FBB b;
+  const auto value = R::CreateVersionSummary(b, b.CreateString(text));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionSummary,
+                         value.Union()));
 }
 
 void Service::cache_clear(RequestIn& req) {

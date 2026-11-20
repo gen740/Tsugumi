@@ -23,8 +23,7 @@ struct StageLogView: View {
   @State private var chosen = false
   @State private var rawStream: Tsugumi_Data_LogStream = .standardOutput
   @State private var executeStream: Tsugumi_Data_LogStream = .standardOutput
-  @State private var terminal = LogStreamReader()
-  @State private var journal = LogStreamReader(form: .journal(["validate", "save"]))
+  @State private var reader = LogStreamReader()
   @State private var exporting = false
   @State private var exportError: String?
 
@@ -86,7 +85,12 @@ struct StageLogView: View {
     return "execute"
   }
 
-  private var reader: LogStreamReader { shownStream.journal ? journal : terminal }
+  private struct VisibleLog: Equatable {
+    let source: LogStreamReader.Source?
+    let form: LogForm
+  }
+
+  private var visibleLog: VisibleLog { VisibleLog(source: source, form: shownStream.journal ? .journal : .terminal) }
 
   private var source: LogStreamReader.Source? {
     guard let inv = shownInvocation else { return nil }
@@ -99,7 +103,7 @@ struct StageLogView: View {
         Text(String(localized: "\(session.displayName(key(card))) · \(shownInvocation ?? 0) 回目") + (state.map { " · " + $0.label } ?? ""))
           .font(.callout.weight(.medium)).lineLimit(1)
         Spacer()
-        if reader.hasText, let source {
+        if reader.hasBytes, let source {
           Button("ログを書き出す…") { export(source, size: reader.size) }.controlSize(.small).disabled(exporting)
         }
       }
@@ -141,10 +145,11 @@ struct StageLogView: View {
                       execution: ExecutionHistoryRefresh(session: session, card: key(card)))) {
       await loadInfo()
     }
-    .onChange(of: source, initial: true) {
-      if shownStream.journal { journal.show(source, session: session) } else { terminal.show(source, session: session) }
+    .onChange(of: visibleLog, initial: true) { _, log in
+      reader.show(log.source, form: log.form, session: session)
     }
-    .onChange(of: state) { reader.update(session) }
+    .onChange(of: session.connected) { reader.update() }
+    .onChange(of: state) { reader.update() }
     .onChange(of: focus) { if let f = focus, let g = groups.first(where: { $0.stages.contains(f) }) { selected = g.id; chosen = true } }
     .onChange(of: defaultGroup) { if !chosen { selected = nil } }
   }
@@ -221,12 +226,7 @@ struct StageLogView: View {
     .padding(.horizontal, 8).padding(.vertical, 4)
   }
 
-  /// Where the shown text is not the whole log, and why.
   @ViewBuilder private var notices: some View {
-    if reader.clipped {
-      Text("ログの末尾 \(LogStreamReader.shownBytes >> 20) MiB を表示しています。全体は「ログを書き出す…」で保存できます。")
-        .font(.caption).foregroundStyle(.secondary).padding(.horizontal, 8).padding(.bottom, 2)
-    }
     if let e = reader.error ?? exportError { Text(e).font(.caption).foregroundStyle(.red).padding(.horizontal, 8) }
   }
 

@@ -7,7 +7,6 @@
 
 namespace tsugumi::agent {
 namespace {
-namespace comments = host::comments;
 auto Blank(const std::string& text) -> bool {
   return text.find_first_not_of(" \t\r\n") == std::string::npos;
 }
@@ -35,7 +34,7 @@ auto Bytes(const std::string& raw) -> std::string {
 
 auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
                       const host::SaveRead& read,
-                      const host::comments::ReserveComment& reserve,
+                      const comments::ReserveComment& reserve,
                       const host::SourcePatches& patches) -> AgentSave {
   const auto rev = json::Get(base.snapshot, "rev");
   auto before = base.files;

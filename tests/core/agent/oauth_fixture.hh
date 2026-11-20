@@ -1,4 +1,7 @@
 #pragma once
+#include <condition_variable>
+#include <mutex>
+
 #include <curl/curl.h>
 #include <openssl/core_names.h>
 #include <openssl/evp.h>
@@ -69,12 +72,13 @@ class OAuthServer {
     if (!key_) throw std::runtime_error("test RSA key generation failed");
   }
   ~OAuthServer() { EVP_PKEY_free(key_); }
-  auto Begin(client::Connection& host, const std::string& profile = "desktop")
-      -> Reply {
+  auto Begin(client::Connection& host, const std::string& profile = "desktop",
+             bool replace_pending = false) -> Reply {
     return Call(host, H::RequestPayload::SignInBeginRequest, [&](Builder& b) {
       return H::CreateSignInBeginRequest(b, b.CreateString(profile), 0, false,
                                          b.CreateString(server.URL()),
-                                         b.CreateString(resource))
+                                         b.CreateString(resource),
+                                         replace_pending)
           .Union();
     });
   }
@@ -87,16 +91,35 @@ class OAuthServer {
     });
   }
   auto SignIn(client::Connection& host, const std::string& endpoint,
-              const std::string& profile = "desktop", uint64_t expiry = 3600)
-      -> Reply {
+              const std::string& profile = "desktop", uint64_t expiry = 3600,
+              std::string client = {}, bool plan = true) -> Reply {
     resource = endpoint;
+    struct Events {
+      std::mutex mutex;
+      std::condition_variable changed;
+      uint64_t count = 0;
+    };
+    const auto events = std::make_shared<Events>();
+    host.OnEvent([events, profile](const client::Bytes& bytes) {
+      const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
+      const auto* changed = event ? event->value_as_SignInChanged() : nullptr;
+      if (!changed || changed->profile()->string_view() != profile) return;
+      std::lock_guard lock(events->mutex);
+      ++events->count;
+      events->changed.notify_one();
+    });
     // A second sign-in on the same server must check its own exchange.
     const auto first_request = server.Requests().size();
     const auto begin = Begin(host, profile);
     if (!begin.Code().empty()) throw std::runtime_error(begin.Code());
     const auto* info = begin.HostValue()->value_as_SignInBegin();
+    {
+      std::unique_lock lock(events->mutex);
+      if (!events->changed.wait_for(lock, 5s, [&] { return events->count != 0; }))
+        throw std::runtime_error("test sign-in begin event timed out");
+    }
     const auto fields = URLFields(info->url()->str());
-    const auto client = "client-" + profile;
+    if (client.empty()) client = "client-" + profile;
     const auto expiration =
         std::chrono::duration_cast<std::chrono::seconds>(
             std::chrono::system_clock::now().time_since_epoch())
@@ -116,8 +139,8 @@ class OAuthServer {
         "{\"access_token\":\"ACCESS_SENTINEL\",\"refresh_token\":\"REFRESH_"
         "SENTINEL\",\"id_token\":" +
         Quote(token) +
-        ",\"scope\":\"chatgpt.tokens.use.direct\",\"expires_in\":" +
-        std::to_string(expiry) + "}");
+        ",\"scope\":" + Quote(plan ? "chatgpt.tokens.use.direct" : "") +
+        ",\"expires_in\":" + std::to_string(expiry) + "}");
     server.QueueHTTP(JWKS());
     auto* curl = curl_easy_init();
     const auto callback = fields.at("redirect_uri") +
@@ -132,10 +155,18 @@ class OAuthServer {
     const auto rc = curl_easy_perform(curl);
     curl_easy_cleanup(curl);
     if (rc != CURLE_OK) throw std::runtime_error("test callback failed");
-    // Completing or failing the exchange updates signin status. Host offers
-    // status reads for that attempt, with no event for every terminal outcome.
+    // Wake on Host notifications. Bound the fixture's wait so a missing
+    // terminal notification fails the test instead of hanging the suite.
     const auto deadline = std::chrono::steady_clock::now() + 5s;
-    while (std::chrono::steady_clock::now() < deadline) {
+    uint64_t seen = 1;
+    while (true) {
+      {
+        std::unique_lock lock(events->mutex);
+        if (!events->changed.wait_until(
+                lock, deadline, [&] { return events->count != seen; }))
+          throw std::runtime_error("test sign-in event timed out");
+        seen = events->count;
+      }
       auto status = Status(host, info->attempt_id()->str(), profile);
       const auto state =
           status.HostValue()->value_as_SignInStatus()->state()->str();
@@ -157,9 +188,7 @@ class OAuthServer {
               "test OAuth exchange did not bind PKCE and registration");
         return status;
       }
-      std::this_thread::sleep_for(10ms);
     }
-    throw std::runtime_error("test sign-in timed out");
   }
   auto Sign(const std::string& claims) -> std::string {
     const auto unsigned_token =

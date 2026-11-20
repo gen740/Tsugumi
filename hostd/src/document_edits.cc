@@ -6,7 +6,6 @@
 #include <sstream>
 #include <stdexcept>
 
-#include "host/templates.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -32,27 +31,6 @@ auto BoundaryPort(json::Members& ports, const std::string& endpoint)
   for (size_t i = 2; ports.contains(name); ++i) name = stem + std::to_string(i);
   ports[name] = endpoint;
   return name;
-}
-// Normalize JSON before comparing: object order and whitespace are not edits.
-auto Canonical(const std::string& raw) -> std::string {
-  schema::Json value;
-  if (auto error = schema::decode(raw, value))
-    throw std::runtime_error(error->message);
-  const auto text = schema::text(value.value());
-  if (text.starts_with('{')) {
-    auto fields = json::Object(text);
-    for (auto& [key, v] : fields) {
-      (void)key;
-      v = Canonical(v);
-    }
-    return json::Encode(fields);
-  }
-  if (text.starts_with('[')) {
-    auto values = json::Array(text);
-    for (auto& v : values) v = Canonical(v);
-    return json::Encode(values);
-  }
-  return text.starts_with('"') ? json::Quote(json::String(text)) : text;
 }
 }  // namespace
 
@@ -224,14 +202,13 @@ auto CopyDocuments(const std::string& state,
 
 auto ConnectDocuments(const std::string& state, const std::string& from_card,
                       const std::string& from_port, const std::string& to_card,
-                      const std::string& to_port, const std::string& fork_id)
-    -> DocumentConnect {
+                      const std::string& to_port) -> std::string {
   auto scope = json::Object(state);
   auto project = json::Object(json::Get(scope, "project", "{}"));
   auto graph = json::Object(json::Get(project, "canvas", "{}"));
   auto definitions = json::Object(json::Get(scope, "definitions", "{}"));
   auto wires = json::Array(json::Get(graph, "connections", "[]"));
-  auto cards = json::Array(json::Get(graph, "cards", "[]"));
+  const auto cards = json::Array(json::Get(graph, "cards", "[]"));
   const auto has_card = [&](const std::string& id) {
     return std::ranges::any_of(cards, [&](const auto& raw) {
       return json::Text(json::Object(raw), "id") == id;
@@ -239,130 +216,38 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
   };
   if (!has_card(from_card) || !has_card(to_card))
     throw std::runtime_error("A wire endpoint is missing");
-  const auto document = [&](const std::string& id, const std::string& part) {
-    return json::Object(
-        json::Get(json::Object(json::Get(definitions, id, "{}")), part, "{}"));
-  };
-  const auto kind = [&](const std::string& id) {
-    return json::Text(document(id, "card"), "template");
-  };
-  const auto put = [&](const std::string& id, const std::string& part,
-                       const json::Members& value) {
-    auto draft = json::Object(definitions.at(id));
-    draft[part] = json::Encode(value);
-    definitions[id] = json::Encode(draft);
-  };
-  const auto matches = [](const std::string& wire, const std::string& side,
-                          const std::string& card, const std::string& port) {
-    const auto end = json::Object(json::Get(json::Object(wire), side));
-    return json::Text(end, "card") == card && json::Text(end, "port") == port;
+  const auto is_draft = [&](const std::string& id) {
+    const auto definition = json::Object(json::Get(definitions, id, "{}"));
+    return json::Text(json::Object(json::Get(definition, "card", "{}")),
+                      "template") == "draft";
   };
   // Draft gestures attach to the Card itself and never declare ports.
-  const auto endpoint_port = [&](const std::string& id,
-                                 const std::string& port) {
-    if (kind(id) == "draft") return std::string{};
+  const auto endpoint_port = [](bool draft, const std::string& port) {
+    if (draft) return std::string{};
     if (port == "+")
       throw std::runtime_error("Only a Draft accepts a Card endpoint gesture");
     return port;
   };
-  const auto fp = endpoint_port(from_card, from_port);
-  const auto tp = endpoint_port(to_card, to_port);
-  const auto wire = [](const std::string& f, const std::string& p,
-                       const std::string& to) {
-    return json::Encode(json::Members{{"from", Endpoint(f, p)}, {"to", to}});
-  };
-  const auto branch = [&](const std::string& id, const std::string& target) {
-    auto card = document(id, "card");
-    auto params = json::Array(json::Get(card, "params", "[]"));
-    auto branches =
-        std::vector<std::string>{json::Quote("out1"), json::Quote("out2")};
-    for (const auto& param : params) {
-      const auto p = json::Object(param);
-      if (json::Text(p, "name") == "branches")
-        branches = json::Array(json::Get(p, "data", "[]"));
-    }
-    const auto base = target.empty() ? "out" : target;
-    auto name = base;
-    for (size_t n = 2;
-         std::ranges::find(branches, json::Quote(name)) != branches.end(); ++n)
-      name = base + "_" + std::to_string(n);
-    branches.push_back(json::Quote(name));
-    std::erase_if(params, [](const auto& param) {
-      return json::Text(json::Object(param), "name") == "branches";
+  const auto fp = endpoint_port(is_draft(from_card), from_port);
+  const bool to_draft = is_draft(to_card);
+  const auto tp = endpoint_port(to_draft, to_port);
+  if (!to_draft)
+    std::erase_if(wires, [&](const auto& w) {
+      const auto to = json::Object(json::Get(json::Object(w), "to"));
+      return json::Text(to, "card") == to_card && json::Text(to, "port") == tp;
     });
-    params.push_back(
-        json::Encode(json::Members{{"name", json::Quote("branches")},
-                                   {"type", json::Quote("string[]")},
-                                   {"data", json::Encode(branches)}}));
-    card["params"] = json::Encode(params);
-    put(id, "card", card);
-    return name;
-  };
-  std::vector<std::string> taken;
-  for (const auto& w : wires)
-    if (matches(w, "from", from_card, fp) && !matches(w, "to", to_card, tp))
-      taken.push_back(w);
-  auto source_card = from_card, source_port = fp;
-  DocumentConnect result;
-  if (!taken.empty() && kind(from_card) != "draft") {
-    const auto next =
-        taken.size() == 1
-            ? json::Text(json::Object(json::Get(json::Object(taken[0]), "to")),
-                         "card")
-            : "";
-    if (kind(from_card) == "fork") {
-      source_port = branch(from_card, to_card);
-    } else if (!next.empty() && kind(next) == "fork") {
-      source_card = next;
-      source_port = branch(next, to_card);
-    } else {
-      if (fork_id.empty()) {
-        result.needs_fork = true;
-        return result;
-      }
-      if (has_card(fork_id) || definitions.contains(fork_id))
-        throw std::runtime_error("A new fork Card id is needed");
-      result.inserted_id = fork_id;
-      cards.push_back(
-          json::Encode(json::Members{{"id", json::Quote(fork_id)}}));
-      auto fork = json::Object(WriteTemplate("fork", fork_id).definition_json);
-      auto fork_card = json::Object(fork.at("card"));
-      fork_card["params"] =
-          R"([{"name":"branches","type":"string[]","data":[]}])";
-      fork["card"] = json::Encode(fork_card);
-      fork["meta"] = R"({"name":"fork"})";
-      definitions[fork_id] = json::Encode(fork);
-      std::erase_if(wires, [&](const auto& w) {
-        return std::ranges::find(taken, w) != taken.end();
-      });
-      for (const auto& w : taken) {
-        const auto to = json::Get(json::Object(w), "to");
-        wires.push_back(
-            wire(fork_id, branch(fork_id, json::Text(json::Object(to), "card")),
-                 to));
-      }
-      wires.push_back(wire(from_card, fp, Endpoint(fork_id, "in")));
-      source_card = fork_id;
-      source_port = branch(fork_id, to_card);
-    }
-  }
-  // Real inputs accept one wire; a Draft can receive any number.
-  if (kind(to_card) != "draft")
-    std::erase_if(wires,
-                  [&](const auto& w) { return matches(w, "to", to_card, tp); });
-  wires.push_back(wire(source_card, source_port, Endpoint(to_card, tp)));
-  graph["cards"] = json::Encode(cards);
+  wires.push_back(json::Encode(json::Members{{"from", Endpoint(from_card, fp)},
+                                             {"to", Endpoint(to_card, tp)}}));
   graph["connections"] = json::Encode(wires);
   project["canvas"] = json::Encode(graph);
   scope["project"] = json::Encode(project);
-  scope["definitions"] = json::Encode(definitions);
   scope.erase("ports");
-  result.state_json = json::Encode(scope);
-  return result;
+  return json::Encode(scope);
 }
 
 auto DocumentsEqual(const std::string& a, const std::string& b) -> bool {
-  return Canonical(a) == Canonical(b);
+  return schema::canonical_text(schema::capture(a)) ==
+         schema::canonical_text(schema::capture(b));
 }
 
 }  // namespace tsugumi::host

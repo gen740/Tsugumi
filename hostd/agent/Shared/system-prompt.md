@@ -20,9 +20,7 @@ the person's decision.
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
   permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port has one wire; a fork Card ({"template": "fork", "params": [{"name": "branches", "type":
-  "string[]", "data": ["<a name per output>"]}]}) sends a value to several Cards. Input types come from the connected
-  outputs.
+  links use. An output port can feed several inputs. Input types come from the connected outputs.
 - How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
   large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
   (en/report/definitions/generate/src/main.py); demo_list lists each demo's path, name and one line.
@@ -70,3 +68,10 @@ the person's decision.
   what is not done or not verified; when they asked for an explanation, the explanation is the work: answer the
   question first, with the detail it needs. Reply in the language of the person's own messages and of the Drafts'
   descriptions (the app's requests, such as the Draft request, are in English whatever their language is).
+- Cite what you read with links the chat opens, within this project: [Spectrum](card:spectrum) (inside a Card in
+  Card, card:outer/inner), [Run 12 (its start time or mark)](run:12), [Spectrum #1 (run 12)](run:12/spectrum#1) for an
+  invocation, [stderr (12/spectrum#1)](log:12/spectrum?invocation=1&stream=stderr&offset=0) (stdout, stderr, build or
+  journal at a byte offset; no Card and invocation for the run's own log), [plot.png (run
+  12)](artifact:12?id=<URL-encoded artifact id>&path=<URL-encoded member>) (no path for the whole artifact). Label a
+  link with the name the person sees and use the run numbers, Card ids, invocations and artifact ids tools returned; a
+  link to something missing shows as text that cannot be opened.

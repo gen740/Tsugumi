@@ -703,7 +703,7 @@ export function GuideSetupForm() {
         </div>
       </div>
       <div className="callout">{L('ツグミとチャットの Agent は、Anthropic・OpenAI の API キーか ChatGPT プランで使えます。プランの利用は Tsugumi への支払いではありません。キーはこのホストの hostd（所有者だけが読める 0600 のファイル）にだけ保存し、プロジェクト・会話の記録・ログには残しません。')}</div>
-      <ChatGPTSettings onboarding controller={chatGPT} onConnected={() => guide.finishChatGPTSetup()} />
+      <ChatGPTSettings onboarding controller={chatGPT} onConnected={clientId => guide.finishChatGPTSetup(clientId)} />
       <div className="segmented" role="radiogroup" aria-label={L('使うモデル')}>
         {(['anthropic', 'openai'] as const).map((p) => (
           <button key={p} type="button" role="radio" aria-checked={provider === p} className={provider === p ? 'on' : ''}

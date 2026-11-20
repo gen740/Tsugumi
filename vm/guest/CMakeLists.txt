@@ -1,5 +1,5 @@
 if(CMAKE_SYSTEM_NAME STREQUAL "Linux")
   add_executable(tsugumi-vmd src/vmd_main.cc)
-  target_link_libraries(tsugumi-vmd PRIVATE tsugumi_runtime_support tsugumi_nix_store)
+  target_link_libraries(tsugumi-vmd PRIVATE tsugumi_runtime_support tsugumi_nix_store tsugumi_protocol flatbuffers::flatbuffers)
   install(TARGETS tsugumi-vmd RUNTIME DESTINATION bin)
 endif()

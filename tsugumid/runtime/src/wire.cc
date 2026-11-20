@@ -2,6 +2,7 @@
 
 #include <flatbuffers/reflection.h>
 
+#include <algorithm>
 #include <cmath>
 
 extern const unsigned char tsugumi_rpc_bfbs[];
@@ -101,7 +102,33 @@ Off<R::Definition> definition(FBB& b, const std::string& id,
       d.meta_json ? b.CreateString(*d.meta_json) : Off<flatbuffers::String>());
 }
 
-Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {
+Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s,
+                             const std::vector<InvocationSummaryData>& active) {
+  const auto now = now_ms();
+  const auto since = [&](int64_t t) {
+    return static_cast<uint64_t>(std::max<int64_t>(0, now - t));
+  };
+  std::vector<Off<R::ActiveInvocation>> cards;
+  for (const auto& inv : active) {
+    std::vector<Off<R::BuildActivity>> building;
+    for (const auto& a : inv.building)
+      building.push_back(R::CreateBuildActivity(b, b.CreateString(a.derivation),
+                                                since(a.start)));
+    auto bv = b.CreateVector(building);
+    auto card = path(b, inv.card);
+    R::ActiveInvocationBuilder ab(b);
+    ab.add_card(card);
+    ab.add_invocation(inv.invocation);
+    if (!inv.stages.empty()) {
+      ab.add_stage(inv.stages.back().phase);
+      ab.add_stage_elapsed_ms(since(inv.stages.back().start));
+    }
+    ab.add_building(bv);
+    cards.push_back(ab.Finish());
+  }
+  auto av = active.empty()
+                ? Off<flatbuffers::Vector<Off<R::ActiveInvocation>>>()
+                : b.CreateVector(cards);
   auto id = s.run_id ? b.CreateString(*s.run_id) : Off<flatbuffers::String>();
   auto f = s.failure ? failure(b, *s.failure) : Off<D::Failure>();
   auto commit =
@@ -118,6 +145,7 @@ Off<R::RunStatus> run_status(FBB& b, const RunStatusData& s) {
   if (s.commit) rb.add_commit(commit);
   rb.add_partial_run(s.partial_run);
   rb.add_uses_partial_result(s.uses_partial_result);
+  if (!active.empty()) rb.add_active(av);
   return rb.Finish();
 }
 

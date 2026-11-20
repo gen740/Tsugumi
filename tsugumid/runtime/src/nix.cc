@@ -348,7 +348,8 @@ types::TypeRef NixRunner::params_type(const Node& node) {
   for (const auto& p : node.settings.params)
     fields.emplace_back(p.name, param_fbs_type(p.type));
   std::string err;
-  auto t = types::compile(types::params_schema(fields), "params.Params", &err);
+  auto t =
+      types::compile(types::params_schema(fields), "parameters.Params", &err);
   if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
   return *t;
 }
@@ -633,6 +634,8 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   call.pin_url = *pin.url;
   call.pin_hash = *pin.nar_hash;
   call.system = req.target.system;
+  call.jobs = req.jobs;
+  call.cores = req.cores;
   call.max_implementations = req.max_implementations;
   call.definition_dir = def;
   call.args =
@@ -647,6 +650,7 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
   if (req.timeout_seconds)
     call.deadline = budget_start + std::chrono::seconds(*req.timeout_seconds);
   call.log = req.log;
+  call.on_build = req.on_build;
   call.on_phase = [&](bool building) {
     if (req.on_phase) req.on_phase(building ? Phase::build : Phase::evaluate);
   };

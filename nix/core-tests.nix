@@ -39,6 +39,7 @@ clangStdenv.mkDerivation {
       if target == null then
         [
           ../hostd/tools/test-binary-cache.py
+          ../vm/guest/src/control_wire.hh
           (lib.fileset.fileFilter (
             file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
           ) ../tests/core)
@@ -85,6 +86,8 @@ clangStdenv.mkDerivation {
           tsugumi_vm_lifetime_tests = [
             ../tests/core/cmake/vm.cmake
             ../tests/core/vm_lifetime_test.cc
+            ../tests/core/vm_guest_wire_test.cc
+            ../vm/guest/src/control_wire.hh
           ];
         }
         .${target}

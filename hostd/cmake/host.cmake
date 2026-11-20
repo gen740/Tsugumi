@@ -1,7 +1,7 @@
 include(${CMAKE_CURRENT_LIST_DIR}/agent-resources.cmake)
 
 set(_template_files "")
-foreach(name basic visualization reports csharp marimo go rust)
+foreach(name basic input/Sources/InputTemplates/inputs visualization reports csharp marimo go rust)
   list(APPEND _template_files ${PROJECT_SOURCE_DIR}/ui/shared/templates/${name}.json)
 endforeach()
 add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
@@ -65,7 +65,7 @@ endif()
 target_include_directories(tsugumi_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private ${CMAKE_CURRENT_SOURCE_DIR}/agent/private)
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_link_libraries(tsugumi_host_core PUBLIC tsugumi_trace_codec tsugumi_rpc_schema tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client PkgConfig::LIBGIT2 CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
+  Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
 target_link_libraries(tsugumi_host_core PRIVATE native_sqlite)
 if(NOT APPLE)
   target_link_libraries(tsugumi_host_core PRIVATE PkgConfig::CRYPTO)

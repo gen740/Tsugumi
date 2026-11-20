@@ -12,9 +12,9 @@
 #               image's store (lower) + /persist/nix (upper) as an overlay
 #   virtiofs "tsugumi-<n>" (16 slots): one per open project, with its
 #               `project` and `control` folders, at /mnt/slots/<n> (tsugumi-vmd)
-#   hvc0        console: everything here and in tsugumi-vmd is logged to it,
-#               with "TSUGUMI-STAGE <name>" lines for the app's progress
-#   vsock       1024 control, 1025 RPC (tsugumi-vmd)
+#   hvc0        early boot, kernel and supervisor fallback logs, with
+#               "TSUGUMI-STAGE <name>" lines for the app's progress
+#   vsock       1024 guest-to-host control, 1025 project RPC, 1026 terminals
 #
 # Contents and why each is needed:
 #   nix            the one nix-daemon of the shared store, the clients, and

@@ -1,5 +1,5 @@
 import { H } from '../wire/hostLayout'
-import { VersionCommentT } from '../../shared/gen/tsugumi/host/version-comment'
+import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 // The project's versions as a tree (tsugumid/runtime/src/versions.cc): each commit with its
 // branches, tags, runs (from its note) and changed Cards; hovering one shows
 // what it changed and a minimap of its Cards. A version can be named, and the
@@ -79,7 +79,7 @@ export interface MiniMapCard { id: string; x: number; y: number; kind: CardKind;
 function miniMapCardData(c: MiniMapCard): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
-    title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(c.kind === 'fork' ? c.fan : 1), params: [],
+    title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(1), params: [],
     invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: c.collapsed, hasDisplay: false,
   }
 }

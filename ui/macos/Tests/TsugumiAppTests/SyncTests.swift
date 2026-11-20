@@ -104,8 +104,9 @@ import TsugumiTestSupport
   }
 
   static func connected(_ s: ProjectSession) async throws {
-    try await waitForModel { s.connected }
-    #expect(s.connected, "\(s.connectionMessage ?? "")")
+    // A failed or abandoned connection is reported, not waited for.
+    try await waitForModel("the session connects") { s.connected || s.connectionMessage != nil || s.closed }
+    try #require(s.connected, "\(s.connectionMessage ?? "the session closed before it connected")")
     if s.connected, let endpoint = s.endpointOverride {
       // Direct test daemons bypass EnvironmentManager's host registration.
       _ = try await CoreHostClient.shared.call("RegisterProjectRequest", [

@@ -1,14 +1,13 @@
 // The UI's language. The source strings are Japanese; English comes from
-// i18n/en.json, keyed by the Japanese text, with {0}, {1}… for the values put
+// ui/shared/i18n/en.json, keyed by the Japanese text, with {0}, {1}… for the values put
 // in. The language is the app's setting (the server keeps it, shared with the
 // desktop app on a Mac); this page reads it once at load, and changing it
 // reloads the page.
-import EN from '../shared/i18n/en.json'
+import { translate } from '../shared/i18n'
 
 export type Language = 'ja' | 'en'
 
 const STORE = 'tsugumi.language'
-const en = EN as Record<string, string>
 
 function initial(): Language {
   const forced = (globalThis as { TSUGUMI_LANGUAGE?: string }).TSUGUMI_LANGUAGE
@@ -26,8 +25,7 @@ export const language = (): Language => current
 
 /** The text in the current language, with the values put in. */
 export function L(ja: string, ...values: unknown[]): string {
-  const text = current === 'en' ? en[ja] ?? ja : ja
-  return values.length ? text.replace(/\{(\d+)\}/g, (m, i) => (Number(i) < values.length ? String(values[Number(i)]) : m)) : text
+  return translate(current, ja, values)
 }
 
 /** The server's setting as this page's: reloads when they differ (the

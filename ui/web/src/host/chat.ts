@@ -6,7 +6,6 @@ import { modelChoices } from '../../shared/agentShared'
 import type { Access } from '../../shared/gen/tsugumi/service/access'
 import type { ProviderConfig } from './types'
 import { CoreHost, CoreHostError } from './coreHost'
-import { ChatGPTAuth, ChatGPTError, endpointsFor, OPENAI_ENDPOINTS, USAGE_URL } from './chatgpt'
 import { Environments, projectKey } from './environment'
 import { L, type Language } from '../i18n'
 
@@ -44,9 +43,6 @@ interface Settings {
   effort: string
   fastModel: string
   fixturePort: number
-  /** What the Agent may give Cards without asking (network, sandbox_off,
-   *  host_folder_read, host_folder_write); the rest waits for the user. */
-  allowedPermissions: string[]
   /** The chat's Agent may search the web through the provider (its queries
    *  leave for the provider's search service). Off until the user turns it on. */
   webSearch: boolean
@@ -66,7 +62,7 @@ interface Settings {
 // The host keeps presentation snapshots only; persistence and validation are RPC.
 const SHARED_KEYS: Record<string, string> = {
   provider: 'agent.provider', model: 'agent.model', openAIModel: 'agent.model.openai', chatGPTModel: 'agent.model.chatgpt',
-  effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort', allowedPermissions: 'agent.permissions.allowed',
+  effort: 'agent.effort', fastModel: 'agent.fastModel', fixturePort: 'agent.fixturePort',
   allowUnscopedHelpers: 'agent.allowUnscopedHelpers',
   animateAgentWork: 'agent.animateWork', webSearch: 'agent.webSearch', versionNoteMode: 'versions.noteMode', language: 'app.language',
 }
@@ -98,13 +94,15 @@ async function loadSettings() {
   snapshot = next as Settings
   return { ...snapshot, revision }
 }
-async function patchSettings(change: Partial<Settings>, expected?: Record<string, number>) {
+async function patchSettings(change: Partial<Settings>, expected?: Record<string, number>, chatGPTAccount?: string) {
   for (const [profile, keys] of settingsProfiles()) {
     const changes = Object.entries(keys).filter(([name]) => name in change).map(([name, key]) => ({ key, value_json: JSON.stringify(change[name as keyof Settings]) }))
     if (!changes.length) continue
     const revision = expected ? expected[profile] : (await core.getSettings(profile)).revision
     if (revision === undefined) throw ctx.httpError(400, 'Missing settings revision')
-    await core.user.call('SettingsUpdateRequest', { profile, revision, changes, client: 'web' })
+    const chatgpt_account = chatGPTAccount && changes.some(change => change.key === SHARED_KEYS.provider)
+      ? { profile: localProfile(), client_id: chatGPTAccount } : undefined
+    await core.user.call('SettingsUpdateRequest', { profile, revision, changes, chatgpt_account })
   }
   return loadSettings()
 }
@@ -125,17 +123,6 @@ async function deleteKey(p: KeyedProvider) {
   await core.keys.delete(p, settingsProfile())
   return L('{0} のキーを削除しました。', PROVIDERS[p].name)
 }
-
-// Browser sign-in and account status are scoped to this Web host in hostd.
-// Test overrides point the issuer and resource at the local OAuth fixture.
-let chatGPTAuth: ChatGPTAuth | undefined
-// Checks set these on the page (like TSUGUMI_LANGUAGE) to use a local OAuth fixture.
-const testIssuer = () => (globalThis as { TSUGUMI_CHATGPT_ISSUER?: string }).TSUGUMI_CHATGPT_ISSUER
-const testResource = () => (globalThis as { TSUGUMI_CHATGPT_API?: string }).TSUGUMI_CHATGPT_API
-const chatgpt = () => (chatGPTAuth ??= new ChatGPTAuth(localProfile(),
-  testIssuer() ? endpointsFor(testIssuer()!, testResource() ?? OPENAI_ENDPOINTS.resource) : OPENAI_ENDPOINTS, (method, fields) => core.user.call(method, fields)))
-/** The last sign-in started from the page: its outcome, once it came. */
-let signInOutcome: { ok: boolean; message: string; welcome?: string } | null = null
 
 async function provider(): Promise<ProviderConfig> {
   return providerFor(settings().provider)
@@ -185,11 +172,43 @@ function providerConnectionMessage(code?: string): string | undefined {
   }
 }
 
-/** The ChatGPT accounts and the sign-in for the settings page (never a token). */
-async function chatGPTState() {
-  const status = await core.user.call<{ code?: string }>('ProviderStatusRequest', { profile: localProfile(), id: 'chatgpt' })
-  return { accounts: await chatgpt().accounts(), signingIn: chatgpt().signingIn, outcome: signInOutcome, usageURL: USAGE_URL,
-    connectionMessage: providerConnectionMessage(status.code) }
+interface ChatGPTAccount {
+  clientId: string
+  email?: string
+  signedIn: boolean
+  planEnabled: boolean
+  active: boolean
+}
+interface SignInStatus {
+  accounts: ChatGPTAccount[]
+  attempt_id?: string
+  client_id?: string
+  state: string
+  planEnabled: boolean
+  message?: string
+  welcome?: string
+  revoked: boolean
+}
+const testIssuer = () => (globalThis as { TSUGUMI_CHATGPT_ISSUER?: string }).TSUGUMI_CHATGPT_ISSUER
+const testResource = () => (globalThis as { TSUGUMI_CHATGPT_API?: string }).TSUGUMI_CHATGPT_API
+const signInStatus = (attempt_id?: string) =>
+  hostRequest<SignInStatus>('SignInStatusRequest', { profile: localProfile(), attempt_id })
+const signInAction = (action: string, fields: { client_id?: string; attempt_id?: string }) =>
+  hostRequest<SignInStatus>('SignInActionRequest', { profile: localProfile(), action, ...fields })
+
+function chatGPTState(status: SignInStatus) {
+  const account = status.accounts.find(a => a.clientId === status.client_id)
+  const outcome = status.state === 'complete' && account
+    ? { ok: true, clientId: account.clientId, planEnabled: status.planEnabled, welcome: status.welcome, message: status.planEnabled
+      ? L('{0} でサインインしました。', account.email ?? account.clientId)
+      : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
+    : status.state === 'cancelled' ? { ok: false, message: L('サインインを中止しました。') }
+      : status.state === 'failed' ? { ok: false, message: status.message } : null
+  const active = status.accounts.find(a => a.active)
+  return { accounts: status.accounts, signingIn: ['pending', 'committing'].includes(status.state),
+    attemptId: status.attempt_id, outcome, usageURL: 'https://chatgpt.com/settings/usage',
+    connectionMessage: active && providerConnectionMessage(!active.signedIn ? 'chatgpt_sign_in_required'
+      : !active.planEnabled ? 'chatgpt_plan_disabled' : undefined) }
 }
 
 // ---- The guide -----------------------------------------------------------------
@@ -326,6 +345,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   core.observeHost((event) => {
     if (event.type === 'ProviderChanged') c.broadcast({ type: 'providerChanged' })
     if (event.type === 'Connected') c.broadcast({ type: 'reconnected' })
+    if (['SignInChanged', 'ProviderChanged'].includes(event.type) && event.value.profile === localProfile())
+      c.broadcast({ type: 'chatgptChanged' })
     if (event.type === 'SettingsChanged' && event.value.profile === PROFILE) {
       void loadSettings().then(() => c.broadcast({ type: 'settingsChanged' }), (error) => console.error(error))
     }
@@ -348,7 +369,8 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
     keys: { Anthropic: await keySource('anthropic'), OpenAI: await keySource('openai') },
   }),
   'POST /api/settings': async (b) => {
-    const updated = await patchSettings(b, b.revision)
+    const account = b?.provider === 'chatgpt' && typeof b.chatGPTAccount === 'string' ? b.chatGPTAccount : undefined
+    const updated = await patchSettings(b, b.revision, account)
     return { ...updated, ...await modelCatalogs(), chatProvider: await providerInfo() }
   },
   'POST /api/versions/note': async (b) => {
@@ -369,40 +391,34 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'GET /api/settings/connections': async () => ({
     anthropic: !!(await keySource('anthropic')),
     openai: !!(await keySource('openai')),
-    chatgpt: (await chatgpt().accounts()).some((a) => a.active && a.signedIn && a.planEnabled),
+    chatgpt: (await signInStatus()).accounts.some(a => a.active && a.signedIn && a.planEnabled),
   }),
-  'GET /api/chatgpt': () => chatGPTState(),
-  // Starts a sign-in: the page opens the URL in a tab; the outcome is read back with GET /api/chatgpt.
+  'GET /api/chatgpt': async (_b, url) => chatGPTState(await signInStatus(url.searchParams.get('attemptId') ?? undefined)),
   'POST /api/chatgpt/signin': async (b) => {
-    const { url, done } = await chatgpt().begin(typeof b.clientId === 'string' ? b.clientId : undefined, b.consent === true)
-    signInOutcome = null
-    done.then((r) => {
-      signInOutcome = { ok: true, welcome: r.welcome ? r.account.clientId : undefined, message: r.account.planEnabled
-        ? L('{0} でサインインしました。', r.account.email ?? r.account.clientId)
-        : L('サインインしましたが、ChatGPT プランの利用は許可されませんでした。「プランの利用を許可」から許可するか、API キーの接続を使ってください。') }
-    }, (e: Error) => {
-      signInOutcome = { ok: false, message: e.message === new ChatGPTError('cancelled').message ? L('サインインを中止しました。') : e.message }
+    // Checks set these on the page (like TSUGUMI_LANGUAGE) to use the loopback OAuth fixture.
+    const { url, attempt_id } = await hostRequest<{ url: string; attempt_id: string }>('SignInBeginRequest', {
+      profile: localProfile(), client_id: typeof b.clientId === 'string' ? b.clientId : undefined,
+      consent: b.consent === true, issuer: testIssuer(), resource: testResource(),
     })
-    return { url }
+    return { url, attemptId: attempt_id }
   },
-  'POST /api/chatgpt/cancel': async () => {
-    await chatgpt().cancel()
-    return chatGPTState()
+  'POST /api/chatgpt/cancel': async (b) => {
+    await signInAction('cancel', { attempt_id: String(b.attemptId) })
+    return {}
   },
   'POST /api/chatgpt/select': async (b) => {
-    await chatgpt().select(String(b.clientId))
-    return chatGPTState()
+    await signInAction('select', { client_id: String(b.clientId) })
+    return {}
   },
   'POST /api/chatgpt/welcomed': async (b) => {
-    await chatgpt().markWelcomed(String(b.clientId))
-    signInOutcome = signInOutcome && { ...signInOutcome, welcome: undefined }
-    return chatGPTState()
+    await signInAction('welcomed', { client_id: String(b.clientId) })
+    return {}
   },
   'POST /api/chatgpt/signout': async (b) => {
     const id = String(b.clientId)
-    const email = (await chatgpt().accounts()).find((a) => a.clientId === id)?.email ?? id
-    const revoked = await chatgpt().signOut(id)
-    return { ...await chatGPTState(), message: revoked ? L('{0} からサインアウトしました。', email)
+    const status = await signInAction('signout', { client_id: id })
+    const email = status.accounts.find(a => a.clientId === id)?.email ?? id
+    return { message: status.revoked ? L('{0} からサインアウトしました。', email)
       : L('このホストのトークンは消しましたが、OpenAI 側での取り消しを確かめられませんでした。ChatGPT の設定で Tsugumi の接続を解除できます。') }
   },
   'POST /api/settings/skillCount': async (b) => ({ count: (await skillMetadata(undefined, [String(b.path)])).skills.filter((s) => s.status === 'ready' && s.path !== 'builtin:demo').length }),
@@ -458,11 +474,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/chat/compact': conversationAction('Compact'),
   'POST /api/chat/permission': async (b) => {
     const allow = b.allow === true
-    if (allow && Array.isArray(b.always) && b.always.length > 0) {
-      const { allowedPermissions, revision } = await loadSettings()
-      const merged = [...new Set([...allowedPermissions, ...b.always.map(String)])]
-      await patchSettings({ allowedPermissions: merged }, revision)
-    }
     await answerPermission(String(b.id), allow, Array.isArray(b.selected) ? b.selected : undefined)
     return { ok: true }
   },

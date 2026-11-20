@@ -305,15 +305,14 @@ final class GuideController {
     if connected { inviteOnConnect = true }
     setupDone = true
     advance(["kind": "setup"])
-    refreshAvailability()
+    refreshAvailability(fresh: connected)
   }
 
   /// Called only after a sign-in with plan permission and its welcome.
-  func finishChatGPTSetup() async throws {
-    CorePreferences.shared.set("chatgpt", forKey: "agent.provider")
-    await CorePreferences.shared.reload()
-    if let error = CorePreferences.shared.error { throw ChatGPTError.failed(error) }
+  func finishChatGPTSetup(clientId: String) async throws {
+    try await CorePreferences.shared.selectChatGPT(clientId: clientId)
     finishSetup(connected: true)
+    await pendingGuide?.value
   }
 
   /// Asks the first start's questions again (Settings).

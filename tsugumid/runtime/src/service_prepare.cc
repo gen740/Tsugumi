@@ -24,11 +24,11 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
     BuildRequest request;
     request.node = &node;
     request.doc = doc;
-    request.jobs = opts_.env_cpus;
-    request.cores = 1;
     request.timeout_seconds = node.settings.build_timeout_seconds;
-    request.log = [&](const std::string& line) {
-      log::info("build " + card + ": " + line);
+    request.log = [&](auto chunk) {
+      for (const auto& line : chunk.lines)
+        log::info("build " + card + ": " + line);
+      if (chunk.truncated) log::info("build " + card + ": log truncated");
     };
     // One schema::PreparedCard per line.
     std::vector<std::pair<std::string, hosq::json::GenericDom<>>> fields;

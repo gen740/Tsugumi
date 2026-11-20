@@ -9,6 +9,7 @@ import { EventPayload as HostEventPayload } from '../../shared/gen/tsugumi/host/
 import { SettingT } from '../../shared/gen/tsugumi/host/setting'
 import { SettingsGetRequestT as HSettingsGetRequest } from '../../shared/gen/tsugumi/host/settings-get-request'
 import { SettingsUpdateRequestT as HSettingsUpdateRequest } from '../../shared/gen/tsugumi/host/settings-update-request'
+import { ExpectedAccountT } from '../../shared/gen/tsugumi/host/expected-account'
 import { ProviderSetRequestT as HProviderSetRequest } from '../../shared/gen/tsugumi/host/provider-set-request'
 import { ProviderStatusRequestT as HProviderStatusRequest } from '../../shared/gen/tsugumi/host/provider-status-request'
 import { SignInBeginRequestT as HSignInBeginRequest } from '../../shared/gen/tsugumi/host/sign-in-begin-request'
@@ -109,7 +110,9 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [])
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
-    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
+    case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0),
+      (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)),
+      v.chatgpt_account ? new ExpectedAccountT(v.chatgpt_account.profile, v.chatgpt_account.client_id) : null)
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove)
     case 'ProviderStatusRequest': return new HProviderStatusRequest(v.profile, v.id)
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)

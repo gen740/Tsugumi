@@ -6,6 +6,7 @@
 #include <set>
 
 #include "agent/catalog.hh"
+#include "agent/runtime.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::agent {
@@ -22,17 +23,13 @@ namespace {
 // A `tools` call runs the family action it names, so its result has that
 // tool's shape. Anything else, including a schema listing, keeps its own name.
 auto ResultTool(const ContentBlock& call) -> std::string {
-  if (call.name != "tools") return call.name;
-  static const auto families = json::Object(json::Get(
-      json::Object(json::Get(Catalog().shared(), "modelTools")), "families"));
+  static const Catalog catalog;
   try {
-    const auto args = json::Object(call.input);
-    const auto family = families.find(json::Text(args, "family"));
-    if (family == families.end()) return call.name;
-    const auto name =
-        json::Text(json::Object(family->second), json::Text(args, "action"));
-    return name.empty() ? call.name : name;
+    return catalog
+        .ResolveCall({call.id, call.name, call.input}, ModelRole::Main)
+        .name;
   } catch (const std::exception&) {
+    // Malformed or unavailable historical actions have no typed result shape.
     return call.name;
   }
 }
