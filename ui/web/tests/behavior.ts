@@ -20,7 +20,7 @@ await import("./hostReadiness")
 await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
-await import("./switchCard")
+await import("./booleanInput")
 await import("./reports")
 
 await import("./table")

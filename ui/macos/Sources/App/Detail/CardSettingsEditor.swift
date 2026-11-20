@@ -1,5 +1,6 @@
 import AppKit
 import SwiftUI
+import InputTemplates
 import TsugumiAgentClient
 import TsugumiRPC
 
@@ -34,6 +35,7 @@ final class CardEditorModel {
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
+  private var presetOutputs: String?
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
 
   init(session: ProjectSession, cardKey: CardKey) {
@@ -85,16 +87,36 @@ final class CardEditorModel {
     return ends
   }
 
+  var implementation: String {
+    let template = definition?["template"]?.string
+    if template == "input", definition?["params"]?.array?.first?["type"]?.string == "bool" {
+      return DefinitionTemplate.booleanInput.rawValue
+    }
+    return template ?? definition?["language"]?.string ?? "draft"
+  }
+
   func implementAs(_ value: String) {
-    if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
+    if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
+      do {
+        guard let files = try InputTemplates.load()[value],
+              let card = files["_card.json"], let outputs = files["_outputs.fbs"] else {
+          throw CocoaError(.fileReadCorruptFile)
+        }
+        definition = try JSONValue.parse(card)
+        if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
+          let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
+          if untouched || (!created.contains(p) && texts[p] == nil) {
+            let schema = outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card")
+            createFile("_outputs.fbs", text: schema)
+            presetOutputs = schema
+          }
+        }
+      } catch {
+        message = error.localizedDescription
+      }
+    } else if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
       definition = .object([("language", .string(value))])
     } else { definition = .object([("template", .string(value))]) }
-    if value == "input" || value == "switch" {
-      definition?["params"] = .array([.object([("name", .string("value")), ("type", .string(value == "input" ? "double" : "bool")), ("data", value == "input" ? .number("0") : .bool(false))])])
-      if value == "input", let outputsPath, !files.contains(outputsPath) {
-        createFile("_outputs.fbs", text: "namespace card;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
-      }
-    }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
   }
 
@@ -124,6 +146,7 @@ final class CardEditorModel {
     baseMeta = meta
     texts = [:]
     baseTexts = [:]
+    presetOutputs = nil
     baseHashes = [:]
     loads = [:]
     for (p, t) in keep {
@@ -246,6 +269,7 @@ final class CardEditorModel {
   func createFile(_ rel: String, text: String = "") {
     guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
+    if p == outputsPath { presetOutputs = nil }
     removed.remove(p)
     created.insert(p)
     if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
@@ -258,6 +282,7 @@ final class CardEditorModel {
   func rename(_ p: String, to rel: String) async -> Bool {
     let target = prefix + rel
     if target == p { return true }
+    if p == outputsPath || target == outputsPath { presetOutputs = nil }
     let origin = renames[p] ?? p
     let hash = baseHashes[p] ?? session.sources[origin]?.hash
     let text = texts[p], base = baseTexts[p], load = loads[p]
@@ -606,12 +631,10 @@ private struct GeneralCategory: View {
         })
         if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
         LabeledContent("種類", value: model.kind.label)
-        if model.kind != .switchCard {
-          LabeledContent("アイコン") {
-            SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
-                                         set: { model.definition?["symbol"] = $0.map { .string($0) } }),
-                         inherited: model.kind.symbol)
-          }
+        LabeledContent("アイコン") {
+          SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
+                                       set: { model.definition?["symbol"] = $0.map { .string($0) } }),
+                       inherited: model.kind.symbol)
         }
         TextField("概要", text: metaString("description"), axis: .vertical)
           .lineLimit(2...5)
@@ -622,13 +645,16 @@ private struct GeneralCategory: View {
       }
       if model.session.kind(model.cardKey) == .draft {
         Section {
-          Picker("種類", selection: Binding(get: { model.definition?["template"]?.string ?? model.definition?["language"]?.string ?? "draft" }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input", "switch", "trigger", "fork", "branch", "merge", "collect"], id: \.self) { Text($0).tag($0) }
+          Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
+            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input",
+                     DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "merge", "collect"], id: \.self) { value in
+              Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+            }
           }
         } header: { Text("Draft を手動で実装") }
           footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }
       }
-      if model.kind != .switchCard, let params = model.definition?["params"]?.array, !params.isEmpty {
+      if let params = model.definition?["params"]?.array, !params.isEmpty {
         Section("パラメータ") {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }

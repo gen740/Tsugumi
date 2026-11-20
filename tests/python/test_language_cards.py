@@ -1,4 +1,4 @@
-"""R and Julia Cards (rCard, juliaCard) and the display of bash Cards: params,
+"""R, Julia and Ruby Cards and the display of Bash Cards: params,
 messages and File outputs cross between languages through the port types, and
 each display kind reaches the Card's record. Their interpreters live in the
 ABI worker; exceptions fail the Card. A Card keeps no interpreter state unless
@@ -69,6 +69,8 @@ def write_project(root, cards: dict, connections: list):
 R_NIX = '''{ pkgs, inputs, params }: { run = inputs.tsugumi.rCard { src = ./src; }; }
 '''
 JULIA_NIX = '''{ pkgs, inputs, params }: { run = inputs.tsugumi.juliaCard { src = ./src; }; }
+'''
+RUBY_NIX = '''{ pkgs, inputs, params }: { run = inputs.tsugumi.rubyCard { src = ./src; }; }
 '''
 
 R_MAKE = '''
@@ -546,8 +548,7 @@ def main(inputs, report, run):
     while not run.cancelled():
         time.sleep(0.01)
 '''),
-    "ruby": ('''{ pkgs, inputs, params }: { run = inputs.tsugumi.rubyCard { src = ./src; }; }
-''', "main.rb", '''
+    "ruby": (RUBY_NIX, "main.rb", '''
 def main(inputs, report, run)
   @calls = (@calls || 0) + 1
   report.text("call #{@calls}")
@@ -588,12 +589,12 @@ public sealed class Card : ICard {
 #include <string.h>
 #include <unistd.h>
 static int calls;
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char display[80];
   snprintf(display, sizeof display, "{\\"text\\":\\"call %d\\"}", ++calls);
-  c->effects->display_json(c->host, display);
-  if (calls != 2) return c->effects->outputs_json(c->host, "{}", outputs);
+  c->effects->display(c->host, TSUGUMI_DISPLAY_JSON, display);
+  if (calls != 2) return 0;
   const char* params = c->effects->params_json(c->host);
   if (!params) return 1;
   if (strstr(params, "\\"fail\\"")) {
@@ -601,7 +602,7 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
     return 1;
   }
   while (!c->effects->cancelled(c->host)) usleep(10000);
-  return c->effects->outputs_json(c->host, "{}", outputs);
+  return 0;
 }
 '''),
 }
@@ -718,14 +719,19 @@ def test_full_integer_ranges_struct_enum_and_union_cross_interpreters(project):
     struct Bounds { low:long; high:ulong; }
     table Item { value:string; }
     union Choice { Item }
-    table Value { signed:long; unsigned:ulong; bounds:Bounds; color:Color; choice:Choice; absent:Item; text:string; }
-    table Outputs { value:Value (required); }
+    table Value {
+      signed:long; unsigned:ulong; bounds:Bounds; color:Color; choice:Choice; absent:Item; text:string;
+      defaulted:ulong = 9223372036854775808;
+      overridden:ulong = 9223372036854775808;
+    }
+    table Outputs { value:Value (required); unused:Value; }
     root_type Outputs;
     '''
     payload = {"signed": -9223372036854775808, "unsigned": 18446744073709551615,
                "bounds": {"low": -9007199254740993, "high": 9007199254740993}, "color": "green",
                "choice_type": "Item", "choice": {"value": "18446744073709551615"},
-               "text": 'quoted "18446744073709551615" and \\backslash'}
+               "text": 'quoted "18446744073709551615" and \\backslash',
+               "overridden": 9223372036854775810}
     raw = json.dumps({"value": payload})
     make = '''{ pkgs, inputs, params }: { run = ''cat > "$TSUGUMI_OUTPUT" <<'JSON'
 ''' + raw + '''
@@ -734,25 +740,52 @@ JSON
     show = "{ pkgs, inputs, params }: { run = ''jq -n --rawfile m \"$JSON_VALUE\" '{text:$m}' > \"$TSUGUMI_REPORT\"''; }"
     write_project(root, {
         "make": {"card": {"language": "bash"}, "nix": make, "outputs": schema},
-        "r": {"card": {"language": "r", "inputs": [{"name": "value"}]}, "nix": R_NIX, "outputs": schema,
+        "r": {"card": {"language": "r", "recordIO": True, "inputs": [{"name": "value"}]},
+              "nix": R_NIX, "outputs": schema,
               "src": {"main.R": '''main <- function(inputs, report, run) {
-  result <- list(); result[["value"]] <- inputs$input("value")
-  result
+  value <- inputs$input("value")
+  stopifnot(identical(value$defaulted, "9223372036854775808"))
+  list(value = value, unused = NULL)
 }'''}},
-        "julia": {"card": {"language": "julia", "inputs": [{"name": "value"}]}, "nix": JULIA_NIX, "outputs": schema,
+        "julia": {"card": {"language": "julia", "recordIO": True, "inputs": [{"name": "value"}]},
+                  "nix": JULIA_NIX, "outputs": schema,
                   "src": {"main.jl": '''function main(inputs, report)
-    result = Dict{String,Any}()
- result["value"] = Tsugumi.input(inputs, "value")
-
-    return result
+    value = Tsugumi.input(inputs, "value")
+    @assert value["defaulted"] == 9223372036854775808
+    return Dict("value" => value, "unused" => nothing)
+end'''}},
+        "ruby": {"card": {"language": "ruby", "inputs": [{"name": "value"}]},
+                 "nix": RUBY_NIX, "outputs": schema,
+                 "src": {"main.rb": '''def main(inputs)
+  value = inputs.input("value")
+  raise unless value.fetch("defaulted") == 9223372036854775808
+  {value: value}
 end'''}},
         "show": {"card": {"language": "bash", "inputs": [{"name": "value"}]}, "nix": show},
-    }, [("make", "value", "r", "value"), ("r", "value", "julia", "value"), ("julia", "value", "show", "value")])
+    }, [("make", "value", "r", "value"), ("r", "value", "julia", "value"),
+        ("julia", "value", "ruby", "value"), ("ruby", "value", "show", "value")])
     c = connect()
     run_id, status = run_and_wait(c, "start")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     shown = c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display
-    assert json.loads(text(shown.value.text)) == payload
+    assert json.loads(text(shown.value.text)) == {**payload, "defaulted": 9223372036854775808}
+    for card in ("r", "julia"):
+        record = c.call("RunRecordRequest", runId=run_id, card=path(card)).record
+        assert [text(port.name) for port in record.outputs] == ["value"]
+
+
+@pytest.mark.parametrize("language,nix,name,source", [
+    ("r", R_NIX, "main.R", "main <- function(inputs) list(value = NULL)"),
+    ("julia", JULIA_NIX, "main.jl", 'main(inputs) = Dict("value" => nothing)'),
+])
+def test_json_sdk_cannot_omit_required_output(project, language, nix, name, source):
+    root, connect = project
+    schema = "table Value { value:ulong; } table Outputs { value:Value (required); } root_type Outputs;"
+    write_project(root, {"omit": {"card": {"language": language}, "nix": nix,
+                                  "outputs": schema, "src": {name: source}}}, [])
+    c = connect()
+    _, status = run_and_wait(c, "omit")
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.output_invalid
 
 
 def test_nix_r_packages_available_in_resident_interpreter(project):

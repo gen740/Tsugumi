@@ -38,10 +38,10 @@ BASE_DEFS = {
     "trigger": {"template": "trigger"},
     "msg": {"template": "input", "params": [{"name": "text", "type": "string", "data": "hello"}], "_outputs": MSG_FBS},
     "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG_FBS},
-    "fork": {"template": "fork"},
     "branch": {"template": "branch"},
     "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
     "sink": dict(SINK, maxRuns=4, recordIO=True),
+    "relay": {"template": "merge", "inputs": [{"name": "in"}]},
 }
 
 
@@ -94,17 +94,16 @@ def test_run_can_start_on_terminal_status_notification(env):
     assert wait_run(c, second).state == RunState.succeeded
 
 
-def test_any_consumes_in_arrival_order_without_loss_or_duplicates(env, tmp_path):
-    """A merge consumes each arriving value once and preserves arrival order."""
-    c = env([card("src", "msg"), card("spread", "fork"), card("join", "merge"), card("out", "sink")],
-            [conn("src", "msg", "spread", "in"), conn("spread", "out1", "join", "a"),
-             conn("spread", "out2", "join", "b"), conn("join", "out", "out", "in")])
+def test_direct_fanout_reaches_each_input_once(env, tmp_path):
+    """A merge consumes one copy of the output for each connected input."""
+    c = env([card("src", "msg"), card("join", "merge"), card("out", "sink")],
+            [conn("src", "msg", "join", "a"), conn("src", "msg", "join", "b"), conn("join", "out", "out", "in")])
     run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
     values = inputs(c, tmp_path / "decode", run_id, "out")
     assert len(values) == 2  # one per arrival, none lost or repeated
     kinds = [value["value_type"] for value in values]
-    assert kinds == ["a", "b"]  # fork emits out1 before out2
+    assert sorted(kinds) == ["a", "b"]
 
 
 def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
@@ -128,12 +127,12 @@ def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
     }
 
 
-def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(project, core_factory):
-    """A saved Switch condition selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, switch={"template": "switch"}),
-          [card("start", "trigger"), card("src", "msg"), card("toggle", "switch"),
+def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
+    """A saved Boolean Input selects the same branch after reopening the project."""
+    write(project, dict(BASE_DEFS, condition={"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG_FBS}),
+          [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
            card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
-          [conn("src", "msg", "gate", "value"), conn("toggle", "value", "gate", "condition"),
+          [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),
            conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")])
     d = core_factory()
     c = d.connect()
@@ -145,10 +144,7 @@ def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(proje
         assert states(c, rid, skipped) in ([], [CardState.skipped])
 
     assert_branch("no", "yes")
-    snap = c.call("ProjectInspectRequest")
-    body = {"template": "switch", "params": [{"name": "value", "type": "bool", "data": True}]}
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-           changes=[change("PutDefinition", id="toggle", cardJson=json.dumps(body), keepMeta=True)])
+    set_param(c, "toggle", "value", True)
 
     d.restart()
     c = d.connect()
@@ -158,9 +154,8 @@ def test_switch_without_a_schema_drives_a_branch_and_persists_after_reopen(proje
 def test_max_runs_is_enforced(env):
     """A card stops the run when another invocation would exceed maxRuns."""
     defs = dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 1})
-    c = env([card("src", "msg"), card("spread", "fork"), card("join", "merge"), card("out", "sink")],
-            [conn("src", "msg", "spread", "in"), conn("spread", "out1", "join", "a"),
-             conn("spread", "out2", "join", "b"), conn("join", "out", "out", "in")], defs)
+    c = env([card("src", "msg"), card("join", "merge"), card("out", "sink")],
+            [conn("src", "msg", "join", "a"), conn("src", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
     run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.failed
     assert st.failure.kind == FailureKind.execution_limit
@@ -168,15 +163,15 @@ def test_max_runs_is_enforced(env):
 
 
 def subgraph(id_, inner_text_id="inner"):
-    return card_in_card(id_, [card(inner_text_id, "fork")], [],
+    return card_in_card(id_, [card(inner_text_id, "relay")], [],
                         {"inputs": {"in": {"card": inner_text_id, "port": "in"}},
-                         "outputs": {"out": {"card": inner_text_id, "port": "out1"}}})
+                         "outputs": {"out": {"card": inner_text_id, "port": "out"}}})
 
 
 def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):
     """Nested workflows keep separate histories and honor partial-run propagation."""
-    c = env([card("src", "msg"), card("f", "fork"), subgraph("s1"), subgraph("s2"), card("o1", "sink"), card("o2", "sink")],
-            [conn("src", "msg", "f", "in"), conn("f", "out1", "s1", "in"), conn("f", "out2", "s2", "in"),
+    c = env([card("src", "msg"), subgraph("s1"), subgraph("s2"), card("o1", "sink"), card("o2", "sink")],
+            [conn("src", "msg", "s1", "in"), conn("src", "msg", "s2", "in"),
              conn("s1", "out", "o1", "in"), conn("s2", "out", "o2", "in")])
     run_id, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
@@ -206,9 +201,9 @@ def set_param(c, card_id, name, value):
 
 FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"]),
             "branch": dict(BASE_DEFS["branch"], recordIO=True)}
-FAN_CARDS = [card("start", "trigger"), card("fan", "fork"), card("words", "words"), card("cond", "cond"),
+FAN_CARDS = [card("start", "trigger"), card("words", "words"), card("cond", "cond"),
              card("gate", "branch"), card("yes", "sink"), card("no", "sink")]
-FAN_CONNS = [conn("start", "out", "fan", "in"), conn("fan", "out1", "words", "start"), conn("fan", "out2", "cond", "start"),
+FAN_CONNS = [conn("start", "out", "words", "start"), conn("start", "out", "cond", "start"),
              conn("words", "msg", "gate", "value"), conn("cond", "flag", "gate", "condition"),
              conn("gate", "a", "yes", "in"), conn("gate", "b", "no", "in")]
 
@@ -291,9 +286,9 @@ def test_a_saved_value_never_goes_ahead_of_the_new_one_on_a_shared_port(env, tmp
 def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env, tmp_path):
     """An `any` Card takes values as they arrive, so nothing is added to them."""
     defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
-    c = env([card("start", "trigger"), card("fan", "fork"), card("words", "words"), card("other", "other"),
+    c = env([card("start", "trigger"), card("words", "words"), card("other", "other"),
              card("join", "merge"), card("out", "sink")],
-            [conn("start", "out", "fan", "in"), conn("fan", "out1", "words", "start"), conn("fan", "out2", "other", "start"),
+            [conn("start", "out", "words", "start"), conn("start", "out", "other", "start"),
              conn("words", "msg", "join", "a"), conn("other", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
     _, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
@@ -308,10 +303,10 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     """Draft cards block their dependents while implemented branches still run."""
     defs = dict(BASE_DEFS)
     defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
-    c = env([card("start", "trigger"), card("src", "msg"), card("f", "fork"), card("out", "sink"), card("plan", "plan"),
+    c = env([card("start", "trigger"), card("src", "msg"), card("out", "sink"), card("plan", "plan"),
              card("after", "sink")],
-            [conn("start", "out", "src", "start"), conn("src", "msg", "f", "in"), conn("f", "out1", "out", "in"),
-             conn("f", "out2", "plan", ""),
+            [conn("start", "out", "src", "start"), conn("src", "msg", "out", "in"),
+             conn("src", "msg", "plan", ""),
              conn("plan", "", "after", "in")], defs)
     # Metadata descriptions do not create ports on the Draft.
     snap = c.call("ProjectInspectRequest")
@@ -343,8 +338,8 @@ def test_merges_nested_several_levels_deep(env, tmp_path):
     conns = [conn("start", "out", "src", "start")]
     prev = ("src", "msg")
     for i in range(4):
-        cards += [card(f"f{i}", "fork"), card(f"m{i}", "merge")]
-        conns += [conn(prev[0], prev[1], f"f{i}", "in"), conn(f"f{i}", "out1", f"m{i}", "a")]
+        cards.append(card(f"m{i}", "merge"))
+        conns.append(conn(*prev, f"m{i}", "a"))
         prev = (f"m{i}", "out")
     conns.append(conn(prev[0], prev[1], "out", "in"))
     c = env(cards, conns, defs=dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))

@@ -105,9 +105,9 @@ TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   EXPECT_EQ(Inspect(second).Code(), "grant_required");
   EXPECT_NO_THROW(ConnectHost(false, false, false));
 }
-TEST_F(AgentProjectFixture, MissingForkSchemaReportsTypedFailureAndPath) {
+TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
   Write(directory.path / "project/definitions/share/_card.json",
-        R"({"template":"fork"})");
+        R"({"template":"collect"})");
   Write(directory.path / "project/definitions/share/_meta.json", "{}");
   StartProject();
   const auto conversation = Conversation("missing-schema");

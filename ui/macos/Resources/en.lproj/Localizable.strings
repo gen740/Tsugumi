@@ -517,7 +517,6 @@
 "システムに従う（視差効果を減らす）" = "Follow the system (Reduce motion)";
 "ショートカット" = "Shortcuts";
 "ジョブ ID" = "Job ID";
-"スイッチ" = "Switch";
 "スキップ" = "Skipped";
 "スキップして始める" = "Skip and Start";
 "ソース" = "Source";
@@ -887,7 +886,6 @@
 "出力検証・保存" = "Output validation, saving";
 "出力表示を戻す" = "Show Output Display Again";
 "分岐" = "Branch";
-"分配" = "Fork";
 "分野を選び直す" = "Choose Another Field";
 "切断" = "Disconnect";
 "初めてプロジェクトを開いたときに、VM イメージの展開と Nix store の保存領域（設定のサイズまで、使った分だけ）を作ります。" = "When a project is first opened, the VM image is unpacked and the Nix store's space is made (up to the size in Settings, only what is used).";
@@ -1336,6 +1334,7 @@
 "直近の入力トークン数（上限に近づくと自動で圧縮）。この会話でキャッシュから読んだ量 %lld、キャッシュに書いた量 %lld" = "Recent input tokens (compacted automatically near the limit). In this conversation: %lld read from the prompt cache, %lld written to it";
 "相違あり" = "Changed";
 "省略可" = "Optional";
+"真偽値の入力" = "Boolean Input";
 "破棄した変更は取り消せません。" = "Discarded changes cannot be undone.";
 "破棄して再読込" = "Discard and Reload";
 "確定 revision" = "Confirmed revision";
