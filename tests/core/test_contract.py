@@ -84,6 +84,39 @@ def test_completed_save_can_be_replayed_after_restart(daemon):
     assert saved.rev == replay.rev and project_json(saved)["name"] == "persisted"
 
 
+@pytest.mark.parametrize("existing", [None, "parent", "child"])
+def test_save_rejects_file_directory_conflicts_before_writing(daemon, existing):
+    client = daemon.connect()
+    revision = client.call("ProjectInspectRequest").rev
+    paths = {"parent": "skills/entry", "child": "skills/entry/body.txt"}
+
+    def put(which):
+        return change("PutSource", path=paths[which], bytes=which.encode())
+
+    if existing:
+        revision = client.call("ProjectSaveRequest", baseRev=revision, opId=new_id(),
+                               origin="ui:test", changes=[put(existing)]).rev
+    request = dict(baseRev=revision, opId=new_id(), origin="ui:test",
+                   changes=[put(which) for which in paths if which != existing])
+    expected = {paths[existing]: existing.encode()} if existing else {}
+
+    def files_on_disk():
+        return {str(file.relative_to(daemon.project)): file.read_bytes()
+                for file in (daemon.project / "skills").rglob("*") if file.is_file()}
+
+    with pytest.raises(RpcFailure) as error:
+        client.call("ProjectSaveRequest", **request)
+    assert error.value.kind == "invalid_path"
+    assert client.call("ProjectInspectRequest").rev == revision
+    assert files_on_disk() == expected
+
+    daemon.restart()
+    recovered = daemon.connect()
+    assert recovered.call("ProjectInspectRequest").rev == revision
+    assert files_on_disk() == expected
+    assert save_name(recovered, revision, "after rejection").rev == revision + 1
+
+
 def test_session_requires_hello_and_matching_project(daemon):
     """Hello authenticates a session and checks project identity."""
     with ExitStack() as connections:

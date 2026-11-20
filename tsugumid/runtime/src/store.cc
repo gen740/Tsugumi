@@ -37,6 +37,17 @@ bool writable(const stdfs::path& root, const std::string& rel) {
          fs::resolves_inside(root, root / rel);
 }
 
+auto conflicts_with_file(const auto& files, const std::string& path) -> bool {
+  const auto prefix = path + '/';
+  const auto child = files.lower_bound(prefix);
+  if (child != files.end() && child->first.starts_with(prefix)) return true;
+  for (auto slash = path.find('/'); slash != std::string::npos;
+       slash = path.find('/', slash + 1)) {
+    if (files.contains(path.substr(0, slash))) return true;
+  }
+  return false;
+}
+
 auto put_receipt(sql::Db& db, const Receipt& receipt) -> void {
   db.prepare("INSERT INTO receipt(op_id, kind, digest, bytes) VALUES(?,?,?,?)")
       .bind(1, receipt.op_id)
@@ -397,7 +408,7 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
 void Store::check_disk_unchanged(const Document& base,
                                  const std::vector<FileOp>& ops) const {
   for (const auto& op : ops) {
-    auto disk = fs::file_sha256(opts_.root / op.path);
+    const auto target = opts_.root / op.path;
     std::optional<std::string> expected;
     if (Document::is_document_file(op.path)) {
       auto it = base.disk_hashes.find(op.path);
@@ -406,7 +417,7 @@ void Store::check_disk_unchanged(const Document& base,
       auto it = base.sources.find(op.path);
       if (it != base.sources.end()) expected = it->second.hash;
     }
-    if (disk != expected)
+    if (stdfs::is_directory(target) || fs::file_sha256(target) != expected)
       throw Failed(FailureKind::external_change,
                    op.path + " changed outside Tsugumi; Reload before saving",
                    {{"path", op.path}});
@@ -573,14 +584,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
               throw hash_conflict(c.path, *c.base_hash, it->second.hash);
           } else if (c.base_hash) {
             throw hash_conflict(c.path, *c.base_hash, "");
-          } else {
-            std::error_code ec;
-            if (stdfs::exists(opts_.root / c.path, ec))
-              throw Failed(
-                  FailureKind::external_change,
-                  c.path +
-                      " exists on disk but not in the document; Reload first",
-                  {{"path", c.path}});
           }
           if (c.file) {
             doc->sources[c.path] = SourceEntry{c.file->hash, c.file->size};
@@ -742,6 +745,18 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
       doc->disk_hashes[op.path] = crypto::sha256_hex(*op.content);
     else
       doc->disk_hashes.erase(op.path);
+  }
+  // Applying an intent must also work from a partially applied tree. A save
+  // can change a path's file/directory role only after a separate removal.
+  for (const auto& op : st.ops) {
+    if (!op.content && !op.file) continue;
+    if (conflicts_with_file(base->disk_hashes, op.path) ||
+        conflicts_with_file(base->sources, op.path) ||
+        conflicts_with_file(doc->disk_hashes, op.path) ||
+        conflicts_with_file(doc->sources, op.path))
+      throw Failed(FailureKind::invalid_path,
+                   op.path + " conflicts with a file above or below it",
+                   {{"path", op.path}});
   }
   wrap([&] { doc->execution_fingerprint = execution_fingerprint(*doc); });
   st.doc = doc;
