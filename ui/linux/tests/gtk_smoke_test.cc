@@ -183,6 +183,22 @@ auto WithHost(HostRun& run) -> void {
       "the Canvas has the project's Cards and wire");
   Check(run.window->project().canvas().selected() == "start",
         "the Card named by ShowRequest is selected");
+
+  // Run from the trigger: the run's and the Card's states come from
+  // notifications.
+  session->Run("start");
+  const bool ended = WaitFor(
+      [&] {
+        return !session->run_id().empty() && !session->running() &&
+               session->run_state() != D::RunState::idle;
+      },
+      std::chrono::seconds(120));
+  Check(ended,
+        "the run ends: " + std::string(ui::RunStateText(session->run_state())) +
+            " " + session->message());
+  Check(session->CardState("start") == D::CardState::succeeded,
+        std::string("the trigger Card's state: ") +
+            ui::CardStateText(session->CardState("start")));
 }
 
 auto Stop() -> void {

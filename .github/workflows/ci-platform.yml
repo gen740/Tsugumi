@@ -104,6 +104,9 @@ jobs:
         if: matrix.checks['linux-ui']
         run: |
           nix build -L --no-link ".#checks.$TSUGUMI_CI_SYSTEM.linux-ui"
+          # With a hostd and a project: tsugumid needs private parents for
+          # its run scratch, which the build sandbox's root is not.
+          nix run -L .#linux-ui-check
           # The arm64 package is defined from the same expression.
           nix eval --raw .#packages.aarch64-linux.linux-ui.drvPath > /dev/null
 

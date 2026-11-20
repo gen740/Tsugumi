@@ -12,7 +12,12 @@ let
 in
 {
   perSystem =
-    { pkgs, lib, ... }:
+    {
+      pkgs,
+      lib,
+      config,
+      ...
+    }:
     let
       core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
@@ -76,6 +81,11 @@ in
             core
             web
             ;
+        };
+        # Its headless GTK check, full (hostd and a project) outside the sandbox.
+        linux-ui-check = pkgs.callPackage ../linux-ui-check.nix {
+          linux-ui = config.packages.linux-ui;
+          inherit core;
         };
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {

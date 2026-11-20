@@ -136,7 +136,11 @@ auto ProjectSession::StartEnvironment() -> void {
             if (more && more->size() > 0) detail += "\n" + more->str();
           return self->Fail(L("実行環境を起動できませんでした"), detail);
         }
-        self->Connect(Str(state.endpoint()), Str(state.token()));
+        // On this host the project's own socket; its WebSocket listener is
+        // for pages, which send an Origin.
+        const auto socket = Str(state.unix_socket());
+        self->Connect(socket.empty() ? Str(state.endpoint()) : "unix:" + socket,
+                      Str(state.token()));
       });
 }
 

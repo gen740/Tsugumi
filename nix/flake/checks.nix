@@ -27,10 +27,11 @@
         };
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        linux-ui = pkgs.callPackage ../linux-ui-check.nix {
-          inherit (config.packages) linux-ui;
-          core = config.packages.tsugumid;
-        };
+        # The display part; CI also runs the full check with a host.
+        linux-ui = pkgs.runCommand "tsugumi-gtk-display-check" { } ''
+          ${lib.getExe config.packages.linux-ui-check} --no-host
+          touch $out
+        '';
       };
       formatter = pkgs.treefmt.withConfig {
         runtimeInputs = [
