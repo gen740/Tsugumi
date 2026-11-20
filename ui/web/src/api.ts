@@ -1,8 +1,6 @@
 import { modelErrorMessage } from './i18n'
 // Calls to the host server (files, processes, the Agent).
 
-import type { HistoryVersionMismatch } from '../shared/historyVersion'
-
 let settingsRevision: Record<string, number> | undefined
 
 export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
@@ -72,22 +70,6 @@ export function onServerEvent(fn: Listener): () => void {
     }
   }
   return () => listeners.delete(fn)
-}
-
-export interface EnvPublicState {
-  executionScopeUnavailable?: boolean
-  state: 'stopped' | 'starting' | 'ready' | 'failed'
-  message?: string
-  /** While starting in the VM: the step, and how far along the start is. */
-  stage?: string
-  fraction?: number
-  recovery?: string
-  log?: string
-  historyVersionMismatch?: HistoryVersionMismatch
-  endpoint?: string
-  token?: string
-  projectId?: string
-  readyFile?: string
 }
 
 export interface SetupStatus {

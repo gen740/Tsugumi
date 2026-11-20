@@ -76,7 +76,7 @@ class HostConnection:
         # Python's generated native API uses None for absent vectors.
         # All optional Host lists have the same omission-means-empty rule.
         value = reply.value
-        for name in ("services", "projects", "models", "demos"):
+        for name in ("services", "projects", "models", "demos", "environments"):
             if hasattr(value, name) and getattr(value, name) is None:
                 setattr(value, name, [])
         for item in getattr(value, "services", []):
