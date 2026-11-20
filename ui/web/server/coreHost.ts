@@ -32,7 +32,7 @@ class Connection {
   private socket?: net.Socket
   private nextId = 0n
   private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void }>()
-  private opening?: Promise<void>
+  private opening?: Promise<Ready>
   // A plugin retry after the page answers must resume the approved call ID.
 
   constructor(private host: CoreHost, private external: boolean, private hostContract = false) {}
@@ -101,6 +101,7 @@ class Connection {
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
     if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
+    return ready
   }
 
   private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {
@@ -173,6 +174,8 @@ export class CoreHost {
     this.demoRoot = path.join(repo, 'demos')
   }
 
+  connectHost() { return this.host.connect() }
+
   async ready(): Promise<Ready> {
     return this.starting ??= (async () => {
       const socketDir = fs.mkdtempSync(path.join(process.env.TSUGUMI_SOCKET_DIR ?? '/tmp', 'tsugumi-host-'))
@@ -195,7 +198,9 @@ export class CoreHost {
           if (!bytes.includes('\n')) return
           try {
             const next = JSON.parse(bytes.slice(0, bytes.indexOf('\n'))) as Ready
-            if (logPath !== stateLog && next.pid === child.pid) fs.renameSync(logPath, stateLog)
+            if (next.pid === child.pid) {
+              if (logPath !== stateLog) fs.renameSync(logPath, stateLog)
+            } else fs.rmdirSync(socketDir)
             child.stdout!.destroy()
             child.unref()
             resolve(next)

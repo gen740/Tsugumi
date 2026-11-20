@@ -182,11 +182,6 @@ const routes: Record<string, Handler> = {
   'POST /api/runtime/cache-usage': () => vm ? hostRequest('HostRuntimeRequest', { action: 'Command', command: 'cache-usage' }) : {},
   'POST /api/runtime/verify-store': () => hostRequest('HostRuntimeRequest', { action: 'VerifyStore' }),
   'POST /api/runtime/reset': () => hostRequest('HostRuntimeRequest', { action: 'Reset' }),
-  'GET /api/permission-kinds': () => hostRequest('PermissionKindsRequest', { language: language() }),
-  'POST /api/identifiers/reserve': (b) => hostRequest('IdentifierReserveRequest', b),
-  'GET /api/execution-services': () => hostRequest('ExecutionServicesRequest'),
-  'POST /api/execution-services/register': (body) => hostRequest('ExecutionServicePutRequest', body),
-  'POST /api/execution-services/remove': (body) => hostRequest('ExecutionServiceRemoveRequest', body),
   'GET /api/status': async () => ({
     setup: setupStatus(), demos: await hostRequest('HostDemoListRequest', { language: language() }),
     recents: await hostRequest('HostRecentListRequest'), home: os.homedir(), launchProject: launchProject ?? null,
@@ -195,7 +190,6 @@ const routes: Record<string, Handler> = {
     hostFolders: process.platform !== 'darwin' || !!vm,
     ...chatStatus(), documents: projectsDir,
   }),
-  'POST /api/project/trust': (b) => hostRequest('ProjectTrustRequest', { path: projectDir(b.path), decision: b.decision }),
   'POST /api/project/open': async (b) => {
     const recent = await hostRequest('HostRecentRememberRequest', { path: b.path })
     return { path: recent.path, key: recent.path, name: recent.name }

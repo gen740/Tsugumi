@@ -4,6 +4,7 @@ import { cardIds } from './cardIds'
 // read of the versions is said.
 import assert from 'node:assert/strict'
 import { parse } from '../shared/json'
+import { R } from '../src/wire/rpc'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -59,10 +60,10 @@ const session = (dir = '/p', key = 'k') => {
 {
   const s = session()
   s.client = {} as any
-  globalThis.fetch = (async () => ({ ok: false, status: 500, json: async () => ({ error: 'git failed' }) })) as typeof fetch
+  s.projectHost = { ...s.projectHost, graph: async () => { throw Error('git failed') } }
   await s.refreshVersions()
   assert.match(s.versionGraphError ?? '', /git failed/)
-  globalThis.fetch = (async () => ({ ok: true, status: 200, json: async () => ({ enabled: false, commits: [] }) })) as typeof fetch
+  s.projectHost.graph = async () => Object.assign(new R.VersionGraphT(), { enabled: false })
   await s.refreshVersions()
   assert.equal(s.versionGraphError, undefined)
 }

@@ -71,31 +71,3 @@ console.log('Host settings: profile sharing, combined patches and stale revision
     assert.deepEqual(requests[0].revision, { desktop: 3 })
   } finally { globalThis.fetch = originalFetch }
 }
-
-// Permission settings forward each edit to the host and display its returned list.
-{
-  const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
-  const calls: { method: string; fields: any }[] = []
-  const snapshot = { projects: [{ project_id: 'project', title: 'Project', path: '/project', permissions: [] }] }
-  try {
-    CoreHost.prototype.provisionEnvironment = async () => {}
-    CoreHost.prototype.getSettings = async function () {
-      this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
-        calls.push({ method, fields })
-        return snapshot as T
-      }
-      return { revision: 0, values: [] }
-    }
-    const routes = chatRoutes({ support: '/permission-settings', here: '/fixture', envs: {} as never,
-      projectDir: String, broadcast: () => {}, httpError: (_status, message) => new Error(message) })
-    const url = new URL('http://fixture')
-    assert.equal(await routes['POST /api/project-permissions']({}, url), snapshot)
-    const edit = { project_id: 'project', resource_id: 'folder', access: 'Read', allow: true }
-    assert.equal(await routes['POST /api/project-permissions/set'](edit, url), snapshot)
-    assert.deepEqual(calls, [{ method: 'ProjectPermissionsRequest', fields: {} },
-      { method: 'ProjectPermissionSetRequest', fields: edit }])
-  } finally {
-    CoreHost.prototype.getSettings = original.settings
-    CoreHost.prototype.provisionEnvironment = original.environment
-  }
-}

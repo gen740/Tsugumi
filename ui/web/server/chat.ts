@@ -363,7 +363,7 @@ function conversationAction(action: string) {
   }
 }
 
-export function hostReady() { return core.ready() }
+export function hostReady() { return core.connectHost() }
 
 export function hostRequest<T = any>(method: string, fields: unknown = {}): Promise<T> {
   return core.user.call<T>(method, fields)
@@ -401,19 +401,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/settings': async (b) => {
     const updated = await patchSettings(b, b.revision)
     return { ...updated, ...await modelCatalogs(), chatProvider: await providerInfo() }
-  },
-  'POST /api/file/format': (b) => core.user.call('FileFormatRequest', { path: String(b.path), text: String(b.text) }),
-  'POST /api/versions/graph': async (b) => {
-    const project = await core.project(projectDir(b.path))
-    return core.user.call('HostVersionGraphRequest', { project, language: settings().language })
-  },
-  'POST /api/versions/diff': async (b) => {
-    const project = await core.project(projectDir(b.path))
-    return core.user.call('HostVersionDiffRequest', { project, commit: String(b.commit), from_commit: b.from })
-  },
-  'POST /api/versions/comments': async (b) => {
-    const project = await core.project(projectDir(b.path))
-    return core.user.call('VersionCommentsRequest', { project, commit: String(b.commit) })
   },
   'POST /api/versions/note': async (b) => {
     const project = await core.project(projectDir(b.path))
@@ -563,8 +550,6 @@ export function chatRoutes(c: ChatContext): Record<string, Handler> {
   'POST /api/agent/call': (b, _url, signal) => String(b.name).startsWith('agent_')
     ? externalAPI(String(b.name), b.arguments, b.path ? projectDir(b.path) : undefined, signal)
     : chatFor(projectDir(b.path)).externalCall(String(b.name), b.arguments, signal),
-  'POST /api/project-permissions': () => core.user.call('ProjectPermissionsRequest'),
-  'POST /api/project-permissions/set': (b) => core.user.call('ProjectPermissionSetRequest', { project_id: String(b.project_id), resource_id: String(b.resource_id), access: b.access, allow: b.allow === true }),
   'POST /api/agent/access': () => core.user.call('AccessListRequest'),
   'POST /api/agent/access/resolve': async (b) => { await answerPermission(String(b.id), b.allow === true, Array.isArray(b.selected) ? b.selected : undefined); return { ok: true } },
   'POST /api/agent/access/revoke': (b) => core.user.call('AccessRevokeRequest', { grant_id: String(b.id) }),

@@ -241,6 +241,48 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
         assert host.call("HostRecentListRequest").projects == []
 
 
+def test_agent_rpc_reaches_the_authenticated_agent_listener(web):
+    import flatbuffers
+
+    from harness.transport import ws_connect, ws_frame, ws_read
+    from Tsugumi.Agent.ConversationListRequest import ConversationListRequestT
+    from Tsugumi.Agent.Message import MessageT
+    from Tsugumi.Agent.Payload import Payload
+    from Tsugumi.Agent.ReplyPayload import ReplyPayload
+    from Tsugumi.Agent.Request import RequestT
+    from Tsugumi.Agent.RequestPayload import RequestPayload
+    from Tsugumi.Service.HelloRequest import HelloRequestT
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    token = post(port, cookie, "/api/host/connect", {})["token"]
+    connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.agent.v1",
+                                    path="/rpc/agent", headers=[("Cookie", cookie)])
+    with connection:
+        assert status.split()[1] == "101"
+
+        def call(request_id, kind, value):
+            request = RequestT()
+            request.valueType = kind
+            request.value = value
+            message = MessageT()
+            message.requestId = request_id
+            message.payloadType = Payload.Request
+            message.payload = request
+            builder = flatbuffers.Builder()
+            builder.Finish(message.Pack(builder), file_identifier=b"TSA1")
+            connection.sendall(ws_frame(builder.Output()))
+            result = MessageT.InitFromPackedBuf(ws_read(connection))
+            assert result.requestId == request_id and result.payloadType == Payload.Reply
+            return result.payload
+
+        hello = HelloRequestT()
+        hello.token = token
+        assert call(1, RequestPayload.HelloRequest, hello).valueType == ReplyPayload.HelloResult
+        assert call(2, RequestPayload.ConversationListRequest,
+                    ConversationListRequestT()).valueType == ReplyPayload.ConversationList
+
+
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):
     from Tsugumi.Host.EnvironmentAction import EnvironmentAction
     from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
