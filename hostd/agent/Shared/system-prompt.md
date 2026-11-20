@@ -13,7 +13,7 @@ the person's decision.
   Cards beside it, the Card in Card it is in), not by coordinates.
 - What you save becomes part of the person's project and its version history, as their work. Analysis done in
   Cards can be followed and rerun by the person.
-- Project edits are atomic; the host places new Cards near their connections, and project_validate checks the
+- Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its settings (params with their values in "data", trigger
@@ -29,7 +29,7 @@ the person's decision.
 - What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
-- A Card in Card is definitions/<id>/_link.json {"external": "<name>"}: the project externals/<name>/ with its own
+- A Card in Card is definitions/<id>/_card.json {"external": "<name>"}: the project externals/<name>/ with its own
   tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
   the paths under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one

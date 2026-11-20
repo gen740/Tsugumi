@@ -28,9 +28,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
       const auto definition = json::Object(raw);
       if (json::Text(definition, "id") != id) continue;
       card = json::Text(definition, "card_json");
-      for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
+      for (const auto& [key, file] :
+           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
         if (!json::Text(definition, key).empty()) files.insert(file);
     }
   }
@@ -47,15 +46,17 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
                                    {"at_rev", json::Get(snapshot, "rev")}});
     card = json::Text(value, "bytes");
   }
-  auto kind = card.empty() ? (files.contains("_link.json") ? "subgraph" : "")
-                           : json::Text(json::Object(card), "template", "code");
-  if (!card.empty()) {
+  if (card.empty()) return {};
+  const auto definition = json::Object(card);
+  auto kind = json::Text(definition, "template", "code");
+  if (definition.contains("external")) {
+    kind = "subgraph";
+  } else {
     const std::set<std::string> builtins{"trigger", "input", "fork",
                                          "branch",  "merge", "collect",
                                          "draft",   "switch"};
     if (!builtins.contains(kind)) kind = "code";
   }
-  if (kind.empty()) return {};
   std::string out = id + " is a " + kind + " Card; it has ";
   constexpr size_t kLimit = 6;
   size_t count = 0;

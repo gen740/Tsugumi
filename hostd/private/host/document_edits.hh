@@ -9,7 +9,7 @@ namespace tsugumi::host {
 struct DocumentSubgraph {
   std::string project_json;
   std::string external_json;
-  std::string link_json;
+  std::string card_json;
 };
 struct DocumentFileCopy {
   std::string from;

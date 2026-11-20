@@ -91,9 +91,9 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
     for c in doc["canvas"]["cards"]:
         cid = c["id"]
         out.append([*prefix, cid])
-        link = root / "definitions" / cid / "_link.json"
-        if link.exists():
-            ext = json.loads(link.read_text())["external"]
+        definition = root / "definitions" / cid / "_card.json"
+        ext = json.loads(definition.read_text()).get("external") if definition.exists() else None
+        if ext:
             out += card_paths(root / "externals" / ext, [*prefix, cid])
     return out
 

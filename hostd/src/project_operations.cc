@@ -152,6 +152,49 @@ auto Prepare(
   else
     throw Failure("invalid_request", "missing operation body");
   const auto project = required(prefix + "tsugumi.json");
+  const auto layout_path = prefix + "layout.json";
+  auto read_layout = [&] { return get(layout_path).value_or("{}"); };
+  auto read_geometry =
+      [&](const std::string& relative) -> std::optional<LayoutFile> {
+    const auto bytes = get(prefix + relative);
+    if (!bytes) return std::nullopt;
+    return LayoutFile{*bytes, {}};
+  };
+  auto displayed_positions = [&](const std::string& layout) {
+    return json::Object(
+        json::Get(json::Object(CompleteLayout(project, layout, read_geometry)),
+                  "cards", "{}"));
+  };
+  auto external_id = [&](const std::string& card) {
+    return json::Text(
+        json::Object(
+            get(prefix + "definitions/" + card + "/_card.json").value_or("{}")),
+        "external");
+  };
+  auto retained_externals = [&](const std::set<std::string>& removed) {
+    std::set<std::string> retained;
+    const auto definitions = prefix + "definitions/";
+    for (const auto& [path, bytes] : base.files) {
+      if (!path.starts_with(definitions) || !path.ends_with("/_card.json"))
+        continue;
+      const auto local = std::string_view(path).substr(definitions.size());
+      const auto slash = local.find('/');
+      if (slash == local.rfind('/') &&
+          !removed.contains(std::string(local.substr(0, slash))))
+        retained.insert(json::Text(json::Object(bytes, path), "external"));
+    }
+    return retained;
+  };
+  auto write_position = [&](const std::string& id, const std::string& x,
+                            const std::string& y, json::Members entry = {}) {
+    auto layout = json::Object(read_layout(), layout_path);
+    auto positions = json::Object(json::Get(layout, "cards", "{}"));
+    entry["x"] = x;
+    entry["y"] = y;
+    positions[id] = json::Encode(entry);
+    layout["cards"] = json::Encode(positions);
+    put(layout_path, json::Encode(layout));
+  };
   auto place = [&](const std::string& id, double x, double y,
                    bool automatic = false) {
     if (!valid_id(id))
@@ -181,25 +224,13 @@ auto Prepare(
       layout[field] = json::Encode(entries);
       put(prefix + "layout.json", json::Encode(layout));
     }
-    if (!automatic) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                                 prefix + "layout.json");
-      auto positions = json::Object(json::Get(layout, "cards", "{}"),
-                                    prefix + "layout.json.cards");
-      positions[id] = json::Encode(
-          json::Members{{"x", std::to_string(x)}, {"y", std::to_string(y)}});
-      layout["cards"] = json::Encode(positions);
-      put(prefix + "layout.json", json::Encode(layout));
-    }
+    if (!automatic) write_position(id, std::to_string(x), std::to_string(y));
   };
   auto definition = [&](const std::string& dir, const std::string& raw) {
     const auto parts = json::Object(raw);
-    for (const auto& [key, name] : {std::pair{"card", "_card.json"},
-                                    {"meta", "_meta.json"},
-                                    {"link", "_link.json"}})
-      if (parts.contains(key) &&
-          !(key == std::string("card") && parts.contains("link")))
-        put(dir + name, parts.at(key));
+    for (const auto& [key, name] :
+         {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
+      if (parts.contains(key)) put(dir + name, parts.at(key));
   };
   auto external = [&](const std::string& to, const std::string& raw) {
     const auto state = json::Object(raw);
@@ -212,7 +243,7 @@ auto Prepare(
   auto link = [&](const std::string& id, const std::string& name) {
     definition(prefix + "definitions/" + id + '/',
                json::Encode(json::Members{
-                   {"link",
+                   {"card",
                     json::Encode(json::Members{{"external", json::Quote(id)}})},
                    {"meta", json::Encode(
                                 json::Members{{"name", json::Quote(name)}})}}));
@@ -234,7 +265,6 @@ auto Prepare(
         const auto file = rest.substr(slash + 1), id = rest.substr(0, slash);
         std::string key = file == "_card.json"   ? "card"
                           : file == "_meta.json" ? "meta"
-                          : file == "_link.json" ? "link"
                                                  : "";
         if (key.empty()) continue;
         auto d = json::Object(json::Get(definitions, id, "{}"));
@@ -259,8 +289,7 @@ auto Prepare(
   if (const auto* selection = body.AsProjectSelection()) {
     if (selection->action == H::ProjectSelectionAction::Place) {
       for (const auto& id : selection->cards) {
-        if (!get(prefix + "definitions/" + id + "/_card.json") &&
-            !get(prefix + "definitions/" + id + "/_link.json"))
+        if (!get(prefix + "definitions/" + id + "/_card.json"))
           throw Failure("target_missing", "Definition: " + id);
         place(id, selection->x, selection->y);
       }
@@ -286,16 +315,14 @@ auto Prepare(
                           "Cannot delete a placed definition");
       }
       if (deleting || definitions) {
+        const auto retained = retained_externals(ids);
         for (const auto& id : ids) {
           const auto dir = prefix + "definitions/" + id + '/';
           std::vector<std::string> roots{dir};
-          const auto link_bytes = get(dir + "_link.json");
-          if (link_bytes) {
-            const auto external_id = json::Text(
-                json::Object(*link_bytes, dir + "_link.json"), "external");
-            if (!valid_id(external_id))
-              throw Failure("invalid_path", external_id);
-            roots.push_back(prefix + "externals/" + external_id + '/');
+          const auto external = external_id(id);
+          if (!external.empty() && !retained.contains(external)) {
+            if (!valid_id(external)) throw Failure("invalid_path", external);
+            roots.push_back(prefix + "externals/" + external + '/');
           }
           for (const auto& path : paths)
             for (const auto& at : roots)
@@ -440,9 +467,8 @@ auto Prepare(
                        "cards", "[]"))) {
       const auto id = json::Text(json::Object(raw), "id");
       json::Members parts;
-      for (const auto& [part, name] : {std::pair{"card", "_card.json"},
-                                       {"meta", "_meta.json"},
-                                       {"link", "_link.json"}}) {
+      for (const auto& [part, name] :
+           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}}) {
         const auto path = prefix + "definitions/" + id + '/' + name;
         // Only definitions that influence this connection need a helper read
         // grant.
@@ -462,9 +488,8 @@ auto Prepare(
     put(prefix + "tsugumi.json", state.at("project"));
     for (const auto& [id, raw] : json::Object(state.at("definitions"))) {
       const auto parts = json::Object(raw);
-      for (const auto& [part, name] : {std::pair{"card", "_card.json"},
-                                       {"meta", "_meta.json"},
-                                       {"link", "_link.json"}})
+      for (const auto& [part, name] :
+           {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
         if (parts.contains(part) && (!definitions.contains(id) ||
                                      json::Get(json::Object(definitions.at(id)),
                                                part) != parts.at(part)))
@@ -495,6 +520,11 @@ auto Prepare(
     if (copy->items.empty())
       throw Failure("invalid_request", "choose Cards to copy");
     const auto state = document_state(base.files);
+    const auto layout = copy->copy_connections ? read_layout() : "{}";
+    const auto positions = copy->copy_connections ? displayed_positions(layout)
+                                                   : json::Members{};
+    const auto saved = json::Object(
+        json::Get(json::Object(layout), "cards", "{}"));
     std::map<std::string, std::string> copied_ids;
     for (const auto& item : copy->items) {
       if (!valid_id(item->id))
@@ -530,17 +560,15 @@ auto Prepare(
         from = "definitions/" + item->from + '/';
       }
       const auto& source_files = imported ? imported_files : base.files;
-      if (!source_files.contains(from + "_card.json") &&
-          !source_files.contains(from + "_link.json") && !is_external)
+      if (!source_files.contains(from + "_card.json") && !is_external)
         throw Failure("not_found", "Card not found");
       std::vector<std::string> closure{from};
-      if (source_files.contains(from + "_link.json")) {
-        const auto at = from.substr(0, from.rfind("definitions/"));
-        closure.push_back(
-            at + "externals/" +
-            json::Text(json::Object(source_files.at(from + "_link.json")),
-                       "external") +
-            '/');
+      if (!is_external) {
+        const auto external_id = json::Text(
+            json::Object(source_files.at(from + "_card.json")), "external");
+        if (!external_id.empty())
+          closure.push_back(from.substr(0, from.rfind("definitions/")) +
+                            "externals/" + external_id + '/');
       }
       for (const auto& path : source_paths)
         for (const auto& dir : closure)
@@ -569,14 +597,14 @@ auto Prepare(
         const auto old = item->from.substr(
             prefix.size() + 12, item->from.size() - prefix.size() - 13);
         copied_ids[old] = item->id;
-        const auto positions = json::Object(
-            json::Get(json::Object(get(prefix + "layout.json").value_or("{}"),
-                                   prefix + "layout.json"),
-                      "cards", "{}"));
-        const auto position = json::Object(json::Get(positions, old, "{}"),
-                                           prefix + "layout.json.cards." + old);
-        x = std::stod(json::Get(position, "x", "0")) + 30;
-        y = std::stod(json::Get(position, "y", "0")) + 30;
+        if (!positions.contains(old))
+          throw Failure("not_found", "Card is missing from the canvas: " + old);
+        const auto position = json::Object(positions.at(old));
+        auto previous = json::Object(json::Get(saved, old, "{}"));
+        if (!previous.contains("x") || !previous.contains("y"))
+          write_position(old, position.at("x"), position.at("y"), std::move(previous));
+        x = std::stod(position.at("x")) + 30;
+        y = std::stod(position.at("y")) + 30;
       }
       place(item->id, x, y);
     }
@@ -608,44 +636,24 @@ auto Prepare(
     const auto nested = MakeSubgraph(project, subgraph->cards, subgraph->id);
     const auto destination = prefix + "externals/" + subgraph->id + '/';
     if (get(destination + "tsugumi.json") ||
-        get(prefix + "definitions/" + subgraph->id + "/_card.json") ||
-        get(prefix + "definitions/" + subgraph->id + "/_link.json"))
+        get(prefix + "definitions/" + subgraph->id + "/_card.json"))
       throw Failure("value_conflict", "subgraph destination already exists");
     put(prefix + "tsugumi.json", nested.project_json);
     put(destination + "tsugumi.json",
         PreserveProjectBytes(project, nested.external_json));
-    put(prefix + "definitions/" + subgraph->id + "/_link.json",
-        nested.link_json);
-    auto positions = json::Object(json::Get(
-        json::Object(required(prefix + "layout.json"), prefix + "layout.json"),
-        "cards", "{}"));
+    put(prefix + "definitions/" + subgraph->id + "/_card.json",
+        nested.card_json);
+    auto outer_layout = json::Object(read_layout(), layout_path);
+    const auto positions = displayed_positions(json::Encode(outer_layout));
     json::Members inner_positions;
+    const auto retained =
+        retained_externals({subgraph->cards.begin(), subgraph->cards.end()});
     std::set<std::string> copied;
     for (const auto& id : subgraph->cards) {
       const auto definition = prefix + "definitions/" + id + '/';
-      const auto link = get(definition + "_link.json");
+      const auto target = external_id(id);
       const auto external =
-          link ? prefix + "externals/" +
-                     json::Text(json::Object(*link, definition + "_link.json"),
-                                "external") +
-                     '/'
-               : std::string{};
-      bool shared_external = false;
-      if (!external.empty()) {
-        for (const auto& [path, bytes] : base.files) {
-          if (!path.starts_with(prefix + "definitions/") ||
-              !path.ends_with("/_link.json"))
-            continue;
-          const auto local = path.substr(prefix.size() + 12);
-          const auto other = local.substr(0, local.find('/'));
-          if (std::find(subgraph->cards.begin(), subgraph->cards.end(),
-                        other) == subgraph->cards.end() &&
-              prefix + "externals/" +
-                      json::Text(json::Object(bytes, path), "external") + '/' ==
-                  external)
-            shared_external = true;
-        }
-      }
+          target.empty() ? std::string{} : prefix + "externals/" + target + '/';
       for (const auto& path : paths) {
         if (!path.starts_with(definition) &&
             (external.empty() || !path.starts_with(external)))
@@ -654,29 +662,27 @@ auto Prepare(
         put(destination + path.substr(prefix.size()), required(path));
         // Root definition removal includes its sources. External files and
         // nested definitions use the ordinary concrete source removals.
-        if (path.starts_with(definition) || !shared_external) remove(path);
+        if (path.starts_with(definition) || !retained.contains(target))
+          remove(path);
       }
-      if (positions.contains(id)) inner_positions[id] = positions.at(id);
+      inner_positions[id] = positions.at(id);
     }
     double cx = 0, cy = 0;
     for (const auto& id : subgraph->cards) {
-      const auto pos = json::Object(json::Get(positions, id, "{}"),
-                                    prefix + "layout.json.cards." + id);
-      cx += std::stod(json::Get(pos, "x", "0"));
-      cy += std::stod(json::Get(pos, "y", "0"));
+      const auto pos = json::Object(positions.at(id));
+      cx += std::stod(pos.at("x"));
+      cy += std::stod(pos.at("y"));
     }
     cx /= subgraph->cards.size();
     cy /= subgraph->cards.size();
     for (auto& [id, raw] : inner_positions) {
       auto pos = json::Object(raw, prefix + "layout.json.cards." + id);
-      pos["x"] = std::to_string(std::stod(json::Get(pos, "x", "0")) - cx);
-      pos["y"] = std::to_string(std::stod(json::Get(pos, "y", "0")) - cy);
+      pos["x"] = std::to_string(std::stod(pos.at("x")) - cx);
+      pos["y"] = std::to_string(std::stod(pos.at("y")) - cy);
       raw = json::Encode(pos);
     }
     put(destination + "layout.json",
         json::Encode(json::Members{{"cards", json::Encode(inner_positions)}}));
-    auto outer_layout =
-        json::Object(required(prefix + "layout.json"), prefix + "layout.json");
     auto selected = [&](const std::string& id) {
       return std::find(subgraph->cards.begin(), subgraph->cards.end(), id) !=
              subgraph->cards.end();
@@ -726,36 +732,22 @@ auto Prepare(
       put(prefix + "definitions/" + subgraph->id + "/_meta.json",
           json::Encode(json::Members{{"name", json::Quote(subgraph->name)}}));
   } else if (const auto* move = body.AsProjectMove()) {
-    put(prefix + "layout.json",
-        MoveProjectLayout(
-            project, required(prefix + "layout.json"),
-            [&](const auto& relative) -> std::optional<LayoutFile> {
-              const auto bytes = get(prefix + relative);
-              return bytes ? std::optional<LayoutFile>{{*bytes, {}}}
-                           : std::nullopt;
-            },
-            *move));
+    put(layout_path,
+        MoveProjectLayout(project, read_layout(), read_geometry, *move));
   } else if (const auto* layout = body.AsProjectLayout()) {
     if (layout->action != H::ProjectLayoutAction::Arrange &&
         layout->action != H::ProjectLayoutAction::Untangle)
       throw Failure("invalid_request", "unknown layout action");
-    const auto path = prefix + "layout.json";
-    put(path, ArrangeProjectLayout(
-                  project, required(path),
-                  [&](const auto& relative) -> std::optional<LayoutFile> {
-                    const auto bytes = get(prefix + relative);
-                    return bytes ? std::optional<LayoutFile>{{*bytes, {}}}
-                                 : std::nullopt;
-                  },
-                  layout->action == H::ProjectLayoutAction::Untangle,
-                  layout->scene.get()));
+    put(layout_path,
+        ArrangeProjectLayout(project, read_layout(), read_geometry,
+                             layout->action == H::ProjectLayoutAction::Untangle,
+                             layout->scene.get()));
   }
   // Deleting a root definition is a guarded folder replacement; independent
-  // _card/_link removals remain invalid in the public edit vocabulary.
+  // _card.json removals remain invalid in the public edit vocabulary.
   std::set<std::string> removed;
   for (const auto& [path, value] : staged) {
-    if (!value &&
-        (path.ends_with("/_card.json") || path.ends_with("/_link.json"))) {
+    if (!value && path.ends_with("/_card.json")) {
       const auto dir = path.substr(0, path.size() - 10);
       if (removed.contains(dir)) continue;
       H::ProjectTreeEditT tree;
@@ -831,9 +823,8 @@ auto Authored(const json::Members& plan, SaveBase base) -> SaveBase {
           json::Text(value, "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
+      for (const auto& [key, file] :
+           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
         if (value.contains(key)) {
           const auto text = json::Text(value, key);
           if (text.empty())
@@ -867,9 +858,8 @@ auto Preserve(json::Members plan, const SaveBase& base) -> json::Members {
       preserve("layout.json", "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                      {"meta_json", "_meta.json"},
-                                      {"link_json", "_link.json"}})
+      for (const auto& [key, name] :
+           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
         preserve(dir + name, key);
     } else if (type == "PutSource" &&
                base.files.contains(json::Text(value, "path"))) {
@@ -915,14 +905,12 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
                                  {"changes", "[]"}});
   for (int attempt = 0; attempt < 8; ++attempt) {
     try {
-      const auto inspection =
-          InspectForSave([&](const auto& method, const auto& query) {
-            return Value(call(method, query));
-          });
+      const auto snapshot = Value(call("project_inspect", {}));
+      const auto base = CaptureSaveBase(snapshot);
       auto read = [&](const std::string& path) -> std::optional<std::string> {
         std::string hash;
         for (const auto& raw :
-             json::Array(json::Get(inspection.snapshot, "sources", "[]"))) {
+             json::Array(json::Get(snapshot, "sources", "[]"))) {
           const auto source = json::Object(raw);
           if (json::Text(source, "path") == path)
             hash = json::Text(source, "hash");
@@ -931,13 +919,12 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         std::string bytes;
         uint64_t offset = 0;
         for (;;) {
-          const auto page =
-              Value(call("project_file_read",
-                         {{"path", json::Quote(path)},
-                          {"at_rev", json::Get(inspection.snapshot, "rev")},
-                          {"if_hash", json::Quote(hash)},
-                          {"offset", std::to_string(offset)},
-                          {"limit_bytes", "1048576"}}));
+          const auto page = Value(
+              call("project_file_read", {{"path", json::Quote(path)},
+                                         {"at_rev", json::Get(snapshot, "rev")},
+                                         {"if_hash", json::Quote(hash)},
+                                         {"offset", std::to_string(offset)},
+                                         {"limit_bytes", "1048576"}}));
           const auto chunk = Bytes(json::Get(page, "bytes"));
           bytes += chunk;
           if (json::Bool(json::Get(page, "eof"))) break;
@@ -947,50 +934,40 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         return bytes;
       };
       auto plan = Prepare(
-          operation.body, inspection.base, read,
+          operation.body, base, read,
           [&](const auto& path) {
-            if (context.authorize_file)
-              context.authorize_file(path, inspection.base);
+            if (context.authorize_file) context.authorize_file(path, base);
           },
           context.demo);
       if (json::Array(plan.at("changes")).empty())
         plan["changes"] = json::Encode(std::vector<std::string>{
-            Change("SetProject", {{"json", json::Quote(inspection.base.files.at(
-                                               "tsugumi.json"))}})});
-      const auto authored = Authored(plan, inspection.base);
+            Change("SetProject",
+                   {{"json", json::Quote(base.files.at("tsugumi.json"))}})});
+      const auto authored = Authored(plan, base);
       plan["op_id"] = json::Quote(operation.op_id);
       plan["origin"] = json::Quote(context.origin);
       if (context.origin == "agent" && operation.body.AsProjectEdits())
-        plan = agent::PrepareAgentSave(plan, [&](const auto& method,
-                                                 const auto& args) {
-                 return Value(call(method, args));
-               }).arguments;
+        plan =
+            agent::PrepareAgentSave(plan, base,
+                                    [&](const auto& method, const auto& args) {
+                                      return Value(call(method, args));
+                                    })
+                .arguments;
       auto layout_read =
           [&](const std::string& path) -> std::optional<LayoutFile> {
-        const auto bytes = inspection.base.files.contains(path)
-                               ? std::optional(inspection.base.files.at(path))
-                               : read(path);
-        return bytes ? std::optional<LayoutFile>{{*bytes,
-                                                  crypto::sha256_hex(*bytes)}}
-                     : std::nullopt;
+        const auto bytes = base.files.find(path);
+        if (bytes == base.files.end()) return std::nullopt;
+        return LayoutFile{bytes->second, crypto::sha256_hex(bytes->second)};
       };
-      std::vector<std::string> documents{"tsugumi.json"};
-      for (const auto& [path, ignored] : inspection.base.files) {
-        (void)ignored;
-        if (IsExternalDocument(path, "tsugumi.json")) documents.push_back(path);
-      }
       plan = Preserve(
-          json::Object(PrepareLayoutSave(
-              json::Encode(plan), layout_read, documents,
-              context.layout_scope ? context.layout_scope(inspection.base)
-                                   : LayoutWrite{})),
+          json::Object(PrepareLayoutSave(json::Encode(plan), layout_read)),
           authored);
-      if (context.authorize) context.authorize(plan, inspection.base);
+      if (context.authorize) context.authorize(plan, base);
       plan["check_permissions"] = context.origin == "agent" ? "true" : "false";
       plan["save_intent"] = json::Quote(intent);
       if (context.origin == "ui") {
         // Opaque to the core: carried in its existing save reply and replay.
-        const auto inverse = ReverseProjectChanges(plan, inspection.base, read);
+        const auto inverse = ReverseProjectChanges(plan, base, read);
         flatbuffers::FlatBufferBuilder undo_builder;
         undo_builder.Finish(H::ProjectEdits::Pack(undo_builder, &inverse));
         plan["operation_data"] = json::Encode(json::Members{
@@ -1006,8 +983,6 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
           json::Text(json::Object(json::Get(envelope, "value", "{}")),
                      "kind") != "revision_conflict")
         return result;
-    } catch (const agent::SaveRevisionConflict&) {
-      continue;
     } catch (const Failure& failure) {
       if (context.origin == "ui" && (failure.code == "value_conflict" ||
                                      failure.code == "source_changed")) {

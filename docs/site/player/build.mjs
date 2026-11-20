@@ -52,7 +52,7 @@ function cardFiles(dir) {
   const walk = (d, prefix = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
     (e.isDirectory() ? walk(path.join(d, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]))
   if (!fs.existsSync(dir)) return []
-  return walk(dir).filter((f) => f !== '_meta.json' && f !== '_link.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
+  return walk(dir).filter((f) => f !== '_meta.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
     const bytes = fs.readFileSync(path.join(dir, f))
     return bytes.includes(0) ? [] : [sourceFile(f, bytes.toString('utf8'))]
   })
@@ -61,8 +61,8 @@ function cardFiles(dir) {
 const KINDS = new Set(['trigger', 'input', 'fork', 'branch', 'merge', 'collect', 'draft'])
 
 /** As definitionKind in ui/web/src/model/session.ts. */
-function kindOf(dir, def) {
-  if (fs.existsSync(path.join(dir, '_link.json'))) return 'subgraph'
+function kindOf(def) {
+  if (def?.external) return 'subgraph'
   if (KINDS.has(def?.template)) return def.template
   return def?.language === undefined ? 'draft' : 'code'
 }
@@ -76,7 +76,7 @@ function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
   const def = readJson(path.join(dir, '_card.json'), {})
   const meta = readJson(path.join(dir, '_meta.json'), {})
-  const kind = kindOf(dir, def)
+  const kind = kindOf(def)
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
   const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
@@ -113,7 +113,7 @@ function readProject(root, ports, prefix = '') {
   const cards = doc.canvas.cards.map((c) => {
     const card = readCard(root, c.id, scoped, wires)
     if (card.kind === 'subgraph') {
-      const ext = readJson(path.join(root, 'definitions', c.id, '_link.json')).external
+      const ext = readJson(path.join(root, 'definitions', c.id, '_card.json')).external
       const inner = readProject(path.join(root, 'externals', ext), ports, `${prefix}${c.id}/`)
       card.boundary = inner.doc.boundary ?? {}
       card.inner = inner.cards.map((x) => ({ id: x.id, kind: x.kind, summary: x.summary, files: x.files.filter((f) => f.path !== '_card.json') }))

@@ -21,9 +21,8 @@ final class RevisionEdit {
     func definitions(_ prefix: String, _ values: [String: DefinitionDraft]) {
       for (id, d) in values {
         let dir = prefix + "definitions/" + id + "/"
-        if d.link == nil { conflictDocuments[dir + "_card.json"] = d.card }
+        conflictDocuments[dir + "_card.json"] = d.card
         conflictDocuments[dir + "_meta.json"] = d.meta
-        conflictDocuments[dir + "_link.json"] = d.link
       }
     }
     definitions("", session.definitionDrafts)

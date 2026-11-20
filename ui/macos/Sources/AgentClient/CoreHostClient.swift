@@ -80,6 +80,7 @@ public actor CoreHostClient {
   public init(support: URL? = nil) { supportOverride = support }
   private var transports: [Bool: NativeByteTransport] = [:]
   private var connectionID = UUID()
+  private var hostConnected = false
   private var opening: Task<Void, Error>?
   private var nextID: UInt64 = 0
   private var runtimeArguments: [String]?
@@ -88,6 +89,28 @@ public actor CoreHostClient {
   public func observeHost(_ handler: @escaping @Sendable ([String: Any]) -> Void) -> UUID {
     let token = UUID(); hostObservers[token] = handler; return token
   }
+  /// A new identity restarts a panel even if SwiftUI coalesces a disconnect
+  /// and a reconnect into one update.
+  public func hostConnectionChanges() -> AsyncStream<UUID?> {
+    let (stream, continuation) = AsyncStream<UUID?>.makeStream()
+    continuation.yield(hostConnected ? connectionID : nil)
+    let observer = observeHost { event in
+      switch event["type"] as? String {
+      case "Connected": continuation.yield(UUID())
+      case "Disconnected": continuation.yield(nil)
+      default: break
+      }
+    }
+    continuation.onTermination = { [weak self] _ in
+      Task { await self?.removeHostObserver(observer) }
+    }
+    return stream
+  }
+
+  private func removeHostObserver(_ observer: UUID) {
+    hostObservers.removeValue(forKey: observer)
+  }
+
   private func hostEvent(_ data: Data, identity: UUID) {
     guard connectionID == identity, let event = try? ServiceWire.decodeEvent(data) else { return }
     for handler in hostObservers.values { handler(event) }
@@ -202,6 +225,14 @@ public actor CoreHostClient {
     return value
   }
 
+  public func traceConnection() async throws -> HostTraceConnection {
+    let ready = try await ready(existingOnly: true)
+    guard let socket = ready["host_socket"] as? String, let token = ready["user_token"] as? String else {
+      throw CoreHostFailure(code: "protocol", message: "Invalid service endpoints", requestID: nil)
+    }
+    return await HostTraceConnection(socket: socket, token: token)
+  }
+
   private func connect(existingOnly: Bool = false) async throws {
     guard !HostProcessLifetime.shared.isEnding else { throw CancellationError() }
     if let opening { return try await opening.value }
@@ -236,10 +267,12 @@ public actor CoreHostClient {
       try await transport.start()
       _ = try await exchange("HelloRequest", ["token": token], host: host)
     }
+    hostConnected = true
     for handler in hostObservers.values { handler(["type": "Connected"]) }
   }
 
   private func close() {
+    hostConnected = false
     connectionID = UUID()
     let previous = transports
     transports.removeAll()
@@ -440,5 +473,56 @@ public actor CoreHostClient {
   public func models(_ config: ProviderConfig, asking: Bool = false) async throws -> [(id: String, name: String)] {
     let selection = try await provider(config, asking: asking)
     return try await modelList(id: config.connection, refresh: true, keyProfile: selection.keyProfile)
+  }
+}
+
+/// A view owns this connection so cancelling the view also ends its subscription.
+@MainActor
+public final class HostTraceConnection {
+  private nonisolated let transport: NativeByteTransport
+  private let token: String
+  private var nextID: UInt64 = 0
+
+  fileprivate init(socket: String, token: String) {
+    transport = NativeByteTransport(endpoint: "unix:" + socket, contract: .host)
+    self.token = token
+  }
+
+  public func connect(changed: @escaping @Sendable (String?) -> Void,
+                      closed: @escaping @Sendable () -> Void) async throws {
+    transport.observe(receive: { data in
+      guard let event = try? ServiceWire.hostEventValue(data),
+            let notice = event as? Tsugumi_Trace_TraceChangedT else { return }
+      changed(notice.catalog ? nil : notice.source ?? "")
+    }, closed: closed)
+    try await transport.start()
+    let hello = Tsugumi_Service_HelloRequestT()
+    hello.token = token
+    hello.client = .trace
+    _ = try await call(.hellorequest, hello)
+  }
+
+  public nonisolated func close() { transport.close() }
+
+  public func query(mode: Tsugumi_Trace_Mode? = nil, source: String? = nil,
+                    generation: UInt64 = 0, after: UInt64 = 0) async throws -> Tsugumi_Trace_HostTraceT {
+    let request = Tsugumi_Trace_HostTraceRequestT()
+    request.mode = mode?.rawValue
+    request.source = source
+    request.generation = generation
+    request.after = after
+    guard let result = try await call(.hosttracerequest, request) as? Tsugumi_Trace_HostTraceT else {
+      throw RPCError.unexpectedReply("HostTrace")
+    }
+    return result
+  }
+
+  private func call(_ type: Tsugumi_Host_RequestPayload, _ value: NativeObject) async throws -> NativeObject {
+    nextID += 1
+    let frame = ServiceWire.encodeHost(type, value, id: nextID)
+    let data = try await withCheckedThrowingContinuation { continuation in
+      transport.call(frame, timeout: .zero, continuation: continuation)
+    }
+    return try ServiceWire.decodeReply(data, host: true)
   }
 }
