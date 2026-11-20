@@ -247,7 +247,7 @@ class Server {
     if (!o->shown())
       where = o->opened() ? "A browser window opens it."
                           : "No web UI page is free to show it (a page on another project keeps that project); the "
-                            "user opens it from the tsugumi command's URL (or call tsugumi_open again without "
+                            "user opens it with `tsugumi web` (or call tsugumi_open again without "
                             "browser: false).";
     auto text = "Opened " + o->path()->str() + " in the Tsugumi web UI (" + (o->url() ? o->url()->str() : "") +
                 "). " + where + " Opening a project does not grant Agent access to its contents.";

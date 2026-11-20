@@ -17,14 +17,14 @@ trap 'rm -rf "$stage"' EXIT
 git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
-  client/CMakeLists.txt client/cmake client/include client/src sdk workerd \
+  client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src sdk workerd \
   protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
   nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix \
-  third-party cli/third-party/node-linux \
+  third-party \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
   ui/web/scripts/build.mjs ui/web/scripts/build-client.sh ui/web/scripts/gen.sh ui/web/scripts/check-boundaries.mjs \
-  ui/web/server ui/web/src ui/web/shared ui/web/third-party ui/shared/modules 'ui/shared/templates/*.json' \
+  ui/web/src ui/web/shared ui/web/third-party ui/shared/modules 'ui/shared/templates/*.json' \
   demos docs/CardGuide.md docs/site/player/build.mjs docs/site/player/narration.json \
   docs/site/player-data/assets docs/assets/tsugumi-icon.svg | tar -xf - -C "$stage"
 # Repository-only generators and their template inputs are already represented

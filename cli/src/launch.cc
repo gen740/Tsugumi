@@ -77,12 +77,10 @@ auto LaunchFromEnvironment(const f::path& executable) -> Launch {
 #endif
   if (!Env("TSUGUMI_HOST_STATE").empty()) launch.state = f::absolute(Env("TSUGUMI_HOST_STATE"));
   if (!Env("TSUGUMI_VMHOST").empty()) {
-#ifdef __APPLE__
-    launch.runtime = {"--vmhost", Env("TSUGUMI_VMHOST"), "--vm-support", support.string(),
+    // The shared Mac VM's helper (a stand-in for it in checks).
+    const auto vm_support = !Env("TSUGUMI_SUPPORT_DIR").empty() ? f::path(Env("TSUGUMI_SUPPORT_DIR")) : data.parent_path();
+    launch.runtime = {"--vmhost", Env("TSUGUMI_VMHOST"), "--vm-support", vm_support.string(),
                       "--vm-image", Env("TSUGUMI_VM_IMAGE")};
-#else
-    throw std::runtime_error("TSUGUMI_VMHOST is for macOS");
-#endif
   } else {
     const auto pick = [&](const char* name, const f::path& fallback) {
       return !Env(name).empty() ? Env(name) : fallback.string();

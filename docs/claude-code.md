@@ -7,7 +7,7 @@ The work shows in the [Web UI](WebUI.md) as it happens: Cards Claude Code saves 
 
 ```text
 Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) ── tsugumi-hostd ── tsugumid
-                                                                       └─ Host RPC ── browser (Canvas, thrush, approvals)
+                                                                       └─ Web UI ── browser (Canvas, thrush, approvals)
 ```
 
 - The MCP server (`tsugumi mcp`, `cli/src/mcp.cc`) calls `tsugumi-hostd` on its Agent socket as the external-agent principal. The service validates tool arguments, checks access grants, applies saves with `origin: agent` and follows runs through the project RPC.
@@ -31,20 +31,20 @@ Claude Code ── MCP (stdio) ── tsugumi mcp ── Agent RPC (external) �
 ## Using it
 
 - Use `/tsugumi:open <project folder>`, or ask "in this Tsugumi project, do …". Claude Code opens the project with `tsugumi_open` before working.
-- `tsugumi_open` reaches the same host as the `tsugumi` command (`tsugumi-hostd --ensure` on the same state folder and startup lock) and starts one if there is none; it keeps running after Claude Code closes. hostd's `ProjectOpenRequest` shows the project on a page that shows it or a Home page (a page showing another project is not switched); otherwise hostd opens it in a browser, so the page key never reaches Claude Code ([Security §7](security.md#the-agents-permission-boundary)).
+- `tsugumi_open` reaches the same host as `tsugumi web` (`tsugumi-hostd --ensure` on the same state folder and startup lock) and starts one if there is none; it keeps running after Claude Code closes. hostd's `ShowRequest` shows the project on a page that shows it or a Home page (a page showing another project is not switched); otherwise hostd opens it in a browser, so the page key never reaches Claude Code ([Security §7](security.md#the-agents-permission-boundary)).
 - Concurrent command and plugin starts use one host per state folder. A host that already runs keeps its build until it is stopped.
 - A new project can be made with `create: true` on `tsugumi_open` (only for a folder that does not exist yet).
 - The first `tsugumi_open` returns the MCP instructions (`hostd/agent/Shared/mcp-transport.md` and the shared rules, generated into `cli/src/mcp_instructions.hh`).
 
 | Environment variable (MCP server) | Meaning |
 | --- | --- |
-| `TSUGUMI_HOST_STATE` | hostd's state folder. Use the same value as the `tsugumi` command |
+| `TSUGUMI_HOST_STATE` | hostd's state folder. Use the same value as for `tsugumi web` |
 | `TSUGUMI_WEB_PORT` | The Web UI port of a host it starts (by default 8780, else a free port) |
 
 ## What is not supported
 
 - The macOS app is not supported. Projects Claude Code works on are opened in the Web UI.
-- Cards run in the environment of the Web UI server `tsugumi_open` found (inside the shared VM if the `tsugumi` command's server is running on a Mac). If no server is running, a server is started from the repository you built, and `tsugumid` runs directly on this host.
+- Cards run in the environment of the host `tsugumi_open` found (inside the shared VM if the Mac's `tsugumi` command or the app started it). If no host is running, one is started from the repository you built, and `tsugumid` runs directly on this host.
 
 The plugin uses core's project-tool allow list in `hostd/agent/Shared/agent.json`,
 shared with the built-in Agent. Run history deletion, cache clearing, version

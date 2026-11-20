@@ -117,7 +117,7 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
   // In WSL, the browser of Windows: this handler takes the URL as it is,
   // through no shell.
 #ifdef __APPLE__
-  std::vector<std::string> argv = {"/usr/bin/open", url};
+  std::vector<std::string> argv = {"open", url};
 #else
   std::vector<std::string> argv = std::getenv("WSL_DISTRO_NAME")
                                       ? std::vector<std::string>{"rundll32.exe", "url.dll,FileProtocolHandler", url}
