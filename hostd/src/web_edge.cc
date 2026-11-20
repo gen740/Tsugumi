@@ -180,6 +180,12 @@ auto Respond(int fd, std::string_view status, std::string_view type, std::string
   SendAll(fd, out);
 }
 
+// The redirect stays on this origin: "//host" or "/\\host" would be another.
+auto SameOriginPath(std::string_view path) -> std::string {
+  while (!path.empty() && (path.front() == '/' || path.front() == '\\')) path.remove_prefix(1);
+  return "/" + std::string(path);
+}
+
 }  // namespace
 
 auto UrlEncode(std::string_view value) -> std::string {
@@ -237,10 +243,23 @@ auto WebEdge::start() -> void {
   thread_ = std::thread([this] { loop(); });
 }
 
+auto WebEdge::Release(int fd) -> void {
+  std::lock_guard lock(connections_mutex_);
+  connections_.erase(fd);
+  ::close(fd);
+}
+
 auto WebEdge::stop() -> void {
   if (stopping_.exchange(true)) return;
   if (wake_w_ >= 0) (void)::write(wake_w_, "x", 1);
   if (thread_.joinable()) thread_.join();
+  {
+    // Wake readers blocked on their sockets, then wait for every thread:
+    // they use this object.
+    std::unique_lock lock(connections_mutex_);
+    for (const int fd : connections_) ::shutdown(fd, SHUT_RDWR);
+    drained_.wait(lock, [this] { return active_ == 0; });
+  }
   for (int* fd : {&listen_fd_, &wake_r_, &wake_w_})
     if (*fd >= 0) ::close(std::exchange(*fd, -1));
 }
@@ -267,9 +286,22 @@ auto WebEdge::loop() -> void {
     timeval timeout{30, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof timeout);
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof timeout);
-    // A slow reader holds only its own thread; the options outlive it (hostd
-    // stops the edge at exit only).
-    std::thread([this, fd] { serve(fd); }).detach();
+    {
+      // A page needs a handful of parallel loads; more waits for a slot.
+      std::lock_guard lock(connections_mutex_);
+      if (connections_.size() >= kMaxConnections) {
+        ::close(fd);
+        continue;
+      }
+      connections_.insert(fd);
+      ++active_;
+    }
+    // A slow reader holds only its own thread; stop() waits for it.
+    std::thread([this, fd] {
+      serve(fd);
+      std::lock_guard lock(connections_mutex_);
+      if (--active_ == 0) drained_.notify_all();
+    }).detach();
   }
 }
 
@@ -279,7 +311,7 @@ auto WebEdge::serve(int fd) -> void {
   while (head.find("\r\n\r\n") == std::string::npos) {
     const auto n = ::recv(fd, buf, sizeof buf, 0);
     if (n < 0 && errno == EINTR) continue;
-    if (n <= 0 || head.size() > 16384) return void(::close(fd));
+    if (n <= 0 || head.size() > 16384) return void(Release(fd));
     head.append(buf, static_cast<size_t>(n));
   }
   const auto end = head.find("\r\n\r\n");
@@ -288,7 +320,7 @@ auto WebEdge::serve(int fd) -> void {
   auto request = Parse(std::string_view(head).substr(0, end));
   if (!request) {
     Respond(fd, "400 Bad Request", "text/plain", "bad request");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   auto& r = *request;
   // Loopback names only (no DNS rebinding).
@@ -296,7 +328,7 @@ auto WebEdge::serve(int fd) -> void {
   const auto& host = r.headers["host"];
   if (host != "127.0.0.1:" + port && host != "localhost:" + port) {
     Respond(fd, "403 Forbidden", "text/plain", "forbidden host");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   const auto cookie_name = "tsugumi_" + port;
   auto authorized = [&] {
@@ -318,9 +350,9 @@ auto WebEdge::serve(int fd) -> void {
     auto query = WithoutQueryValue(r.query, "key");
     Respond(fd, "302 Found", "", "",
             "Set-Cookie: " + cookie_name + "=" + options_.key +
-                "; HttpOnly; SameSite=Strict; Path=/\r\nLocation: " + r.path +
+                "; HttpOnly; SameSite=Strict; Path=/\r\nLocation: " + SameOriginPath(r.path) +
                 (query.empty() ? "" : "?" + query) + "\r\n");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   if (r.path == "/rpc/host" || r.path == "/rpc/agent") {
     const bool to_host = r.path == "/rpc/host";
@@ -334,7 +366,7 @@ auto WebEdge::serve(int fd) -> void {
         r.headers["sec-websocket-protocol"] != (to_host ? "tsugumi.host.v1" : "tsugumi.agent.v1") ||
         r.headers["sec-websocket-version"] != "13" || !key_ok) {
       Respond(fd, "403 Forbidden", "text/plain", "forbidden");
-      return void(::close(fd));
+      return void(Release(fd));
     }
     // The edge checked the cookie and Origin; the RPC server sees only the
     // WebSocket handshake fields and authenticates its binary Hello itself.
@@ -346,6 +378,11 @@ auto WebEdge::serve(int fd) -> void {
     timeval none{0, 0};
     ::setsockopt(fd, SOL_SOCKET, SO_RCVTIMEO, &none, sizeof none);
     ::setsockopt(fd, SOL_SOCKET, SO_SNDTIMEO, &none, sizeof none);
+    {
+      // The RPC server owns it from here; stop() no longer waits on it.
+      std::lock_guard lock(connections_mutex_);
+      connections_.erase(fd);
+    }
     (to_host ? host_ : agent_)->adopt(fd, std::move(forwarded));
     return;
   }
@@ -360,17 +397,17 @@ auto WebEdge::serve(int fd) -> void {
     } else {
       Respond(fd, "404 Not Found", "application/json; charset=utf-8", R"({"error":"not found"})");
     }
-    return void(::close(fd));
+    return void(Release(fd));
   }
   if (r.method != "GET" && r.method != "HEAD") {
     Respond(fd, "405 Method Not Allowed", "text/plain", "");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   auto decoded = PercentDecode(r.path);
   auto relative = std::filesystem::path(decoded.value_or("/")).relative_path().lexically_normal();
   if (!decoded || (!relative.empty() && *relative.begin() == "..")) {
     Respond(fd, "403 Forbidden", "text/plain", "");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   auto file = options_.root / relative;
   struct stat st{};
@@ -383,7 +420,7 @@ auto WebEdge::serve(int fd) -> void {
   if (in < 0 || ::fstat(in, &st) != 0) {
     if (in >= 0) ::close(in);
     Respond(fd, "404 Not Found", "text/plain", "not found");
-    return void(::close(fd));
+    return void(Release(fd));
   }
   std::string out = "HTTP/1.1 200 OK\r\n";
   out += module ? kModuleHeaders : kSecurityHeaders;
@@ -399,7 +436,7 @@ auto WebEdge::serve(int fd) -> void {
   }
   ::close(in);
   ::shutdown(fd, SHUT_WR);
-  ::close(fd);
+  Release(fd);
 }
 
 }  // namespace tsugumi::host

@@ -4,6 +4,9 @@
 #pragma once
 
 #include <atomic>
+#include <condition_variable>
+#include <mutex>
+#include <set>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -39,6 +42,9 @@ class WebEdge {
  private:
   auto loop() -> void;
   auto serve(int fd) -> void;
+  auto Release(int fd) -> void;  // closes a connection this edge still owns
+
+  static constexpr size_t kMaxConnections = 64;
 
   WebEdgeOptions options_;
   TransportServer* host_;
@@ -49,6 +55,10 @@ class WebEdge {
   int port_ = -1;
   std::atomic<bool> stopping_{false};
   std::thread thread_;
+  std::mutex connections_mutex_;
+  std::condition_variable drained_;
+  std::set<int> connections_;
+  size_t active_ = 0;
 };
 
 /** Percent-encodes a URL query value. */
