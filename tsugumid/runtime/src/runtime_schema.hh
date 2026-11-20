@@ -63,6 +63,7 @@ struct InvocationDetailJson {
   Opt<"batch_size", v::Uint64> batch_size;
   Opt<"implementation_index", v::Uint64> implementation_index;
   Opt<"implementation_label", v::String> implementation_label;
+  Opt<"secrets", v::Array<v::String>> secrets;
 };
 
 struct InputSourceJson {

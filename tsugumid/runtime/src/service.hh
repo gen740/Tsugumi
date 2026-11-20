@@ -126,6 +126,10 @@ class Service : public RequestSink {
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
+  // The values of a Card's declared secrets for one invocation, from hostd.
+  // Throws Failed (before anything of the Card runs) when one is missing.
+  auto card_secrets(const Node& node, std::stop_token stop = {}) const
+      -> std::vector<std::pair<std::string, std::string>>;
   static auto execution_diagnostic(const Node& node,
                                    const std::vector<RemoteTarget>& targets)
       -> std::optional<Diag>;

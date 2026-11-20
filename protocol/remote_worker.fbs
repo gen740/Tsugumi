@@ -37,7 +37,12 @@ table CancelRequest { fingerprint:string (required); log_offset:ulong; log_limit
 table ReleaseRequest { fingerprint:string (required); }
 // Broker-local; never forwarded to the remote listener.
 table CatalogRequest {}
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest }
+// Broker-local: the values of the Card secrets one invocation declares, read
+// from hostd's secret store just before the call, within the project the
+// capability authorizes. The reply lists only the names that are set; the
+// core fails the invocation for any other.
+table CardSecretsRequest { names:[string] (required); }
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -62,7 +67,9 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   log_offset:ulong; log_size:ulong; log_bytes:[ubyte]; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
-union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure }
+table CardSecret { name:string (required); value:string (required, trace_secret); }
+table CardSecrets { secrets:[CardSecret] (required); }
+union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure, CardSecrets }
 table Reply { body:ReplyBody (required); }
 // Private host broker envelope. Never accepted by or forwarded to a worker.
 table BrokerRequest { capability:string (required, trace_secret); request:Request (required); }

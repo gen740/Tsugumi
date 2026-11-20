@@ -177,6 +177,10 @@ Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGui
 - The kernel runs Bash Cards' programs under the emulator. Package Cards load a native `main.so` or an explicitly named SDK runtime artifact, so their build also makes a worker for the selected system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time, and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
+### Card secrets
+
+A Card declares the names of the credentials it needs (`"secrets": ["database_password"]` in `_card.json`); people set the values for each project in its **Settings > Card secrets** (Mac app and Web UI), kept by hostd beside the API keys, bound to that project and never shown again. Each invocation's process receives them as environment variables of the same names; the run history records only which names were provided. See [Card secrets](security.md#card-secrets) and the [Card guide](CardGuide.md#card-secrets).
+
 ### Outside access (Experimental)
 
 - By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).

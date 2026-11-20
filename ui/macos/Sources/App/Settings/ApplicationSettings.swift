@@ -147,7 +147,7 @@ private struct StorageNote: View {
 
 /// The settings of one project: kept in the project (or its environment).
 enum ProjectSettingsPane: String, CaseIterable, Identifiable {
-  case general, canvas, history, cache
+  case general, canvas, history, cache, secrets
   var id: String { rawValue }
   /// The settings window's selection for this pane.
   var selection: String { "project." + rawValue }
@@ -157,6 +157,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return "Canvas"
     case .history: return String(localized: "実行履歴")
     case .cache: return String(localized: "ビルドキャッシュ")
+    case .secrets: return String(localized: "Card シークレット")
     }
   }
   var symbol: String {
@@ -165,6 +166,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return "rectangle.3.group"
     case .history: return "clock.arrow.circlepath"
     case .cache: return "shippingbox"
+    case .secrets: return "key.horizontal"
     }
   }
   func storage(_ s: ProjectSession) -> String {
@@ -174,6 +176,7 @@ enum ProjectSettingsPane: String, CaseIterable, Identifiable {
     case .canvas: return String(localized: "このプロジェクト（\(name)/layout.json）")
     case .history: return String(localized: "このプロジェクトの実行環境（\(name)/.tsugumi/runs.sqlite）")
     case .cache: return String(localized: "このプロジェクトの実行環境（VM の中）")
+    case .secrets: return String(localized: "このホストの hostd（このプロジェクト用、値は表示されません）")
     }
   }
 

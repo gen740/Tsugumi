@@ -1171,6 +1171,8 @@ void execute(const Options& opt, Call& call,
       // A `cd` in preRun carries over (bash keeps PWD current).
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
+    // The dump holds the call's environment, Card secrets included.
+    ::unlink(dump.c_str());
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
     apply_env(body_env(call_env, env));

@@ -1059,6 +1059,9 @@ table InvocationSummary {
   /// Absent when the implementation has no label; implementation_index still
   /// identifies it.
   implementation_label:string (id: 31);
+  /// Names of the Card secrets handed to this invocation's process (never
+  /// their values), in the order the Card declares them.
+  secrets:[string] (id: 32);
 }
 
 table StageTime {

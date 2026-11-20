@@ -415,6 +415,32 @@ class Builder {
       n.diags.push_back(diag(n.path, "invalid_setting",
                              "external execution requires sandbox, no worker "
                              "reuse or host folders"));
+    if (const auto* secrets = schema::get(d.secrets)) {
+      std::set<std::string> names;
+      for (const auto& name : *secrets) {
+        if (!valid_secret_name(name)) {
+          n.diags.push_back(diag(n.path, "invalid_setting",
+                                 "secrets entries must match "
+                                 "[a-z][a-z0-9_]{0,63}: " +
+                                     name));
+          continue;
+        }
+        if (!names.insert(name).second) {
+          n.diags.push_back(
+              diag(n.path, "invalid_setting", "duplicate secret " + name));
+          continue;
+        }
+        s.secrets.push_back(name);
+      }
+      if (!s.secrets.empty() && s.reuse_worker)
+        n.diags.push_back(diag(n.path, "invalid_setting",
+                               "a Card with secrets cannot reuse its worker "
+                               "(reuseWorker)"));
+      if (!s.secrets.empty() && remote)
+        n.diags.push_back(diag(n.path, "invalid_setting",
+                               "secrets are delivered only to the local "
+                               "execution service for now"));
+    }
     if (const auto* resources = schema::get(d.execution_resources)) {
       const auto* cpu = schema::get(resources->cpu_millis);
       const auto* memory = schema::get(resources->memory_bytes);

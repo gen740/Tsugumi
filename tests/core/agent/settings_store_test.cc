@@ -41,6 +41,12 @@ class MemorySecrets final : public host::SecretStore {
     values[id] = secret;
   }
   auto Erase(const std::string& id) -> void override { values.erase(id); }
+  auto Keys(const std::string& prefix) -> std::vector<std::string> override {
+    std::vector<std::string> keys;
+    for (const auto& [key, value] : values)
+      if (key.starts_with(prefix) && !value.empty()) keys.push_back(key);
+    return keys;
+  }
 };
 TEST(HostSettingsStore,
      ProviderAvailabilityChangesNotifyWithoutProvisioningLoops) {

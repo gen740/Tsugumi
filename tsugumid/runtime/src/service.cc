@@ -403,9 +403,14 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     const auto resident_id =
         resident == resident_targets_.end() ? std::string{} : resident->second;
     for (;;) {
+      // Card secrets reach only the local service for now.
+      const auto& service = node.settings.secrets.empty() ||
+                                    node.settings.execution_service != "auto"
+                                ? node.settings.execution_service
+                                : std::string(kLocalExecutionService);
       const auto choice =
           select_worker(candidates, node.settings.worker_condition.get(),
-                        node.settings.execution_service, resident_id);
+                        service, resident_id);
       if (!choice.matches)
         throw Failed(FailureKind::invalid_request,
                      "no registered worker satisfies workerCondition");
@@ -463,6 +468,37 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
 
 auto Service::remote_execution() -> RemoteExecutionService& {
   return *remote_execution_;
+}
+
+auto Service::card_secrets(const Node& node, std::stop_token stop) const
+    -> std::vector<std::pair<std::string, std::string>> {
+  const auto& names = node.settings.secrets;
+  if (names.empty()) return {};
+  std::vector<std::pair<std::string, std::string>> values;
+  try {
+    values = remote_jobs_.card_secrets(names, stop);
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::not_found,
+                 "the Card's secrets are unavailable (" +
+                     std::string(error.what()) +
+                     "): open the project from the Tsugumi app or Web UI");
+  }
+  std::vector<std::pair<std::string, std::string>> ordered;
+  std::string missing;
+  for (const auto& name : names) {
+    const auto found = std::ranges::find_if(
+        values, [&](const auto& value) { return value.first == name; });
+    if (found == values.end() || found->second.empty())
+      missing += (missing.empty() ? "" : ", ") + name;
+    else
+      ordered.push_back(std::move(*found));
+  }
+  if (!missing.empty())
+    throw Failed(FailureKind::not_found,
+                 "Card secret not set: " + missing +
+                     ". Set it in Settings > Card secrets, then run again",
+                 {{"secrets", missing}});
+  return ordered;
 }
 
 auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {

@@ -1466,6 +1466,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.outputs_sent = done.outputs_sent;
       rec.summary.worker_reused = done.worker_reused;
       rec.summary.emulator = done.emulator;
+      rec.summary.secrets = done.secrets;
       try {
         History& h = svc_.history();
         std::map<LogStream, std::vector<LogEnd>> remote_log_ends;

@@ -14,6 +14,7 @@ import { Icon } from './icons'
 import { L } from '../i18n'
 import { TrustedFoldersSettings } from './trustedFolders'
 import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
+import { CardSecretsSettings } from './cardSecrets'
 
 // ---- Card database -----------------------------------------------------------------
 
@@ -148,12 +149,13 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
 
 // ---- Project settings --------------------------------------------------------------
 
-export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache'
+export type ProjectSettingsPane = 'general' | 'canvas' | 'history' | 'cache' | 'secrets'
 export const PROJECT_SETTINGS_PANES: { id: ProjectSettingsPane; title: string; icon: string }[] = [
   { id: 'general', title: L('名前と実行環境'), icon: 'folder.badge.gearshape' },
   { id: 'canvas', title: 'Canvas', icon: 'rectangle.3.group' },
   { id: 'history', title: L('実行履歴'), icon: 'clock.arrow.circlepath' },
   { id: 'cache', title: L('ビルドキャッシュ'), icon: 'shippingbox' },
+  { id: 'secrets', title: L('Card シークレット'), icon: 'key' },
 ]
 
 /** One of a project's settings panes (also shown in the settings window). */
@@ -164,6 +166,7 @@ export function ProjectSettingsContent({ pane, session }: { pane: ProjectSetting
     case 'canvas': return <CanvasProjectSettings session={session} />
     case 'history': return <RunHistorySettings key={session.key} session={session} />
     case 'cache': return <CacheSettings key={session.key} session={session} />
+    case 'secrets': return <CardSecretsSettings key={session.key} session={session} />
   }
 }
 

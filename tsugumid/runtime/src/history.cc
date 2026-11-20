@@ -84,6 +84,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.batch_size = s.batch_size.value_or(0);
   *d.implementation_index = s.implementation_index.value_or(0);
   *d.implementation_label = s.implementation_label;
+  *d.secrets = s.secrets;
   return schema::encode(d);
 }
 
@@ -104,6 +105,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
     s.worker_reused = reused == 1;
   if (const auto* outputs = schema::get(d.outputs_sent))
     s.outputs_sent = *outputs;
+  if (const auto* secrets = schema::get(d.secrets)) s.secrets = *secrets;
   if (auto ready = d.ready_at->value_or(-1); ready >= 0) s.ready_at = ready;
   s.emulator = d.emulator->value_or("");
   s.environment_id = d.environment_id->value_or("");

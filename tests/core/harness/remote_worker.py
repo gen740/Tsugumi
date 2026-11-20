@@ -13,6 +13,8 @@ from Tsugumi.RemoteWorker.Ack import AckT
 from Tsugumi.RemoteWorker.BrokerRequest import BrokerRequestT
 from Tsugumi.RemoteWorker.BlobChunk import BlobChunkT
 from Tsugumi.RemoteWorker.CancelRequest import CancelRequestT
+from Tsugumi.RemoteWorker.CardSecret import CardSecretT
+from Tsugumi.RemoteWorker.CardSecrets import CardSecretsT
 from Tsugumi.RemoteWorker.Capabilities import CapabilitiesT
 from Tsugumi.RemoteWorker.Catalog import CatalogT
 from Tsugumi.RemoteWorker.CatalogRequest import CatalogRequestT
@@ -37,7 +39,7 @@ from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-__all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
+__all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CardSecretT', 'CardSecretsT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
 
 class _ByteBlobChunk(BlobChunkT):

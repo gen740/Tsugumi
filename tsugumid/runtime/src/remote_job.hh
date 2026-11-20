@@ -12,6 +12,7 @@
 #include <string>
 #include <string_view>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "tsugumi/workerd/protocol.hh"
@@ -107,6 +108,11 @@ class RemoteJobClient {
   auto release(std::string_view service, std::string_view instance,
                std::string_view job_id, std::string_view fingerprint) const
       -> void;
+  // The values hostd holds for these Card secret names, read just before an
+  // invocation and kept only in memory. Names that are not set are absent.
+  auto card_secrets(const std::vector<std::string>& names,
+                    std::stop_token stop) const
+      -> std::vector<std::pair<std::string, std::string>>;
 
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message,

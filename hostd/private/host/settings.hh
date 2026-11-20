@@ -13,7 +13,9 @@
 
 namespace tsugumi::host {
 struct Credentials;
-// API-key storage has a narrow interface, independent of platform UI and OAuth.
+// The one store of host secrets, independent of platform UI and OAuth. It
+// holds provider API keys ("<profile>:<provider>") and Card secrets
+// ("card-secret/<project id>/<name>"); the two key forms never overlap.
 class SecretStore {
  public:
   virtual ~SecretStore() = default;
@@ -21,6 +23,8 @@ class SecretStore {
   virtual auto Put(const std::string& key, const std::string& secret)
       -> void = 0;
   virtual auto Erase(const std::string& key) -> void = 0;
+  // Stored keys that start with `prefix`, in order.
+  virtual auto Keys(const std::string& prefix) -> std::vector<std::string> = 0;
 };
 // The shared VM's size on this machine. Defaults: half the memory (4-16 GiB),
 // all but two cores (2-8), a 64 GiB store. Limits: every core, all but 2 GiB
@@ -38,6 +42,12 @@ class Settings {
   auto Handle(const Tsugumi::Host::Request& request, uint64_t id)
       -> std::string;
   auto Redact(std::string text) -> std::string;
+  // The values of these Card secret names that are set for one project, for
+  // one invocation. Only the execution broker calls this, with the project its
+  // capability authorizes; no Host or Agent request returns a value.
+  auto CardSecretValues(const std::string& project,
+                        const std::vector<std::string>& names)
+      -> std::vector<std::pair<std::string, std::string>>;
   auto AllowUnscopedHelpers() -> bool;
   // vm.cpus, vm.memoryGiB and vm.storeGiB of the host; 0 (the default)
   // takes VMDefaultResources' value.

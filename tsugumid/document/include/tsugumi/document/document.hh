@@ -85,6 +85,10 @@ struct Document {
 using DocumentPtr = std::shared_ptr<const Document>;
 
 bool valid_id(const std::string& id);
+// A Card secret name, which is also its environment variable's name:
+// [a-z][a-z0-9_]{0,63}. Lower case never collides with PATH, HOME, LANG or the
+// TSUGUMI_* variables a worker sets.
+bool valid_secret_name(std::string_view name);
 
 class DocumentError : public std::runtime_error {
  public:

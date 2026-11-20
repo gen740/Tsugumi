@@ -47,6 +47,7 @@ function paneStorage(p: ProjectSettingsPane, s: ProjectSession): string {
     case 'canvas': return L('このプロジェクト（{0}/layout.json）', name)
     case 'history': return L('このプロジェクトの実行環境（{0}/.tsugumi/runs.sqlite）', name)
     case 'cache': return L('このプロジェクトの実行環境（このホスト）')
+    case 'secrets': return L('このホストの hostd（このプロジェクト用、値は表示されません）')
   }
 }
 

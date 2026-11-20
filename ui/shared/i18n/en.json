@@ -1822,5 +1822,18 @@
   "プロジェクトを開けませんでした": "The project could not be opened",
   "tsugumid に接続できませんでした": "Could not connect to tsugumid",
   "前のログを読む": "Read Earlier Log",
-  "Card を選ぶと、ここにログを表示します": "Choose a Card to show its log here"
+  "Card を選ぶと、ここにログを表示します": "Choose a Card to show its log here",
+  "Card シークレット": "Card secrets",
+  "このホストの hostd（このプロジェクト用、値は表示されません）": "This host's hostd, for this project (values are never shown)",
+  "Card の定義（_card.json の \"secrets\"）が名前を挙げたシークレットを、その Card のプロセスに同じ名前の環境変数として渡します。値はこのホストの hostd がこのプロジェクト用にだけ保存し、表示されることはありません。": "A Card's process receives each secret its definition names (\"secrets\" in _card.json) as an environment variable of the same name. This host's hostd stores the values for this project only, and they are never shown.",
+  "プロジェクトの実行環境に接続すると設定できます": "Available once the project's environment is connected",
+  "設定されたシークレットはありません": "No secrets are set",
+  "設定済み": "Set",
+  "置き換え": "Replace",
+  "{0} を削除しました。": {"text": "Deleted {0}.", "mac": ["@"]},
+  "シークレットを設定": "Set a secret",
+  "Card がその値をどう扱うか（子プロセスへの継承、ログ、出力）は Card の作者の責任です。": "What a Card does with a value (child processes inherit it, logs, outputs) is the Card author's responsibility.",
+  "小文字、数字、_ で 64 文字まで（先頭は小文字）。": "Up to 64 lower-case letters, digits and _, starting with a letter.",
+  "{0} を保存しました。": {"text": "Saved {0}.", "mac": ["@"]},
+  "渡したシークレット": "Secrets provided"
 }

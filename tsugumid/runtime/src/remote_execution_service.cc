@@ -324,6 +324,10 @@ auto RemoteExecutionService::prepare(const Node& node,
     throw Failed(
         FailureKind::unsupported,
         "remote worker requires sandbox, no worker reuse or host folders");
+  if (!settings.secrets.empty())
+    throw Failed(FailureKind::unsupported,
+                 "Card secrets are delivered only to the local execution "
+                 "service for now");
   const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");

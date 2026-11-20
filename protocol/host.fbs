@@ -38,6 +38,13 @@ table Settings { revision:string (required); values:[Setting]; }
 // hostd stores API keys itself on every platform; clients save and read them
 // only through it.
 table ProviderSetRequest { profile:string (required); id:string (required); provider:ProviderInput; remove:bool; }
+// Card secrets are a second kind of entry in the same hostd secret store as
+// API keys: one value per project id and name, delivered only to the Card
+// invocations of that project that declare the name (`secrets` in
+// _card.json). Write-only: replies list the names that are set, never a value.
+table CardSecretListRequest { project_id:string (required); }
+table CardSecretSetRequest { project_id:string (required); name:string (required); value:string (trace_secret); remove:bool; }
+table CardSecretList { names:[string]; }
 // Availability uses exactly the same key policy as model requests.
 table ProviderStatusRequest { profile:string (required); id:string (required); }
 // Model choices for guide/summary are read from host settings and catalogs.
@@ -528,6 +535,7 @@ union RequestPayload {
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
+  CardSecretListRequest, CardSecretSetRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -541,6 +549,7 @@ union ReplyPayload {
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
+  CardSecretList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

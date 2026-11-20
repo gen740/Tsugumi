@@ -53,6 +53,15 @@ bool valid_id(const std::string& id) {
   return true;
 }
 
+bool valid_secret_name(std::string_view name) {
+  if (name.empty() || name.size() > 64 || name[0] < 'a' || name[0] > 'z')
+    return false;
+  for (char c : name)
+    if (!((c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_'))
+      return false;
+  return true;
+}
+
 namespace {
 auto local_document_path(std::string_view path) -> std::string_view {
   while (path.starts_with("externals/")) {
