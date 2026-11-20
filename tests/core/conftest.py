@@ -20,10 +20,10 @@ def core_factory(project, tmp_path, request):
     with ExitStack() as stack:
         daemons = []
         def create(*, project_root=None, mocked_builds=False, mocked_worker=False,
-                   fault=None, args=None):
+                   fault=None, args=None, env=None):
             worker = worker_launcher(tmp_path) if mocked_worker else None
             d = Daemon(project_root or project, mocked_builds=mocked_builds, worker=worker,
-                       fault=fault, args=args)
+                       fault=fault, args=args, env=env)
             stack.callback(d.close)
             daemons.append(d)
             d.start()

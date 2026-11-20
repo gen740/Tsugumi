@@ -138,12 +138,11 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     package.mkdir()
     (package / "scenario.json").write_text(json.dumps({"actions": []}))
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
-    graph = Project(project).card("start", {"template": "trigger"}).card("split", {"template": "fork"})
-    graph.connect("start", "out", "split", "in")
+    graph = Project(project).card("start", {"template": "trigger"})
     for name in ["a", "b"]:
         graph.card(name, {"language": "bash", "sandbox": False, "inputs": [{"name": "start"}]},
                    outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}})
-        graph.connect("split", "out1" if name == "a" else "out2", name, "start")
+        graph.connect("start", "out", name, "start")
     graph.save(client)
     first = run(client, "start")
     assert wait_run(client, first).state == RunState.succeeded
@@ -160,7 +159,7 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     assert users.nextOffset is None
     latest = client.call("RunLatestInvocationsRequest", runId=first).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in latest}
-    assert ids == {"start": None, "split": None, "a": original_id, "b": original_id}
+    assert ids == {"start": None, "a": original_id, "b": original_id}
     graph.card("b", {"language": "bash", "sandbox": False, "inputs": [{"name": "start"}]},
                outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}, "preRun": "true"})
     graph.save(client)

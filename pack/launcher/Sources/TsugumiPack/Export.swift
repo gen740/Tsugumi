@@ -171,7 +171,7 @@ struct Export {
         var entry: [String: Any] = ["name": p["name"] ?? "", "type": p["type"] ?? ""]
         entry["default"] = p["data"]
         let template = definition["template"] as? String ?? "code"
-        if p["nix"] as? Bool == true || !["code", "input", "switch"].contains(template) { entry["fixed"] = true }
+        if p["nix"] as? Bool == true || !["code", "input"].contains(template) { entry["fixed"] = true }
         return entry
       }
       var entry: [String: Any] = ["id": id, "template": definition["template"] ?? "code",

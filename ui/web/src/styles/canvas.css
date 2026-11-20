@@ -75,15 +75,6 @@
 .cv-start { flex-direction: row; align-items: center; box-sizing: border-box; }
 .cv-start-run { flex: none; display: inline-flex; align-items: center; justify-content: center; padding: 0; border: 0; border-radius: 50%; background: var(--accent); color: #fff; cursor: pointer; }
 .cv-start-run:disabled { background: var(--secondary); cursor: inherit; pointer-events: none; }
-.cv-switch-card-control { position: absolute; left: 0; top: 0; padding: 0; border: 0; background: transparent; pointer-events: auto; cursor: pointer; }
-.cv-switch-card-control:disabled { cursor: default; pointer-events: none; }
-.cv-switch-card-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; }
-.cv-switch-card-knob { position: absolute; display: block; border-radius: 50%; background: #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.28); transition: transform 160ms ease-in-out; }
-.cv-switch-card-title { position: absolute; top: 0; height: 100%; display: flex; align-items: center; justify-content: center; transition: transform 160ms ease-in-out, color 160ms ease-in-out; }
-.cv-card-switch .cv-card-fill path { transition: fill 160ms ease-in-out; }
-@media (prefers-reduced-motion: reduce) {
-  .cv-switch-card-knob, .cv-switch-card-title, .cv-card-switch .cv-card-fill path { transition: none; }
-}
 .cv-routing-icon { position: absolute; display: inline-flex; pointer-events: auto; }
 .cv-port-label { position: absolute; transform: translateY(-50%); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; pointer-events: none; line-height: 1.2; }
 .cv-port { position: absolute; display: flex; align-items: center; justify-content: center; pointer-events: auto; }
@@ -111,6 +102,7 @@
 .cv-param-bool input { position: absolute; opacity: 0; width: 0; height: 0; }
 .cv-switch { position: relative; display: inline-block; border-radius: 999px; background: var(--separator-strong); transition: background 0.12s; }
 .cv-switch::after { content: ""; position: absolute; top: 1.5px; left: 1.5px; height: calc(100% - 3px); aspect-ratio: 1; border-radius: 50%; background: #fff; box-shadow: 0 0.5px 1.5px rgba(0, 0, 0, 0.3); transition: left 0.12s; }
+.cv-param-bool input:focus-visible + .cv-switch { outline: 2px solid var(--accent); outline-offset: 2px; }
 .cv-param-bool input:checked + .cv-switch { background: var(--accent); }
 .cv-param-bool input:checked + .cv-switch::after { left: calc(100% - 1.5px); transform: translateX(-100%); }
 .cv-param-bool input:disabled + .cv-switch { opacity: 0.5; }

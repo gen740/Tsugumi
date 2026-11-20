@@ -28,8 +28,8 @@ import uuid
 from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
-# Cards whose parameters are values; a fork's or branch's shape the graph.
-SETTABLE = {"code", "input", "switch"}
+# Card kinds that expose editable values in the exported app.
+SETTABLE = {"code", "input"}
 
 
 def stage(text):

@@ -7,13 +7,7 @@
         "id": "start"
       },
       {
-        "id": "begin"
-      },
-      {
         "id": "generate"
-      },
-      {
-        "id": "share"
       },
       {
         "id": "preprocess"
@@ -41,24 +35,14 @@
           "port": "out"
         },
         "to": {
-          "card": "begin",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "begin",
-          "port": "synthetic"
-        },
-        "to": {
           "card": "generate",
           "port": "start"
         }
       },
       {
         "from": {
-          "card": "begin",
-          "port": "real"
+          "card": "start",
+          "port": "out"
         },
         "to": {
           "card": "mitosis",
@@ -71,24 +55,14 @@
           "port": "scene"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "preprocess"
-        },
-        "to": {
           "card": "preprocess",
           "port": "scene"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "score"
+          "card": "generate",
+          "port": "scene"
         },
         "to": {
           "card": "score",
@@ -97,8 +71,8 @@
       },
       {
         "from": {
-          "card": "share",
-          "port": "sweep"
+          "card": "generate",
+          "port": "scene"
         },
         "to": {
           "card": "sweep",

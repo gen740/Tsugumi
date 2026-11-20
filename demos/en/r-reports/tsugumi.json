@@ -10,9 +10,6 @@
         "id": "aggregate"
       },
       {
-        "id": "share"
-      },
-      {
         "id": "rmarkdown"
       },
       {
@@ -59,24 +56,14 @@
           "port": "data"
         },
         "to": {
-          "card": "share",
-          "port": "in"
-        }
-      },
-      {
-        "from": {
-          "card": "share",
-          "port": "rmarkdown"
-        },
-        "to": {
           "card": "rmarkdown",
           "port": "data"
         }
       },
       {
         "from": {
-          "card": "share",
-          "port": "quarto"
+          "card": "aggregate",
+          "port": "data"
         },
         "to": {
           "card": "quarto",

@@ -74,7 +74,7 @@ case "$suite" in
     if $full; then run python3 -m pytest -q tests/python/test_host_projects_rpc.py; fi
     ;;
   core)
-    run "$bin/tsugumi_rpc_trace_tests"
+    (export TSUGUMI_RPC_TRACE=1; run "$bin/tsugumi_rpc_trace_tests")
     run "$bin/tsugumi_rpc_cli_tests"
     gtest tsugumi_remote_result_tests 'ShellTest.*' 'RunScratch.*'
     if $full; then run "$bin/tsugumi_worker_condition_tests"; fi

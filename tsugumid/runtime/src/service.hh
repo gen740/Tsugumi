@@ -123,11 +123,6 @@ class Service : public RequestSink {
                          const std::filesystem::path& directory,
                          BuildRequest& build)
       -> std::unique_ptr<PreparedExecution>;
-  // A Card's build ahead of its activation: when the worker it would choose
-  // with every worker free is the local one, configures `build` as
-  // prepare_execution() would and returns true. Reserves no worker; the
-  // activation still chooses its own.
-  auto prepare_early_build(const Node& node, BuildRequest& build) -> bool;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
   auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
@@ -149,9 +144,19 @@ class Service : public RequestSink {
   void save(RequestIn& req);
   auto card_id(RequestIn& req) -> void;
   void reload(RequestIn& req);
-  auto complete_reload(RequestIn& req, const std::string& op_id,
-                       const std::string& digest, const Document& base,
-                       Store::Staged& staged) -> void;
+  struct PreparedSaveReply {
+    std::string receipt;
+    size_t notification_bytes = 0;
+  };
+  auto prepare_save_reply(
+      Store::Staged& staged, const Document& base,
+      const flatbuffers::Vector<uint8_t>* operation_data = nullptr)
+      -> PreparedSaveReply;
+  void complete_save(RequestIn& req, const std::string& op_id,
+                     const std::string& kind, const std::string& digest,
+                     const Document& base, Store::Staged& staged,
+                     const PreparedSaveReply& response,
+                     const std::function<void()>& check_cancelled = [] {});
   auto version_operation(RequestIn& req,
                          const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);
@@ -183,6 +188,7 @@ class Service : public RequestSink {
   void run_status(RequestIn& req);
   void run_history(RequestIn& req);
   void run_invocations(RequestIn& req);
+  void run_definition_paths(RequestIn& req);
   void run_latest_invocations(RequestIn& req);
   auto dispatch_shell(RequestIn req) -> void;
   auto project_shell(RequestIn& req, const std::atomic<bool>& cancelled)
@@ -209,20 +215,22 @@ class Service : public RequestSink {
   void store_failure_receipt(const std::string& op_id, const std::string& kind,
                              const std::string& digest, const FailureData& f);
 
-  std::string snapshot_reply(uint64_t request_id, const Document& doc,
-                             const std::optional<std::string>& view_id,
-                             bool open, const std::string& sub_id);
-  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
-      flatbuffers::FlatBufferBuilder& b, const Document& doc,
-      const std::optional<std::string>& view_id);
-  void publish_delta(const Delta& delta);
-  void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
-  RunStatusData current_run_status();
-
   struct ViewRecord {
     uint64_t rev = 0;
     std::string view;
   };
+  std::string snapshot_reply(uint64_t request_id, const Document& doc,
+                             const std::optional<std::string>& view_id,
+                             bool open, const std::string& sub_id,
+                             const ViewRecord* view = nullptr);
+  flatbuffers::Offset<Tsugumi::RPC::ProjectSnapshot> snapshot(
+      flatbuffers::FlatBufferBuilder& b, const Document& doc,
+      const std::optional<std::string>& view_id, const ViewRecord* view);
+  void check_snapshot(const Document& doc);
+  void publish_delta(const Delta& delta, size_t notification_bytes);
+  void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
+  RunStatusData current_run_status();
+
   std::optional<ViewRecord> load_view(const std::string& view_id);
 
   ServiceOptions opts_;
