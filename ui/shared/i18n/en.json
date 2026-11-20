@@ -1816,5 +1816,11 @@
   "並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。": "Hands on each listed value in its own invocation (an execution list).",
   "{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。": {"text": "Hands on {0} values, one invocation each (an execution list).", "mac": ["lld"]},
   "値を JSON の配列で書いてください。例: [8, 12, 16]": "Write the values as a JSON array, for example [8, 12, 16].",
-  "リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。": "For a list parameter, each element of the array is one list."
+  "リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。": "For a list parameter, each element of the array is one list.",
+  "Tsugumi のホストに接続していません": "Not connected to the Tsugumi host",
+  "Tsugumi のホストを起動できませんでした": "The Tsugumi host could not start",
+  "プロジェクトを開けませんでした": "The project could not be opened",
+  "tsugumid に接続できませんでした": "Could not connect to tsugumid",
+  "前のログを読む": "Read Earlier Log",
+  "Card を選ぶと、ここにログを表示します": "Choose a Card to show its log here"
 }
