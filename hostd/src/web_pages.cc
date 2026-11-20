@@ -119,7 +119,12 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
     H::HostWebT result;
     result.url = Url();
     if (result.url.empty()) throw Failure("unavailable", "The Web UI is not being served");
-    if (web->open()) OpenBrowser(web->project() ? web->project()->str() : "");
+    const auto project = web->project() ? web->project()->str() : "";
+    {
+      std::lock_guard lock(mutex_);
+      if (edge_) result.page_url = edge_->page_url(project);
+    }
+    if (web->open()) OpenBrowser(project);
     return wire::HostReply(request.request_id, std::move(result));
   }
   const auto* report = r.value_as_HostPageRequest();

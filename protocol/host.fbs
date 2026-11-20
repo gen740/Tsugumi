@@ -123,10 +123,11 @@ table SettingsChanged { profile:string (required); revision:ulong; }
 table ConversationChanged { conversation_id:string; answered_permission:string; }
 // hostd serves the Web UI's origin. A local client (not a page) starts it,
 // giving the built page's folder when it is not serving yet; open also opens
-// a page in the default browser, on project when given. The page key goes to
-// the browser alone; url carries none.
+// a page in the default browser, on project when given. url is the origin;
+// page_url carries the page key for the local user to open a page by hand
+// (a page never gets it this way).
 table HostWebRequest { root:string; port:uint; open:bool; project:string; }
-table HostWeb { url:string (required); }
+table HostWeb { url:string (required); page_url:string; }
 // A Web page reports on its Host connection what it shows (none: Home).
 // hostd gives Claude Code's projects to a page on Home; a detached page (a
 // child workflow's) is never given another.
