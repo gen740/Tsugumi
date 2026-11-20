@@ -4,8 +4,8 @@ import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { ChatController } from '../src/model/chat'
-import { chatRoutes } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
+import { chatRoutes } from '../src/host/chat'
+import { CoreHost } from '../src/host/coreHost'
 
 // One server request shares all selected folders before registering them. Equal
 // names in different parent folders must keep separate resource identities.
@@ -18,7 +18,7 @@ CoreHost.prototype.project = async function () { throw new Error('Attach must no
 const restoreSettings = mockHostSettings()
 try {
     const routes = chatRoutes({
-    support: root, here: root, envs: { attachFolders: async (_p: string, values: string[]) => {
+    envs: { attachFolders: async (_p: string, values: string[]) => {
       for (const folder of values) if (!fs.existsSync(folder)) throw new Error('Folder not found')
       const unique = [...new Set(values)]
       shares.push(unique)

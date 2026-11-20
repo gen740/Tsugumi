@@ -3,8 +3,8 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { chatRoutes, type ChatContext } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
+import { chatRoutes, type ChatContext } from '../src/host/chat'
+import { CoreHost } from '../src/host/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
 import { projectAccessNeededNow } from '../shared/agentShared'
 import { create } from 'react-test-renderer'
@@ -18,7 +18,7 @@ for (const folder of folders) {
   fs.mkdirSync(folder)
   fs.writeFileSync(path.join(folder, 'tsugumi.json'), '{"name":"Collatz"}')
 }
-const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment,
+const original = { settings: CoreHost.prototype.getSettings,
   project: CoreHost.prototype.project }
 let model = 'gpt-6.1-sol'
 let busy = false
@@ -33,7 +33,6 @@ const conversations = new Map<string, string>()
 const snapshots = (id: string) => ({ conversation: { id, messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 } },
   busy, modelBinding: { providerId: 'chatgpt', model: 'gpt-6.1-terra', effort: 'high', fast: false }, event_seq: 0n })
 try {
-  CoreHost.prototype.provisionEnvironment = async () => {}
   CoreHost.prototype.project = async function(folder) { return folder === folders[0] ? 'project-a' : 'project-b' }
   CoreHost.prototype.getSettings = async function() {
     host = this
@@ -60,7 +59,7 @@ try {
       'agent.effort': '', 'agent.fastModel': '', 'agent.skillFolders': [], 'app.language': 'en' })
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
-  const routes = chatRoutes({ support: dir, here: dir, desktop: true, envs: {} as never, projectDir: String,
+  const routes = chatRoutes({ envs: {} as never, projectDir: String,
     broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
@@ -101,7 +100,6 @@ try {
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
   CoreHost.prototype.getSettings = original.settings
-  CoreHost.prototype.provisionEnvironment = original.environment
   CoreHost.prototype.project = original.project
   fs.rmSync(dir, { recursive: true, force: true })
 }

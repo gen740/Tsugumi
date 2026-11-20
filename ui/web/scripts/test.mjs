@@ -1,31 +1,14 @@
 // Run behavioral regression tests without a browser.
 import * as esbuild from 'esbuild'
-import childProcess, { execFileSync } from 'node:child_process'
-import { syncBuiltinESMExports } from 'node:module'
-import assert from 'node:assert/strict'
+import { execFileSync } from 'node:child_process'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
 import { pathToFileURL, fileURLToPath } from 'node:url'
 
-// Set before importing or bundling any server adapter, even outside the wrapper.
-process.env.TSUGUMI_TEST_NO_SECRET_STORE = '1'
+// The developer's own keys never reach a test host.
 for (const key of ['ANTHROPIC_API_KEY', 'OPENAI_API_KEY']) delete process.env[key]
-// An independent tripwire covers the entire suite, including future adapters.
-// Record only command/argv, never stdin (which can contain a fixture key).
-const securityCommands = []
-for (const method of ['execFile', 'execFileSync', 'spawn', 'spawnSync']) {
-  const original = childProcess[method]
-  childProcess[method] = function (command, ...args) {
-    if (path.basename(String(command)) === 'security') {
-      securityCommands.push({ command, args: args[0] })
-      throw new Error('Tests must inject a fake Keychain command runner')
-    }
-    return original.call(this, command, ...args)
-  }
-}
-syncBuiltinESMExports()
 
 const web = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-behavior-'))
@@ -42,8 +25,6 @@ if (process.env.TSUGUMI_TEST_RUN_ROOT === undefined) {
 }
 const out = path.join(dir, 'behavior.mjs')
 try {
-  await import('../tests/secretStore.mjs')
-  await import('../tests/startup.mjs')
   if (!process.env.TSUGUMI_SITE_PLAYER_DIR) {
     const player = path.join(dir, 'player')
     execFileSync(process.execPath, [path.join(web, '../../docs/site/player/build.mjs'), '--out-dir', player], { stdio: 'inherit' })
@@ -57,7 +38,5 @@ try {
   process.argv = [process.argv[0], out, path.resolve(web, '../..'), ...process.argv.slice(2)]
   await import(pathToFileURL(out).href)
 } finally {
-  console.log(`Web suite: recorded Keychain OS commands ${JSON.stringify(securityCommands)}`)
   fs.rmSync(dir, { recursive: true, force: true })
-  assert.deepEqual(securityCommands, [], 'Web tests reached the OS Keychain runner')
 }

@@ -233,7 +233,7 @@
     "AccessRevokeRequest",
     "AccessListRequest",
     "ConversationSummarizeRequest",
-    "ProjectOpenRequest"
+    "ShowRequest"
   ],
   "operationRequests": [
     {

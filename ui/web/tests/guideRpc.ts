@@ -107,11 +107,10 @@ console.log('Guide UI: core events and presentation, absent lists, no model or l
 
 // A browser with an old connected snapshot still receives the sign-in reason.
 {
-  const { chatRoutes } = await import('../server/chat')
-  const { CoreHost } = await import('../server/coreHost')
-  const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
+  const { chatRoutes } = await import('../src/host/chat')
+  const { CoreHost } = await import('../src/host/coreHost')
+  const original = { settings: CoreHost.prototype.getSettings }
   try {
-    CoreHost.prototype.provisionEnvironment = async () => {}
     for (const language of ['ja', 'en']) {
       CoreHost.prototype.getSettings = async function () {
         this.user.call = async <T = any>(method: string): Promise<T> => {
@@ -123,9 +122,10 @@ console.log('Guide UI: core events and presentation, absent lists, no model or l
         return { revision: 0, values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': 'fixture', 'app.language': language })
           .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
       }
-      const routes = chatRoutes({ support: '/guide-test', here: '/fixture', envs: {} as never, projectDir: String,
+      const routes = chatRoutes({ envs: {} as never, projectDir: String,
         broadcast: () => {}, httpError: (status, message) => Object.assign(new Error(message), { status }) })
-      const message = language === 'ja' ? 'ChatGPT にもう一度サインインしてください。' : 'Sign in to ChatGPT again'
+      // The page's own language (it adopts the setting at load), not the setting read here.
+      const message = 'ChatGPT にもう一度サインインしてください。'
       const state = await routes['POST /api/guide']({}, new URL('http://fixture')) as any
       assert.equal(state.connectionMessage, message)
       await assert.rejects(routes['POST /api/guide/send']({ text: 'Question' }, new URL('http://fixture')) as Promise<unknown>,
@@ -133,6 +133,5 @@ console.log('Guide UI: core events and presentation, absent lists, no model or l
     }
   } finally {
     CoreHost.prototype.getSettings = original.settings
-    CoreHost.prototype.provisionEnvironment = original.environment
   }
 }

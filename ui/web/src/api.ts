@@ -1,68 +1,113 @@
 import { modelErrorMessage } from './i18n'
-// Calls to the host server (files, processes, the Agent).
+import { pageRoutes, RouteError } from './host/routes'
+// Calls to hostd (files, processes, the Agent), assembled in the page.
+
+/** The page's host routes (src/host/routes.ts): Host and Agent RPC to hostd. */
+let routes: ReturnType<typeof pageRoutes> | undefined
+const local = () => (routes ??= pageRoutes((v) => {
+  emit(v)
+  if ((v as { type?: string })?.type === 'guideChanged') broadcastPages(v)
+}))
+
+/** What answers api() and feeds onServerEvent: the page's routes, or a
+ *  test double (tests/fetchTransport.ts). */
+export interface ApiTransport {
+  call(path: string, body: unknown, signal?: AbortSignal): Promise<unknown>
+  start(emit: (v: unknown) => void): void
+}
+let transport: ApiTransport | undefined
+export function useApiTransport(t: ApiTransport) { transport = t }
 
 export async function api<T = any>(path: string, body?: unknown, signal?: AbortSignal): Promise<T> {
-  const r = await fetch(path, body === undefined
-    ? { signal, headers: { 'x-tsugumi': '1' } }
-    : { signal, method: 'POST', headers: { 'content-type': 'application/json', 'x-tsugumi': '1' }, body: JSON.stringify(body) })
-  const v = await r.json().catch(() => ({ error: `HTTP ${r.status}` }))
-  if (!r.ok) throw new Error(modelErrorMessage(v.error ?? `HTTP ${r.status}`, v.code))
-  if (path === '/api/settings' && body !== undefined) {
-    for (const l of [...listeners]) l({ type: 'settingsChanged', provider: v.chatProvider })
+  let v: any
+  try {
+    v = transport ? await transport.call(path, body, signal) : await local().call(body === undefined ? 'GET' : 'POST', path, body, signal)
+  } catch (e) {
+    if (e instanceof RouteError || transport && e instanceof Error) throw new Error(modelErrorMessage(e.message, (e as { code?: string }).code))
+    throw e
   }
+  if (path === '/api/settings' && body !== undefined) emit({ type: 'settingsChanged', provider: v.chatProvider })
   return v as T
 }
 
 type Listener = (e: any) => void
 const listeners = new Set<Listener>()
-let source: EventSource | undefined
-/** This page (browser tab) to the host server. */
-let pageId: string | undefined
-const page = () => (pageId ??= crypto.randomUUID())
+function emit(v: unknown) {
+  for (const l of [...listeners]) l(v)
+}
+let started = false
 let reported: string | undefined
+const detached = () => new URLSearchParams(globalThis.location?.search).has('scope')
+const report = (project?: string) => (transport
+  ? transport.call('/api/page', { project, detached: detached() })
+  : local().core.user.call('HostPageRequest', { project, detached: detached() })).catch(() => {})
 
-/** Tells the host server what this page shows now (it picks a free page for Claude Code's projects). */
+/** Tells hostd what this page shows now (it picks a free page for Claude Code's projects). */
 export function reportPageProject(project?: string) {
   reported = project
-  void api('/api/page', { page: page(), project }).catch(() => {})
+  void report(project)
 }
 
-/** This page left a project. The last page releases chat observation and terminals. */
-export function closePageProject(project: string) {
+/** This page left a project. When no other page shows it, hostd tells the
+ *  pages (a child workflow's page closes with it). */
+export async function closePageProject(_project: string) {
   reported = undefined
-  return api('/api/project/close', { page: page(), path: project })
+  await report(undefined)
+  return { ok: true }
 }
 
-/** Events from the host server: environment states, terminals and Agent progress. */
+/** Claude Code asked for access: the page on its project opens the chat. */
+async function showExternalAccess() {
+  try {
+    const list = await local().core.user.call<{ requests: { id: string; state: string; conversation_id: string; project_path?: string; asked: string[]; groups?: unknown }[] }>('AccessListRequest')
+    for (const r of list.requests)
+      if (r.state === 'pending' && r.conversation_id.startsWith('external-') && r.project_path)
+        emit({ type: 'chat', project: r.project_path, session: 'external',
+          event: { kind: 'permission', id: r.id, asked: r.asked, groups: r.groups, from: 'Claude Code' } })
+  } catch { /* the next change reads it again */ }
+}
+
+/** The guide's progress is the same on every page of this origin. */
+let guideChannel: BroadcastChannel | undefined
+
+/** Events of hostd and this page: page routing, settings, the guide, Claude Code's access. */
 export function onServerEvent(fn: Listener): () => void {
   listeners.add(fn)
-  if (!source) {
-    const detached = new URLSearchParams(globalThis.location?.search).has('scope')
-    source = new EventSource(`/api/events?page=${page()}${detached ? '&detached' : ''}`)
-    // Events sent while the stream was down are lost: after it comes back,
-    // every listener reads its state again ({ type: 'reconnected' }).
+  if (!started && transport) {
+    started = true
+    transport.start(emit)
+  }
+  if (!started) {
+    started = true
+    const core = local().core
     let lost = false
-    source.onerror = () => {
-      lost = true
-    }
-    source.onopen = () => {
-      if (!lost) return
-      lost = false
-      // A new stream is a new page to the server.
-      reportPageProject(reported)
-      for (const l of [...listeners]) l({ type: 'reconnected' })
-    }
-    source.onmessage = (m) => {
-      let v: unknown
-      try {
-        v = JSON.parse(m.data)
-      } catch {
-        return
+    core.observeHost(({ type, value }) => {
+      if (type === 'PageShow') emit({ type: 'agentOpen', project: value.project })
+      else if (type === 'PageClosed') emit({ type: 'projectClosed', project: value.project })
+      else if (type === 'ConversationChanged' && String(value.conversation_id ?? '').startsWith('external-')) void showExternalAccess()
+      else if (type === 'Disconnected') {
+        lost = true
+        // Events sent while the socket was down are lost: once it is back,
+        // every listener reads its state again ({ type: 'reconnected' }).
+        const retry = () => void core.connectHost().catch(() => setTimeout(retry, 1000))
+        setTimeout(retry, 200)
+      } else if (type === 'Connected' && lost) {
+        lost = false
+        void report(reported)
       }
-      for (const l of [...listeners]) l(v)
+    })
+    if (typeof BroadcastChannel !== 'undefined') {
+      guideChannel = new BroadcastChannel('tsugumi.guide')
+      guideChannel.onmessage = (m) => emit(m.data)
     }
+    void core.connectHost().then(() => report(reported)).catch(() => {})
   }
   return () => listeners.delete(fn)
+}
+
+/** Sends an event to the other pages of this origin too (the guide). */
+export function broadcastPages(v: unknown) {
+  guideChannel?.postMessage(v)
 }
 
 export interface SetupStatus {

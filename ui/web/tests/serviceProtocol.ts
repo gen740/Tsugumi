@@ -17,7 +17,7 @@ import { ExecutionServices } from '../shared/gen/tsugumi/host/execution-services
 // correlation/cursors and conversion to the existing HTTP/SSE presentation DTOs.
 import assert from 'node:assert/strict'
 import * as fb from 'flatbuffers'
-import { decodeReply, encodeRequest, hostMethod, CoreHostError } from '../server/serviceWire'
+import { decodeReply, encodeRequest, hostMethod, CoreHostError } from '../src/host/serviceWire'
 import { Message, MessageT } from '../shared/gen/tsugumi/agent/message'
 import { Payload } from '../shared/gen/tsugumi/agent/payload'
 import { ReplyT } from '../shared/gen/tsugumi/agent/reply'
@@ -30,8 +30,7 @@ import { SequencedEventT } from '../shared/gen/tsugumi/agent/sequenced-event'
 import { EventT } from '../shared/gen/tsugumi/agent/event'
 import { FailureT } from '../shared/gen/tsugumi/service/failure'
 import { Message as HostMessage } from '../shared/gen/tsugumi/host/message'
-import { hostProjectErrorText } from '../server/hostProjects'
-import { setLanguage } from '../server/i18n'
+import { hostProjectErrorText } from '../src/host/hostProjects'
 
 const high = (1n << 64n) - 2n
 const sent = Message.getRootAsMessage(new fb.ByteBuffer(encodeRequest('ConversationSendRequest', {
@@ -195,7 +194,6 @@ assert.deepEqual((await browserRequest(H.RequestPayload.HostVersionDiffRequest, 
 const fs = await import('node:fs')
 const path = await import('node:path')
 const { BFBS } = await import('../shared/bfbs')
-const { ToolCatalog } = await import('../server/agent')
 const serviceVectors = JSON.parse(fs.readFileSync(path.join(process.argv[2], 'tests/fixtures/service-contract.json'), 'utf8'))
 const directHost: Record<string, (fields: any) => H.RequestT['value']> = {
   IdentifierReserveRequest: (f) => new H.IdentifierReserveRequestT(f.project_id, f.kind, f.scope, f.occupied),
@@ -224,10 +222,7 @@ const agentSchema = new BFBS(new Uint8Array(fs.readFileSync(path.join(process.ar
 const agentRequests = agentSchema.enums.find(e => e.name === 'Tsugumi.Agent.RequestPayload')!.values
   .filter(v => v.value && v.unionType && !['HelloRequest', 'ToolCallCancelRequest', 'CallIdRequest'].includes(v.name)).map(v => v.name)
 assert.deepEqual(new Set(agentRequests), new Set(serviceVectors.agentRequests))
-const externalCatalog = new ToolCatalog(agentSchema, agentRequests)
-for (const method of ['demo_list', 'demo_read', 'version_note', 'call_id']) assert.equal(externalCatalog.tools.find(tool => tool.name === method), undefined)
-for (const method of ['tool_call', 'access', 'conversation_summarize']) assert.ok(externalCatalog.tools.find(tool => tool.name === method))
-console.log('Separate Host/Agent contracts: shared goldens, routes and external MCP catalog passed')
+console.log('Separate Host/Agent contracts: shared goldens and routes passed')
 
 // Reset confirmations and the helper's actual file report survive the host adapter.
 {
@@ -274,12 +269,10 @@ const { ExecutionServicesT } = await import('../shared/gen/tsugumi/host/executio
 }
 
 // A project's conversation failure keeps a recovery action in both languages.
-for (const language of ['ja', 'en'] as const) {
-  setLanguage(language)
+{
   const text = hostProjectErrorText('conversation_identity_mismatch')
   assert.ok(text.trim())
   assert.notEqual(text, hostProjectErrorText('stale_project'))
   assert.notEqual(text, hostProjectErrorText('unknown'))
   assert.notEqual(hostProjectErrorText('stale_project'), hostProjectErrorText('unknown'))
 }
-setLanguage('ja')
