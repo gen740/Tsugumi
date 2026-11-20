@@ -11,7 +11,7 @@ Card names appear throughout the UI; exact identifiers remain in tool arguments 
 
 Install the command using the [installation guide](INSTALL.md#using-it-in-the-browser-the-tsugumi-command). `tsugumi-hostd` serves the Web UI whenever it runs with a built page: run `tsugumi web` to start the host when none runs and open a page, or `tsugumi web <project folder>` to show that project. The command prints the page's URL and returns; hostd, project environments and core conversations remain resident. Stop a project's environment explicitly when its execution should end.
 
-Showing is one hostd request (`ShowRequest` in `protocol/agent.fbs`) for the user and for Agents alike: a page that shows the project, or one on Home, is told to; when no page is free, hostd opens the Web UI with the system's opener (`open`, `xdg-open`, or the Windows browser in WSL). It never launches the desktop app. The default port is 8780; an occupied port is replaced by a free one. Use `tsugumi update` to install the latest stable distribution; a running host keeps its version until it stops.
+Showing is one hostd request (`ShowRequest` in `protocol/agent.fbs`) for the user and for Agents alike: a page that shows the project (a browser tab or a window of the Mac app, which then comes forward), or one on Home, is told to; when no page is free, hostd opens the Web UI with the system's opener (`open`, `xdg-open`, or the Windows browser in WSL). It never launches the desktop app: the app's windows are pages only while you have it open. The app carries the built page, so a hostd it starts serves the Web UI too. The default port is 8780; an occupied port is replaced by a free one. Use `tsugumi update` to install the latest stable distribution; a running host keeps its version until it stops.
 
 Register a Linux worker under **Settings → Execution service** to run individual Code Cards remotely. [Remote execution](RemoteExecution.md)
 
@@ -94,7 +94,7 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
 
-hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`), so a project the user or Claude Code shows goes to a tab showing it or to a Home tab, and a tab showing another project is not switched.
+hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`; the Mac app's main windows share one connection and each names its page), so a project the user or Claude Code shows goes to a tab or window showing it or to one on Home, and one showing another project is not switched.
 
 ## Shortcuts
 
