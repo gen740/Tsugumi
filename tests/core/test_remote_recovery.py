@@ -10,6 +10,7 @@ import sqlite3
 import struct
 import tempfile
 import threading
+import time
 from pathlib import Path
 
 import flatbuffers
@@ -79,6 +80,11 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.stalls_expected = 1
         self.stall_lock = threading.Lock()
         self.resume = threading.Event()
+        # A running job's JSONL log, served by status requests from the
+        # core's cursor; hidden ones appear only once the job has stopped.
+        self.live_logs = {}
+        self.hidden_live_logs = False
+        self.log_offsets = []
 
     def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
         def blob(data):
@@ -123,7 +129,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=9)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=10)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -137,7 +143,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
-            if caps.workerContract != 9 or not caps.maxJobs:
+            if caps.workerContract != 10 or not caps.maxJobs:
                 return R.failure(R.ErrorCode.Rejected, "invalid capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance
@@ -188,10 +194,19 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         else:
             assert kind == R.RequestBody.StatusRequest
         state = self.receipts.get(job, {"state": "missing"})
-        return R.reply(R.ReplyBody.JobStatus, R.JobStatusT(
+        status = R.JobStatusT(
             state=getattr(R.JobState, state["state"].capitalize()), fingerprint=state.get("fingerprint"),
             resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic"),
-            logTruncated=state.get("log_truncated", False)))
+            logTruncated=state.get("log_truncated", False))
+        log = self.live_logs.get(job, b"")
+        # Status and Cancel replies carry a slice of the log from the cursor.
+        if body.logLimit and log and (
+                not self.hidden_live_logs or state["state"] in {"succeeded", "failed", "cancelled"}):
+            self.log_offsets.append(body.logOffset)
+            status.logOffset = body.logOffset
+            status.logSize = len(log)
+            status.log = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
+        return R.reply(R.ReplyBody.JobStatus, status)
 
 
 
@@ -732,3 +747,67 @@ def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_f
     # make the core fail a call which the worker has not yet completed.
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
+
+
+def log_entries(*entries):
+    return b"".join((json.dumps({"stream": stream, "text": value}) + "\n").encode() for stream, value in entries)
+
+
+def recorded_log(client, run_id, stream):
+    return text(client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                            stream=stream).text) or ""
+
+
+def wait_recorded_log(client, run_id, stream, expected, timeout=10):
+    deadline = time.monotonic() + timeout
+    while (recorded := recorded_log(client, run_id, stream)) != expected:
+        assert time.monotonic() < deadline, f"recorded {recorded!r}, expected {expected!r}"
+        time.sleep(0.05)
+
+
+def test_running_remote_log_arrives_once_across_reconnects(running_job):
+    """Logs arrive while the job runs; the result's log only adds what is new."""
+    gateway, _, client, run_id, job_id = running_job
+    first = log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
+    gateway.live_logs[job_id] = first
+    wait_recorded_log(client, run_id, LogStream.standard_output, "first line\n")
+    wait_recorded_log(client, run_id, LogStream.build, "building\n")
+    assert client.call("RunStatusRequest", runId=run_id).state == RunState.running
+
+    gateway.online = False
+    wait_for_state(client, run_id, RemoteExecutionState.disconnected)
+    second = first + log_entries((LogStream.standard_output, "after reconnect\n"))
+    gateway.live_logs[job_id] = second
+    gateway.online = True
+    wait_recorded_log(client, run_id, LogStream.standard_output, "first line\nafter reconnect\n")
+
+    complete = second + log_entries((LogStream.standard_error, "only in the result\n"))
+    gateway.finish(job_id, logs=complete)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    assert recorded_log(client, run_id, LogStream.standard_output) == "first line\nafter reconnect\n"
+    assert recorded_log(client, run_id, LogStream.build) == "building\n"
+    assert recorded_log(client, run_id, LogStream.standard_error) == "only in the result\n"
+    # The cursor only moves forward, in bounded slices, and never restarts.
+    assert gateway.log_offsets == sorted(gateway.log_offsets)
+    assert gateway.log_offsets[-1] <= len(complete)
+    assert gateway.submit_count == 1
+
+
+def test_stopped_remote_job_keeps_its_collected_log(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    gateway.hidden_live_logs = True
+    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "before cancel\n"))
+    assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
+    assert wait_run(client, run_id).state == RunState.cancelled
+    assert recorded_log(client, run_id, LogStream.standard_output) == "before cancel\n"
+    assert gateway.download_count == 0
+
+
+def test_remote_result_must_extend_the_recorded_log(running_job):
+    gateway, _, client, run_id, job_id = running_job
+    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "recorded\n"))
+    wait_recorded_log(client, run_id, LogStream.standard_output, "recorded\n")
+    gateway.finish(job_id, logs=log_entries((LogStream.standard_output, "replaced\n")))
+    assert wait_run(client, run_id).state == RunState.failed
+    assert recorded_log(client, run_id, LogStream.standard_output) == "recorded\n"
+    assert not client.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs

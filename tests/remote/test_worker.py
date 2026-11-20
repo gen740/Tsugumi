@@ -410,12 +410,23 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     gate = tmp_path / "hold"
     os.mkfifo(gate)
     launcher = tools / "unshare"
+    entry = json.dumps({"stream": LogStream.standard_output, "text": "live entry\n"}).encode()
+    later = json.dumps({"stream": LogStream.standard_error, "text": "after restart\n"}).encode() + b"\n"
+
+    def log_slice(job, offset, limit=1 << 20):
+        reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
+        assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.log or b"")
+
+    # Like the invocation, append a flushed JSONL entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
+                        'for arg do case "$arg" in */work) mkdir -p "$arg/result" && '
+                        'printf \'%s\\n\' "$TEST_ENTRY" >> "$arg/result/logs.jsonl";; esac; done\n'
                         'echo partial-log\necho $$ > "$TEST_CHILD_PID"\nread -r line < "$TEST_GATE"\n')
     launcher.chmod(0o755)
     peer = Worker(tmp_path, binary, env={**os.environ,
         "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate)})
+        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": entry.decode()})
     first, second = "7" * 64, "8" * 64
     directory = peer.state / "projects" / peer.scope / "jobs" / first
 
@@ -435,7 +446,16 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         assert accepted.body.state == R.JobState.Queued
         pid = process_file(peer.process, child_pid, child)
         assert pid is not None and Path(f"/proc/{pid}").exists()
+        # The running job's log arrives in slices bounded by the worker.
+        assert log_slice(first, 0, 5) == (0, len(entry) + 1, entry[:5])
+        assert log_slice(first, 5) == (5, len(entry) + 1, entry[5:] + b"\n")
         peer.restart()
+        # A cursor survives the listener restart and returns only new bytes.
+        cursor = len(entry) + 1
+        assert log_slice(first, cursor) == (cursor, cursor, b"")
+        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+            log.write(later)
+        assert log_slice(first, cursor) == (cursor, cursor + len(later), later)
         acknowledged = peer.call(R.RequestBody.CancelRequest,
                                  R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
         assert acknowledged.body.state in (R.JobState.Cancelling, R.JobState.Cancelled)
@@ -446,8 +466,15 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         blob = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=first)
         assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+        # Cancellation keeps the log until release, for the same core life only.
+        assert log_slice(first, 0) == (0, cursor + len(later), entry + b"\n" + later)
+        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+            log.write(b"x" * (300 << 10))
+        assert len(log_slice(first, 0)[2]) == 256 << 10
         # A new life cannot collect the old result, but can use the freed slot.
         peer.core_life_id = "f" * 64
+        other = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=first)
+        assert other.bodyType == R.ReplyBody.Failure
         peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
         digest = peer.upload(second, b"next input")
         spec = peer.spec(digest)

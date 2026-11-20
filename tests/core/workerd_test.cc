@@ -217,8 +217,31 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(result_job, p, core);
   j.submit(result_job, bytes, *parse_spec(bytes), core);
   j.claim(result_job, 100, 1, "boot");
+  expect(j.log(result_job, 0, kLogChunkBytes, core) ==
+             std::pair<uint64_t, std::string>{},
+         "a job without a log reported bytes");
   const auto output = j.job_path(result_job) / "work/result";
   private_directory(output);
+  // A running job's log is read from the core's cursor, in bounded slices,
+  // by its own core life only.
+  fs::write_atomic(output / "logs.jsonl", "running entry\npart", 0600);
+  expect(j.log(result_job, 0, 8, core) ==
+             std::pair<uint64_t, std::string>{18, "running "},
+         "log slice from the start");
+  expect(j.log(result_job, 14, kLogChunkBytes, core).second == "part",
+         "log slice from a cursor");
+  expect(j.log(result_job, 18, kLogChunkBytes, core) ==
+             std::pair<uint64_t, std::string>{18, ""},
+         "a cursor at the end returned bytes");
+  expect(j.log(result_job, 40, kLogChunkBytes, core).second.empty(),
+         "a cursor past the end returned bytes");
+  rejected([&] { j.log(result_job, 0, kLogChunkBytes + 1, core); });
+  rejected([&] { j.log(result_job, 0, 8, std::string(64, 'b')); });
+  stdfs::remove(output / "logs.jsonl");
+  stdfs::create_symlink(j.job_path(result_job) / "spec.fb",
+                        output / "logs.jsonl");
+  rejected([&] { j.log(result_job, 0, 8, core); });
+  stdfs::remove(output / "logs.jsonl");
   flatbuffers::FlatBufferBuilder worker;
   namespace W = Tsugumi::Worker;
   const auto values =
