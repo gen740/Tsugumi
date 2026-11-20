@@ -5,7 +5,7 @@ import os from 'node:os'
 import path from 'node:path'
 import { Thoughts, type ThoughtReply } from '../src/model/thoughts'
 import { chatRoutes } from '../server/chat'
-import { CoreHost, RemoteAgent } from '../server/coreHost'
+import { CoreHost } from '../server/coreHost'
 import { ProviderKeys } from '../server/providerKeys'
 
 const page = globalThis as Record<string, unknown>
@@ -149,18 +149,20 @@ assert.equal(forwarded.provider.credential_id, undefined)
 // Page -> host route -> the same core adapter. The route chooses the speech
 // connection already used by the guide and never returns provider credentials.
 const root = fs.mkdtempSync(path.join(os.tmpdir(), 'tsugumi-thoughts-'))
-const original = { open: RemoteAgent.prototype.open, observe: RemoteAgent.prototype.observe, refresh: RemoteAgent.prototype.refresh }
+const restoreSettings = mockHostSettings()
+const getSettings = CoreHost.prototype.getSettings
+const conversation = CoreHost.prototype.conversation
 try {
-  RemoteAgent.prototype.open = async function () {
+  CoreHost.prototype.conversation = async () => ({} as never)
+  CoreHost.prototype.getSettings = async function (profile) {
     // Keep this adapter test independent of the operator's environment and Keychain.
-    Object.assign(this.host, { keys: new ProviderKeys((method, fields) => this.host.user.call(method, fields),
-      this.host.keyProfile, 'darwin', async (command, args) => {
+    Object.assign(this, { keys: new ProviderKeys((method, fields) => this.user.call(method, fields),
+      this.keyProfile, 'darwin', async (command, args) => {
         assert.equal(command, '/usr/bin/security')
         assert.equal(args[0], 'find-generic-password')
         return { code: 1, out: '' }
       }, { ANTHROPIC_API_KEY: 'test-key' }) })
-    this.host.user.call = async (method, fields) => {
-      if (method === 'AccessListRequest') return { requests: [] } as any
+    this.user.call = async (method, fields) => {
       if (method === 'ProviderSetRequest') {
         assert.equal(fields.ephemeral, true)
         if (fields.source === 'env') assert.equal(fields.provider.api_key, 'test-key')
@@ -172,21 +174,18 @@ try {
       forwarded = fields
       return reply('reading') as any
     }
-    return this
+    return getSettings.call(this, profile)
   }
-  RemoteAgent.prototype.observe = () => {}
-  RemoteAgent.prototype.refresh = async () => {}
-  const restoreSettings = mockHostSettings()
-    const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
+  const routes = chatRoutes({ support: root, here: root, envs: {}, projectDir: (p: unknown) => String(p),
   } as any)
   const result = await routes['POST /api/chat/thoughts']({ path: root, session: 'web-thoughts' }, new URL('http://localhost'))
-  restoreSettings()
   assert.deepEqual(result, reply('reading'))
   assert.equal(forwarded.conversation_id, 'web-thoughts')
   assert.equal(forwarded.provider.model, 'host-summary-model')
   assert.equal(JSON.stringify(result).includes('test-key'), false)
 } finally {
-  Object.assign(RemoteAgent.prototype, original)
+  restoreSettings()
+  CoreHost.prototype.conversation = conversation
   fs.rmSync(root, { recursive: true, force: true })
 }
 

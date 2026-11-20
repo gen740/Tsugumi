@@ -1,11 +1,5 @@
-import { ProjectTrustRequestT } from '../shared/gen/tsugumi/host/project-trust-request'
-import { FileFormatRequestT } from '../shared/gen/tsugumi/host/file-format-request'
-import { HostVersionGraphRequestT } from '../shared/gen/tsugumi/host/host-version-graph-request'
-import { HostVersionDiffRequestT } from '../shared/gen/tsugumi/host/host-version-diff-request'
-import { PermissionKindsRequestT } from '../shared/gen/tsugumi/host/permission-kinds-request'
 import * as H from '../shared/gen/tsugumi/host'
 import { ModelSelectionRequestT } from '../shared/gen/tsugumi/host/model-selection-request'
-import { VersionCommentsRequestT } from '../shared/gen/tsugumi/host/version-comments-request'
 import { RuntimeAction } from '../shared/gen/tsugumi/host/runtime-action'
 import { AttachFoldersRequestT } from '../shared/gen/tsugumi/host/attach-folders-request'
 import { EnvironmentRequestT } from '../shared/gen/tsugumi/host/environment-request'
@@ -20,9 +14,6 @@ import { ProviderStatusRequestT as HProviderStatusRequest } from '../shared/gen/
 import { SignInBeginRequestT as HSignInBeginRequest } from '../shared/gen/tsugumi/host/sign-in-begin-request'
 import { SignInActionRequestT as HSignInActionRequest } from '../shared/gen/tsugumi/host/sign-in-action-request'
 import { SignInStatusRequestT as HSignInStatusRequest } from '../shared/gen/tsugumi/host/sign-in-status-request'
-import { ExecutionServicesRequestT } from '../shared/gen/tsugumi/host/execution-services-request'
-import { ExecutionServicePutRequestT } from '../shared/gen/tsugumi/host/execution-service-put-request'
-import { ExecutionServiceRemoveRequestT } from '../shared/gen/tsugumi/host/execution-service-remove-request'
 import { ExecutionProjectAuthorizeRequestT } from '../shared/gen/tsugumi/host/execution-project-authorize-request'
 import { ExecutionProjectRevokeRequestT } from '../shared/gen/tsugumi/host/execution-project-revoke-request'
 import { DemoListRequestT as HDemoListRequest } from '../shared/gen/tsugumi/host/demo-list-request'
@@ -107,12 +98,7 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'DemoListRequest': return new HDemoListRequest()
     case 'DemoReadRequest': return new HDemoReadRequest(v.path)
     case 'VersionNoteRequest': return new HVersionNoteRequest(v.project_id, v.commit, v.profile, v.language, v.anthropic_key_profile, v.openai_key_profile)
-    case 'FileFormatRequest': return new FileFormatRequestT(v.path, v.text)
-    case 'HostVersionGraphRequest': return new HostVersionGraphRequestT(v.project, v.language, v.limit ?? 500)
-    case 'HostVersionDiffRequest': return new HostVersionDiffRequestT(v.project, v.commit, v.from_commit)
-    case 'PermissionKindsRequest': return new PermissionKindsRequestT(v.language)
     case 'ModelSelectionRequest': return new ModelSelectionRequestT(v.profile, v.purpose)
-    case 'VersionCommentsRequest': return new VersionCommentsRequestT(v.project, v.commit)
     case 'GuideGetRequest': return new GuideGetRequestT(v.session_id, v.language)
     case 'GuideAdvanceRequest': {
       const e = v.event ?? {}
@@ -122,8 +108,6 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'AttachFoldersRequest': return new AttachFoldersRequestT(v.project, v.folders ?? [])
     case 'EnvironmentRequest': return new EnvironmentRequestT(v.project, enumValue(EnvironmentAction, v.action), v.origins ?? [], v.folders ?? [])
     case 'HostRuntimeRequest': return new HostRuntimeRequestT(enumValue(RuntimeAction, v.action), v.project_id, v.project, v.command)
-    case 'ProjectPermissionsRequest': return new H.ProjectPermissionsRequestT()
-    case 'ProjectPermissionSetRequest': return new H.ProjectPermissionSetRequestT(v.project_id, v.resource_id, enumValue(Access, v.access), v.allow === true)
     case 'SettingsGetRequest': return new HSettingsGetRequest(v.profile)
     case 'SettingsUpdateRequest': return new HSettingsUpdateRequest(v.profile, BigInt(v.revision ?? 0), (v.changes ?? []).map((s: any) => new SettingT(s.key, s.value_json)), v.client)
     case 'ProviderSetRequest': return new HProviderSetRequest(v.profile, v.id, providerInput(v.provider), v.remove, v.ephemeral, v.source)
@@ -131,19 +115,14 @@ function request(method: string, v: any, host: boolean): fb.IGeneratedObject {
     case 'SignInBeginRequest': return new HSignInBeginRequest(v.profile, v.client_id, v.consent, v.issuer, v.resource)
     case 'SignInActionRequest': return new HSignInActionRequest(v.profile, v.attempt_id, v.action, v.client_id)
     case 'SignInStatusRequest': return new HSignInStatusRequest(v.profile, v.attempt_id)
-    case 'ExecutionServicesRequest': return new ExecutionServicesRequestT()
-    case 'ExecutionServicePutRequest': return new ExecutionServicePutRequestT(v.id, v.name, v.endpoint, v.workerPublicKey, v.verify, BigInt(v.grade ?? '1'))
-    case 'ExecutionServiceRemoveRequest': return new ExecutionServiceRemoveRequestT(v.id)
     case 'ExecutionProjectAuthorizeRequest': return new ExecutionProjectAuthorizeRequestT(v.project_id, v.path, v.control_dir, v.guest)
     case 'ExecutionProjectRevokeRequest': return new ExecutionProjectRevokeRequestT(v.project_id)
 
-    case 'IdentifierReserveRequest': return new H.IdentifierReserveRequestT(v.project_id, v.kind, v.scope, v.occupied)
     case 'HostRecentListRequest': return new HHostRecentListRequest()
     case 'HostProjectDefaultsRequest': return new HHostProjectDefaultsRequest()
     case 'HelloRequest': return new HHelloRequest(v.token)
     case 'RegisterProjectRequest': return new HRegisterProjectRequest(v.project_id, v.endpoint, v.token, v.title, v.path)
     case 'RegisterFolderRequest': return new HRegisterFolderRequest(v.project_id, v.resource_id, v.folder, v.title)
-    case 'ProjectTrustRequest': return new ProjectTrustRequestT(v.path, v.decision ?? 0)
     case 'SkillsListRequest': return new HSkillsListRequest(v.project_path, v.folders, v.conversation_id)
     case 'ModelsListRequest': return new HModelsListRequest(v.provider_id, v.refresh, v.profile, v.account_profile, v.key_profile)
     case 'HostProjectInfoRequest': return new HHostProjectInfoRequest(v.path)
@@ -204,7 +183,7 @@ function view(value: any): any {
   }
   if (typeof value !== 'object') return value
   const out: Record<string, any> = {}
-  const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id',
+  const names: Record<string, string> = { projectId: 'project_id', resourceId: 'resource_id', conversationId: 'conversation_id', projectPath: 'project_path',
     trustedFolder: 'trusted_folder', sourceFolder: 'source_folder', attachmentFolder: 'attachment_folder', eventSeq: 'event_seq', nextSeq: 'next_seq', callId: 'call_id', contextSummary: 'contextSummary',
     inputJson: 'input', argumentsJson: 'arguments', resultJson: 'result', inputSchemaJson: 'inputSchema',
     contentJson: 'content', providerContentJson: 'providerContent', providerApi: 'providerApi', mediaType: 'media_type', clientId: 'client_id', attemptId: 'attempt_id', valueJson: 'value_json', capabilityFile: 'capability_file' }

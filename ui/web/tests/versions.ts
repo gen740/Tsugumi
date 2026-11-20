@@ -1,5 +1,6 @@
 // A version's minimap fits its Cards and draws each with its canvas shape.
 import assert from 'node:assert/strict'
+import * as H from '../shared/gen/tsugumi/host'
 
 const page = globalThis as Record<string, unknown>
 page.document = { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -115,7 +116,6 @@ globalThis.fetch = async (url, init) => {
     if (body?.versionNoteMode) mode = body.versionNoteMode
     return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
   }
-  if (path === '/api/versions/comments') return new Response(JSON.stringify({ comments: [{ card: 'plan', text: 'Ask', change: 'resolved', by: 'agent', cards: ['plan'] }] }))
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
 }
@@ -125,7 +125,13 @@ try {
   Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost: { ...layoutHost, versionCanvas: async (input) => {
     assert.deepEqual(input, rawCanvas)
     return hostCanvas
-  } }, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
+  } }, versionCanvases: new Map(), dir: '/project', projectId: 'project', projectHost: {
+    async comments(project: string, commit: string) {
+      assert.equal(project, 'project')
+      assert.equal(commit, 'version')
+      return [new H.VersionCommentT('plan', 'Ask', 'resolved', null, 'agent', ['plan'])]
+    },
+  }, versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
   await session.loadVersionNoteMode()
   assert.equal(session.versionNoteMode, 'mechanical')
   await session.loadVersionCanvas('version')

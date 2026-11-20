@@ -470,15 +470,19 @@ struct Service::State {
   auto Event(const std::string& id, const std::string& input) -> void {
     const auto raw = Scrub(input);
     std::lock_guard lock(mutex);
-    if (turns->running.contains(id)) {
-      const auto event = json::Object(raw);
-      const auto kind = json::Text(event, "kind");
+    const auto event = json::Object(raw);
+    const auto kind = json::Text(event, "kind");
+    if (turns->running.contains(id))
       turns->ThoughtsFor(id)->Note(
           kind == "helper"
               ? json::Text(json::Object(json::Get(event, "event")), "kind")
               : kind);
-    }
     conversations->RecordEvent(id, raw);
+    H::ConversationChangedT notification;
+    notification.conversation_id = id;
+    if (kind == "permissionAnswered")
+      notification.answered_permission = json::Text(event, "id");
+    events->Publish(wire::HostEvent(std::move(notification)));
   }
 
   auto Handle(const RequestIn& request, bool human) -> std::string {
@@ -695,10 +699,19 @@ struct Service::State {
       lock.unlock();
       auto result = environments->Terminal(*input);
       lock.lock();
-      if (input->action == H::TerminalAction::Open)
+      if (input->action == H::TerminalAction::Open) {
+        if (!events->host_connections.contains(request.conn)) {
+          lock.unlock();
+          H::HostTerminalRequestT close;
+          close.action = H::TerminalAction::Close;
+          close.session = result.session;
+          environments->Terminal(close);
+          throw Cancelled();
+        }
         events->terminals[result.session] = request.conn;
-      if (input->action == H::TerminalAction::Close)
+      } else if (input->action == H::TerminalAction::Close) {
         events->terminals.erase(input->session);
+      }
       return wire::HostReply(request.request_id, std::move(result));
     }
     if (host::ExecutionBroker::Handles(r->value_type())) {

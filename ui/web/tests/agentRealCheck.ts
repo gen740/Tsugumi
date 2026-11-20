@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { chatRoutes, cancelChats, type ChatContext } from '../server/chat'
+import { chatRoutes, type ChatContext } from '../server/chat'
 import { CoreHost } from '../server/coreHost'
 import { toolStep, PermissionRequests } from '../src/ui/chat'
 import { projectAccessNeededNow } from '../shared/agentShared'
@@ -19,7 +19,7 @@ for (const folder of folders) {
   fs.writeFileSync(path.join(folder, 'tsugumi.json'), '{"name":"Collatz"}')
 }
 const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment,
-  project: CoreHost.prototype.project, folder: CoreHost.prototype.projectFolder }
+  project: CoreHost.prototype.project }
 let model = 'gpt-6.1-sol'
 let busy = false
 const asked = 'project_access ' + JSON.stringify({ title: 'Collatz', path: folders[0], access: 'Read', reason: 'Read project content', needed_now: true })
@@ -35,7 +35,6 @@ const snapshots = (id: string) => ({ conversation: { id, messages: [], archive: 
 try {
   CoreHost.prototype.provisionEnvironment = async () => {}
   CoreHost.prototype.project = async function(folder) { return folder === folders[0] ? 'project-a' : 'project-b' }
-  CoreHost.prototype.projectFolder = () => undefined
   CoreHost.prototype.getSettings = async function() {
     host = this
     this.user.call = async <T>(method: string, fields: any = {}): Promise<T> => {
@@ -52,8 +51,9 @@ try {
         return snapshots(fields.conversation_id) as T
       }
       if (method === 'ConversationGetRequest') return snapshots(fields.conversation_id) as T
-      if (method === 'EventsRequest') return { events: [], next_seq: 0n, busy } as T
-      if (method === 'AccessListRequest') return { requests: (!fields.conversation_id || fields.conversation_id === 'a') ? [{ id: 'pending-a', state: 'pending', asked: pendingAsked }] : [] } as T
+      if (method === 'AccessListRequest') return { requests: [{
+        id: 'pending-a', state: 'pending', conversation_id: 'a', project_path: folders[0], asked: pendingAsked,
+      }] } as T
       throw new Error(`Unexpected call: ${method}`)
     }
     return { revision: 1, values: Object.entries({ 'agent.provider': 'chatgpt', 'agent.model.chatgpt': model,
@@ -61,7 +61,7 @@ try {
       .map(([key, value]) => ({ key, value_json: JSON.stringify(value) })) }
   }
   const routes = chatRoutes({ support: dir, here: dir, desktop: true, envs: {} as never, projectDir: String,
-    listeners: () => 0, broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
+    broadcast(event) { events.push(event) }, httpError: (_status, message) => new Error(message) } as ChatContext)
   const call = async (route: string, fields: any) => routes[`POST /api/chat/${route}`](fields, new URL('http://fixture')) as Promise<any>
   assert.deepEqual(await call('sessions', { path: folders[0] }), [{ id: 'a', title: 'Only A' }])
   host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 2 } })
@@ -73,19 +73,21 @@ try {
   await call('search', { path: folders[1], text: 'Only A' })
   assert.equal(calls.find(c => c.method === 'ConversationSearchRequest')?.fields.project_id, 'project-b')
   const a = await call('conversation', { path: folders[0], session: 'a' })
-  assert.deepEqual(a.permission.asked, [asked, write, run])
-  assert.deepEqual(a.permission.asked.filter(projectAccessNeededNow), [asked])
+  assert.deepEqual(a.permissions[0].asked, [asked, write, run])
+  assert.deepEqual(a.permissions[0].asked.filter(projectAccessNeededNow), [asked])
+  assert.equal(a.eventSeq, '0')
+  assert.ok(!calls.some(c => c.method === 'ConversationActionRequest' || c.method === 'ConversationSendRequest'))
   await call('permission', { id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
     { request_id: 'pending-a', allow: true, selected: [Access.Read, Access.Write] })
   pendingAsked = [run.replace('"needed_now":false', '"needed_now":true')]
   const later = await call('conversation', { path: folders[0], session: 'a' })
-  assert.deepEqual(later.permission.asked, pendingAsked)
+  assert.deepEqual(later.permissions[0].asked, pendingAsked)
   await call('permission', { id: 'pending-a', allow: false, selected: [Access.Run] })
   assert.deepEqual(calls.filter(c => c.method === 'AccessResolveRequest').at(-1)?.fields,
     { request_id: 'pending-a', allow: false, selected: [Access.Run] })
   const b = await call('conversation', { path: folders[1], session: 'b' })
-  assert.equal(b.permission, null)
+  assert.deepEqual(b.permissions, [])
   assert.equal(b.provider.model, 'gpt-6.1-sol')
   model = 'gpt-6.1-terra'
   host!.event({ type: 'SettingsChanged', value: { profile: 'desktop', revision: 3 } })
@@ -98,11 +100,9 @@ try {
   assert.equal((await call('conversation', { path: folders[1], session: 'b' })).provider.model, 'gpt-6.1-terra')
   await assert.rejects(call('conversation', { path: folders[1], session: 'a' }), /conflict/)
 } finally {
-  for (const folder of folders) cancelChats(folder)
   CoreHost.prototype.getSettings = original.settings
   CoreHost.prototype.provisionEnvironment = original.environment
   CoreHost.prototype.project = original.project
-  CoreHost.prototype.projectFolder = original.folder
   fs.rmSync(dir, { recursive: true, force: true })
 }
 

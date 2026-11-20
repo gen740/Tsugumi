@@ -1,9 +1,12 @@
+import { ConversationEvents } from '../wire/agentEvents'
+import { onHostEvent } from '../wire/host'
+import * as H from '../../shared/gen/tsugumi/host'
 import type { Access } from '../../shared/gen/tsugumi/service/access'
 // The chat of one project: several conversations (sessions), each an Agent
 // run by the host server with its own persisted transcript.
 import { api, onServerEvent } from '../api'
 import type { ChatRow, AccessGroup } from '../../shared/chatPresentation'
-import { uuid } from '../wire/rpc'
+import { s, uuid } from '../wire/rpc'
 import type { AppModel } from './app'
 import { guide, GuideAction, type GuideShow, parseShow } from './guide'
 import { agentAppearance } from './agentAppearance'
@@ -130,9 +133,15 @@ export class ChatController extends Observable {
   get permission() { return this.permissions?.[0] }
   private enqueuePermission(p: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }) {
     this.permissions ??= []
-    if (!this.permissions.some(x => x.id === p.id)) this.permissions.push(p)
+    if (!this.permissions.some(x => x.id === p.id)) {
+      this.permissionRevision++
+      this.permissions.push(p)
+    }
   }
-  private removePermission(id: string) { this.permissions = (this.permissions ?? []).filter(p => p.id !== id) }
+  private removePermission(id: string) {
+    this.permissionRevision++
+    this.permissions = (this.permissions ?? []).filter(p => p.id !== id)
+  }
   loadError?: string
   status?: string
   failed = false
@@ -156,6 +165,9 @@ export class ChatController extends Observable {
   provider: ProviderInfo = { name: 'Anthropic', model: 'claude-sonnet-5-5', api: 'anthropicMessages', remote: true, plan: false, modelNames: {} }
 
   private readonly offEvents: () => void
+  private readonly offHost: () => void
+  private readonly events = new ConversationEvents((event) => this.handle(event), (error) => this.fail(error))
+  private permissionRevision = 0
   private readonly offSession: () => void
   private providerRefresh = 0
   readonly thoughts: Thoughts
@@ -169,9 +181,7 @@ export class ChatController extends Observable {
     this.available = app.status?.chatAvailable ?? true
     if (!this.available) this.status = app.status?.chatError ?? L('RPC スキーマを読み込めないため、チャットは使えません。通常の操作はすべて UI から行えます。')
     this.offEvents = onServerEvent((e) => {
-      if (e.type === 'chat' && e.project === session.dir && e.session === this.currentId) this.handle(e.event)
-      // Claude Code's saves (the plugin) are approved here, whichever conversation is open.
-      else if (e.type === 'chat' && e.project === session.dir && e.session === 'external' && (e.event.kind === 'permission' || e.event.kind === 'permissionAnswered')) this.handle(e.event)
+      if (e.type === 'chat' && e.project === session.dir && e.session === 'external') this.handle(e.event)
       // Progress sent while the stream was down: the conversation is read again.
       if (e.type === 'reconnected' && this.currentId) void this.reread(this.currentId)
       if (e.type === 'settingsChanged' && this.currentId) {
@@ -183,6 +193,11 @@ export class ChatController extends Observable {
           this.changed()
         } else void this.refreshProvider()
       }
+    })
+    this.offHost = onHostEvent((event) => {
+      if (event.valueType !== H.EventPayload.ConversationChanged) return
+      const id = s((event.value as H.ConversationChangedT).answeredPermission)
+      if (id && this.permissions.some(p => p.id === id)) this.handle({ kind: 'permissionAnswered', id })
     })
     let run = session.currentRunId
     this.offSession = session.subscribe(() => {
@@ -204,6 +219,8 @@ export class ChatController extends Observable {
     this.reload++
     this.thoughts.close()
     this.offEvents()
+    this.offHost()
+    this.events.close()
     this.offSession()
     this.permissions = []
     this.team.endAll('stopped', Date.now() / 1000)
@@ -233,9 +250,9 @@ export class ChatController extends Observable {
 
   /** Reads the open conversation again (its turn keeps running on the server). */
   private async reread(id: string) {
-    const request = ++this.reload, turn = this.turn, revision = this.contentRevision
+    const request = ++this.reload, turn = this.turn, revision = this.contentRevision, permissions = this.permissionRevision
     try {
-      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; permission: { id: string; asked: string[]; groups?: AccessGroup[] } | null }>(
+      const r = await api<{ conversation: Conversation; busy: boolean; resumable?: boolean; interruptedOperation?: InterruptedOperation; continuable?: boolean; provider: ProviderInfo; eventSeq: string; permissions: { id: string; asked: string[]; groups?: AccessGroup[]; from?: string }[] }>(
         '/api/chat/conversation', { path: this.session.dir, session: id, folders: this.folders })
       if (this.currentId !== id || request !== this.reload || turn !== this.turn) return
       // An observation received after the read began is newer than this snapshot.
@@ -245,10 +262,11 @@ export class ChatController extends Observable {
         this.items = items
         this.busy = r.busy
         this.adoptInterruption(r)
-        if (r.permission) this.enqueuePermission(r.permission)
         this.usage = r.conversation.usage
         this.provider = r.provider
       }
+      if (permissions === this.permissionRevision) this.permissions = r.permissions ?? []
+      if (r.eventSeq !== undefined) this.events?.start(id, BigInt(r.eventSeq))
       if (this.status === this.loadError) this.status = undefined
       this.loadError = undefined
       this.displayedId = id
@@ -266,6 +284,7 @@ export class ChatController extends Observable {
   retryLoad() { if (this.currentId) this.select(this.currentId); else void this.init() }
 
   select(id: string) {
+    this.events?.close()
     this.turn++
     guide.chatThought(this)
     this.busy = false
@@ -444,7 +463,7 @@ export class ChatController extends Observable {
     guide.chatThought(this)
     void this.request('/api/chat/cancel', this.base).then(() => {
       if (this.turn === turn) void this.refreshProvider()
-    }).catch(() => {})
+    }).catch((error) => { if (this.turn === turn) this.fail(error) })
     this.stopping = true
     this.canContinue = true
     this.busy = false
@@ -534,7 +553,12 @@ export class ChatController extends Observable {
   }
 
   private request(endpoint: string, body: Record<string, unknown>) {
-    const pending = this.transition.catch(() => {}).then(() => api(endpoint, body))
+    const turn = this.turn
+    const pending = this.transition.catch(() => {}).then(async () => {
+      const result = await api(endpoint, body)
+      if (endpoint !== '/api/chat/cancel' && turn === this.turn) void this.refreshProvider()
+      return result
+    })
     this.transition = pending
     return pending
   }
@@ -623,9 +647,6 @@ export class ChatController extends Observable {
       case 'presentation':
         this.contentRevision++
         this.items = e.rows.map(presentedItem)
-        break
-      case 'modelAccepted':
-        void this.refreshProvider()
         break
       case 'permission':
         this.enqueuePermission({ id: e.id, asked: e.asked, groups: e.groups, from: e.from })

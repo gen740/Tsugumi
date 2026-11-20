@@ -10,6 +10,7 @@ from html.parser import HTMLParser
 import http.client
 from http.cookies import SimpleCookie
 import json
+import os
 import select
 import shutil
 import subprocess
@@ -239,6 +240,38 @@ def test_host_rpc_requires_the_page_cookie_and_origin(web):
             assert status.split()[1] == "403"
     with closing(web_host(port, cookie)) as host:
         assert host.call("HostRecentListRequest").projects == []
+
+
+def test_agent_rpc_reaches_the_authenticated_agent_listener(web, tmp_path):
+    from harness.transport import ws_connect, ws_frame, ws_read
+
+    _, port, key = web
+    cookie = page_cookie(port, key)
+    token = post(port, cookie, "/api/host/connect", {})["token"]
+    connection, status = ws_connect(port, f"http://127.0.0.1:{port}", "tsugumi.agent.v1",
+                                    path="/rpc/agent", headers=[("Cookie", cookie)])
+    with connection:
+        assert status.split()[1] == "101"
+        flatc = os.environ.get("TSUGUMI_FLATC", "flatc")
+        schema = str(ROOT / "protocol/agent.fbs")
+
+        def call(request_id, kind, value):
+            request = tmp_path / "request.json"
+            request.write_text(json.dumps({
+                "request_id": request_id, "payload_type": "Request",
+                "payload": {"value_type": kind, "value": value},
+            }))
+            subprocess.run([flatc, "-b", "-o", str(tmp_path), schema, str(request)], check=True)
+            connection.sendall(ws_frame(request.with_suffix(".bin").read_bytes()))
+            reply = tmp_path / "reply.bin"
+            reply.write_bytes(ws_read(connection))
+            subprocess.run([flatc, "-t", "--strict-json", "-o", str(tmp_path), schema, "--", str(reply)], check=True)
+            result = json.loads(reply.with_suffix(".json").read_text())
+            assert result["request_id"] == request_id and result["payload_type"] == "Reply"
+            return result["payload"]["value_type"]
+
+        assert call(1, "HelloRequest", {"token": token}) == "HelloResult"
+        assert call(2, "ConversationListRequest", {}) == "ConversationList"
 
 
 def test_core_keeps_running_when_the_last_page_showing_a_project_leaves(web, tmp_path):

@@ -1,3 +1,5 @@
+#include <atomic>
+#include <future>
 // Scenarios exercise only the public Agent RPC through the shipped client.
 #include <regex>
 #include <set>
@@ -839,6 +841,20 @@ TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
   const auto conversation = Conversation("cancel");
   ASSERT_TRUE(Send(conversation, "Wait for cancellation.").Code().empty());
   ASSERT_TRUE(model.WaitForRequests(1));
+  struct Observation {
+    std::atomic<bool> notified = false;
+    std::promise<void> changed;
+  };
+  const auto observation = std::make_shared<Observation>();
+  auto changed = observation->changed.get_future();
+  host->OnEvent([observation, conversation](const client::Bytes& bytes) {
+    const auto* event = H::GetMessage(bytes.data())->payload_as_Event();
+    const auto* wake = event->value_as_ConversationChanged();
+    if (wake && wake->conversation_id() &&
+        wake->conversation_id()->string_view() == conversation &&
+        !observation->notified.exchange(true))
+      observation->changed.set_value();
+  });
   ASSERT_TRUE(Call(*external, A::RequestPayload::ConversationCancelRequest,
                    [&](Builder& b) {
                      return A::CreateConversationCancelRequest(
@@ -847,6 +863,8 @@ TEST_F(AgentFixture, PublicCancellationStopsAnInFlightModelRequest) {
                    })
                   .Code()
                   .empty());
+  changed.get();
+  host->OnEvent({});
   const auto state = WaitUntilIdle(conversation);
   EXPECT_EQ(state.find("This must never become a completed answer."),
             std::string::npos);

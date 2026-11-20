@@ -1,4 +1,3 @@
-import type { ChatRow } from '../shared/chatPresentation'
 // Platform adapter for the core-owned services. The browser keeps the HTTP/SSE
 // API; service credentials and binary socket connections stay in this host.
 import { spawn } from 'node:child_process'
@@ -14,10 +13,11 @@ import path from 'node:path'
 import { randomUUID } from 'node:crypto'
 import type { Environments, HostEvent } from './environment'
 import { EnvironmentPhase } from '../shared/gen/tsugumi/host/environment-phase'
-import { ToolCatalog, type ProviderConfig, type AgentEvent, type Conversation } from './agent'
+import { ToolCatalog, type ProviderConfig, type Conversation } from './agent'
 import { BFBS } from '../shared/bfbs'
 
 interface Ready {
+  endpoint: string
   host_endpoint: string
   unix_socket: string
   host_socket: string
@@ -32,12 +32,12 @@ class Connection {
   private socket?: net.Socket
   private nextId = 0n
   private waiting = new Map<bigint, { resolve: (v: any) => void; reject: (e: Error) => void }>()
-  private opening?: Promise<void>
+  private opening?: Promise<Ready>
   // A plugin retry after the page answers must resume the approved call ID.
 
   constructor(private host: CoreHost, private external: boolean, private hostContract = false) {}
 
-  private open() {
+  connect() {
     return this.opening ??= this.start().catch((e) => { this.opening = undefined; throw e })
   }
 
@@ -69,6 +69,7 @@ class Connection {
       for (const p of this.waiting.values()) p.reject(error)
       this.waiting.clear()
       socket.destroy()
+      if (this.hostContract) this.host.event({ type: 'Disconnected', value: error })
     }
     socket.on('error', fail)
     socket.on('close', () => fail(new Error('Service connection closed')))
@@ -100,6 +101,7 @@ class Connection {
     })
     await this.write('HelloRequest', { token: this.external ? ready.external_token : ready.user_token, client: 'Web' })
     if (this.hostContract) this.host.event({ type: 'Connected', value: {} })
+    return ready
   }
 
   private write(method: string, value: unknown, signal?: AbortSignal): Promise<any> {
@@ -130,7 +132,7 @@ class Connection {
 
   async call<T>(method: string, value: unknown = {}, signal?: AbortSignal): Promise<T> {
     signal?.throwIfAborted()
-    await this.open()
+    await this.connect()
     signal?.throwIfAborted()
     return this.write(method, value, signal)
   }
@@ -152,7 +154,6 @@ export class CoreHost {
       (hostMethod(method) ? this.host : this.agent).call<T>(method, value),
   }
   readonly external = new Connection(this, true)
-  private projects = new Map<string, string>()
   private hostListeners = new Set<(event: HostEvent) => void>()
   observeHost(fn: (event: HostEvent) => void) {
     this.hostListeners.add(fn)
@@ -172,6 +173,8 @@ export class CoreHost {
       : path.join(support, 'host-core')))
     this.demoRoot = path.join(repo, 'demos')
   }
+
+  connectHost() { return this.host.connect() }
 
   async ready(): Promise<Ready> {
     return this.starting ??= (async () => {
@@ -195,7 +198,9 @@ export class CoreHost {
           if (!bytes.includes('\n')) return
           try {
             const next = JSON.parse(bytes.slice(0, bytes.indexOf('\n'))) as Ready
-            if (logPath !== stateLog && next.pid === child.pid) fs.renameSync(logPath, stateLog)
+            if (next.pid === child.pid) {
+              if (logPath !== stateLog) fs.renameSync(logPath, stateLog)
+            } else fs.rmdirSync(socketDir)
             child.stdout!.destroy()
             child.unref()
             resolve(next)
@@ -216,15 +221,42 @@ export class CoreHost {
   }
 
   async project(folder: string): Promise<string> {
-    const state = await this.envs.start(folder)
+    const current = await this.envs.state(folder)
+    const state = current.phase === EnvironmentPhase.Ready ? current : await this.envs.start(folder)
     if (state.phase !== EnvironmentPhase.Ready || !state.project_id) throw new Error(state.message || 'Project core is not ready')
-    this.projects.set(folder, state.project_id)
     return state.project_id
   }
 
-  projectFolder(resource: string): string | undefined {
-    for (const [folder, id] of this.projects) if (resource === id || resource.startsWith(`folder:${id}:`)) return folder
-    return undefined
+  async conversation(id: string, folder?: string, role?: string) {
+    return this.user.call<ConversationSnapshot>('ConversationCreateRequest', {
+      conversation_id: id, project_id: folder ? await this.project(folder) : undefined, role,
+    })
+  }
+
+  async cancelConversation(id: string) {
+    await this.host.connect()
+    let notify: (() => void) | undefined
+    let failure: Error | undefined
+    const off = this.observeHost(({ type, value }) => {
+      if (type === 'Disconnected') failure = value
+      else if (type !== 'ConversationChanged' || value.conversation_id !== id) return
+      notify?.()
+      notify = undefined
+    })
+    // Install before asking to cancel. A fresh snapshot covers completion that
+    // happened before a notification could wake the next read.
+    const wait = () => new Promise<void>((resolve) => { notify = resolve })
+    try {
+      await this.user.call('ConversationCancelRequest', { conversation_id: id })
+      for (;;) {
+        const changed = wait()
+        const current = await this.user.call<ConversationSnapshot>('ConversationGetRequest', { conversation_id: id })
+        if (!current.busy) return
+        if (failure) throw failure
+        await changed
+        if (failure) throw failure
+      }
+    } finally { off() }
   }
 
   async provider(config: ProviderConfig) {
@@ -282,127 +314,4 @@ export class CoreHost {
 export interface InterruptedOperation { kind: string; id?: string; name?: string; arguments?: string }
 
 export interface ModelBinding { providerId: string; model: string; effort?: string; fast: boolean }
-export interface RemoteConversation { modelBinding?: ModelBinding; interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq?: bigint }
-
-export class RemoteAgent {
-  conversation: Conversation
-  busy = false
-  continuable = false
-  resumable = false
-  interruptedOperation?: InterruptedOperation
-  modelBinding?: ModelBinding
-  private seq = 0n
-  private observing = false
-  private observationID = 0
-  private listener?: (e: AgentEvent) => void
-  private transition: Promise<void> = Promise.resolve()
-  private changing = 0
-
-  constructor(readonly host: CoreHost, readonly id: string, readonly project?: string, readonly role = 'worker') {
-    this.conversation = { id, rows: [], messages: [], archive: [], tools: [], usage: { inputTokens: 0, outputTokens: 0 }, updatedAt: Date.now() }
-  }
-
-  async open() {
-    const project = this.project ? await this.host.project(this.project) : undefined
-    const result = await this.host.user.call<RemoteConversation>('ConversationCreateRequest', {
-      conversation_id: this.id, project_id: project, role: this.role,
-    })
-    this.adopt(result)
-    this.seq = result.event_seq ?? 0n
-    return this
-  }
-
-  private adopt(result: RemoteConversation) {
-    this.conversation = result.conversation
-    this.busy = result.busy
-    this.resumable = result.resumable === true
-    this.continuable = result.continuable === true
-    this.interruptedOperation = result.interruptedOperation
-    this.modelBinding = result.modelBinding
-  }
-
-  async refresh() {
-    this.adopt(await this.host.user.call<RemoteConversation>('ConversationGetRequest', { conversation_id: this.id }))
-  }
-
-  private interested = () => true
-  observe(listener: (e: AgentEvent) => void, interested = this.interested) {
-    this.interested = interested
-    this.listener = listener
-    if (this.observing || this.changing) return
-    this.observing = true
-    void this.poll(++this.observationID)
-  }
-
-  private async poll(identity: number) {
-    try {
-      while (this.observing && identity === this.observationID) {
-        if (!this.busy && !this.interested()) { this.observing = false; return }
-        const result = await this.host.user.call<{ events: { seq: bigint; event: AgentEvent }[]; next_seq: bigint; busy: boolean; rows: ChatRow[]; hasRows: boolean }>(
-          'EventsRequest', { conversation_id: this.id, after_seq: this.seq })
-        if (identity !== this.observationID) return
-        if (result.events.some((e) => e.event.kind === 'finished')) await this.refresh()
-        if (identity !== this.observationID) return
-        for (const e of result.events) this.listener?.(e.event)
-        if (result.hasRows) this.listener?.({ kind: 'presentation', rows: result.rows })
-        this.seq = result.next_seq
-        const wasBusy = this.busy
-        this.busy = result.busy
-        if (wasBusy && !this.busy) await this.refresh()
-        await new Promise<void>((resolve) => { const t = setTimeout(resolve, this.busy ? 80 : 500); t.unref() })
-      }
-    } catch (e) {
-      if (identity !== this.observationID) return
-      this.observing = false
-      this.listener?.({ kind: 'error', message: (e as Error).message })
-    }
-  }
-
-  private change(run: () => Promise<void>) {
-    this.changing++
-    this.close()
-    const pending = this.transition.catch(() => {}).then(run)
-    this.transition = pending
-    return pending.finally(() => {
-      this.changing--
-      if (!this.changing && this.listener) this.observe(this.listener)
-    })
-  }
-
-  private async beginTurn() {
-    const result = await this.host.user.call<RemoteConversation>('ConversationGetRequest', { conversation_id: this.id })
-    this.adopt(result)
-    this.seq = result.event_seq ?? this.seq
-  }
-
-  send(text: string, listener: (e: AgentEvent) => void, turnId = randomUUID(), selections: Record<string, unknown> = {}) {
-    this.listener = listener
-    return this.change(async () => {
-      await this.beginTurn()
-      await this.host.user.call('ConversationSendRequest', { conversation_id: this.id, turn_id: turnId, text, ...selections })
-      await this.refresh()
-      this.listener?.({ kind: 'modelAccepted' })
-    })
-  }
-
-  action(action: string, listener: (e: AgentEvent) => void) {
-    this.listener = listener
-    return this.change(async () => {
-      await this.beginTurn()
-      await this.host.user.call('ConversationActionRequest', { conversation_id: this.id, action })
-      await this.refresh()
-      this.listener?.({ kind: 'modelAccepted' })
-    })
-  }
-
-  cancel() {
-    return this.change(async () => {
-      await this.host.user.call('ConversationCancelRequest', { conversation_id: this.id })
-      do {
-        await this.beginTurn()
-        if (this.busy) await new Promise((resolve) => setTimeout(resolve, 20))
-      } while (this.busy)
-    })
-  }
-  close() { this.observing = false; this.observationID++ }
-}
+export interface ConversationSnapshot { modelBinding?: ModelBinding; interruptedOperation?: InterruptedOperation; conversation: Conversation; busy: boolean; resumable?: boolean; continuable?: boolean; project_id?: string; event_seq: bigint }

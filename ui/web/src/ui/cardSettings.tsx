@@ -7,6 +7,7 @@ import inputTemplates from '../../../shared/templates/input/Sources/InputTemplat
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
+import { hostCall } from '../wire/host'
 import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
@@ -1429,13 +1430,14 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     if (!rpc || source === undefined || formatting) return
     setFormatting(true)
     try {
-      const r = await api<{ text: string; diagnostics: { offset?: string; message: string }[] }>('/api/file/format', { path: p, text: source })
+      const r = await hostCall<H.FileFormatResultT>(H.RequestPayload.FileFormatRequest,
+        new H.FileFormatRequestT(p, source), H.ReplyPayload.FileFormatResult)
       if (!r.diagnostics.length) {
         model.setText(p, s(r.text))
         setFormatMessage(L('整形しました'))
         setFormatMarkers([])
       } else {
-        setFormatMarkers(r.diagnostics.map((d) => ({ offset: BigInt(d.offset ?? 0), message: s(d.message) })))
+        setFormatMarkers(r.diagnostics.map((d) => ({ offset: d.offset ?? 0n, message: s(d.message) })))
         setFormatMessage(L('構文エラーがあります（テキストは変更していません）'))
       }
     } catch (e) {
@@ -1503,7 +1505,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     )
   } else if (shown && model.files.includes(shown)) {
     const markers = [
-      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: BigInt(d.offset ?? 0), message: d.message })),
+      ...(session.resolution.get(model.cardKey)?.diagnostics ?? []).filter((d) => d.path === shown).map((d) => ({ offset: d.offset ?? 0n, message: d.message })),
       ...formatMarkers,
     ]
     const text = model.loadedText(shown)

@@ -2,6 +2,10 @@ import { agentAppearance } from '../model/agentAppearance'
 // App-wide settings; the category on the left switches the content. While a
 // project is open its own settings follow the app's (kept in the project).
 import { useEffect, useState } from 'react'
+import * as H from '../../shared/gen/tsugumi/host'
+import { Access } from '../../shared/gen/tsugumi/service/access'
+import { hostCall } from '../wire/host'
+import { s } from '../wire/rpc'
 import { environmentHost } from '../wire/environment'
 import { api, onServerEvent } from '../api'
 import { app } from '../model/app'
@@ -438,7 +442,9 @@ function reloadChats() {
 }
 
 function SkillSettings() {
-  const [folders, setFolders] = useState<SkillFolder[]>()
+  type SkillFolderSettings = { skillFolders: SkillFolder[]; revision: Record<string, number> }
+  const [data, setData] = useState<SkillFolderSettings>()
+  const folders = data?.skillFolders
   const [exists, setExists] = useState<Record<string, boolean>>({})
   const [query, setQuery] = useState('')
   const [state, setState] = useState<'idle' | 'loading' | 'loaded' | { failed: string }>('idle')
@@ -446,11 +452,12 @@ function SkillSettings() {
   const [picking, setPicking] = useState(false)
 
   /** Reads the folders on the host; a slow or missing folder never blocks the window. */
-  const reload = async (list?: SkillFolder[]) => {
+  const reload = async (updated?: SkillFolderSettings) => {
     setState('loading')
     try {
-      const f = list ?? (await api<{ skillFolders: SkillFolder[] }>('/api/settings')).skillFolders
-      setFolders(f)
+      const snapshot = updated ?? await api<SkillFolderSettings>('/api/settings')
+      const f = snapshot.skillFolders
+      setData(snapshot)
       const ex = await api<Record<string, boolean>>('/api/settings/skillFolderStatus', { paths: f.map((x) => x.path) })
       setExists(ex)
       setFound(await api<Skill[]>('/api/skills', {}))
@@ -465,9 +472,10 @@ function SkillSettings() {
     void reload()
   }, [])
   const save = async (next: SkillFolder[]) => {
-    setFolders(next)
-    await api('/api/settings', { skillFolders: next })
-    await reload(next)
+    if (!data) return
+    try {
+      await reload(await api<SkillFolderSettings>('/api/settings', { skillFolders: next, revision: data.revision }))
+    } catch (error) { setState({ failed: errorText(error) }) }
   }
   const q = query.toLowerCase()
   const shown = found.filter((s) => !q || s.name.toLowerCase().includes(q) || s.description.toLowerCase().includes(q))
@@ -704,31 +712,37 @@ function ConnectionSettings() {
   )
 }
 
-interface ProjectPermission { resource_id: string; title: string; path: string; access: string; allowed: boolean }
-interface PermissionProject { project_id: string; title: string; path: string; permissions: ProjectPermission[] }
-interface ProjectPermissionList { projects: PermissionProject[] }
-const permissionLabel = (access: string) => ({ Read: L('内容の読み取り'), Write: L('内容の変更'), Run: L('Card の実行'), Shell: L('シェルコマンドの実行') })[access] ?? access
+const permissionLabel = (access: Access) => {
+  const labels: Partial<Record<Access, string>> = {
+    [Access.Read]: L('内容の読み取り'), [Access.Write]: L('内容の変更'),
+    [Access.Run]: L('Card の実行'), [Access.Shell]: L('シェルコマンドの実行'),
+  }
+  return labels[access] ?? Access[access]
+}
 
 export function ProjectPermissionSettings() {
-  const [projects, setProjects] = useState<PermissionProject[]>([])
+  const [projects, setProjects] = useState<H.ProjectPermissionsT[]>([])
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
-  const request = async (project?: PermissionProject, permission?: ProjectPermission, allow?: boolean) => {
+  const request = async (project?: H.ProjectPermissionsT, permission?: H.ProjectPermissionT, allow = false) => {
     setBusy(true)
     setError(undefined)
     try {
-      const result = await api<ProjectPermissionList>(project ? '/api/project-permissions/set' : '/api/project-permissions', project && permission
-        ? { project_id: project.project_id, resource_id: permission.resource_id, access: permission.access, allow } : {})
-      setProjects(result.projects ?? [])
+      const result = project && permission
+        ? await hostCall<H.ProjectPermissionListT>(H.RequestPayload.ProjectPermissionSetRequest,
+          new H.ProjectPermissionSetRequestT(project.projectId, permission.resourceId, permission.access, allow), H.ReplyPayload.ProjectPermissionList)
+        : await hostCall<H.ProjectPermissionListT>(H.RequestPayload.ProjectPermissionsRequest,
+          new H.ProjectPermissionsRequestT(), H.ReplyPayload.ProjectPermissionList)
+      setProjects(result.projects)
     } catch (e) { setError(errorText(e)) }
     finally { setBusy(false) }
   }
   useEffect(() => { void request() }, [])
   return <Section info={L('プロジェクトのすべての会話とヘルパーに適用され、取り消すまで有効です。')} title={L('Agent のプロジェクト権限')}>
-    {projects.map(project => <div key={project.project_id}>
-      <Row label={project.title || project.path || project.project_id}><span className="caption secondary selectable">{project.path}</span></Row>
-      {project.permissions.map(permission => <Row key={`${permission.resource_id}:${permission.access}`}
-        label={permission.resource_id === project.project_id ? permissionLabel(permission.access) : `${L('添付フォルダ')} · ${permission.title || permission.path} · ${permissionLabel(permission.access)}`}>
+    {projects.map(project => <div key={s(project.projectId)}>
+      <Row label={s(project.title || project.path || project.projectId)}><span className="caption secondary selectable">{s(project.path)}</span></Row>
+      {project.permissions.map(permission => <Row key={`${permission.resourceId}:${permission.access}`}
+        label={permission.resourceId === project.projectId ? permissionLabel(permission.access) : `${L('添付フォルダ')} · ${s(permission.title || permission.path)} · ${permissionLabel(permission.access)}`}>
         <Toggle checked={permission.allowed} disabled={busy} onChange={allow => void request(project, permission, allow)} />
       </Row>)}
     </div>)}

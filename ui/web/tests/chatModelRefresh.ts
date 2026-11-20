@@ -74,14 +74,14 @@ try {
   accepted = 'accepted-model'
   const controller = chat as any
   controller.begin()
-  stream!.onmessage!({ data: JSON.stringify({ type: 'chat', project: '/model-refresh', session: 's', event: { kind: 'modelAccepted' } }) })
+  await controller.request('/api/chat/send', { path: session.dir, session: 's' })
   await flush()
   assert.equal(chat.provider.model, accepted, 'turn start adopts the accepted model')
   await api('/api/settings', { chatGPTModel: 'next-turn-model' })
   await flush()
   assert.equal(chat.provider.model, accepted, 'edits during a turn preserve the accepted model')
   accepted = undefined
-  stream!.onmessage!({ data: JSON.stringify({ type: 'chat', project: '/model-refresh', session: 's', event: { kind: 'finished' } }) })
+  controller.handle({ kind: 'finished' })
   await flush()
   assert.equal(chat.provider.model, 'next-turn-model', 'turn end shows the next selection')
   leave()
