@@ -213,6 +213,21 @@ auto journal_test(const stdfs::path& root) -> void {
   reopened.finish(second, R::JobState::Interrupted, {}, "supervisor lost");
   expect(!reopened.claim(second, 1, 1, "boot"),
          "interrupted invocation was rerun");
+  const std::string queued(64, '5');
+  j.put(queued, p, core);
+  j.submit(queued, bytes, *parse_spec(bytes), core);
+  rejected([&] { j.discard(queued, false); });
+  expect(j.discard(queued, true).state == R::JobState::Queued &&
+             j.status(queued).state == R::JobState::Released &&
+             j.status(queued).fingerprint == fingerprint &&
+             !j.claim(queued, 1, 1, "boot"),
+         "removed queued job could still start");
+  expect(j.discard(second, false).state == R::JobState::Interrupted &&
+             std::distance(stdfs::directory_iterator(j.job_path(second)),
+                           stdfs::directory_iterator{}) == 1,
+         "removal kept payload");
+  rejected([&] { j.put(second, p, core); });
+  rejected([&] { j.discard(std::string(64, '6'), true); });
   const std::string result_job(64, '7');
   j.put(result_job, p, core);
   j.submit(result_job, bytes, *parse_spec(bytes), core);
@@ -259,8 +274,9 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(interrupted_upload, prefix, core);
   reopened.put(interrupted_upload, prefix, core);
   {
-    std::ofstream tail(j.job_path(interrupted_upload) / "parts" / partial.digest,
-                       std::ios::app);
+    std::ofstream tail(
+        j.job_path(interrupted_upload) / "parts" / partial.digest,
+        std::ios::app);
     tail << "suffix";
   }
   auto suffix = partial;

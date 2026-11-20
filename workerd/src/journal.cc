@@ -106,6 +106,9 @@ Journal::Journal(stdfs::path root) : root_(std::move(root)) {
 auto Journal::job_path(std::string_view job) const -> stdfs::path {
   return root_ / "jobs" / job;
 }
+auto Journal::supervisor_lock_path(std::string_view job) const -> stdfs::path {
+  return root_ / "locks" / (std::string(job) + ".supervisor");
+}
 auto Journal::locked(
     std::string_view job,
     const std::function<void(const stdfs::path&)>& action) const -> void {
@@ -389,6 +392,30 @@ auto Journal::clean_released(std::string_view job) -> void {
     auto state = read(dir);
     if (state.state == R::JobState::Released) erase_scratch(dir);
   });
+}
+auto Journal::discard(std::string_view job, bool active) -> Record {
+  Record previous;
+  locked(job, [&](const auto& dir) {
+    if (!stdfs::exists(stdfs::symlink_status(dir)))
+      throw Error(R::ErrorCode::NotFound, "job not found");
+    // An unreadable record has no state to protect; its fingerprint is lost.
+    try {
+      previous = read(dir);
+    } catch (const std::runtime_error&) {
+    }
+    if (!active && (previous.state == R::JobState::Queued ||
+                    previous.state == R::JobState::Running ||
+                    previous.state == R::JobState::Cancelling))
+      throw Error(R::ErrorCode::Rejected,
+                  "the journal records this job as queued, running or "
+                  "cancelling");
+    Record tombstone;
+    tombstone.state = R::JobState::Released;
+    tombstone.fingerprint = previous.fingerprint;
+    write(dir, tombstone);
+    erase_scratch(dir);
+  });
+  return previous;
 }
 auto Journal::import_results(std::string_view job) -> std::string {
   const auto dir = job_path(job);
