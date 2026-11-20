@@ -50,16 +50,17 @@ def unix_read(connection):
     return exact(connection, size)
 
 
-def ws_connect(port, origin="http://rpc.test", protocol="tsugumi.rpc.v1"):
+def ws_connect(port, origin="http://rpc.test", protocol="tsugumi.rpc.v1", *, path="/rpc", headers=()):
     connection = socket.create_connection(("127.0.0.1", port), timeout=5)
     try:
         key = base64.b64encode(os.urandom(16)).decode()
-        lines = ["GET /rpc HTTP/1.1", f"Host: 127.0.0.1:{port}", "Upgrade: websocket", "Connection: Upgrade",
+        lines = [f"GET {path} HTTP/1.1", f"Host: 127.0.0.1:{port}", "Upgrade: websocket", "Connection: Upgrade",
                  f"Sec-WebSocket-Key: {key}", "Sec-WebSocket-Version: 13"]
         if protocol:
             lines.append(f"Sec-WebSocket-Protocol: {protocol}")
         if origin:
             lines.append(f"Origin: {origin}")
+        lines.extend(f"{key}: {value}" for key, value in headers)
         connection.sendall(("\r\n".join(lines) + "\r\n\r\n").encode())
         response = bytearray()
         while not response.endswith(b"\r\n\r\n"):

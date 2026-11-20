@@ -31,6 +31,21 @@ def codes(node):
     return {text(diagnostic.code) for diagnostic in node.diagnostics}
 
 
+@pytest.mark.parametrize("destination", ["right", "left"], ids=["distinct-input", "duplicate-wire"])
+def test_one_output_feeds_distinct_inputs_once(core_factory, project, destination):
+    """One output can feed several ports; the same endpoints cannot be wired twice."""
+    _, resolved = inspect_graph(core_factory, project,
+                                {"source": code(), "sink": code(["left", "right"])},
+                                [conn("source", "out", "sink", "left"),
+                                 conn("source", "out", "sink", destination)])
+
+    assert ("duplicate_wire" in codes(resolved["sink"])) == (destination == "left")
+    if destination == "right":
+        assert {text(p.name): text(p.rootType) for p in resolved["sink"].inputs} == {
+            "left": "t.Number", "right": "t.Number",
+        }
+
+
 @pytest.mark.parametrize("fields,compatible", [
     ("x:int; s:string;", True),
     ("x:long; s:string;", False),
@@ -59,13 +74,13 @@ def test_invalid_output_types_are_reported_to_the_client(core_factory, project, 
     assert "invalid_outputs" in codes(resolved["source"])
 
 
-def test_port_types_flow_through_fork_and_branch(core_factory, project):
-    """A downstream Card sees the original value type through forks and branches."""
+def test_port_types_flow_through_branch(core_factory, project):
+    """A downstream Card sees the original value type through a Branch."""
     _, resolved = inspect_graph(core_factory, project, {
-        "source": code(), "fork": {"template": "fork"}, "branch": {"template": "branch"},
+        "source": code(), "branch": {"template": "branch"},
         "condition": {"template": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG},
         "sink": code(["in"]),
-    }, [conn("source", "out", "fork", "in"), conn("fork", "out1", "branch", "value"),
+    }, [conn("source", "out", "branch", "value"),
         conn("condition", "flag", "branch", "condition"), conn("branch", "a", "sink", "in")])
 
     incoming = resolved["sink"].inputs[0]
@@ -81,23 +96,20 @@ def assert_reference(node, name, target, valid=True):
     assert ref.valid == valid
 
 
-@pytest.mark.parametrize("builtin", ["fork", "branch", "merge", "collect"])
+@pytest.mark.parametrize("builtin", ["branch", "merge", "collect"])
 def test_nix_exports_follow_the_connected_code_origin(core_factory, project, builtin):
     """A transparent built-in keeps the Code producer's exports on the destination port."""
     definitions = {"source": code(), "sink": code(["data"], body='{ run = inputs.data.command; }'),
                    "bridge": {"template": builtin}}
     if builtin == "branch":
-        definitions["condition"] = {"template": "switch"}
-        connections = [conn("source", "out", "bridge", "value"), conn("condition", "value", "bridge", "condition"),
+        definitions["condition"] = {"template": "input", "_outputs": FLAG}
+        connections = [conn("source", "out", "bridge", "value"), conn("condition", "flag", "bridge", "condition"),
                        conn("bridge", "a", "sink", "data")]
     elif builtin == "merge":
-        definitions["fork"] = {"template": "fork"}
         definitions["bridge"]["inputs"] = [{"name": "a"}, {"name": "b"}]
-        connections = [conn("source", "out", "fork", "in"), conn("fork", "out1", "bridge", "a"),
-                       conn("fork", "out2", "bridge", "b"), conn("bridge", "out", "sink", "data")]
+        connections = [conn("source", "out", "bridge", "a"), conn("source", "out", "bridge", "b"), conn("bridge", "out", "sink", "data")]
     else:
-        output = "out1" if builtin == "fork" else "out"
-        connections = [conn("source", "out", "bridge", "in"), conn("bridge", output, "sink", "data")]
+        connections = [conn("source", "out", "bridge", "in"), conn("bridge", "out", "sink", "data")]
     _, resolved = inspect_graph(core_factory, project, definitions, connections)
     assert not codes(resolved["sink"])
     assert_reference(resolved["sink"], "data", ["source"])

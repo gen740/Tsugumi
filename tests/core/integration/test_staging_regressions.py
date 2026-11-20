@@ -58,7 +58,7 @@ def test_sparse_output_and_staged_input_keep_their_holes(core_factory, tmp_path)
 #include <fcntl.h>
 #include <stdio.h>
 #include <unistd.h>
-int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
+int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char path[4096], json[8192];
   snprintf(path, sizeof path, "%s/sparse", c->output_directory);
@@ -66,8 +66,8 @@ int tsugumi_main(const tsugumi_call* c, tsugumi_buffer* outputs) {
   if (fd < 0 || ftruncate(fd, (off_t)4 * 1024 * 1024 * 1024) ||
       pwrite(fd, "data", 4, (off_t)2 * 1024 * 1024 * 1024) != 4) return 1;
   close(fd);
-  snprintf(json, sizeof json, "{\"doc\":{\"value\":\"%s\"}}", path);
-  return c->effects->outputs_json(c->host, json, outputs);
+  snprintf(json, sizeof json, "{\"value\":\"%s\"}", path);
+  return c->effects->output_json(c->host, "doc", json);
 }
 '''
     make = {

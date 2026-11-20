@@ -40,7 +40,7 @@ const ports = (s: Session, k: string) => {
   assert.deepEqual(ports(s, a), [[], []])
   assert.deepEqual(ports(s, b), [[], []])
 
-  // More wires attach to the same Card (no fork, nothing replaced).
+  // More wires attach to the same Card without replacing existing wires.
   const c = await s.addCard('draft', [], { x: 600, y: 0 })
   await s.connect([a, NEW_PORT], [c, NEW_PORT], [])
   await s.connect([c, NEW_PORT], [b, NEW_PORT], [])

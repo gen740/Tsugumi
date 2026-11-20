@@ -111,6 +111,7 @@ class Environments {
                Progress progress);
   ~Environments();
   auto Handle(const Tsugumi::Host::EnvironmentRequestT& request) -> State;
+  auto List() -> Tsugumi::Host::EnvironmentListT;
   // Commit registration under the same project lock as mount changes. The
   // callback must commit its whole batch or throw without changing resources.
   auto Attach(

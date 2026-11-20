@@ -48,9 +48,11 @@ const session = (dir = '/p', key = 'k') => {
   assert.equal(app.sessions.has('b'), true)
 
   // A session that was left does not start its environment again by reconnecting.
-  calls.length = 0
+  left.environmentHost = { ...left.environmentHost, start: async () => {
+    assert.fail('A closed session cannot restart its environment')
+  } }
   left.reconnect()
-  assert.deepEqual(calls.filter((c) => c === '/api/env/start'), [])
+  assert.equal(left.connected, false)
 }
 
 // The versions cannot be read: it is said, and the next read that works clears it.

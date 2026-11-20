@@ -248,8 +248,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
         id, invocation.run_id, invocation.card, invocation.number, inputs,
         params.bfbs, params.root, params.bytes, invocation.outputs,
         worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
-        environment, invocation.timeout_ms, invocation.input_schema,
-        invocation.output_schema);
+        environment, invocation.timeout_ms);
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");

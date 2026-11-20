@@ -1345,8 +1345,7 @@ struct GraphCanvas: View {
 
   private func commitParam(_ k: CardKey, _ name: String, _ text: String, _ edit: InlineParamEdit?, overwrite: Bool) async -> Bool {
     guard session.isEditable, let edit else { return false }
-    let type = session.kind(k) == .switchCard && name == "value" ? "bool"
-      : session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
+    let type = session.cardDefinition(k)?["params"]?.array?.first(where: { $0["name"]?.string == name })?["type"]?.string
     guard let type else { return false }
     return await edit.commit(session, text: text) { $0.updateParam(k, name, parseParam(text, type), initial: edit.parameterBase(session, k, name, overwrite: overwrite)) }
   }
@@ -1640,7 +1639,7 @@ struct BuiltinCardItems: View {
   /// The Cards a person writes, then the ones with a fixed role.
   static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
   static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
-  static let fixed: [DefinitionTemplate] = [.trigger, .input, .switchCard, .fork, .branch, .merge, .collect]
+  static let fixed: [DefinitionTemplate] = [.trigger, .input, .booleanInput, .branch, .merge, .collect]
 
   var body: some View {
     Menu("レポート（HTML・PDF 未対応）") {

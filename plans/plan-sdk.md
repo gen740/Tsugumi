@@ -1,5 +1,7 @@
 # SDK rebuild plan (decided 2026-11-18)
 
+ABI 8 supersedes this plan's ABI 7 choice of a single `Outputs` buffer. The worker and language adapters now exchange individual port buffers at the Card ABI boundary.
+
 Goal: adding or changing a Card builds only that Card's share, and every language's Card has the same shape.
 
 ## 1. The Card's shape (every language)

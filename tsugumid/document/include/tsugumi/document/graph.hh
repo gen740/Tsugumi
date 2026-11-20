@@ -21,8 +21,6 @@ enum class Template {
   Code,
   Trigger,
   Input,
-  Switch,
-  Fork,
   Branch,
   Merge,
   Collect,
@@ -176,6 +174,5 @@ std::shared_ptr<const Resolution> resolve(const Document& doc,
 std::optional<std::string> check_param_value(ParamType t,
                                              const hosq::json::GenericDom<>& v);
 // Decodes an array-of-strings param.
-std::vector<std::string> string_array_param(const hosq::json::GenericDom<>& v);
 
 }  // namespace tsugumi

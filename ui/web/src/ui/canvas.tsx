@@ -259,8 +259,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const commitParam = async (k: CardKey, name: string, text: string, edit = new InlineParamEdit(), overwrite = false) => {
     if (!session.isEditable) return false
-    const type = session.kind(k) === 'switch' && name === 'value' ? 'bool'
-      : str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
+    const type = str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
     if (!type) return false
     return edit.commit(session, text, x => x.updateParam(k, name, parseParam(text, type), edit.parameterBase(session, k, name, overwrite)))
   }
@@ -620,7 +619,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
               edit.paramBase = { parameter: clone((arr(get(session.cardDefinition(k), 'params')) ?? []).find(p => str(get(p, 'name')) === name)) }
               return session.rev
             }}
-            onParamCommit={data.kind === 'input' || data.kind === 'switch' ? (name, text, edit, overwrite) => {
+            onParamCommit={data.kind === 'input' ? (name, text, edit, overwrite) => {
               if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
               return commitParam(k, name, text, edit, overwrite)
             } : undefined}
@@ -859,7 +858,7 @@ export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem
     label: L('可視化'),
     submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
   }
-  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('switch'), item('fork'), item('branch'), item('merge'), item('collect')]
+  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('input_bool'), item('branch'), item('merge'), item('collect')]
 }
 export { templateIcon }
 

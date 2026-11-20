@@ -138,14 +138,10 @@ def test_two_cards_run_the_same_notebook_without_shared_state(tmp_path):
         card = json.loads(other.read_text())
         set_param(card, 'selected', 'source')
         other.write_text(json.dumps(card))
-        fork=root/'definitions/share';fork.mkdir()
-        (fork/'_card.json').write_text(json.dumps({'template':'fork','params':[{'name':'branches','type':'string[]','data':['a','b']}]}))
         project_file=root/'tsugumi.json';project=json.loads(project_file.read_text())
-        project['canvas']['cards'] += [{'id':'share'},{'id':'notebook_b'}]
+        project['canvas']['cards'] += [{'id':'notebook_b'}]
         wires=project['canvas']['connections']
-        wires[:]=[w for w in wires if w['to']['card']!='notebook']
-        for a,ap,b,bp in [('source','value','share','in'),('share','a','notebook','data'),('share','b','notebook_b','data')]:
-            wires.append({'from':{'card':a,'port':ap},'to':{'card':b,'port':bp}})
+        wires.append({'from':{'card':'source','port':'value'},'to':{'card':'notebook_b','port':'data'}})
         project_file.write_text(json.dumps(project))
     env=demo_environment(tmp_path,'marimo',edit=edit)
     try:

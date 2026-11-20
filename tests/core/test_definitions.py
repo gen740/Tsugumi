@@ -28,19 +28,17 @@ def diagnostics(c, card: list[str]) -> list[str]:
 
 
 def external(root: Path, name: str, text_value: str) -> None:
-    """externals/<name>: input -> fork, with the forwarded message as the boundary output."""
+    """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
     put(ext / "tsugumi.json", json.dumps({
         "name": name, "pkgsPath": "tsugumi:default",
-        "canvas": {"cards": [{"id": "say"}, {"id": "pass"}], "connections": [conn("say", "msg", "pass", "in")]},
-        "boundary": {"inputs": {}, "outputs": {"said": {"card": "pass", "port": "out1"}}}}))
+        "canvas": {"cards": [{"id": "say"}], "connections": []},
+        "boundary": {"inputs": {}, "outputs": {"said": {"card": "say", "port": "msg"}}}}))
     put(ext / "layout.json", "{}")
     put(ext / "definitions" / "say" / "_card.json", json.dumps(
         {"template": "input", "params": [{"name": "text", "type": "string", "data": text_value},
                                          {"name": "value", "type": "bool", "data": True}]}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
-    put(ext / "definitions" / "pass" / "_card.json", json.dumps({"template": "fork", "params": [
-        {"name": "branches", "type": "string[]", "data": ["out1"]}]}))
 
 
 def rename(c, card_id, name, prefix=""):
@@ -305,7 +303,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert bytes(content.bytes) == updated.encode()
     with pytest.raises(RpcFailure) as error:
         c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
-               changes=[change("PutSource", path=card_path, bytes=b'{"template":"fork"}',
+               changes=[change("PutSource", path=card_path, bytes=b'{"template":"trigger"}',
                                baseHash=text(accepted_source.hash))])
     assert error.value.kind == "external_change"
     reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
@@ -330,7 +328,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     c = d.connect()
     snap = c.call("ProjectInspectRequest")
     cards = {"/".join(text(s) for s in r.card.segments) for r in snap.resolution}
-    assert {"greet", "greet/say", "greet/pass"} <= cards
+    assert {"greet", "greet/say"} <= cards
     assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
     source = "externals/greeting/definitions/say/_card.json"
@@ -475,23 +473,3 @@ def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_fact
     assert after.executionRev == snap.executionRev
     assert ("greet", "say") in {tuple(text(s) for s in r.card.segments) for r in after.resolution}
     assert json.loads(bytes(c.call("ProjectFileReadRequest", path="externals/greeting/definitions/say/_meta.json").bytes))["name"] == "Greeting"
-
-
-def test_an_output_feeds_one_wire(tmp_path, core_factory):
-    """Connecting one output twice is diagnosed; adding a fork makes the graph runnable."""
-    root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("out2", "sink")], extra_conns=[conn("src", "msg", "out2", "in")])
-    d = core_factory(project_root=root)
-    c = d.connect()
-    assert "fan_out" in diagnostics(c, ["src"])
-    # Through a fork, each output has one wire.
-    rev, project = project_json(c)
-    project["canvas"]["cards"].append({"id": "share"})
-    project["canvas"]["connections"] = [
-        conn("src", "msg", "share", "in"), conn("share", "out1", "out", "in"), conn("share", "out2", "out2", "in")]
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test", changes=[
-        change("PutDefinition", id="share", cardJson=json.dumps({"template": "fork"})),
-        change("SetProject", json=json.dumps(project))])
-    assert "fan_out" not in diagnostics(c, ["src"])
-    _, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded

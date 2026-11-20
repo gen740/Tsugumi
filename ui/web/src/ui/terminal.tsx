@@ -3,7 +3,8 @@
 import type { FitAddon } from '@xterm/addon-fit'
 import type { Terminal } from '@xterm/xterm'
 import { useEffect, useRef, useState } from 'react'
-import { api, onServerEvent, TerminalEvent } from '../api'
+import { openHost, type HostConnection } from '../wire/host'
+import * as H from '../../shared/gen/tsugumi/host'
 import { useObserve } from '../model/observable'
 import { prefs } from '../model/prefs'
 import { errorText, ProjectSession } from '../model/session'
@@ -56,31 +57,32 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   fit.fit()
   term.focus()
 
-  let mine: string | undefined
+  let client: HostConnection | undefined
+  let mine: bigint | undefined
   let closed = false
-  // What it prints before its id is known (the first prompt) waits here.
-  const early: TerminalEvent[] = []
-  const onEvent = (e: TerminalEvent) => {
-    if (e.type === 'terminal') term.write(e.data)
-    else if (e.type === 'terminal-exit') {
+  let opening = true
+  const early: H.HostTerminalDataT[] = []
+  const writeError = (e: unknown) => term.write(`\r\n${errorText(e)}\r\n`)
+  const onEvent = (e: H.HostTerminalDataT) => {
+    if (e.session !== mine) return
+    if (e.data.length) term.write(Uint8Array.from(e.data))
+    if (e.closed) {
+      mine = undefined
       term.write(L('\r\n[ターミナルは終了しました]\r\n'))
       onEnd(L('終了しました'))
     }
   }
-  const off = onServerEvent((e: TerminalEvent) => {
-    if (e.type !== 'terminal' && e.type !== 'terminal-exit') return
-    if (!mine) early.push(e)
-    else if (e.id === mine) onEvent(e)
-  })
+  const call = (request: H.HostTerminalRequestT) =>
+    client!.call<H.HostTerminalT>(H.RequestPayload.HostTerminalRequest, request, H.ReplyPayload.HostTerminal)
+  const encoder = new TextEncoder()
   const input = new TerminalInput(
-    (data) => api('/api/terminal/input', { id: mine, data }),
-    (e) => term.write(`\r\n${errorText(e)}\r\n`),
+    (data) => mine === undefined ? Promise.resolve() :
+      call(new H.HostTerminalRequestT(null, H.TerminalAction.Input, mine, term.rows, term.cols, [...encoder.encode(data)])),
+    writeError,
   )
-  term.onData((data) => {
-    if (mine) input.write(data)
-  })
+  term.onData((data) => { if (mine !== undefined) input.write(data) })
   term.onResize(({ cols, rows }) => {
-    if (mine) void api('/api/terminal/resize', { id: mine, cols, rows }).catch(() => {})
+    if (mine !== undefined) void call(new H.HostTerminalRequestT(null, H.TerminalAction.Resize, mine, rows, cols)).catch(writeError)
   })
   const seen = new ResizeObserver(() => {
     // Hidden, it has no size to fit.
@@ -89,14 +91,31 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   seen.observe(el)
   void (async () => {
     try {
-      const r = await api<{ id: string }>('/api/terminal/start', { path: session.dir, cols: term.cols, rows: term.rows })
-      if (closed) {
-        void api('/api/terminal/stop', { id: r.id }).catch(() => {})
-        return
-      }
-      mine = r.id
-      for (const e of early.splice(0)) if (e.id === mine) onEvent(e)
+      const ready = await session.environmentHost.start(session.dir)
+      if (closed) return
+      if (ready.state !== 'ready') throw new Error(ready.message || L('実行環境が起動していません'))
+      client = await openHost()
+      if (closed) { client.close(); return }
+      client.onClose((reason) => {
+        if (closed) return
+        mine = undefined
+        term.write(`\r\n${reason}\r\n`)
+        onEnd(L('終了しました'))
+      })
+      client.onEvent((event) => {
+        if (event.valueType !== H.EventPayload.HostTerminalData) return
+        const data = event.value as H.HostTerminalDataT
+        if (opening) early.push(data)
+        else onEvent(data)
+      })
+      const r = await call(new H.HostTerminalRequestT(session.dir, H.TerminalAction.Open, 0n, term.rows, term.cols))
+      if (closed) { client.close(); return }
+      opening = false
+      mine = r.session
+      for (const e of early.splice(0)) onEvent(e)
     } catch (e) {
+      client?.close()
+      if (closed) return
       term.write(L('ターミナルを開けませんでした: {0}\r\n', errorText(e)))
       onEnd(L('開けませんでした'))
     }
@@ -104,8 +123,8 @@ function openTerminal(el: HTMLElement, xterm: typeof import('@xterm/xterm'), fit
   return () => {
     closed = true
     seen.disconnect()
-    off()
-    if (mine) void api('/api/terminal/stop', { id: mine }).catch(() => {})
+    // hostd can release the session once its Open reply registers ownership.
+    if (!opening) client?.close()
     term.dispose()
   }
 }

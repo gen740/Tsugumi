@@ -85,6 +85,9 @@ table EnvironmentState {
 }
 table EnvironmentProgress { project:string (required); key:string (required); stage:string (required); fraction:double = null; preparing:bool; }
 table EnvironmentStopped { state:EnvironmentState (required); }
+table EnvironmentListRequest {}
+table EnvironmentEntry { state:EnvironmentState (required); name:string (required); }
+table EnvironmentList { environments:[EnvironmentEntry]; }
 // Native hosts report vm_state="unavailable"; no VM is booted by this query.
 // Command carries the operator tool's explicit supervisor diagnosis. Project
 // UIs use EnvironmentRequest; ordinary state queries do not boot a VM.
@@ -197,7 +200,6 @@ table ProjectConnect {
   project_path:string;
   from_card:string (required); from_port:string (required);
   to_card:string (required); to_port:string (required);
-  fork_id:string;
 }
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); name:string; }
 // Source paths name a definition or an external folder in the current project.
@@ -308,7 +310,7 @@ table LayoutCard {
   /// In the order drawn.
   inputs:[LayoutPort] (id: 5);
   outputs:[LayoutPort] (id: 6);
-  /// Its ports may be drawn in another order (not those of a fork, a branch
+  /// Its ports may be drawn in another order (not those of a branch
   /// and the like, whose places have a meaning).
   reorderable:bool (id: 7);
 }
@@ -389,10 +391,10 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, fork, branch, merge,
+  /// What it is, which decides its shape: trigger, input, branch, merge,
   /// draft, subgraph or code.
   kind:string (id: 3, required);
-  /// The ports a fork or merge fans over, which decide its width; 0 for others.
+  /// The inputs of a Merge, which decide its width; 0 for others.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);
@@ -503,7 +505,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest,
 }
 table Request { value:RequestPayload; }
@@ -517,7 +519,7 @@ union ReplyPayload {
   FileFormatResult, VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
-  HostTrace:Tsugumi.Trace.HostTrace,
+  HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

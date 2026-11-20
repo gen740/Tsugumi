@@ -6,17 +6,14 @@ import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
 enum CardKind: String {
-  case trigger, input, fork, branch, merge, collect, draft, subgraph, code
-  case switchCard = "switch"
+  case trigger, input, branch, merge, collect, draft, subgraph, code
 
-  var editsValueOnCanvas: Bool { self == .input || self == .switchCard }
+  var editsValueOnCanvas: Bool { self == .input }
 
   var label: String {
     switch self {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
-    case .switchCard: return String(localized: "スイッチ")
-    case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
@@ -30,8 +27,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
-    case .switchCard: return "switch.2"
-    case .fork: return "arrow.triangle.branch"
     case .branch: return "arrow.triangle.swap"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
@@ -45,9 +40,9 @@ enum CardKind: String {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, fork, branch, merge, collect
+  case booleanInput = "input_bool"
+  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, merge, collect
   case report_rmarkdown, report_quarto
-  case switchCard = "switch"
   /// Visualization starting points: ordinary Python Cards, one per plotting library.
   case matplotlib = "visualization_matplotlib"
   case plotly = "visualization_plotly"
@@ -73,21 +68,24 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .csharp: return String(localized: "C# の処理")
     case .rust: return String(localized: "Rust の処理")
     case .input: return String(localized: "入力値")
-    case .switchCard: return String(localized: "スイッチ")
+    case .booleanInput: return String(localized: "真偽値の入力")
     case .trigger: return String(localized: "開始")
-    case .fork: return String(localized: "分配")
     case .branch: return String(localized: "分岐")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     }
   }
-  var symbol: String { isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol }
+  var symbol: String {
+    if self == .booleanInput { return CardKind.input.symbol }
+    return isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol
+  }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
     case .matplotlib, .plotly, .altair: return "visualization"
     case .python, .cpp, .go, .rust, .ruby, .csharp: return "card"
     case .trigger: return "start"
+    case .booleanInput: return "condition"
     default: return rawValue
     }
   }
@@ -341,7 +339,6 @@ extension ProjectSession {
     let body = Tsugumi_Host_ProjectConnectT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
     body.fromCard = fromId; body.fromPort = from.1; body.toCard = toId; body.toPort = to.1
-    body.forkId = try await newCardId("fork", in: scope)
     try await operate(.projectconnect, body: body)
   }
 
@@ -385,11 +382,7 @@ extension ProjectSession {
       if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
         return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"], new: value)]
       }
-      guard definition?["template"]?.string == "switch", name == "value", let value, value.bool != nil else {
-        throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
-      }
-      return [fieldEdit(dir + "_card.json", [.string("params"), match], old: nil,
-                        new: .object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))]
+      throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
     }
   }
 
@@ -398,12 +391,7 @@ extension ProjectSession {
     if let initial {
       if let dir = definitionDir(k) {
         let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
-        if let parameter = initial.parameter {
-          appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: parameter["data"], new: value)])
-        } else {
-          appendEdits([fieldEdit(dir + "_card.json", selector, old: nil,
-            new: .object([("name", .string(name)), ("type", .string("bool")), ("data", value ?? .null)]))])
-        }
+        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"], new: value)])
       }
       return
     }
@@ -411,8 +399,6 @@ extension ProjectSession {
       var params = c["params"]?.array ?? []
       if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
         params[i]["data"] = value
-      } else if c["template"]?.string == CardKind.switchCard.rawValue, name == "value", let value {
-        params.append(.object([("name", .string(name)), ("type", .string("bool")), ("data", value)]))
       }
       c["params"] = .array(params)
     }

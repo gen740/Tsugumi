@@ -315,12 +315,10 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     write(root,
           defs={"trigger": {"template": "trigger"},
                 "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
-                "fork": {"template": "fork"},
                 "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
-          cards=[card("start", "trigger"), card("src", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
-          conns=[conn("src", "msg", "split", "in"), conn("split", "out1", "both", "a"),
-                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
+          cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
+          conns=[conn("src", "msg", "both", "a"), conn("src", "msg", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -329,15 +327,15 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     _, st = run_and_wait(c, "both")
     assert summary_of(c, root, st) == run_facts(card="both", failed=[("both", "input_missing")], never=["sink"])
     set_text(c, "second")
-    ran = [("src", 1), ("split", 1), ("both", 2), ("sink", 2)]
+    ran = [("src", 1), ("both", 2), ("sink", 2)]
     ran.extend((name, 1) for name in independent)
     expected = run_facts(whole=True, card="start", ran=ran)
     first_run, st = run_and_wait(c, "start")
     assert summary_of(c, root, st) == expected
     committed = next(entry for entry in graph(c).commits if text(entry.id) == text(st.commit))
     assert not committed.message and text(committed.facts.kind) == "run" and text(committed.facts.card) == "start"
-    _, st = run_and_wait(c, "split")
-    assert summary_of(c, root, st) == run_facts(card="split", saved=True, ran=[("split",1),("both",2),("sink",2)])
+    _, st = run_and_wait(c, "both")
+    assert summary_of(c, root, st) == run_facts(card="both", saved=True, ran=[("both",1),("sink",1)])
     _, st = run_and_wait(c, "sink", propagate=False)
     assert summary_of(c, root, st) == run_facts(card="sink", propagate=False, saved=True, ran=[("sink",1)])
     # Another connection, in Japanese, on the same project.
@@ -359,16 +357,15 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
 def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):
     """A run summary identifies the Card that exceeded its execution limit."""
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("feed", "source"), card("split", "fork"), card("both", "merge"), card("sink", "sink")],
-                    extra_conns=[conn("feed", "msg", "split", "in"), conn("split", "out1", "both", "a"),
-                                 conn("split", "out2", "both", "b"), conn("both", "out", "sink", "in")])
+    builtin_project(root, extra_cards=[card("feed", "source"), card("both", "merge"), card("sink", "sink")],
+                    extra_conns=[conn("feed", "msg", "both", "a"), conn("feed", "msg", "both", "b"), conn("both", "out", "sink", "in")])
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
     _, st = run_and_wait(c, "feed")
     assert st.state == RunState.failed
     summary = summary_of(c, root, st)
-    assert summary == run_facts(card="feed", ran=[("feed",1),("split",1),("both",2),("sink",1)], failed=[("both","execution_limit")]), summary
+    assert summary == run_facts(card="feed", ran=[("feed",1),("both",2),("sink",1)], failed=[("both","execution_limit")]), summary
     assert any(text(run.state) == "failed" for run in notes(c, root, text(st.commit), 1))
 
 
@@ -381,18 +378,18 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
         return git(project, "rev-parse", "HEAD").strip()
 
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("f", "fork"), card("wide", "fork"), card("b", "branch"), card("m", "merge")],
+    builtin_project(root, extra_cards=[card("wide", "merge"), card("b", "branch"), card("m", "merge")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
-    wide.write_text(json.dumps({"template": "fork", "params": [{"name": "branches", "type": "string[]", "data": ["a", "b", "c"]}]}))
+    wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "fork", "f": "fork", "wide": "fork", "b": "branch", "m": "merge"}
-    assert (cards["f"].fan, cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (2, 3, 2, 0, 0)
+        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "b": "branch", "m": "merge"}
+    assert (cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (3, 2, 0, 0)
     raw_layout = '{"cards":{"out":{"x":3,"y":7,"collapsed":true}},"future":1}'
     (root / "layout.json").write_text(raw_layout)
     assert text(c.call("VersionCanvasRequest", commit=commit_all(root)).layoutJson) == raw_layout
@@ -401,7 +398,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
     assert (text(now["wide"].kind), now["wide"].fan) == ("merge", 1)
     then = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=first).cards}
-    assert (text(then["wide"].kind), then["wide"].fan) == ("fork", 3)
+    assert (text(then["wide"].kind), then["wide"].fan) == ("merge", 3)
 
 
 

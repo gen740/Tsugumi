@@ -14,6 +14,7 @@ import flatbuffers
 from .daemon import BUILD
 from .file_events import process_file
 from .remote_worker import exact, string
+from .transport import ws_frame, ws_read
 from Tsugumi.Host.Message import MessageT
 from Tsugumi.Host.Payload import Payload
 from Tsugumi.Host.ReplyPayload import ReplyPayload
@@ -30,19 +31,19 @@ class HostFailure(RuntimeError):
 
 
 class HostConnection:
-    def __init__(self, ready, *, trace=False):
-        self.socket = socket.socket(socket.AF_UNIX)
+    def __init__(self, ready, *, trace=False, websocket=None):
+        self.socket = websocket if websocket is not None else socket.socket(socket.AF_UNIX)
         self.socket.settimeout(30)
-        self.stream = self.socket.makefile("rwb", buffering=0)
+        self.stream = None if websocket is not None else self.socket.makefile("rwb", buffering=0)
         self.request_id = 0
         self.events = deque()
         try:
-            self.socket.connect(ready["host_socket"])
+            if self.stream is not None:
+                self.socket.connect(ready["host_socket"])
             self.call("HelloRequest", token=ready["user_token"],
                       client=Client.Trace if trace else Client.Unspecified)
         except BaseException:
-            self.stream.close()
-            self.socket.close()
+            HostConnection.close(self)
             raise
 
     def call(self, name, /, **fields):
@@ -63,7 +64,7 @@ class HostConnection:
         builder = flatbuffers.Builder(128)
         builder.Finish(message.Pack(builder), file_identifier=b"TSH1")
         data = bytes(builder.Output())
-        self.socket.sendall(struct.pack("<I", len(data)) + data)
+        self.socket.sendall(ws_frame(data) if self.stream is None else struct.pack("<I", len(data)) + data)
         response = self._receive()
         while response.payloadType == Payload.Event:
             self.events.append(response.payload)
@@ -75,7 +76,7 @@ class HostConnection:
         # Python's generated native API uses None for absent vectors.
         # All optional Host lists have the same omission-means-empty rule.
         value = reply.value
-        for name in ("services", "projects", "models", "demos"):
+        for name in ("services", "projects", "models", "demos", "environments"):
             if hasattr(value, name) and getattr(value, name) is None:
                 setattr(value, name, [])
         for item in getattr(value, "services", []):
@@ -87,6 +88,8 @@ class HostConnection:
         return value
 
     def _receive(self):
+        if self.stream is None:
+            return MessageT.InitFromPackedBuf(ws_read(self.socket))
         size, = struct.unpack("<I", exact(self.stream, 4))
         assert 0 < size <= 16 << 20
         return MessageT.InitFromPackedBuf(exact(self.stream, size))
@@ -99,7 +102,8 @@ class HostConnection:
         return response.payload
 
     def close(self):
-        self.stream.close()
+        if self.stream is not None:
+            self.stream.close()
         self.socket.close()
 
 

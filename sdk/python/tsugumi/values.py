@@ -123,11 +123,6 @@ def _object(schema, index, value):
     return result
 
 
-def _accessor(name):
-    field = _camel(name)
-    return field[:1].upper() + field[1:]
-
-
 def _is_struct_array(type_):
     return type_["base_type"] == "Array" and type_["element"] == "Obj"
 
@@ -170,13 +165,14 @@ def _fix_struct_array_packing():
 
 def encode_outputs(value):
     from tsugumi import contract, message
-    from outputs.Outputs import OutputsT
 
     if value is None:
         value = {}
     if not isinstance(value, Mapping):
         raise Failure("output_invalid", "return a mapping by output port")
-    result = OutputsT()
+    result = {}
+    if value:
+        _fix_struct_array_packing()
     for port, item in value.items():
         found = contract.port(port, "outputs")
         if found is None:
@@ -184,20 +180,12 @@ def encode_outputs(value):
         if found["kind"] in ("file", "directory") and isinstance(item, (str, Path)):
             item = {"value": str(item)}
         try:
-            if isinstance(item, (bytes, bytearray, memoryview)) or hasattr(item, "Output"):
-                module = importlib.import_module(found["type"])
-                cls = getattr(module, found["type"].rsplit(".", 1)[1] + "T")
-                item = cls.InitFromPackedBuf(bytes(item) if not hasattr(item, "Output") else message(item))
-            elif not hasattr(item, "Pack"):
+            if not (isinstance(item, (bytes, bytearray, memoryview))
+                    or hasattr(item, "Output") or hasattr(item, "Pack")):
                 schema = _schema()
                 index = next(i for i, obj in enumerate(schema["objects"]) if obj["name"] == found["type"])
                 item = _object(schema, index, item)
-            setattr(result, _camel(port), item)
+            result[port] = message(item)
         except Exception as error:
             raise Failure("output_invalid", f"output {port}: {error}") from error
-    try:
-        if value:
-            _fix_struct_array_packing()
-        return message(result)
-    except Exception as error:
-        raise Failure("output_invalid", f"cannot pack Outputs: {error}") from error
+    return result

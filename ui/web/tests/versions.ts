@@ -17,7 +17,7 @@ type CardNodeData = import('../src/model/canvasKit').CardNodeData
 function nodeData(kind: CardKind, fan: number): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
-    title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(kind === 'fork' ? fan : 1), params: [],
+    title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(1), params: [],
     invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false,
   }
 }
@@ -42,38 +42,38 @@ assert.equal(small.height, small.cards[0].h + 16, 'the box is only as tall as th
 assert.deepEqual(miniMapLayout([], 'leftToRight', 284, 132).cards, [])
 
 // What is not a Card has the outline and size it has on the canvas, so a graph
-// laid out on the canvas does not overlap here: start -> fork -> two Cards.
+// laid out on the canvas does not overlap here: start and two Cards feeding a Merge.
 const flow = 'leftToRight'
-const fork = new CardGeometry(nodeData('fork', 2), flow), start = new CardGeometry(nodeData('trigger', 0), flow)
-const forked = miniMapLayout([
-  card('start', 0, 30, 'trigger'), card('fork', start.size.width + 10, 20, 'fork', 2),
-  card('load', start.size.width + fork.size.width + 40, -30), card('draft', start.size.width + fork.size.width + 40, 60, 'draft'),
+const mergeGeometry = new CardGeometry(nodeData('merge', 2), flow), start = new CardGeometry(nodeData('trigger', 0), flow)
+const placed = miniMapLayout([
+  card('start', 0, 30, 'trigger'), card('merge', start.size.width + 10, 20, 'merge', 2),
+  card('load', start.size.width + mergeGeometry.size.width + 40, -30), card('draft', start.size.width + mergeGeometry.size.width + 40, 60, 'draft'),
 ], flow, 284, 132)
-const at = Object.fromEntries(forked.cards.map((c) => [c.id, c]))
+const at = Object.fromEntries(placed.cards.map((c) => [c.id, c]))
 assert.equal(at.start.shape, 'start')
-assert.equal(at.fork.shape, 'fork')
+assert.equal(at.merge.shape, 'merge')
 assert.equal(at.load.shape, 'card')
 assert.equal(at.draft.shape, 'card')
 assert.equal(at.draft.draft, true, 'a Draft has its dashed outline')
 assert.equal(at.load.draft, false)
-for (const [i, a] of forked.cards.entries()) for (const b of forked.cards.slice(i + 1)) assert.ok(!overlap(a, b), `${a.id} and ${b.id} do not overlap`)
+for (const [i, a] of placed.cards.entries()) for (const b of placed.cards.slice(i + 1)) assert.ok(!overlap(a, b), `${a.id} and ${b.id} do not overlap`)
 // The shapes are those of the canvas, scaled and at their place.
-const k = at.fork.w / fork.size.width
+const k = at.merge.w / mergeGeometry.size.width
 assert.ok(k > 0 && k <= 0.3)
-assert.equal(at.fork.h, fork.size.height * k)
+assert.equal(at.merge.h, mergeGeometry.size.height * k)
 assert.equal(at.start.w, start.size.width * k)
 const outlineOf = (g: CardGeometry, c: { x: number; y: number }, scale: number) => {
   const o = g.outlineRect
   return g.outline({ x: c.x + o.x * scale, y: c.y + o.y * scale, width: o.width * scale, height: o.height * scale }, scale)
 }
-assert.equal(at.fork.outline, outlineOf(fork, at.fork, k))
+assert.equal(at.merge.outline, outlineOf(mergeGeometry, at.merge, k))
 assert.equal(at.start.outline, outlineOf(start, at.start, k))
-// A triangle with its point upstream: it starts at the middle of the left side.
+// The outline leaves the room the canvas leaves for its wires.
 const leftmost = (d: string) => Math.min(...[...d.matchAll(/(-?[\d.]+),(-?[\d.]+)/g)].map((m) => Number(m[1])))
-assert.ok(Math.abs(leftmost(at.fork.outline) - (at.fork.x + fork.outlineRect.x * k)) < 1e-6, 'the outline leaves the room the canvas leaves for its wires')
+assert.ok(Math.abs(leftmost(at.merge.outline) - (at.merge.x + mergeGeometry.outlineRect.x * k)) < 1e-6, 'the outline leaves the room the canvas leaves for its wires')
 
 // A branch is a diamond whose corners shrink with it; a merge is a triangle that
-// grows with its inputs, and a fork with its outputs; both follow the flow.
+// grows with its inputs.
 const diamond = miniMapLayout([card('b', 0, 0, 'branch')], flow, 284, 132).cards[0]
 const canvasDiamond = new CardGeometry(nodeData('branch', 0), flow)
 assert.equal(diamond.shape, 'branch')
@@ -85,8 +85,6 @@ assert.equal(merge(2, flow).shape, 'merge')
 assert.ok(merge(6, flow).h > merge(2, flow).h, 'more inputs, a wider edge')
 assert.ok(merge(6, 'topToBottom').w > merge(2, 'topToBottom').w)
 assert.notEqual(merge(2, flow).outline, merge(2, 'topToBottom').outline)
-const fan = (n: number) => miniMapLayout([card('f', 0, 0, 'fork', n)], flow, 284, 132).cards[0]
-assert.ok(fan(6).h > fan(2).h, 'more outputs, a wider edge')
 
 // A loop is a merge and a branch with a wire back: wires are the client's, so
 // the two only need not overlap and keep their shapes.
@@ -98,7 +96,6 @@ for (const [i, a] of loop.cards.entries()) for (const b of loop.cards.slice(i + 
 const folded = miniMapLayout([card('a', 0, 0, 'code', 0, true)], flow, 284, 132).cards[0]
 assert.equal(folded.h, CardGeometry.header * 0.3)
 // The kinds as the daemon names them.
-assert.equal(cardKindNamed('fork'), 'fork')
 assert.equal(cardKindNamed('something new'), 'code')
 
 // The UI asks only for a note. No client-side diff, model choice or note write.
@@ -118,10 +115,6 @@ globalThis.fetch = async (url, init) => {
     if (body?.versionNoteMode) mode = body.versionNoteMode
     return new Response(JSON.stringify({ versionNoteMode: mode, revision: { desktop: 0 } }))
   }
-  if (path === '/api/layout/version-canvas') {
-    assert.deepEqual(body, rawCanvas, 'opaque layout and Card ids reach the host unchanged')
-    return new Response(JSON.stringify(hostCanvas))
-  }
   if (path === '/api/versions/comments') return new Response(JSON.stringify({ comments: [{ card: 'plan', text: 'Ask', change: 'resolved', by: 'agent', cards: ['plan'] }] }))
   assert.equal(path, '/api/versions/note')
   return new Response(JSON.stringify(failNote ? { error: 'retry me' } : { text: 'Host-owned note' }), { status: failNote ? 503 : 200 })
@@ -129,7 +122,10 @@ globalThis.fetch = async (url, init) => {
 try {
   // Avoid connecting a project: only the presentation methods under test run.
   const session = Object.create(ProjectSession.prototype) as InstanceType<typeof ProjectSession>
-  Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
+  Object.assign(session, { client: { versionCanvas: async (commit: string) => { assert.equal(commit, 'version'); return rawCanvas } }, layoutHost: { ...layoutHost, versionCanvas: async (input) => {
+    assert.deepEqual(input, rawCanvas)
+    return hostCanvas
+  } }, versionCanvases: new Map(), dir: '/project', versionComments: new Map(), versionNoteRequests: new Map(), versionNoteBusy: new Set(), versionNoteErrors: new Map(), versionNotes: new Map(), changed() {} })
   await session.loadVersionNoteMode()
   assert.equal(session.versionNoteMode, 'mechanical')
   await session.loadVersionCanvas('version')
