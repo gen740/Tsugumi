@@ -39,14 +39,9 @@ let package = Package(
     // macOS adapters for the shared host service.
     .target(
       name: "TsugumiAgentClient",
-      dependencies: [.product(name: "TsugumiVMTypes", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), "TsugumiKeychainUI", .product(name: "FlatBuffers", package: "flatbuffers")],
+      dependencies: [.product(name: "TsugumiVMTypes", package: "TsugumiVM"), .product(name: "TsugumiRPC", package: "swift"), .product(name: "FlatBuffers", package: "flatbuffers")],
       path: "Sources/AgentClient",
       swiftSettings: [.swiftLanguageMode(.v5), .treatAllWarnings(as: .error, .when(configuration: .debug))]),
-    // The file-based Keychain has no supported replacement for its UI switch.
-    // The bridge leaves that one deprecated call visible as a warning.
-    .target(
-      name: "TsugumiKeychainUI", path: "Sources/KeychainUI",
-      cSettings: [.treatAllWarnings(as: .error, .when(configuration: .debug))]),
     .target(
       name: "TsugumiLauncher",
       dependencies: [.product(name: "TsugumiVMTypes", package: "TsugumiVM"), "TsugumiAgentClient", .product(name: "TsugumiRPC", package: "swift"), .product(name: "FlatBuffers", package: "flatbuffers")],

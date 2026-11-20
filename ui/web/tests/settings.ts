@@ -1,10 +1,10 @@
 import assert from 'node:assert/strict'
-import { chatRoutes, type ChatContext } from '../server/chat'
-import { CoreHost } from '../server/coreHost'
+import { chatRoutes, type ChatContext } from '../src/host/chat'
+import { CoreHost } from '../src/host/coreHost'
 
 // The Web adapter forwards one patch for the current surface and consumes
 // the returned snapshot. Host RPC tests cover the ownership of each key.
-const original = { settings: CoreHost.prototype.getSettings, environment: CoreHost.prototype.provisionEnvironment }
+const original = { settings: CoreHost.prototype.getSettings }
 try {
   for (const desktop of [false, true]) {
     let reads = 0, current = 0
@@ -16,11 +16,10 @@ try {
     const writes: any[] = []
     const values: Record<string, unknown> = { 'agent.model': 'old', 'app.language': 'ja' }
     const snapshot = () => ({ revision: revision(), values: Object.entries(values).map(([key, v]) => ({ key, value_json: JSON.stringify(v) })) })
-    CoreHost.prototype.provisionEnvironment = async () => {}
     CoreHost.prototype.getSettings = async function (surface: string) {
       host = this
       reads++
-      assert.equal(surface, 'web:/settings-test')
+      assert.equal(surface, 'desktop')
       this.user.call = async <T = any>(method: string, fields: any = {}): Promise<T> => {
         if (method === 'ModelSelectionRequest') return { provider: { providerId: 'anthropic', model: 'host-summary-model' } } as T
         if (method === 'ModelsListRequest') return [] as T
@@ -34,7 +33,7 @@ try {
       }
       return snapshot()
     }
-    const routes = chatRoutes({ support: '/settings-test', here: '/fixture', desktop,
+    const routes = chatRoutes({
       envs: {} as never, projectDir: String, broadcast: (event: any) => {
         // The page's own reconnect notice comes from main.ts; chat routes
         // report the settings they read again.
@@ -46,7 +45,7 @@ try {
     const result: any = await routes['POST /api/settings']({ revision: revision(0), model: 'new', skillFolders, vmCpus: 2 }, url)
     assert.equal(reads, 1)
     assert.equal(writes.length, 1)
-    assert.equal(writes[0].profile, 'web:/settings-test')
+    assert.equal(writes[0].profile, 'desktop')
     assert.deepEqual(Object.fromEntries(writes[0].changes.map((s: any) => [s.key, JSON.parse(s.value_json)])),
       { 'agent.model': 'new', 'agent.skillFolders': skillFolders, 'vm.cpus': 2 })
     assert.equal(result.model, 'new')
@@ -81,7 +80,6 @@ try {
   }
 } finally {
   CoreHost.prototype.getSettings = original.settings
-  CoreHost.prototype.provisionEnvironment = original.environment
 }
 console.log('Host settings: combined patches and stale revisions passed')
 

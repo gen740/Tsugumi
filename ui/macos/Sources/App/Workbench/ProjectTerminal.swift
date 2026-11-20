@@ -82,7 +82,7 @@ struct ProjectTerminalPanel: View {
 @MainActor
 @Observable
 final class ProjectTerminals {
-  /// As many as the Web UI allows at once (`MAX_TERMINALS` in ui/web/server/main.ts).
+  /// At most this many terminals per project window.
   static let limit = 8
 
   private(set) var tabs: [ProjectTerminal] = []

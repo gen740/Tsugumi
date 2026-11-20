@@ -9,6 +9,7 @@
 #include <thread>
 
 #include "host/service.hh"
+#include "host/web_pages.hh"
 #include "host/wire_endpoint.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -44,6 +45,9 @@ auto RunHost(int argc, char** argv) -> int {
     listener.allow_missing_origin = true;
     std::filesystem::path broker_dir;
     bool ensure = false;
+    std::filesystem::path web_root;
+    int web_port = 8780;
+    bool web_port_chosen = false;
     for (int i = 1; i < argc; ++i) {
       const std::string arg = argv[i];
       auto next = [&]() -> std::string {
@@ -76,7 +80,12 @@ auto RunHost(int argc, char** argv) -> int {
         options.environment.run_scratch_directory = next();
       else if (arg == "--demos-dir")
         options.demos_dir = next();
-      else if (arg == "--allow-origin")
+      else if (arg == "--web-root")
+        web_root = next();
+      else if (arg == "--web-port") {
+        web_port = std::stoi(next());
+        web_port_chosen = true;
+      } else if (arg == "--allow-origin")
         listener.allowed_origins.push_back(next());
       else if (arg == "--listen") {
         const auto address = next();
@@ -165,6 +174,14 @@ auto RunHost(int argc, char** argv) -> int {
     host.Attach(&server, &host_server);
     server.start();
     host_server.start();
+    // The Web UI is served whenever its built page is in place: the one given,
+    // else an installation's share/tsugumi/ui/web/dist/public.
+    if (web_root.empty())
+      web_root = binary_dir.parent_path() / "share/tsugumi/ui/web/dist/public";
+    if (std::filesystem::exists(web_root / "index.html"))
+      host.web().Serve(web_root, web_port, web_port_chosen);
+    else
+      log::info("No Web UI at " + web_root.string() + "; not serving it");
     const auto endpoint = listener.tcp_port < 0
                               ? ""
                               : "ws://" + listener.tcp_host + ":" +
@@ -187,6 +204,7 @@ auto RunHost(int argc, char** argv) -> int {
             {"user_token", json::Quote(options.user_token)},
             {"external_token", json::Quote(options.external_token)},
             {"server_id", json::Quote(options.server_id)},
+            {"web_url", json::Quote(host.web().Url())},
             {"pid", std::to_string(::getpid())}}),
         0600);
     starting.reset();

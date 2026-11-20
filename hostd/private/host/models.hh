@@ -22,15 +22,13 @@ struct Models {
       -> std::vector<std::string>;
   static auto CatalogConnection(std::string_view provider,
                                 std::string_view profile,
-                                std::string_view account_profile = {},
-                                std::string_view key_profile = {})
+                                std::string_view account_profile = {})
       -> std::string;
   static auto ContextWindowTokens(const std::filesystem::path& state_dir,
                                   std::string_view provider,
                                   std::string_view model,
                                   std::string_view profile = "desktop",
-                                  std::string_view account_profile = {},
-                                  std::string_view key_profile = {})
+                                  std::string_view account_profile = {})
       -> uint32_t;
   auto Handle(const RequestIn& request, bool human,
               std::unique_lock<std::recursive_mutex>& lock) -> std::string;

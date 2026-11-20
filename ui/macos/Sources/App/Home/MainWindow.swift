@@ -54,8 +54,12 @@ struct MainWindow: View {
     .background(WindowReader { workspace.window = $0 })
     .onReceive(NotificationCenter.default.publisher(for: NSWindow.willCloseNotification)) { n in
       guard let closing = n.object as? NSWindow, closing === workspace.window else { return }
+      HostPages.shared.closed(workspace)
       model.windowClosed(workspace)
     }
+    // The window is a page of the host: what it shows, for ShowRequest (HostPages).
+    .onChange(of: workspace.session?.identity.id, initial: true) { _, _ in HostPages.shared.report(workspace) }
+    .onChange(of: workspace.session?.rev) { _, _ in workspace.revealPendingCard() }
     .task {
       model.register(workspace)
       guard workspace.session == nil else { return }
