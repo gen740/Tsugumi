@@ -15,6 +15,7 @@
 #include <set>
 #include <stdexcept>
 #include <string>
+#include <string_view>
 #include <vector>
 
 #include "tsugumi/document/definition_values.hh"
@@ -37,16 +38,20 @@ struct Diag {
 struct SourceEntry {
   std::string hash;
   uint64_t size = 0;
+  // Accepted bytes for nested document files carried in snapshots and deltas.
+  std::shared_ptr<const std::string> document_json = nullptr;
 };
 
-// definitions/<id>/: the settings of one Card (_card.json), or, for a Card in
-// Card, the link to its external project (_link.json); never both.
+inline constexpr size_t kMaxDocumentJsonBytes = 8u << 20;
+
+auto external_document_source(const std::string& path, std::string bytes)
+    -> SourceEntry;
+
+// definitions/<id>/_card.json and optional _meta.json.
 struct DefinitionDoc {
   schema::CardDefinition card;
-  std::string card_json;  // empty for a link
+  std::string card_json;
   std::optional<std::string> meta_json;
-  std::optional<std::string> link;  // externals/<link>/
-  std::optional<std::string> link_json;
 };
 
 struct Resolution;  // graph.hh
@@ -69,6 +74,8 @@ struct Document {
 
   static auto is_card_meta_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
+  static auto is_external_document_file(std::string_view path) -> bool;
+  auto check_document_size() const -> void;
   enum class SourcePath { Invalid, Protected, Source };
   static auto classify_source_path(const std::string& rel) -> SourcePath;
   static bool is_source_area(const std::string& rel);
@@ -99,8 +106,6 @@ schema::Project parse_project_json(const std::string& text);
 schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text);
 void check_meta_json(const std::string& text);
-schema::CardLink parse_link_json(const std::string& id,
-                                 const std::string& text);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
 schema::Project parse_external_project(const std::string& rel,
                                        const std::string& text);
@@ -113,9 +118,7 @@ void check_structure(const Document& doc);
 std::shared_ptr<Document> load_from_disk(const std::filesystem::path& root);
 
 // Fingerprint of everything that influences computation (not layout).
-std::string execution_fingerprint(
-    const Document& doc,
-    const std::function<std::optional<std::string>(const std::string&)>& read);
+std::string execution_fingerprint(const Document& doc);
 
 constexpr const char* kEmptyLayout = "{}";
 

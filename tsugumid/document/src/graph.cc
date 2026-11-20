@@ -211,7 +211,7 @@ std::optional<std::string> check_param_value(
 
 Template template_of(const DefinitionDoc* def) {
   if (!def) return Template::Draft;
-  if (def->link) return Template::Subgraph;
+  if (schema::get(def->card.external)) return Template::Subgraph;
   const auto* t = schema::get(def->card.template_name);
   if (!t || *t == "none" || t->empty()) return Template::Code;
   static const std::map<std::string, Template> m = {
@@ -315,7 +315,7 @@ class Builder {
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || def->link) return;
+    if (!def || schema::get(def->card.external)) return;
     const auto& d = def->card;
     auto str = [&](const auto& f, std::string& out) {
       if (const auto* v = schema::get(f)) out = *v;
@@ -541,23 +541,16 @@ class Builder {
   // The definition of a Card written in an external project (read as sources).
   const DefinitionDoc* external_definition(Node& n) {
     auto card = read_(n.def_dir + "_card.json");
-    auto link = read_(n.def_dir + "_link.json");
-    if (card.has_value() == link.has_value()) {
+    if (!card) {
       n.diags.push_back(
-          diag(n.path, "invalid_document",
-               n.def_dir + " needs _card.json or _link.json (one of them)"));
+          diag(n.path, "invalid_document", n.def_dir + " needs _card.json"));
       return nullptr;
     }
     DefinitionDoc d;
     const std::string& id = n.path.back();
     try {
-      if (card) {
-        d.card = parse_card_json(id, *card);
-        d.card_json = *card;
-      } else {
-        d.link = parse_link_json(id, *link).external->value();
-        d.link_json = *link;
-      }
+      d.card = parse_card_json(id, *card);
+      d.card_json = *card;
       if (auto meta = read_(n.def_dir + "_meta.json")) {
         check_meta_json(*meta);
         d.meta_json = *meta;
@@ -670,7 +663,7 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      std::optional<std::string> link = def ? def->link : std::nullopt;
+      const auto* link = def ? schema::get(def->card.external) : nullptr;
       res_->nodes.push_back(std::move(n));
 
       if (link) {

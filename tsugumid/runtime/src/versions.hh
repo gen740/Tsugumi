@@ -7,12 +7,15 @@
 
 #include <cstdint>
 #include <filesystem>
+#include <functional>
 #include <mutex>
 #include <optional>
 #include <string>
 #include <vector>
 
 namespace tsugumi {
+
+struct Document;
 
 struct VersionRunNote {
   std::string run_id;
@@ -77,14 +80,18 @@ class Versions {
   // Commits saved definitions and versionPaths opt-ins when they differ from
   // HEAD (on a detached HEAD a branch is made first, so nothing is left
   // unreachable). Returns HEAD; "" when the folder is not a repository.
-  std::string commit_all(const std::string& message);
+  // A run supplies the accepted document to verify the bytes before staging.
+  std::string commit_all(const std::string& message,
+                         const Document* accepted = nullptr);
   void note_run(const std::string& commit, const VersionRunNote& run);
   // commit_all(message), then an annotated tag `name` on it.
   std::string mark(const std::string& name, const std::string& message);
   // The folder becomes `commit` (what is saved now is committed first). On a
   // branch's tip HEAD follows that branch, else it is detached and the next
   // commit starts a branch.
-  void checkout(const std::string& commit);
+  void checkout(
+      const std::string& commit,
+      const std::function<void(const std::filesystem::path&)>& validate);
   VersionGraphData graph(size_t limit);
   // Raw layout and definition data of `commit`, without presentation logic.
   VersionCanvasData canvas(const std::string& commit);

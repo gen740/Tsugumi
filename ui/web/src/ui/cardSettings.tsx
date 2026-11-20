@@ -126,7 +126,7 @@ export class CardEditorModel extends Observable {
   get files(): string[] {
     const prefix = this.prefix
     if (!prefix) return []
-    const docs = new Set([prefix + '_card.json', prefix + '_meta.json', prefix + '_link.json'])
+    const docs = new Set([prefix + '_card.json', prefix + '_meta.json'])
     const all = new Set([...this.session.sourcePaths.filter((p) => p.startsWith(prefix) && !docs.has(p)), ...this.created])
     for (const p of this.removed) all.delete(p)
     return [...all].sort()

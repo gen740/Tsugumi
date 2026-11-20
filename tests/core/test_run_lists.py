@@ -137,13 +137,19 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
 
 def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_factory, project, tmp_path):
     """An empty run list produces a typed empty vector through a downstream scalar implementation."""
+    diagnostic = "the evaluation selected no implementations"
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("start", {"template": "trigger"})
-    producer(graph, "left", [])
+    graph.card("left", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+               manifest={"runs": []}, plan={"log": diagnostic})
     producer(graph, "right", [1])
     consumer(graph)
     connect_collect(graph)
     graph.save(client)
+
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
+                cards=[path("left"), path("work")])
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
@@ -153,6 +159,18 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
         batch, = page.batches
         assert batch.complete and batch.executionList and batch.invocationCount == 0
     assert collected(client, tmp_path / "decode", run_id) == []
+    journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
+    lines = [json.loads(line) for line in text(journal.text).splitlines()]
+    assert any(diagnostic in line["message"] and "left activation 1" in line["message"]
+               for line in lines)
+
+    assert not any(
+        note.valueType == NotificationPayload.RunEvent
+        and text(note.value.runId) == run_id
+        and note.value.valueType == RunEventValue.RunCardChanged
+        and note.value.value.invocation.card.segments in ([b"left"], [b"work"])
+        for note in client.notifications
+    )
 
     replay = run(client, "work", propagate=False)
     assert wait_run(client, replay).state == RunState.succeeded
@@ -235,6 +253,33 @@ def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, proje
     latest = client.call("RunLatestInvocationsRequest", runId=run_id)
     assert not any([text(segment) for segment in row.card.segments] == ["work"] and row.executionService
                    for row in latest.records)
+
+
+@pytest.mark.parametrize("prepared", [False, True])
+def test_implementation_limit_applies_before_running_batch(core_factory, project, tmp_path, prepared):
+    daemon = core_factory(mocked_builds=True)
+    client = daemon.connect()
+    graph = Project(project).card("start", {"template": "trigger"})
+    producer(graph, "left", range(17))
+    producer(graph, "right", [1])
+    consumer(graph, implementations=[implementation(99)] * 16)
+    graph.save(client)
+
+    if prepared:
+        cards = tmp_path / "cards.jsonl"
+        daemon.stop()
+        daemon.args = ["--prepare-cards", str(cards)]
+        daemon.start(expect_exit=True)
+        assert daemon.proc.returncode == 0, daemon.diagnostics()
+        daemon.args = ["--prepared-cards", str(cards)]
+        daemon.start()
+        client = daemon.connect()
+
+    run_id = run(client, "start", propagate=True)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.execution_limit
+    row, = invocation_page(client, run_id, "work").records
+    assert row.failure.kind == FailureKind.execution_limit and not row.executionService
 
 
 def test_output_batch_limit_withholds_successful_members(core_factory, project):

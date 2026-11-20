@@ -1,3 +1,4 @@
+#include <algorithm>
 #include <set>
 
 #include "project_fixture.hh"
@@ -7,7 +8,8 @@ namespace tsugumi::test {
 namespace {
 namespace json = ::tsugumi::json;
 
-TEST_F(AgentProjectFixture, ImplementsJapaneseBundledDraftsAndPlacesNewCard) {
+TEST_F(AgentProjectFixture,
+       ImplementsJapaneseBundledDraftsWithoutWritingLayout) {
   const auto demo = std::filesystem::path(TSUGUMI_GUIDE_TEST_ROOT) / "demos" /
                     "ja" / "mnist-classifiers-draft";
   const auto root = directory.path / "project";
@@ -19,6 +21,7 @@ TEST_F(AgentProjectFixture, ImplementsJapaneseBundledDraftsAndPlacesNewCard) {
             Read(file.path()));
   const auto document = Read(root / "tsugumi.json");
   StartProject(false, document, "{}");
+  const auto saved_layout = Read(root / "layout.json");
   const auto conversation = Conversation("mnist-generate-cards");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -121,8 +124,13 @@ TEST_F(AgentProjectFixture, ImplementsJapaneseBundledDraftsAndPlacesNewCard) {
             json::UInt(json::String(json::Get(snapshot, "rev"),
                                     json::Get(snapshot, "rev"))) +
                 1);
-  const auto layout = json::Object(Read(root / "layout.json"));
-  EXPECT_TRUE(json::Object(layout.at("cards")).contains("report"));
+  EXPECT_EQ(Read(root / "layout.json"), saved_layout);
+  const auto saved =
+      json::Object(json::Object(Read(root / "tsugumi.json")).at("canvas"));
+  const auto placed = json::Array(saved.at("cards"));
+  EXPECT_TRUE(std::any_of(placed.begin(), placed.end(), [&](const auto& entry) {
+    return json::Text(json::Object(entry), "id") == "report";
+  }));
   for (const auto& id : implemented) {
     SCOPED_TRACE(id);
     const auto definition = Read(root / "definitions" / id / "_card.json");

@@ -141,7 +141,7 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})");
   std::filesystem::remove_all(root / "definitions/start");
-  fs::write_atomic(root / "definitions/outer/_link.json",
+  fs::write_atomic(root / "definitions/outer/_card.json",
                    R"({"external":"library"})");
   const std::string project =
       R"({"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":{},"outputs":{}}})";
@@ -339,7 +339,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
     {"from":{"card":"start","port":"out"},"to":{"card":"outer","port":"in"}},
     {"from":{"card":"outer","port":"out"},"to":{"card":"next","port":""}}
   ]}})");
-  fs::write_atomic(root / "definitions/outer/_link.json",
+  fs::write_atomic(root / "definitions/outer/_card.json",
                    R"({"external":"child"})");
   fs::write_atomic(root / "definitions/next/_card.json",
                    R"({"template":"draft"})");

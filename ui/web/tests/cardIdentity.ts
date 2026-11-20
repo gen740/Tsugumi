@@ -51,7 +51,7 @@ assert.equal(text(requests[0].name), 'aggregate')
 assert.ok(saves >= 2)
 
 // Nested scopes use the same allocator through the operation transport.
-session.confirmedLinks.set('outer', parse('{"external":"nested"}'))
+session.confirmedDefinitions.set('outer', parse('{"external":"nested"}'))
 session.confirmedDefinitionMeta.set('outer', parse('{"name":"Outer"}'))
 const projectValue = JSON.parse(serialize(session.project))
 projectValue.canvas.cards.push({ id: 'outer' })

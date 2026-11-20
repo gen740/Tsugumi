@@ -5,16 +5,23 @@ another's run."""
 
 from __future__ import annotations
 
+import json
 import os
+from contextlib import closing
+from pathlib import Path
 
 import pytest
 
-from conftest import SharedVM, VMEnv
+from conftest import SharedVM, VMEnv, write_project
+from harness.host import HostConnection
 from projects import card
 from projects import run_and_wait, start_run, wait_for_log, wait_run, write
 from test_cards_container import bash, log
-from tsugumi_client import new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.Host.EventPayload import EventPayload
+from Tsugumi.Trace.CoreTraceRequest import CoreTraceRequestT
+from Tsugumi.Trace.Mode import Mode
 
 pytestmark = pytest.mark.skipif(
     os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
@@ -243,9 +250,9 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
     a = VMEnv(tmp_path / "a").start()
     try:
         vm = a.vm
-        bad = ["start ../x 1 /tmp 3", "start a/b 1 /tmp 3", "start x", "stop ../../etc", "stop", "forget ..",
+        bad = ["start ../x x 1 0", "start a/b x 1 0", "start x", "stop ../../etc", "stop", "forget ..",
                "shell ../x 10 10", "shell x", "resize", "resize 99999999999 1 1", "clock 0", "clock -5",
-               "frobnicate", "start " + "a" * 5000 + " 1 /tmp 3", "stop " + "\u00e9" * 50]
+               "frobnicate", "start " + "a" * 5000 + " p 1 0", "stop " + "\u00e9" * 50]
         for req in bad:
             line = vm.command(f"vm {req}")[-1]
             assert line.startswith("error "), (req, line)
@@ -259,3 +266,39 @@ def test_vmd_answers_malformed_requests_with_an_error_and_keeps_serving(tmp_path
             b.stop()
     finally:
         a.stop()
+
+
+@pytest.mark.parametrize("rpc_trace", [False, True])
+def test_host_launches_guest_core_with_its_trace_grant(tmp_path, rpc_trace):
+    root = tmp_path / "project"
+    write_project(root)
+    vm = SharedVM(rpc_trace=rpc_trace)
+    try:
+        env = VMEnv(root, vm=vm).start()
+        with env.client() as core:
+            if not rpc_trace:
+                capability = (env.control / "execution-broker-capability").read_text()
+                for mode in (None, Mode.Capture):
+                    request = CoreTraceRequestT()
+                    request.capability = capability
+                    request.mode = mode
+                    with pytest.raises(RpcFailure) as error:
+                        core.wait_reply(core.send("CoreTraceRequest", request))
+                    assert error.value.kind == "permission_denied"
+                return
+
+            ready = Path(vm.directory.name) / "host-core/host.ready"
+            with closing(HostConnection(json.loads(ready.read_text()), trace=True)) as viewer:
+                project_id = env.ready["project_id"]
+                watched = viewer.call("HostTraceRequest", mode=Mode.Trace)
+                assert {r.id.decode() for r in watched.recorders if r.available} == {project_id}
+                snapshot = viewer.call("HostTraceRequest", source=project_id).snapshot
+                core.call("ProjectActivityRequest")
+                event = viewer.next_event()
+                assert event.valueType == EventPayload.TraceChanged
+                assert event.value.source.decode() == project_id
+                delta = viewer.call("HostTraceRequest", source=project_id, generation=snapshot.generation,
+                                    after=max((e.sequence for e in snapshot.entries or []), default=0)).snapshot
+                assert any(e.messageType == b"ProjectActivityRequest" for e in delta.entries)
+    finally:
+        vm.quit()

@@ -127,7 +127,7 @@ auto MakeSubgraph(const std::string& project,
   DocumentSubgraph result;
   result.project_json = json::Encode(outer);
   result.external_json = json::Encode(inner);
-  result.link_json = json::Encode(json::Members{{"external", json::Quote(id)}});
+  result.card_json = json::Encode(json::Members{{"external", json::Quote(id)}});
   return result;
 }
 auto CopyDocuments(const std::string& state,
@@ -157,8 +157,7 @@ auto CopyDocuments(const std::string& state,
         const auto slash = rest.find('/');
         if (slash == std::string::npos) continue;
         const auto doc = rest.substr(slash + 1);
-        if (doc == "_card.json" || doc == "_meta.json" || doc == "_link.json")
-          documents.insert(path);
+        if (doc == "_card.json" || doc == "_meta.json") documents.insert(path);
       }
     }
     for (const auto& path : paths)
@@ -199,22 +198,19 @@ auto CopyDocuments(const std::string& state,
       meta["comments"] = json::Encode(comments);
     }
     draft["meta"] = json::Encode(meta);
-    if (draft.contains("link")) {
-      const auto link = json::Object(draft.at("link"));
-      const auto external = json::Text(link, "external");
-      if (!external.empty()) {
-        copy_external(source_prefix + "externals/" + external + "/",
-                      target_prefix + "externals/" + new_id + "/");
-        draft["link"] =
-            json::Encode(json::Members{{"external", json::Quote(new_id)}});
-      }
+    auto card = json::Object(draft.at("card"));
+    const auto external = json::Text(card, "external");
+    if (!external.empty()) {
+      copy_external(source_prefix + "externals/" + external + "/",
+                    target_prefix + "externals/" + new_id + "/");
+      card["external"] = json::Quote(new_id);
+      draft["card"] = json::Encode(card);
     }
     definitions[to] = json::Encode(draft);
     for (const auto& path : paths) {
       if (!path.starts_with(from)) continue;
       const auto rel = path.substr(from.size());
-      if (rel != "_card.json" && rel != "_link.json" && rel != "_meta.json")
-        file(path, to + rel);
+      if (rel != "_card.json" && rel != "_meta.json") file(path, to + rel);
     }
   } else {
     copy_external(from, to);

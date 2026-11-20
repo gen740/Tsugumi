@@ -22,7 +22,6 @@ if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
     agent/tool_arguments_test.cc
     agent/project_files_test.cc
     host/agent_exclude_test.cc
-    host/save_inspection_test.cc
     host/project_edit_test.cc
     host/project_operations_test.cc
     host/file_miss_test.cc

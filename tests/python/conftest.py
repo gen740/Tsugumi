@@ -81,7 +81,7 @@ class SharedVM:
 
     _instance: "SharedVM | None" = None
 
-    def __init__(self):
+    def __init__(self, *, rpc_trace=False):
         import atexit
         vmctl = os.environ.get("TSUGUMI_VMCTL", str(ROOT / "cli/vmctl" / ".build" / "debug" / "tsugumi-vmctl"))
         self.directory = tempfile.TemporaryDirectory(prefix="vm-")
@@ -89,6 +89,7 @@ class SharedVM:
         support.mkdir(parents=True, exist_ok=True)
         self.console = support / "vmctl-console.log"
         env = dict(os.environ, TSUGUMI_SOCKET_DIR=str(support),
+                   TSUGUMI_RPC_TRACE="1" if rpc_trace else "0",
                    TSUGUMI_RUN_SCRATCH_DIR=str(support.resolve() / "scratch"))
         with self.console.open("a") as log:
             self.proc = subprocess.Popen([vmctl, "--support", str(support), "--console"], stdin=subprocess.PIPE,
@@ -136,6 +137,8 @@ class SharedVM:
                 return out
 
     def quit(self):
+        if self.proc.stdin.closed:
+            return
         if self.proc.poll() is None:
             try:
                 self.command("quit", until=lambda l: l == "bye", timeout=120)
@@ -162,9 +165,9 @@ class SharedVM:
 class VMEnv:
     """Runs a project in the app's shared VM (the reference configuration)."""
 
-    def __init__(self, project: Path):
+    def __init__(self, project: Path, *, vm: SharedVM | None = None):
         self.project = project
-        self.vm = SharedVM.get()
+        self.vm = vm if vm is not None else SharedVM.get()
         self.port = None
         self.ready: dict = {}
         self.id = ""

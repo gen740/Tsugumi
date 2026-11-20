@@ -946,10 +946,6 @@
                         "type": "string",
                         "description": " The new _meta.json; omitted removes it unless keep_meta. Empty keeps it."
                       },
-                      "link_json": {
-                        "type": "string",
-                        "description": " A Card in Card: _link.json instead of _card.json. Empty: none."
-                      },
                       "keep_meta": {
                         "type": "boolean",
                         "description": " Keep _meta.json as it is (meta_json omitted): change settings without  writing the intent text again."

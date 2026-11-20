@@ -30,6 +30,18 @@ constexpr uintmax_t kCompactBytes = 8u << 20;
 constexpr size_t kKeepReceipts = 2000;
 constexpr size_t kKeepReceiptBytes = kCompactBytes / 4;
 
+auto load_document(const stdfs::path& root) -> std::shared_ptr<Document> {
+  try {
+    return load_from_disk(root);
+  } catch (const DocumentError& e) {
+    std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
+                                                          e.args.end());
+    throw Failed(
+        failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
+        e.what(), args);
+  }
+}
+
 std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 
 // What a save may write: the documents and the source areas, never
@@ -242,7 +254,7 @@ void Store::open() {
       exec_rev = doc_->execution_rev;
     }
   }
-  auto loaded = load_from_disk(opts_.root);
+  auto loaded = load_document(opts_.root);
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
   auto doc = finalize(loaded);
@@ -259,31 +271,14 @@ DocumentPtr Store::preview(const std::vector<ChangeIn>& changes) const {
   return finalize(st.doc, &st.ops, current().get());
 }
 
-std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
-                                          const std::vector<FileOp>* pending,
-                                          const Document* base) const {
-  // Staged documents carry their fingerprint already; a loaded one does not.
-  if (doc->execution_fingerprint.empty())
-    doc->execution_fingerprint =
-        execution_fingerprint(*doc, reader(*doc, pending));
-  auto resolution_key = doc->execution_fingerprint;
-  if (doc->resolution && doc->resolution_key == resolution_key)
-    return doc;  // resolved before commit
-  doc->resolution_key = resolution_key;
-  if (base && base->resolution && base->resolution_key == doc->resolution_key) {
-    doc->resolution = base->resolution;
-    return doc;
-  }
-  doc->resolution = resolve(*doc, reader(*doc, pending));
-  return doc;
-}
-
-SourceReader Store::reader(const Document& doc,
-                           const std::vector<FileOp>* pending) const {
-  return [root = opts_.root, &doc,
+namespace {
+SourceReader source_reader(const stdfs::path& root, const Document& doc,
+                           const std::vector<FileOp>* pending = nullptr) {
+  return [root, &doc,
           pending](const std::string& rel) -> std::optional<std::string> {
     auto it = doc.sources.find(rel);
     if (it == doc.sources.end()) return std::nullopt;
+    if (it->second.document_json) return *it->second.document_json;
     if (pending) {
       for (const auto& op : *pending)
         if (op.path == rel)
@@ -294,6 +289,23 @@ SourceReader Store::reader(const Document& doc,
       return std::nullopt;
     return data;
   };
+}
+
+}  // namespace
+
+std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
+                                          const std::vector<FileOp>* pending,
+                                          const Document* base) const {
+  auto resolution_key = doc->execution_fingerprint;
+  if (doc->resolution && doc->resolution_key == resolution_key)
+    return doc;  // resolved before commit
+  doc->resolution_key = resolution_key;
+  if (base && base->resolution && base->resolution_key == doc->resolution_key) {
+    doc->resolution = base->resolution;
+    return doc;
+  }
+  doc->resolution = resolve(*doc, source_reader(opts_.root, *doc, pending));
+  return doc;
 }
 
 // Journal record: magic(4) | len(u32 LE) | crc32(u32 LE) | payload (compact
@@ -555,6 +567,7 @@ std::string Store::read_source(const Document& doc,
   if (it == doc.sources.end())
     throw Failed(FailureKind::not_found, rel + " is not a source",
                  {{"path", rel}});
+  if (it->second.document_json) return *it->second.document_json;
   auto data = fs::read_file(opts_.root / rel);
   if (!data || crypto::sha256_hex(*data) != it->second.hash)
     throw Failed(FailureKind::external_change,
@@ -651,17 +664,8 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                        "invalid definition id " + c.id);
         DefinitionDoc d;
         wrap([&] {
-          if (c.link_json) {
-            if (!c.json.empty())
-              throw DocumentError(
-                  "invalid_document",
-                  "a definition has card_json or link_json, not both");
-            d.link = parse_link_json(c.id, *c.link_json).external->value();
-            d.link_json = *c.link_json;
-          } else {
-            d.card = parse_card_json(c.id, c.json);
-            d.card_json = c.json;
-          }
+          d.card = parse_card_json(c.id, c.json);
+          d.card_json = c.json;
           if (c.meta_json) {
             check_meta_json(*c.meta_json);
             d.meta_json = *c.meta_json;
@@ -788,15 +792,23 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   }
   wrap([&] { check_structure(*doc); });
 
-  size_t json_bytes = doc->project_json.size() + doc->layout_json.size();
-  for (const auto& [_, d] : doc->definitions)
-    json_bytes += d.card_json.size() + (d.meta_json ? d.meta_json->size() : 0);
-  if (json_bytes > kMaxDocumentJsonBytes)
-    throw Failed(
-        FailureKind::resource_limit,
-        "document JSON has " + std::to_string(json_bytes) +
-            " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
-            "folder and read it through hostFolders (/host/<name>).");
+  for (const auto& [path, content] : files) {
+    if (!content || !Document::is_external_document_file(path)) continue;
+    wrap([&] {
+      doc->sources.at(path) = external_document_source(path, *content);
+    });
+  }
+  for (const auto& [path, file] : streamed) {
+    if (!Document::is_external_document_file(path)) continue;
+    wrap([&] {
+      if (file->size > kMaxDocumentJsonBytes)
+        throw DocumentError("resource_limit",
+                            path + " exceeds the document JSON limit");
+      doc->sources.at(path) =
+          external_document_source(path, fs::read_file_or_throw(file->path));
+    });
+  }
+  wrap([&] { doc->check_document_size(); });
   if (doc->sources.size() > kMaxManifestEntries)
     throw Failed(
         FailureKind::resource_limit,
@@ -816,19 +828,9 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
     bool fresh = old == base->definitions.end();
-    bool card_changed = fresh || old->second.card_json != d.card_json ||
-                        old->second.link_json != d.link_json;
+    bool card_changed = fresh || old->second.card_json != d.card_json;
     bool meta_changed = fresh || old->second.meta_json != d.meta_json;
-    if (card_changed) {
-      if (d.link_json)
-        files[def_dir(id) + "_link.json"] = *d.link_json;
-      else
-        files[def_dir(id) + "_card.json"] = d.card_json;
-      if (!fresh && d.link_json && !old->second.link_json)
-        files[def_dir(id) + "_card.json"] = std::nullopt;
-      if (!fresh && !d.link_json && old->second.link_json)
-        files[def_dir(id) + "_link.json"] = std::nullopt;
-    }
+    if (card_changed) files[def_dir(id) + "_card.json"] = d.card_json;
     if (meta_changed) {
       if (d.meta_json)
         files[def_dir(id) + "_meta.json"] = *d.meta_json;
@@ -840,13 +842,10 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   for (const auto& [id, d] : base->definitions) {
     if (doc->definitions.count(id)) continue;
     st.delta.definitions_removed.push_back(id);
-    files[def_dir(id) + (d.link_json ? "_link.json" : "_card.json")] =
-        std::nullopt;
+    files[def_dir(id) + "_card.json"] = std::nullopt;
     if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {
-    if (content && Document::is_card_meta_file(path))
-      wrap([&] { check_meta_json(*content); });
     if (Document::is_document_file(path)) continue;
     auto old = base->sources.find(path);
     if (content) {
@@ -875,16 +874,6 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     st.ops.push_back({path, content});
   }
   for (const auto& [path, file] : streamed) {
-    if (Document::is_card_meta_file(path))
-      wrap([&] {
-        // Apply the existing metadata limit before reading its JSON into
-        // memory.
-        if (file->size > (1u << 20))
-          throw DocumentError("invalid_document",
-                              path + " has " + std::to_string(file->size) +
-                                  " bytes; limit is 1048576 bytes (1 MiB)");
-        check_meta_json(fs::read_file_or_throw(file->path));
-      });
     auto old = base->sources.find(path);
     if (old != base->sources.end() && old->second.hash == file->hash) continue;
     st.delta.sources_upsert.push_back(path);
@@ -902,24 +891,32 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     else
       doc->disk_hashes.erase(op.path);
   }
-  doc->execution_fingerprint =
-      execution_fingerprint(*doc, reader(*doc, &st.ops));
+  wrap([&] { doc->execution_fingerprint = execution_fingerprint(*doc); });
   st.doc = doc;
   return st;
 }
 
+namespace {
+void check_ports(const Resolution& resolution) {
+  // Endpoint validity is a document invariant, including when a Draft becomes
+  // implemented. Never infer a port, even if there is only one candidate.
+  for (const auto& diagnostic : resolution.all_diagnostics(false))
+    if (diagnostic.code == "unknown_port")
+      throw Failed(FailureKind::validation_failed, diagnostic.message);
+}
+}  // namespace
+
 Store::Staged Store::stage_reload(const std::string& op_id,
-                                  const std::string& origin) const {
+                                  const std::string& origin,
+                                  const stdfs::path& checkout) const {
   auto base = current();
-  std::shared_ptr<Document> doc;
-  try {
-    doc = load_from_disk(opts_.root);
-  } catch (const DocumentError& e) {
-    std::vector<std::pair<std::string, std::string>> args(e.args.begin(),
-                                                          e.args.end());
-    throw Failed(
-        failure_kind_from_name(e.code).value_or(FailureKind::invalid_document),
-        e.what(), args);
+  auto doc = load_document(checkout.empty() ? opts_.root : checkout);
+  if (!checkout.empty()) {
+    doc->resolution = resolve(*doc, source_reader(checkout, *doc));
+    doc->resolution_key = doc->execution_fingerprint;
+    for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
+      if (diagnostic.code == "invalid_document")
+        throw Failed(FailureKind::invalid_document, diagnostic.message);
   }
   Staged st;
   st.delta.base_rev = base->rev;
@@ -952,10 +949,23 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   // changes.
   doc->rev = base->rev;
   doc->execution_rev = base->execution_rev;
-  doc->execution_fingerprint =
-      execution_fingerprint(*doc, reader(*doc, &st.ops));
   st.doc = doc;
   return st;
+}
+
+void Store::prepare_delta(Staged& st) const {
+  if (!st.effective || st.delta.doc) return;
+  const auto base = current();
+  auto doc = st.doc;
+  doc->rev = base->rev + 1;
+  finalize(doc, &st.ops, base.get());
+  check_ports(*doc->resolution);
+  doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
+                           ? base->execution_rev + 1
+                           : base->execution_rev;
+  st.delta.rev = doc->rev;
+  st.delta.execution_rev = doc->execution_rev;
+  st.delta.doc = doc;
 }
 
 void Store::commit(Staged& st, const std::string& kind,
@@ -969,6 +979,8 @@ void Store::commit(Staged& st, const std::string& kind,
   check_cancelled();
   auto base = current();
   if (!st.effective) {
+    Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
+    check_cancelled();
     // Receipt only: no revision change, no notification. A reload may still
     // learn new on-disk bytes (e.g. reformatted JSON with the same content).
     if (st.doc && st.doc->disk_hashes != base->disk_hashes) {
@@ -978,26 +990,12 @@ void Store::commit(Staged& st, const std::string& kind,
       doc_ = refreshed;
     }
     st.doc = nullptr;
-    Receipt r{st.delta.op_id, kind, digest, make_receipt(nullptr)};
-    check_cancelled();
     record_receipt(r);
     return;
   }
   check_disk_unchanged(*base, st.ops);
+  prepare_delta(st);
   auto doc = st.doc;
-  doc->rev = base->rev + 1;
-  finalize(doc, &st.ops, base.get());
-  // Endpoint validity is a document invariant, including when a Draft becomes
-  // implemented. Never infer a port, even if there is only one candidate.
-  for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
-    if (diagnostic.code == "unknown_port")
-      throw Failed(FailureKind::validation_failed, diagnostic.message);
-  doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
-                           ? base->execution_rev + 1
-                           : base->execution_rev;
-  st.delta.rev = doc->rev;
-  st.delta.execution_rev = doc->execution_rev;
-  st.delta.doc = doc;
   std::string receipt = make_receipt(&st.delta);
 
   auto intent = journal_payload("txn", doc->rev, doc->execution_rev,

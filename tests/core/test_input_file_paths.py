@@ -28,7 +28,7 @@ def project_with_file(root, value, external=False, record_io=False):
         write(root, defs={"shared": {"template": "trigger"}}, cards=[card("child"), card("shared", "shared")], conns=[],
               files={"definitions/shared/data/events.txt": "Outer-project contents"})
         (root / "definitions/child/_card.json").unlink()
-        put(root / "definitions/child/_link.json", '{"external":"child"}')
+        put(root / "definitions/child/_card.json", '{"external":"child"}')
     return owner, ["child", "load"] if external else ["load"]
 
 

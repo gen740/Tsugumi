@@ -53,7 +53,7 @@ function cardFiles(dir) {
   const walk = (d, prefix = '') => fs.readdirSync(d, { withFileTypes: true }).flatMap((e) =>
     (e.isDirectory() ? walk(path.join(d, e.name), `${prefix}${e.name}/`) : [`${prefix}${e.name}`]))
   if (!fs.existsSync(dir)) return []
-  return walk(dir).filter((f) => f !== '_meta.json' && f !== '_link.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
+  return walk(dir).filter((f) => f !== '_meta.json').sort((a, b) => rank(a) - rank(b) || a.localeCompare(b)).flatMap((f) => {
     const bytes = fs.readFileSync(path.join(dir, f))
     return bytes.includes(0) ? [] : [sourceFile(f, bytes.toString('utf8'))]
   })
@@ -62,8 +62,8 @@ function cardFiles(dir) {
 const KINDS = new Set(['trigger', 'input', 'branch', 'merge', 'collect', 'draft'])
 
 /** As definitionKind in ui/web/src/model/session.ts. */
-function kindOf(dir, def) {
-  if (fs.existsSync(path.join(dir, '_link.json'))) return 'subgraph'
+function kindOf(def) {
+  if (def?.external) return 'subgraph'
   if (KINDS.has(def?.template)) return def.template
   return def?.language === undefined ? 'draft' : 'code'
 }
@@ -77,7 +77,7 @@ function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
   const def = readJson(path.join(dir, '_card.json'), {})
   const meta = readJson(path.join(dir, '_meta.json'), {})
-  const kind = kindOf(dir, def)
+  const kind = kindOf(def)
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
   const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))
@@ -112,8 +112,8 @@ function readGraph(root) {
   const wires = readWires(doc)
   const children = new Map()
   for (const { id } of doc.canvas.cards) {
-    const link = readJson(path.join(root, 'definitions', id, '_link.json'))
-    if (link) children.set(id, readGraph(path.join(root, 'externals', link.external)))
+    const { external } = readJson(path.join(root, 'definitions', id, '_card.json'), {})
+    if (external) children.set(id, readGraph(path.join(root, 'externals', external)))
   }
   return { root, doc, wires, children }
 }

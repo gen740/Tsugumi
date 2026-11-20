@@ -121,7 +121,6 @@ export interface CardRunState {
   state: D.CardState
   /** Number of the latest invocation in this run (1, 2, …); 0 = not run. */
   invocation: bigint
-  batchActivation?: bigint
   phase: D.Phase
   failure?: string
   executionState?: D.RemoteExecutionState | null
@@ -159,7 +158,6 @@ export const runStateStage = (st: CardRunState): Stage | undefined =>
 export interface TimelineEntry {
   card: CardKey
   invocation: bigint
-  batchActivation?: bigint
   state: D.CardState
   startedAt?: number
   endedAt?: number
@@ -177,12 +175,10 @@ export interface InlineDraft {
   revision: RevisionEdit
 }
 
-/** Draft of one Card's definition (`_card.json` and `_meta.json`, or for a
- *  Card in Card `_link.json`), or its removal. */
+/** Draft of one Card's definition (`_card.json` and optional `_meta.json`). */
 export interface DefinitionDraft {
   card: J
   meta?: J
-  link?: J
 }
 
 /** A project inside this one (externals/<name>/, nested further): the inner
@@ -191,17 +187,10 @@ export interface DefinitionDraft {
 export interface ExternalProject {
   project: J
   layout: J
-  /** Card id -> its definition files (_card.json or _link.json, _meta.json). */
+  /** Card id -> its definition files (_card.json and optional _meta.json). */
   definitions: Map<string, DefinitionDraft>
   /** Removed (the folder goes with it). */
 }
-
-/** Card id -> external name (its own Cards in Card). */
-export const externalLinks = (e: ExternalProject) =>
-  new Map([...e.definitions].flatMap(([id, d]) => {
-    const n = str(get(d.link, 'external'))
-    return n ? [[id, n] as [string, string]] : []
-  }))
 
 /** The documents as files, relative to the external's folder. */
 export type SyncState =
@@ -401,10 +390,9 @@ export class ProjectSession extends Observable {
   confirmedLayout: J = obj()
   confirmedDefinitions = new Map<string, J>()
   confirmedDefinitionMeta = new Map<string, J>()
-  confirmedLinks = new Map<string, J>()
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
-  private externalsKey = ''
+  private externalDocuments = new Map<string, J>()
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
@@ -525,7 +513,6 @@ export class ProjectSession extends Observable {
     return this.dirty ? { kind: 'saving' } : { kind: 'saved' }
   }
   get definitions(): Map<string, J> { return this.confirmedDefinitions }
-  get links(): Map<string, J> { return this.confirmedLinks }
   get definitionMeta(): Map<string, J> { return this.confirmedDefinitionMeta }
   get sourcePaths(): string[] { return [...this.sources.keys()].sort() }
 
@@ -775,7 +762,7 @@ export class ProjectSession extends Observable {
     if (!prev || prev.invocation <= n) {
       const sent = new Set(inv.outputsSent.map((x) => s(x)))
       this.cardStates.set(k, {
-        state: inv.state, invocation: n, batchActivation: inv.batchActivation ?? undefined, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
+        state: inv.state, invocation: n, phase: inv.phase, failure: sOpt(inv.failure?.diagnostic),
         executionState: inv.executionState,
         transfer: (inv.state === D.CardState.running || inv.state === D.CardState.preparing) && inv.transferDirection && inv.transferDone < inv.transferTotal
           ? L('ファイル転送: {0} ({1}/{2} bytes)', s(inv.transferName), String(inv.transferDone), String(inv.transferTotal)) : undefined,
@@ -794,11 +781,6 @@ export class ProjectSession extends Observable {
     if (current && (batch.activation < current.activation ||
       (batch.activation === current.activation && current.complete && !batch.complete))) return
     this.runBatches.set(card, batch)
-    if (batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) {
-      // Nix preparation can use a provisional invocation before it finds an empty list.
-      if (this.cardStates.get(card)?.batchActivation === batch.activation) this.cardStates.delete(card)
-      this.timeline = this.timeline.filter((item) => item.card !== card || item.batchActivation !== batch.activation)
-    }
   }
 
   /** The Cards of the last run, for a project just opened: their notifications were sent before it was. */
@@ -847,15 +829,8 @@ export class ProjectSession extends Observable {
   private readDefinitions(defs: R.DefinitionT[]) {
     for (const d of defs) {
       const id = s(d.id)
-      if (d.linkJson !== null) {
-        const l = tryParse(s(d.linkJson))
-        if (l !== undefined) this.confirmedLinks.set(id, l)
-        this.confirmedDefinitions.delete(id)
-      } else {
-        const c = tryParse(s(d.cardJson))
-        if (c !== undefined) this.confirmedDefinitions.set(id, c)
-        this.confirmedLinks.delete(id)
-      }
+      const c = tryParse(s(d.cardJson))
+      if (c !== undefined) this.confirmedDefinitions.set(id, c)
       const m = d.metaJson !== null ? tryParse(s(d.metaJson)) : undefined
       if (m !== undefined) this.confirmedDefinitionMeta.set(id, m)
       else this.confirmedDefinitionMeta.delete(id)
@@ -871,11 +846,13 @@ export class ProjectSession extends Observable {
     this.confirmedLayout = tryParse(s(snap.layoutJson)) ?? obj()
     this.confirmedDefinitions = new Map()
     this.confirmedDefinitionMeta = new Map()
-    this.confirmedLinks = new Map()
     this.readDefinitions(snap.definitions)
     this.sources = new Map()
-    for (const src of snap.sources) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
-    this.refreshExternals()
+    this.externalDocuments.clear()
+    this.externals.clear()
+    this.derivedLayouts.clear()
+    this.layoutTasks.clear()
+    this.applySources(snap.sources, [])
     this.refreshDerivedLayout()
     this.applyResolution(snap.resolution, snap.diagnostics)
     if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
@@ -940,11 +917,9 @@ export class ProjectSession extends Observable {
     for (const id of d.definitionsRemoved) {
       this.confirmedDefinitions.delete(s(id))
       this.confirmedDefinitionMeta.delete(s(id))
-      this.confirmedLinks.delete(s(id))
     }
     this.readDefinitions(d.definitionsUpsert)
-    for (const src of d.sourcesUpsert) this.sources.set(s(src.path), { hash: s(src.hash), size: src.sizeBytes ?? 0n })
-    for (const p of d.sourcesRemoved) this.sources.delete(s(p))
+    this.applySources(d.sourcesUpsert, d.sourcesRemoved.map(s))
     if (d.origin === 'agent') {
       const cards = [...d.definitionsUpsert.map(x => s(x.id)), ...d.sourcesUpsert.flatMap(x => {
         const parts = s(x.path).split('/')
@@ -952,7 +927,6 @@ export class ProjectSession extends Observable {
       })]
       this.presence.saved(cards, beforePresence, connectionsOf(this.confirmedProject), Date.now() / 1000)
     }
-    this.refreshExternals()
     this.refreshDerivedLayout()
     this.applyResolution(d.resolution, d.diagnostics)
     // A Draft implemented (or any Card that became code) sends its displays too.
@@ -986,8 +960,6 @@ export class ProjectSession extends Observable {
         if (inv.batchActivation != null) {
           this.batchHistoryRevision++
           if (s(e.runId) !== this.currentRunId) break
-          const batch = this.runBatches.get(key(segs(inv.card)))
-          if (batch?.activation === inv.batchActivation && batch.executionList && batch.complete && !batch.failed && batch.invocationCount === 0) break
         }
         if (inv.executionState !== D.RemoteExecutionState.unspecified) {
           this.remoteHistoryRevision++
@@ -1048,7 +1020,7 @@ export class ProjectSession extends Observable {
       this.timeline[i] = { ...e, state: inv.state, startedAt: st ?? e.startedAt, endedAt: en ?? e.endedAt, stages: stages.length ? stages : e.stages }
       this.timeline = [...this.timeline]
     } else {
-      this.timeline = [...this.timeline, { card: k, invocation: n, batchActivation: inv.batchActivation ?? undefined, state: inv.state, startedAt: st, endedAt: en, stages }]
+      this.timeline = [...this.timeline, { card: k, invocation: n, state: inv.state, startedAt: st, endedAt: en, stages }]
     }
   }
 
@@ -1058,7 +1030,6 @@ export class ProjectSession extends Observable {
   get confirmedDefinitionDrafts(): Map<string, DefinitionDraft> {
     const d = new Map<string, DefinitionDraft>()
     for (const [id, c] of this.confirmedDefinitions) d.set(id, { card: c, meta: this.confirmedDefinitionMeta.get(id) })
-    for (const [id, l] of this.confirmedLinks) d.set(id, { card: obj(), meta: this.confirmedDefinitionMeta.get(id), link: l })
     return d
   }
 
@@ -1074,9 +1045,8 @@ export class ProjectSession extends Observable {
     this.editJSON(prefix + 'layout.json', before.layout, after.layout)
     for (const [id, d] of after.definitions) {
       const old = before.definitions.get(id), dir = prefix + 'definitions/' + id + '/'
-      this.editJSON(dir + '_card.json', old?.link === undefined ? old?.card : undefined, d.link === undefined ? d.card : undefined)
+      this.editJSON(dir + '_card.json', old?.card, d.card)
       this.editJSON(dir + '_meta.json', old?.meta, d.meta)
-      this.editJSON(dir + '_link.json', old?.link, d.link)
     }
   }
 
@@ -1168,9 +1138,6 @@ export class ProjectSession extends Observable {
       if (!this.connected || this.client !== client) throw new RPCError('disconnected', L('接続していません'))
       if (result.delta) this.applyDelta(result.delta)
       await this.documentRevisions.applied(result.rev ?? this.rev)
-      // A delta updates source hashes before the internal documents are read.
-      let externals: Promise<void> | undefined
-      do { externals = this.externalsTask; await externals } while (externals !== this.externalsTask)
       const inverse = record ? operationInverse(result) : new H.ProjectEditsT()
       if (record && inverse.edits.length) {
         this.undoStack.push({ operation: inverse })
@@ -1298,9 +1265,8 @@ export class ProjectSession extends Observable {
   // ---- Document helpers ------------------------------------------------------------
 
   private extLink(prefix: string, id: string): string | undefined {
-    if (prefix === '') return str(get(this.links.get(id), 'external'))
-    const e = this.external(prefix)
-    return e ? externalLinks(e).get(id) : undefined
+    const card = prefix === '' ? this.definitions.get(id) : this.external(prefix)?.definitions.get(id)?.card
+    return str(get(card, 'external'))
   }
 
   /** The project a scope's Cards are written in: "" for this project,
@@ -1394,7 +1360,7 @@ export class ProjectSession extends Observable {
   /** The Card's settings (its _card.json). */
   cardDefinition(k: CardKey): J | undefined {
     const d = this.cardDefinitionDraft(k)
-    return d && d.link === undefined ? d.card : undefined
+    return d && get(d.card, 'external') === undefined ? d.card : undefined
   }
 
   /** The Card's _meta.json. */
@@ -1406,9 +1372,8 @@ export class ProjectSession extends Observable {
   setCardDefinition(k: CardKey, d: DefinitionDraft | undefined) {
     const dir = this.definitionDir(k), before = this.cardDefinitionDraft(k)
     if (!dir || !d) return
-    if (d.link === undefined) this.editJSON(dir + '_card.json', before?.card, d.card)
+    this.editJSON(dir + '_card.json', before?.card, d.card)
     this.editJSON(dir + '_meta.json', before?.meta, d.meta)
-    this.editJSON(dir + '_link.json', before?.link, d.link)
   }
 
   /** The external project of a Card in Card ("externals/<name>/…"), if it is one. */
@@ -1434,7 +1399,7 @@ export class ProjectSession extends Observable {
   /** Changes a Card's _card.json in the draft. */
   updateCard(k: CardKey, fn: (c: JObj) => void) {
     const d = this.cardDefinitionDraft(k)
-    if (!d || d.link !== undefined) return
+    if (!d || get(d.card, 'external') !== undefined) return
     const n = cloneDef(d)
     if (!isObj(n.card)) n.card = obj()
     fn(n.card as JObj)
@@ -1534,93 +1499,106 @@ export class ProjectSession extends Observable {
   }
 
   derivedLayouts = new Map<string, J>()
+  private layoutTasks = new Map<string, Promise<void>>()
 
   refreshDerivedLayout(prefix = '') {
     const graph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
     const saved = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
     const definitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
-    return this.layoutHost.complete(serialize(graph), serialize(saved),
-      Object.fromEntries([...definitions].filter(([, d]) => d.link === undefined).map(([id, d]) => [id, serialize(d.card)])))
+    const task = this.layoutHost.complete(serialize(graph), serialize(saved),
+      Object.fromEntries([...definitions].map(([id, d]) => [id, serialize(d.card)])))
       .then(text => {
         const currentGraph = prefix ? this.externals.get(prefix)?.project ?? obj() : this.confirmedProject
         const currentLayout = prefix ? this.externals.get(prefix)?.layout ?? obj() : this.confirmedLayout
         const currentDefinitions = prefix ? this.externals.get(prefix)?.definitions ?? new Map<string, DefinitionDraft>() : this.confirmedDefinitionDrafts
-        if (!jeq(graph, currentGraph) || !jeq(saved, currentLayout) || !mapEq(definitions, currentDefinitions, defEq)) return
+        if (this.layoutTasks.get(prefix) !== task || !jeq(graph, currentGraph) || !jeq(saved, currentLayout) || !mapEq(definitions, currentDefinitions, defEq)) return
         this.derivedLayouts.set(prefix, parse(text))
         this.changed()
-      }).catch(error => { this.notice = errorText(error); this.changed() })
+      }).catch(error => {
+        if (this.layoutTasks.get(prefix) !== task) return
+        this.derivedLayouts.delete(prefix)
+        this.notice = errorText(error)
+        this.changed()
+      })
+    this.layoutTasks.set(prefix, task)
+    return task
+  }
+
+  /** Waits for the placement inputs currently shown in this scope. */
+  async waitForPlacement(k: CardKey): Promise<boolean> {
+    const scope = path(k).slice(0, -1)
+    while (true) {
+      const prefix = this.projectPrefix(scope)
+      if (prefix === undefined || !this.instance(k)) return false
+      const saved = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
+      if (dbl(get(saved, 'x')) !== undefined && dbl(get(saved, 'y')) !== undefined) return true
+      const layout = this.layoutTasks.get(prefix)
+      await layout
+      if (layout !== this.layoutTasks.get(prefix)) continue
+      return this.projectPrefix(scope) === prefix && this.instance(k) !== undefined &&
+        get(this.derivedLayouts.get(prefix), 'cards', this.layoutKey(k)) !== undefined
+    }
   }
 
   position(k: CardKey): { x: number; y: number } {
     const scope = path(k).slice(0, -1)
-    const p = get(this.layoutOf(scope), 'cards', this.layoutKey(k)) ?? get(this.derivedLayouts.get(this.projectPrefix(scope) ?? ''), 'cards', this.layoutKey(k))
-    return { x: dbl(get(p, 'x')) ?? 0, y: dbl(get(p, 'y')) ?? 0 }
+    const key = this.layoutKey(k)
+    const saved = get(this.layoutOf(scope), 'cards', key)
+    const x = dbl(get(saved, 'x')), y = dbl(get(saved, 'y'))
+    if (x !== undefined && y !== undefined) return { x, y }
+    const derived = get(this.derivedLayouts.get(this.projectPrefix(scope) ?? ''), 'cards', key)
+    return { x: dbl(get(derived, 'x')) ?? 0, y: dbl(get(derived, 'y')) ?? 0 }
   }
 
-  /** Reads the externals' documents when their sources changed. */
-  private externalsTask?: Promise<void>
-
-  refreshExternals() {
-    const paths = [...this.sources.keys()].filter((p) => p.startsWith('externals/')).sort()
-    const k = paths.map((p) => `${p}=${this.sources.get(p)?.hash ?? ''}`).join(';')
-    if (k === this.externalsKey) return
-    this.externalsKey = k
-    const client = this.client
-    if (!client) {
-      // Not connected yet (first snapshot): read once the connection is there.
-      this.externalsKey = ''
-      setTimeout(() => this.client && this.refreshExternals(), 0)
-      return
+  private applySources(upserts: R.SourceInfoT[], removed: string[]) {
+    let changed = false
+    for (const path of removed) {
+      this.sources.delete(path)
+      changed = this.externalDocuments.delete(path) || changed
     }
-    const definitionIds = new Map<string, Set<string>>()
-    for (const p of paths) {
-      const split = p.lastIndexOf('/definitions/')
-      if (split < 0) continue
-      const [id, file, extra] = p.slice(split + '/definitions/'.length).split('/')
-      if (extra || !['_card.json', '_link.json'].includes(file)) continue
-      const prefix = p.slice(0, split + 1)
-      const ids = definitionIds.get(prefix) ?? new Set<string>()
-      ids.add(id); definitionIds.set(prefix, ids)
+    for (const src of upserts) {
+      const path = s(src.path)
+      this.sources.set(path, { hash: s(src.hash), size: src.sizeBytes ?? 0n })
+      if (src.documentJson === null) continue
+      changed = true
+      try {
+        this.externalDocuments.set(path, parse(s(src.documentJson)))
+      } catch (error) {
+        this.externalDocuments.delete(path)
+        this.notice = `${path}: ${errorText(error)}`
+      }
     }
-    const atRev = this.rev
-    const hashes = new Map([...this.sources].map(([p, v]) => [p, v.hash]))
-    this.externalsTask = (async () => {
-      const found = new Map<string, ExternalProject>()
-      const doc = async (rel: string): Promise<J | undefined> => {
-        const h = hashes.get(rel)
-        if (!h) return undefined
-        try {
-          const d = await client.readFile(rel, atRev)
-          return tryParse(new TextDecoder().decode(d))
-        } catch {
-          return undefined
-        }
-      }
-      for (const p of paths) {
-        if (!p.endsWith('/tsugumi.json')) continue
-        const prefix = p.slice(0, -'tsugumi.json'.length)
-        // Only folders that are externals of a project: …externals/<name>/tsugumi.json.
-        const parts = prefix.split('/').filter(Boolean)
-        if (parts.length < 2 || parts.length % 2 !== 0 || parts[parts.length - 2] !== 'externals') continue
-        const [proj, layout] = await Promise.all([doc(p), doc(prefix + 'layout.json')])
-        if (proj === undefined) continue
-        const ext: ExternalProject = { project: proj, layout: layout ?? obj(), definitions: new Map() }
-        const ids = definitionIds.get(prefix) ?? new Set<string>()
-        for (const id of [...ids].sort()) {
-          const dir = `${prefix}definitions/${id}/`
-          const [meta, l, card] = await Promise.all(['_meta.json', '_link.json', '_card.json'].map(file => doc(dir + file)))
-          if (l !== undefined) ext.definitions.set(id, { card: obj(), meta, link: l })
-          else if (card !== undefined) ext.definitions.set(id, { card, meta })
-        }
-        found.set(prefix, ext)
-      }
-      if (this.externalsKey !== k) return
-      this.externals = found
-      for (const prefix of found.keys()) this.refreshDerivedLayout(prefix)
-      this.changed()
-      // Cards inside Cards in Card are known now: their displays are wanted too.
-      void this.refreshVisibleDisplays()
-    })()
+    if (!changed) return
+    const found = new Map<string, ExternalProject>()
+    for (const [path, project] of this.externalDocuments) {
+      if (!path.endsWith('/tsugumi.json')) continue
+      const prefix = path.slice(0, -'tsugumi.json'.length)
+      found.set(prefix, {
+        project, layout: this.externalDocuments.get(prefix + 'layout.json') ?? obj(),
+        definitions: new Map(),
+      })
+    }
+    for (const [path, card] of this.externalDocuments) {
+      if (!path.endsWith('/_card.json')) continue
+      const dir = path.slice(0, -'_card.json'.length)
+      const split = dir.lastIndexOf('/', dir.length - 2) + 1
+      const id = dir.slice(split, -1)
+      const prefix = dir.slice(0, split - 'definitions/'.length)
+      found.get(prefix)?.definitions.set(id, {
+        card, meta: this.externalDocuments.get(dir + '_meta.json'),
+      })
+    }
+    const previous = this.externals
+    this.externals = found
+    for (const prefix of previous.keys()) if (!found.has(prefix)) {
+      this.derivedLayouts.delete(prefix)
+      this.layoutTasks.delete(prefix)
+    }
+    for (const [prefix, next] of found) {
+      const old = previous.get(prefix)
+      if (!old || !jeq(old.project, next.project) || !jeq(old.layout, next.layout) ||
+        !mapEq(old.definitions, next.definitions, defEq)) void this.refreshDerivedLayout(prefix)
+    }
   }
 
   // ---- Reading -------------------------------------------------------------------
@@ -1657,7 +1635,7 @@ export class ProjectSession extends Observable {
   /** Definition folders of this project that no Card uses. */
   get unplacedDefinitions(): string[] {
     const used = new Set(this.cards([]).map((c) => str(get(c, 'id'))))
-    return [...new Set([...this.definitions.keys(), ...this.links.keys()])].filter((id) => !used.has(id)).sort()
+    return [...this.definitions.keys()].filter((id) => !used.has(id)).sort()
   }
 
   /** Places a definition folder no Card uses as its Card (the same name). */
@@ -2607,6 +2585,7 @@ export const KIND_ICON: Record<CardKind, string> = {
 export const cardKindNamed = (name: string): CardKind => ((KINDS as string[]).includes(name) ? name as CardKind : 'code')
 
 export function definitionKind(def: J | undefined): CardKind {
+  if (get(def, 'external') !== undefined) return 'subgraph'
   const t = str(get(def, 'template'))
   if (t && (KINDS as string[]).includes(t)) return t as CardKind
   return get(def, 'language') === undefined ? 'draft' : 'code'
