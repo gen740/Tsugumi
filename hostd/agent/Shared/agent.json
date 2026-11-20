@@ -55,6 +55,42 @@
       }
     },
     {
+      "name": "version_find",
+      "description": "Narrow recorded history to past trials without a run id. Lists versions that changed card (a Card key; newest first, kinds narrows how), each version's runs and what observe (default card) recorded in them: its latest invocation's outputs by content hash, compared as same, changed or unknown with the newest run of an earlier version that recorded observe. Results carry card:, run: and invocation links and say what could not be read. A different hash says only that content differs; read the values with run_record and run_value_read. limit is the number of versions, default 10, max 30.",
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "card": {
+            "type": "string"
+          },
+          "observe": {
+            "type": "string"
+          },
+          "kinds": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "source",
+                "parameters",
+                "definition",
+                "wiring",
+                "added",
+                "removed"
+              ]
+            }
+          },
+          "limit": {
+            "type": "integer"
+          }
+        },
+        "required": [
+          "card"
+        ],
+        "additionalProperties": false
+      }
+    },
+    {
       "name": "tool_result_read",
       "description": "Read saved tool output by call_id. Returns text, next_offset, total_bytes and eof; offsets are UTF-8 bytes, pages default/max 2048 bytes.",
       "inputSchema": {
@@ -932,6 +968,7 @@
         "graph": "version_graph",
         "canvas": "version_canvas",
         "diff": "version_diff",
+        "find": "version_find",
         "checkout": "version_checkout",
         "init": "version_init",
         "mark": "version_mark"

@@ -860,6 +860,7 @@ Never write `_inputs.fbs`: input types come from the connected outputs.
 | `trigger` | out `out` | Where a whole run starts |
 | `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
+| `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
 | `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
 
@@ -938,15 +939,22 @@ What the Card does with the value is its author's responsibility: child processe
 
 ### Run lists and connected Nix exports
 
-Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Card uses a Nix
-function to make three Bash implementations and declares shared
-`exports.thresholds = [ 10 14 ];`. The `score` Card receives `samples.out` on its
-`signal` port. Its `default.nix` reads `inputs.signal.thresholds` and uses
-`run = map compare thresholds;` to make two implementations. Each implementation
-reads the runtime signal from `$JSON_SIGNAL`. Nix exports hold build-time values,
-functions or derivations. The port message carries the runtime value.
+Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
+sweeps its `value` parameter: `"sweep": [8, 12, 16]` in place of `"data"` hands
+on each signal in its own invocation, labeled `value=8` and so on. The `score`
+Card receives `samples.out` on its `signal` port and uses
+`run = map compare thresholds;` to make two implementations. Each entry is
+`{ label = "threshold=10"; run = ''...''; }`: the label names the implementation
+in the history and when comparing runs. Labels are optional and unique within a
+list. Each implementation reads the runtime signal from `$JSON_SIGNAL`.
 
-The three input items and two implementations produce six invocations, in input
+A list-typed parameter (`"type": "uint64[]"`) with `data` is one ordinary
+vector value. Only `sweep` makes a batch, also for a single value
+(`"sweep": [5]` is ×1); each element of a list-typed sweep is one vector.
+Several swept parameters run their Cartesian product, the last one varying
+fastest. Code Cards use run lists instead of `sweep`.
+
+The three swept values and two implementations produce six invocations, in input
 item order with implementation order varying fastest. Every batch input is an
 independent axis. `maxRuns` counts triggers, and a failed member cancels the
 rest of the batch. Inspect each member's history for its inputs and result.
@@ -958,7 +966,7 @@ Add a built-in `collect` after `score` to send one ordinary port value with an
 Directory. The ordered `items` records contain each original name and a path
 relative to the Directory root.
 
-Refer to Nix exports as `inputs.<destination-port>`. Collect, Branch's
+Refer to Nix exports as `inputs.<destination-port>`. Collect, Fork, Branch's
 `value` input and Workflow boundaries preserve a unique Code producer. Use a
 direct connection to that Code Card if the producer would otherwise be
 ambiguous. The `score` Card also exports `thresholdCount`, which `summary` reads through

@@ -53,7 +53,7 @@ consumers, but the local core adapter uses only borrowed connections.
 | Admission | Workerd pool; standby and resident slots | Journal/global job cap, supervisor and namespace per job; still one-shot |
 | Isolation | Darwin Seatbelt or Linux bwrap; existing sandbox/network/folder settings | Linux supervisor namespace and bwrap; existing remote restrictions |
 | Input/output | Existing safe copies through shared filesystem paths | Blob snapshot/upload/download, hashes and path rewriting |
-| Call | Borrowed descriptors; live display and bounded logs | Same runtime; result carries logs/display back at completion |
+| Call | Borrowed descriptors; live display and bounded logs | Same runtime; status replies carry log slices from the core's cursor while it runs; the result carries the display and the authoritative log |
 | Resident | Workerd retains until definition/environment ends or call fails | Remote resident slots remain to be implemented |
 | Timeout | Separate build budget; optional Card budget starts after input staging | Existing journal deadline still includes queue/build/import; unification remains |
 | Core death | Inherited management socket closes; pool ends | Core lifetime identity prevents picking up runs after a core restart; live-core network reconnection remains |

@@ -47,8 +47,11 @@ struct Result {
   std::string out;  // stdout (captured)
 };
 
-// Runs a command to completion. Each stderr read delivers its complete lines
-// together. At EOF, any final unterminated line is delivered too. With a line
+// Runs a command to completion. Complete stderr lines are delivered in order,
+// collected across pipe reads: a delivery waits at most a short interval after
+// its first line, so the number of deliveries does not follow how the OS
+// splits the child's output into reads. At EOF, any final unterminated line is
+// delivered too. With a line
 // limit, an oversized line ends delivery after sending the accepted prefix
 // with truncated=true. The pipe is still drained and the child reaped.
 // Cancellation and deadline terminate the whole process group (TERM, then

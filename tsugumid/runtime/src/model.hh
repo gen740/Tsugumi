@@ -103,6 +103,8 @@ struct InvocationSummaryData {
   std::optional<RemoteExecutionState> execution_state;
   std::optional<uint64_t> batch_activation;
   std::optional<uint32_t> batch_index, batch_size, implementation_index;
+  // A run list entry's label or an Input Card's swept values; "" for none.
+  std::string implementation_label;
   // Card secret names handed to the Card's process; never their values.
   std::vector<std::string> secrets;
 };

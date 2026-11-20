@@ -240,7 +240,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;
     if (auto entry = invocation_log.append(stream, text)) {
-      logs << *entry << '\n';
+      // Flush each entry so status requests can collect it while it runs.
+      logs << *entry << '\n' << std::flush;
     } else {
       const int fd = ::open(truncation_marker.c_str(),
                             O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);

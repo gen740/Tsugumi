@@ -22,6 +22,7 @@
 #include <sstream>
 
 #include "model.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -139,12 +140,14 @@ auto connect_broker(std::string_view endpoint,
     -> int {
   if (endpoint.starts_with("unix:")) {
     const std::string_view path = endpoint.substr(5);
-    sockaddr_un address{};
-    if (path.empty() || path.front() != '/' ||
-        path.size() >= sizeof address.sun_path)
+    if (path.empty() || path.front() != '/')
       throw BrokerDisconnected("invalid execution broker Unix socket path");
-    address.sun_family = AF_UNIX;
-    std::memcpy(address.sun_path, path.data(), path.size());
+    sockaddr_un address{};
+    try {
+      address = unix_socket::Address(std::string(path));
+    } catch (const std::runtime_error& error) {
+      throw BrokerDisconnected(error.what());
+    }
     return socket_for(AF_UNIX, reinterpret_cast<const sockaddr*>(&address),
                       sizeof address, io);
   }
@@ -189,6 +192,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   std::ranges::transform(state, state.begin(), [](unsigned char c) {
     return static_cast<char>(std::tolower(c));
   });
+  if (j->log_bytes.size() > workerd::kLogChunkBytes)
+    throw BrokerDisconnected("remote log slice exceeds its limit");
   return {state,
           j->fingerprint,
           j->result_sha256,
@@ -196,7 +201,10 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->transfer_name,
           j->transfer_done,
           j->transfer_total,
-          j->log_truncated};
+          j->log_truncated,
+          j->log_offset,
+          j->log_size,
+          std::string(j->log_bytes.begin(), j->log_bytes.end())};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -390,16 +398,25 @@ auto RemoteJobClient::submit(std::string_view service,
 }
 auto RemoteJobClient::status(std::string_view service,
                              std::string_view instance,
-                             std::string_view job, std::stop_token stop) const -> RemoteJobState {
+                             std::string_view job, uint64_t log_offset,
+                             std::stop_token stop) const -> RemoteJobState {
+  R::StatusRequestT body;
+  body.log_offset = log_offset;
+  body.log_limit = workerd::kLogChunkBytes;
   return job_state(
-      request(command(R::StatusRequestT{}, service, instance, job), stop));
+      request(command(std::move(body), service, instance, job), stop));
 }
 auto RemoteJobClient::cancel(std::string_view service,
                              std::string_view instance, std::string_view job,
-                             std::string_view fingerprint) const
+                             std::string_view fingerprint,
+                             std::optional<uint64_t> log_offset) const
     -> RemoteJobState {
   R::CancelRequestT body;
   body.fingerprint = fingerprint;
+  if (log_offset) {
+    body.log_offset = *log_offset;
+    body.log_limit = workerd::kLogChunkBytes;
+  }
   return job_state(request(command(std::move(body), service, instance, job)));
 }
 auto RemoteJobClient::release(std::string_view service,

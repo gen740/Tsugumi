@@ -213,12 +213,50 @@ auto journal_test(const stdfs::path& root) -> void {
   reopened.finish(second, R::JobState::Interrupted, {}, "supervisor lost");
   expect(!reopened.claim(second, 1, 1, "boot"),
          "interrupted invocation was rerun");
+  const std::string queued(64, '5');
+  j.put(queued, p, core);
+  j.submit(queued, bytes, *parse_spec(bytes), core);
+  rejected([&] { j.discard(queued, false); });
+  expect(j.discard(queued, true).state == R::JobState::Queued &&
+             j.status(queued).state == R::JobState::Released &&
+             j.status(queued).fingerprint == fingerprint &&
+             !j.claim(queued, 1, 1, "boot"),
+         "removed queued job could still start");
+  expect(j.discard(second, false).state == R::JobState::Interrupted &&
+             std::distance(stdfs::directory_iterator(j.job_path(second)),
+                           stdfs::directory_iterator{}) == 1,
+         "removal kept payload");
+  rejected([&] { j.put(second, p, core); });
+  rejected([&] { j.discard(std::string(64, '6'), true); });
   const std::string result_job(64, '7');
   j.put(result_job, p, core);
   j.submit(result_job, bytes, *parse_spec(bytes), core);
   j.claim(result_job, 100, 1, "boot");
+  expect(j.log(result_job, 0, kLogChunkBytes, core) ==
+             std::pair<uint64_t, std::string>{},
+         "a job without a log reported bytes");
   const auto output = j.job_path(result_job) / "work/result";
   private_directory(output);
+  // A running job's log is read from the core's cursor, in bounded slices,
+  // by its own core life only.
+  fs::write_atomic(output / "logs.jsonl", "running entry\npart", 0600);
+  expect(j.log(result_job, 0, 8, core) ==
+             std::pair<uint64_t, std::string>{18, "running "},
+         "log slice from the start");
+  expect(j.log(result_job, 14, kLogChunkBytes, core).second == "part",
+         "log slice from a cursor");
+  expect(j.log(result_job, 18, kLogChunkBytes, core) ==
+             std::pair<uint64_t, std::string>{18, ""},
+         "a cursor at the end returned bytes");
+  expect(j.log(result_job, 40, kLogChunkBytes, core).second.empty(),
+         "a cursor past the end returned bytes");
+  rejected([&] { j.log(result_job, 0, kLogChunkBytes + 1, core); });
+  rejected([&] { j.log(result_job, 0, 8, std::string(64, 'b')); });
+  stdfs::remove(output / "logs.jsonl");
+  stdfs::create_symlink(j.job_path(result_job) / "spec.fb",
+                        output / "logs.jsonl");
+  rejected([&] { j.log(result_job, 0, 8, core); });
+  stdfs::remove(output / "logs.jsonl");
   flatbuffers::FlatBufferBuilder worker;
   namespace W = Tsugumi::Worker;
   const auto values =
@@ -259,8 +297,9 @@ auto journal_test(const stdfs::path& root) -> void {
   j.put(interrupted_upload, prefix, core);
   reopened.put(interrupted_upload, prefix, core);
   {
-    std::ofstream tail(j.job_path(interrupted_upload) / "parts" / partial.digest,
-                       std::ios::app);
+    std::ofstream tail(
+        j.job_path(interrupted_upload) / "parts" / partial.digest,
+        std::ios::app);
     tail << "suffix";
   }
   auto suffix = partial;

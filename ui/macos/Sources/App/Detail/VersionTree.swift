@@ -78,7 +78,7 @@ struct VersionMiniMapLayout {
     var data: CardNodeData {
       func ports(_ n: Int) -> [PortData] { (0..<n).map { PortData(name: "p\($0)") } }
       var d = CardNodeData(title: id, kind: kind, summary: nil,
-                           inputs: ports(kind == .merge ? fan : 1), outputs: ports(1))
+                           inputs: ports(kind == .merge ? fan : 1), outputs: ports(kind == .fork ? fan : 1))
       d.collapsed = collapsed
       return d
     }

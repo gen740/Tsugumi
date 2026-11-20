@@ -70,6 +70,7 @@ export function BatchInvocations({ session, card, batch, onLog, onHistory }: {
                 {item.batchIndex != null && item.batchSize != null && <span className="caption secondary">
                   {item.batchActivation != null && `#${item.batchActivation} · `}{item.batchIndex}/{item.batchSize}
                 </span>}
+                {sOpt(item.implementationLabel) && <span className="cv-batch-label" title={sOpt(item.implementationLabel)}>{sOpt(item.implementationLabel)}</span>}
                 <span className="spacer" /><span>{cardState(item.state).label}</span>
               </button>)}
             </div>)}

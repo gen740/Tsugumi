@@ -96,7 +96,25 @@ def assert_reference(node, name, target, valid=True):
     assert ref.valid == valid
 
 
-@pytest.mark.parametrize("builtin", ["branch", "merge", "collect"])
+def test_fork_outputs_carry_the_value_type(core_factory, project):
+    """A Fork has outputs a and b by default, or the declared ones, all typed as its value."""
+    _, resolved = inspect_graph(core_factory, project, {
+        "source": code(), "pair": {"template": "fork"},
+        "three": {"template": "fork", "outputs": [{"name": "x"}, {"name": "y"}, {"name": "z"}]},
+        "broken": {"template": "fork", "outputs": [{"name": "x"}, {"name": "x"}, {"name": "not valid"}]},
+        "sink": code(["in"]),
+    }, [conn("source", "out", "pair", "value"), conn("source", "out", "three", "value"),
+        conn("source", "out", "broken", "value"), conn("three", "z", "sink", "in")])
+    assert [text(p.name) for p in resolved["pair"].outputs] == ["a", "b"]
+    assert [text(p.name) for p in resolved["three"].outputs] == ["x", "y", "z"]
+    assert {text(p.rootType) for p in resolved["three"].outputs} == {"t.Number"}
+    assert not any(p.optional for p in resolved["three"].outputs)
+    assert not codes(resolved["three"]) and not codes(resolved["sink"])
+    assert [text(p.name) for p in resolved["broken"].outputs] == ["x"]
+    assert codes(resolved["broken"]) == {"invalid_setting"}
+
+
+@pytest.mark.parametrize("builtin", ["branch", "fork", "merge", "collect"])
 def test_nix_exports_follow_the_connected_code_origin(core_factory, project, builtin):
     """A transparent built-in keeps the Code producer's exports on the destination port."""
     definitions = {"source": code(), "sink": code(["data"], body='{ run = inputs.data.command; }'),
@@ -105,6 +123,8 @@ def test_nix_exports_follow_the_connected_code_origin(core_factory, project, bui
         definitions["condition"] = {"template": "input", "_outputs": FLAG}
         connections = [conn("source", "out", "bridge", "value"), conn("condition", "flag", "bridge", "condition"),
                        conn("bridge", "a", "sink", "data")]
+    elif builtin == "fork":
+        connections = [conn("source", "out", "bridge", "value"), conn("bridge", "b", "sink", "data")]
     elif builtin == "merge":
         definitions["bridge"]["inputs"] = [{"name": "a"}, {"name": "b"}]
         connections = [conn("source", "out", "bridge", "a"), conn("source", "out", "bridge", "b"), conn("bridge", "out", "sink", "data")]

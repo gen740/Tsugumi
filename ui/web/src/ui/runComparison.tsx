@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { ComparedCard, ComparedField, ComparedRow, Difference, comparedConditions, comparedParams, comparedValues, loadRunComparison, runScope, sameDisplay } from '../model/runComparison'
+import { ComparedCard, ComparedField, ComparedMember, ComparedRow, Difference, batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay } from '../model/runComparison'
 import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
-import { R, s, segs } from '../wire/rpc'
+import { R, RPCClient, s, segs } from '../wire/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
 import { DisplayContent } from './display'
 import { L } from '../i18n'
@@ -50,7 +50,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
           <RunScopes left={a} right={b} displayPath={(p) => session.displayPath(p)} />
           <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
-          {rows.map(row => <ComparedCardView key={row.card} row={row} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}`} session={session} left={{ run: left, id: s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId) }} right={{ run: right, id: s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />)}
+          {rows.map(row => <ComparedMembers key={row.card} rpc={session.rpc!} left={left} right={right} row={row}>{(shown, choice) => <ComparedCardView row={shown} choice={choice} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}:${String(shown.left?.summary.invocation ?? '')}:${String(shown.right?.summary.invocation ?? '')}`} session={session} left={{ run: left, id: s((shown.left?.record?.record?.summary ?? shown.left?.summary)?.environmentId) }} right={{ run: right, id: s((shown.right?.record?.record?.summary ?? shown.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />}</ComparedMembers>)}
         </>}
     </div>
   </div></EnvironmentReadScope>
@@ -92,7 +92,8 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   const calls = side.record?.aggregate?.calls ?? v.invocation ?? 0n
   return <div><b style={{ color: `var(--${state.color})` }}>{state.label}</b> · #{String(v.invocation ?? 0n)} · {v.durationMs === null ? '—' : formatDuration(Number(v.durationMs) / 1000)}
     {runMark(side.record?.run) && <p className="caption">{runMark(side.record?.run)}</p>}
-    {calls > 1n && <p className="caption">{L('{0} 回の呼び出しのうち最後の 1 回', calls)}</p>}
+    {inBatch(v) ? <p className="caption">{L('実行リスト {0}/{1}', v.batchIndex ?? 0, v.batchSize ?? 0)} · {memberName(v)}</p>
+      : calls > 1n && <p className="caption">{L('{0} 回の呼び出しのうち最後の 1 回', calls)}</p>}
     {side.record?.aggregate && <p className="caption secondary">{L('呼び出し {0} · 成功 {1} · 失敗 {2}', side.record.aggregate.calls ?? 0n, side.record.aggregate.succeeded ?? 0n, side.record.aggregate.failed ?? 0n)}</p>}
     {(side.error || s(v.failure?.diagnostic)) && <p role="alert">{side.error || s(v.failure?.diagnostic)}</p>}
     {side.record?.record?.recordIo === false && <p className="secondary">{L('入出力は記録されていません')}</p>}
@@ -101,13 +102,58 @@ function SideStatus({ side }: { side?: ComparedCard }) {
   </div>
 }
 
-export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection }: { row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode }) {
+/** A Card that ran an execution list compares one named member at a time:
+ *  members pair by implementation label (or number), not by position. */
+export function ComparedMembers({ rpc, left, right, row, children }: { rpc: Pick<RPCClient, 'invocations' | 'record'>; left: string; right: string; row: ComparedRow; children: (row: ComparedRow, choice?: React.ReactNode) => React.ReactNode }) {
+  const batch = inBatch(row.left?.summary) || inBatch(row.right?.summary)
+  const [members, setMembers] = useState<ComparedMember[]>()
+  const [problem, setProblem] = useState<string>()
+  const [key, setKey] = useState<string>()
+  const [shown, setShown] = useState<ComparedRow>()
+  useEffect(() => {
+    setMembers(undefined); setProblem(undefined); setKey(undefined); setShown(undefined)
+    if (!batch) return
+    let alive = true
+    const controller = new AbortController()
+    const side = (run: string, card?: ComparedCard) => card && inBatch(card.summary) ? batchMembers(rpc, run, card.summary, controller.signal) : Promise.resolve(card ? [card.summary] : [])
+    void Promise.all([side(left, row.left), side(right, row.right)]).then(([a, b]) => {
+      if (!alive) return
+      const pairs = pairMembers(a, b)
+      setMembers(pairs)
+      // The last member is the one the comparison shows by default.
+      const last = row.right?.summary ?? row.left?.summary
+      setKey(pairs.find(p => (p.right ?? p.left)?.invocation === last?.invocation)?.key ?? pairs.at(-1)?.key)
+    }).catch(e => alive && setProblem(errorText(e)))
+    return () => { alive = false; controller.abort() }
+  }, [rpc, left, right, row, batch])
+  const pair = members?.find(m => m.key === key)
+  useEffect(() => {
+    setShown(undefined)
+    if (!pair) return
+    let alive = true
+    const load = async (run: string, summary?: R.InvocationSummaryT, known?: ComparedCard): Promise<ComparedCard | undefined> => {
+      if (!summary) return
+      if (known && known.summary.invocation === summary.invocation) return known
+      try { return { summary, record: await rpc.record(run, segs(summary.card), summary.invocation, false) } }
+      catch (e) { return { summary, error: errorText(e) } }
+    }
+    void Promise.all([load(left, pair.left, row.left), load(right, pair.right, row.right)]).then(([a, b]) => alive && setShown({ card: row.card, left: a, right: b }))
+    return () => { alive = false }
+  }, [rpc, left, right, row, pair])
+  if (!batch) return <>{children(row)}</>
+  const choice = problem ? <p role="alert">{problem}</p> : !members ? <Spinner small /> : <Select label={L('比較する呼び出し')} value={key ?? ''} onChange={setKey}
+    options={members.map(m => ({ value: m.key, label: m.left && m.right ? m.name : L('{0}（片方の実行のみ）', m.name) }))} />
+  return <>{children(shown ?? row, choice)}</>
+}
+
+export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection, choice }: { row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode; choice?: React.ReactNode }) {
   const a = row.left?.record, b = row.right?.record
   const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
   const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
     <summary>{displayPath(row.card.split('/'))} {environmentChange(s((row.left?.record?.record?.summary ?? row.left?.summary)?.environmentId), s((row.right?.record?.record?.summary ?? row.right?.summary)?.environmentId)) === 'changed' && <span className="caption">· {L('環境が変わった Card')}</span>}</summary>
+    {choice && <div className="pad8">{choice}</div>}
     <div className={`comparison-pair pad8${statusChanged ? ' changed' : ''}`}><SideStatus side={row.left} /><SideStatus side={row.right} /></div>
     <ComparedFields title={L('実行条件')} fields={comparedConditions(row.left, row.right, displayPath)} />
     {environmentSection}

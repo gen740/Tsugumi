@@ -56,6 +56,7 @@ body { font: 13px/1.35 var(--font); color: var(--label); background: var(--windo
 .cv-batch-rows { max-height: 260px; overflow: auto; }
 .cv-batch-row { display: flex; align-items: center; gap: 8px; width: 100%; padding: 4px 6px; border: 0; background: transparent; color: var(--label); cursor: pointer; font: inherit; }
 .cv-batch-row:hover, .cv-batch-row:focus-visible { background: var(--window-bg); }
+.cv-batch-label { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .selectable, .selectable * { user-select: text; cursor: text; }
 button { font: inherit; color: inherit; }
 h1 { font-size: 26px; margin: 0; display: flex; align-items: center; gap: 10px; }

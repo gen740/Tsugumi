@@ -83,6 +83,7 @@ std::string detail_json(const InvocationSummaryData& s) {
   *d.batch_index = s.batch_index.value_or(0);
   *d.batch_size = s.batch_size.value_or(0);
   *d.implementation_index = s.implementation_index.value_or(0);
+  *d.implementation_label = s.implementation_label;
   *d.secrets = s.secrets;
   return schema::encode(d);
 }
@@ -133,6 +134,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   if (const auto implementation = d.implementation_index->value_or(0);
       implementation > 0 && implementation <= UINT32_MAX)
     s.implementation_index = static_cast<uint32_t>(implementation);
+  s.implementation_label = d.implementation_label->value_or("");
 }
 
 std::string sources_json(const std::vector<InputSourceData>& s) {

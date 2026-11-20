@@ -15,7 +15,7 @@ and removes inherited Anthropic/OpenAI API keys from the environment, so a test
 host never sees the developer's own keys or settings. Tests store fixture keys
 through Host RPC (`ProviderSetRequest`) or inject `MemorySecrets` in C++.
 
-Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `tsugumi-hostd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
+Hosts can select storage with `TSUGUMI_SOCKET_DIR` (a short existing directory for local sockets; a socket whose path does not fit in `sun_path`, 104 bytes on macOS and 108 on Linux, is reached through a link to its folder in `$TSUGUMI_SOCKET_DIR/tsugumi-<uid>/`, else `/tmp/tsugumi-<uid>/`) and `TSUGUMI_RUN_SCRATCH_DIR` (an absolute disk-backed path without symlink parents). `tsugumi-hostd --socket-dir` selects its stable broker/environment socket directory, and `--usage-scratch-dir` selects the shared run scratch root. Direct project services accept `--scratch-dir` for evaluator work and `--run-scratch-dir` for invocation data. Run data in production is still retained until explicitly deleted; opening a never-run project does not create its run scratch folder.
 
 [The CI selector](ci/select_jobs.py) builds the job matrices from the PR
 merge-base or push diff. Static checks run on every change. The final gate also
@@ -75,7 +75,7 @@ Prose and `README.md` run the documentation build and tests. `docs/features.md` 
 | [tests/core/](core/README.md) | Core behavior, public RPC and integration tests |
 | `tests/python/` | SDKs, examples, demos, CLI/plugin/Web adapters and host/VM integration |
 | `tests/static/` | Repository contracts, packaging, release and generated-file consistency |
-| `tests/remote/` | C++ remote worker admission, scoping, transfers, same-core reconnects and core-lifetime expiry on Linux |
+| `tests/remote/` | C++ remote worker admission, scoping, transfers, same-core reconnects, core-lifetime expiry and the `tsugumi-workerd jobs` command on Linux |
 | `ui/macos/CoreTests/`, `ui/macos/Tests/` | Agent, RPC and app behavior |
 | `ui/web/` | Browser UI type checks and behavior contracts |
 | `tests/prompt/` | Offline prompt probe scoring |
@@ -106,7 +106,7 @@ The VM support directory and its store are disposable and removed at session end
 
 `tests/core/agent/guide_rpc_test.cc` checks both embedded guide languages, script completeness and demo targets, interests and choices, fallback replies, failure/retry/change/farewell without confirmations, unchanged reruns, late and duplicate run observations, two windows sharing a guide, progress scope and restart/resume. Text is evaluated with real models rather than phrase assertions. Build `tsugumi_agent_rpc_tests`; run `--gtest_filter='GuideScript.*:GuideFixture.*'`. `GuideScript.*` needs neither sockets nor a model; `GuideFixture.*` needs sockets but no model or Nix daemon. Native bird geometry stays in `ui/macos/Tests/TsugumiAppTests/GuideTests.swift`; Web and Swift wire tests cover omitted guide vectors and presentation adapters.
 
-Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`). `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request in both languages and the Agent's `version_diff` (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`); it needs Unix sockets. `ui/web/tests/versions.ts` checks the presentation request, retries and late responses without a browser.
+Version notes have socket-free tree and localization tests in `tests/core/agent/version_text_test.cc` (`tsugumi_host_settings_tests --gtest_filter='VersionNote.*:VersionText.*'`). `tests/core/agent/version_note_rpc_test.cc` exercises the human-only Host note request in both languages and the Agent's `version_diff` (`tsugumi_agent_rpc_tests --gtest_filter='AgentProjectFixture.VersionNote*'`); it needs Unix sockets. `ui/web/tests/versions.ts` checks the presentation request, retries and late responses without a browser. `tests/core/agent/version_find_test.cc` checks the Agent's `version_find` against fixed history replies, without sockets (`tsugumi_host_settings_tests --gtest_filter='VersionFind.*'`, Linux).
 
 For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. These commands use the shared generated demo player (`nix build .#site-player`); Web checks also test its generated data. Without Nix, site and Web builds and Web tests generate the player from `ui/web/node_modules` and `ui/web/shared/gen`.
 

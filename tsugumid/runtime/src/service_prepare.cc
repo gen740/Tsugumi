@@ -56,6 +56,12 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
       fields.emplace_back(
           "implementations",
           schema::capture(std::to_string(plan.implementations.size())));
+      std::string labels = "[";
+      for (const auto& label : plan.implementation_labels)
+        labels += (labels.size() > 1 ? "," : "") +
+                  schema::text(schema::string_value(label));
+      fields.emplace_back("implementation_labels",
+                          schema::capture(labels + "]"));
       fields.emplace_back("closure", schema::capture(closure + "]"));
     } catch (const Failed& f) {
       all = false;

@@ -23,8 +23,14 @@ table JobSpec {
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
 table SubmitRequest { spec:[ubyte] (required); }
-table StatusRequest {}
-table CancelRequest { fingerprint:string (required); }
+// The core's cursor into the job's combined JSONL log (work/result/logs.jsonl):
+// the number of bytes it has already received. A reply carries at most
+// log_limit (capped at 256 KiB) bytes from that offset, so a running job's log
+// arrives while it runs. The completed result's logs.jsonl stays authoritative.
+table StatusRequest { log_offset:ulong; log_limit:uint; }
+// A nonzero log_limit also returns a log slice, as for StatusRequest; it
+// requires the job's submitting core life. Zero cancels from any life.
+table CancelRequest { fingerprint:string (required); log_offset:ulong; log_limit:uint; }
 // Sent after durable completion, including interruption on core restart. Idempotent.
 // Erases all job scratch. A compact identity/fingerprint tombstone prevents
 // late submissions from executing again, and is not a retained run result.
@@ -47,7 +53,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 9.
+  // Zero means no advertised contract; writers explicitly send contract 10.
   worker_contract:uint;
   active_jobs:uint;
 }
@@ -55,7 +61,10 @@ table Capabilities {
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }
 table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
-table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool; }
+table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
+  // Echo of the requested cursor, the log's current size, and its bytes from
+  // log_offset. Bytes may end inside a JSONL entry. Status and Cancel replies.
+  log_offset:ulong; log_size:ulong; log_bytes:[ubyte]; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecret { name:string (required); value:string (required, trace_secret); }

@@ -106,3 +106,27 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   }
   await session.close()
 }
+
+@MainActor @Test func comparisonPairsBatchMembersByName() {
+  func member(_ invocation: UInt64, _ label: String?, implementation: UInt32 = 1) -> Tsugumi_RPC_InvocationSummaryT {
+    let item = Tsugumi_RPC_InvocationSummaryT()
+    item.invocation = invocation; item.batchActivation = 1; item.batchIndex = UInt32(invocation); item.batchSize = 4
+    item.implementationIndex = implementation; item.implementationLabel = label
+    return item
+  }
+  // An inserted threshold does not shift the pairs, and a name repeated once
+  // per arriving input pairs by its occurrence.
+  let left = [member(1, "threshold 10"), member(2, "threshold 14"), member(3, "threshold 10"), member(4, "threshold 14")]
+  let right = [member(1, "threshold 10"), member(2, "threshold 12"), member(3, "threshold 14"),
+               member(4, "threshold 10"), member(5, "threshold 12"), member(6, "threshold 14")]
+  let pairs = RunComparison.pairMembers(left, right)
+  #expect(pairs.map(\.name) == ["threshold 10 (1)", "threshold 14 (1)", "threshold 10 (2)", "threshold 14 (2)",
+                                "threshold 12 (1)", "threshold 12 (2)"])
+  #expect(pairs.map { $0.left?.invocation } == [1, 2, 3, 4, nil, nil])
+  #expect(pairs.map { $0.right?.invocation } == [1, 3, 4, 6, 2, 5])
+  #expect(RunComparison.memberName(member(1, nil, implementation: 2)) == String(localized: "実装 \(UInt32(2))"))
+  let single = member(1, "value=5")
+  single.batchSize = 1
+  #expect(RunComparison.inBatch(single))
+  #expect(!RunComparison.inBatch(Tsugumi_RPC_InvocationSummaryT()))
+}

@@ -13,11 +13,13 @@
 #include <cstdio>
 #include <cstdlib>
 #include <limits>
+#include <optional>
 #include <sstream>
 #include <stdexcept>
 #include <thread>
 
 #include "agent_fixture_server.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 
 extern char** environ;
 
@@ -186,6 +188,87 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
       JsonString(JsonString(result.replies[2], "/payload/value/project_json"),
                  "/name"),
       "After 日本語");
+}
+
+// Links to deep folders go to the test's own folder; the service and the CLI
+// inherit the setting.
+class SocketDirectory {
+ public:
+  explicit SocketDirectory(const std::filesystem::path& path) {
+    if (const auto* value = std::getenv("TSUGUMI_SOCKET_DIR"))
+      previous_ = value;
+    ::setenv("TSUGUMI_SOCKET_DIR", path.c_str(), 1);
+  }
+  ~SocketDirectory() {
+    if (previous_)
+      ::setenv("TSUGUMI_SOCKET_DIR", previous_->c_str(), 1);
+    else
+      ::unsetenv("TSUGUMI_SOCKET_DIR");
+  }
+
+ private:
+  std::optional<std::string> previous_;
+};
+
+// A project service in a folder deeper than sun_path allows still listens on
+// its own socket, and a native client reaches it through the same path.
+class RpcCliDeepSocket : public RpcCli {};
+
+TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
+  const SocketDirectory sockets(directory.path);
+  auto deep = directory.path;
+  for (int i = 0; i < 8; ++i) deep /= std::string(20, 'd');
+  std::filesystem::create_directories(deep);
+  const auto socket = (deep / "project.sock").string();
+  ASSERT_GT(socket.size(), sizeof(sockaddr_un::sun_path));
+  Write(
+      directory.path / "project/tsugumi.json",
+      R"({"name":"Deep","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  Write(directory.path / "project/layout.json", "{}");
+  project.Start(
+      {TSUGUMI_PROJECT_BINARY, "--scratch-dir",
+       (directory.path / "scratch").string(), "--run-scratch-dir",
+       (directory.path / "run-scratch").string(), "--project",
+       (directory.path / "project").string(), "--unix", socket, "--listen",
+       "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
+       (directory.path / "project-control").string(), "--worker",
+       TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
+      directory.path / "project.log");
+  const auto server =
+      Readiness(project, directory.path / "project-control/server.ready",
+                directory.path / "project.log");
+  // The socket file is where it was asked for, not in the link folder.
+  EXPECT_EQ(JsonString(server, "/unix_socket"), socket);
+  EXPECT_TRUE(std::filesystem::is_socket(socket));
+  const auto hello =
+      Request(1, "SessionHelloRequest",
+              "{\"token\":" + Quote(JsonString(server, "/token")) + "}");
+  const auto inspect = Run(hello + Request(2, "ProjectInspectRequest", "{}"),
+                           Endpoint(server), TSUGUMI_PROJECT_SCHEMA);
+  ASSERT_EQ(inspect.status, 0) << inspect.error;
+  ASSERT_EQ(inspect.replies.size(), 2);
+  EXPECT_EQ(JsonString(inspect.replies[1], "/payload/value_type"),
+            "ProjectSnapshot")
+      << inspect.replies[1];
+}
+
+INSTANTIATE_TEST_SUITE_P(Transports, RpcCliDeepSocket, ::testing::Values(false),
+                         [](const auto&) { return "UnixSocket"; });
+
+TEST(UnixSocketAddress, NamesThePathAndTheLimitWhenANameCannotBeShortened) {
+  TemporaryDirectory directory;
+  const auto path = (directory.path / std::string(120, 'n')).string();
+  try {
+    unix_socket::Address(path);
+    FAIL() << "a 120-byte name cannot fit in sun_path";
+  } catch (const std::runtime_error& error) {
+    const std::string message = error.what();
+    EXPECT_NE(message.find(path), std::string::npos) << message;
+    EXPECT_NE(message.find("this system allows " +
+                           std::to_string(unix_socket::kMaxPath)),
+              std::string::npos)
+        << message;
+  }
 }
 
 INSTANTIATE_TEST_SUITE_P(Transports, RpcCli, ::testing::Bool(),

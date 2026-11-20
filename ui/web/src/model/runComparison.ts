@@ -144,3 +144,54 @@ export function sameDisplay(a?: DisplaySnapshot, b?: DisplaySnapshot): boolean {
     case 'points': return y.kind === 'points' && sameNumbers(x.x, y.x) && sameNumbers(x.y, y.y) && sameNumbers(x.z, y.z) && sameNumbers(x.colors, y.colors)
   }
 }
+
+/** What names a member of an execution list: its implementation label (a run
+ *  list entry's `label`, an Input sweep's `name=value`), else its number. */
+export function memberName(i: R.InvocationSummaryT): string {
+  const label = s(i.implementationLabel)
+  return label || (i.implementationIndex != null ? L('実装 {0}', i.implementationIndex) : L('{0} 回目', String(i.invocation ?? 0n)))
+}
+
+/** Whether an invocation belongs to an execution list whose members can be chosen. */
+export const inBatch = (i?: R.InvocationSummaryT) => !!i && i.batchActivation != null && (!!s(i.implementationLabel) || (i.batchSize ?? 0) > 1)
+
+export type MemberRPC = Pick<RPCClient, 'invocations'>
+
+/** Every member of the batch an invocation belongs to, in batch order. */
+export async function batchMembers(rpc: MemberRPC, run: string, summary: R.InvocationSummaryT, signal?: AbortSignal): Promise<R.InvocationSummaryT[]> {
+  const out: R.InvocationSummaryT[] = []
+  let cursor: string | null = null
+  // A batch has at most 256 members; a loop's earlier batches come first.
+  for (let pages = 0; pages < 64 && !signal?.aborted; pages++) {
+    const page: R.InvocationPageT = await rpc.invocations(run, segs(summary.card), cursor)
+    out.push(...page.records.filter(r => r.batchActivation === summary.batchActivation))
+    cursor = s(page.nextCursor) || null
+    if (!cursor) break
+  }
+  return out.sort((x, y) => (x.batchIndex ?? 0) - (y.batchIndex ?? 0))
+}
+
+export interface ComparedMember { key: string; name: string; left?: R.InvocationSummaryT; right?: R.InvocationSummaryT }
+
+/** Pairs two batches' members by name, so a moved or added implementation
+ *  does not pair different conditions. A name that occurs several times (once
+ *  per arriving input) pairs by its occurrence. */
+export function pairMembers(left: R.InvocationSummaryT[], right: R.InvocationSummaryT[]): ComparedMember[] {
+  const keyed = (members: R.InvocationSummaryT[]) => {
+    const seen = new Map<string, number>(), total = new Map<string, number>()
+    for (const m of members) total.set(memberName(m), (total.get(memberName(m)) ?? 0) + 1)
+    return members.map(m => {
+      const name = memberName(m), n = (seen.get(name) ?? 0) + 1
+      seen.set(name, n)
+      return { key: `${name}\u0000${n}`, name: (total.get(name) ?? 1) > 1 ? `${name} (${n})` : name, member: m }
+    })
+  }
+  const out = new Map<string, ComparedMember>()
+  for (const { key, name, member } of keyed(left)) out.set(key, { key, name, left: member })
+  for (const { key, name, member } of keyed(right)) {
+    const pair = out.get(key)
+    if (pair) pair.right = member
+    else out.set(key, { key, name, right: member })
+  }
+  return [...out.values()]
+}

@@ -1,5 +1,10 @@
 add_executable(tsugumi_rpc_cli_tests rpc_cli_test.cc agent_fixture_server.cc)
 target_link_libraries(tsugumi_rpc_cli_tests PRIVATE GTest::gtest_main hosq Threads::Threads)
+if(TSUGUMI_INSTALLED_CORE)
+  target_include_directories(tsugumi_rpc_cli_tests PRIVATE ${TSUGUMI_CORE_ROOT}/include)
+else()
+  target_include_directories(tsugumi_rpc_cli_tests PRIVATE ${PROJECT_SOURCE_DIR}/rpc/include)
+endif()
 target_compile_options(tsugumi_rpc_cli_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_compile_definitions(tsugumi_rpc_cli_tests PRIVATE
   TSUGUMI_RPC_BINARY="$<TARGET_FILE:tsugumi-rpc>"

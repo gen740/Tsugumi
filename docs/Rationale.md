@@ -130,6 +130,8 @@ When a Card refers to an upstream Card's Nix definition, being reachable by foll
 
 Say A branches to B or C, and D runs on whichever result arrives. The code Card that always precedes D is A. One of B and C does not run, so if D could refer to both definitions unconditionally, the dependencies would disagree with the execution path drawn on screen.
 
+A Fork is different: every one of its outputs runs downstream each time. When A forks to B and C and D waits for both, B and C always precede D, and D may refer to either of them.
+
 [Nix reference rules](features.md#sharing-nix-exports-through-connections) describe which upstream definitions are available.
 
 **The Workflow's connections are reflected not only in the order of execution but also in the dependencies of the environment's definitions.**

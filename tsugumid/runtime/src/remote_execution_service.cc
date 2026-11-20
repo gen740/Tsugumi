@@ -5,6 +5,7 @@
 #include <condition_variable>
 #include <fstream>
 #include <mutex>
+#include <optional>
 
 #include "remote_invocation.hh"
 #include "service.hh"
@@ -29,17 +30,78 @@ auto remote_execution_state(std::string_view state) -> RemoteExecutionState {
   throw BrokerDisconnected("execution gateway returned an unknown job state");
 }
 
+// Records a remote job's log while it runs. The cursor counts the bytes
+// received, so reconnects and listener restarts within one core life continue
+// where they stopped and never repeat an entry. A trailing partial entry waits
+// for the rest of its bytes.
+class LiveRemoteLog {
+ public:
+  LiveRemoteLog(uint64_t limit, WorkerProc::LogSink sink)
+      : limit_(limit), sink_(std::move(sink)) {}
+
+  auto cursor() const -> uint64_t { return received_; }
+
+  // Records the complete entries of a reply's slice. Returns whether the
+  // slice advanced the cursor and the job's log holds more bytes.
+  auto accept(const RemoteJobState& reply) -> bool {
+    if (closed_ || reply.log_offset != received_ ||
+        reply.log_size < received_ || reply.log.size() > limit_ - received_)
+      return false;
+    if (reply.log.empty()) return false;
+    received_ += reply.log.size();
+    pending_ += reply.log;
+    size_t start = 0;
+    for (size_t end; (end = pending_.find('\n', start)) != std::string::npos;
+         start = end + 1) {
+      const std::string_view line(pending_.data() + start, end - start);
+      std::pair<LogStream, std::string> entry;
+      try {
+        entry = decode_remote_log_entry(line);
+      } catch (const std::exception&) {
+        // The completed result's log decides; its import reports the error.
+        closed_ = true;
+        return false;
+      }
+      hash_.update(pending_.data() + start, end - start + 1);
+      recorded_ += end - start + 1;
+      if (sink_) sink_(entry.first, entry.second);
+    }
+    pending_.erase(0, start);
+    return reply.log_size > received_;
+  }
+
+  // The recorded prefix for the completed result's import. Collection ends
+  // here: the result carries every later entry.
+  auto recorded() -> const RemoteLogPrefix& {
+    if (!prefix_) {
+      prefix_ = {recorded_, recorded_ ? hash_.finish_hex() : std::string{}};
+      closed_ = true;
+    }
+    return *prefix_;
+  }
+
+ private:
+  uint64_t limit_;
+  WorkerProc::LogSink sink_;
+  uint64_t received_ = 0, recorded_ = 0;
+  std::string pending_;
+  crypto::Sha256 hash_;
+  std::optional<RemoteLogPrefix> prefix_;
+  bool closed_ = false;
+};
+
 auto poll_remote_job(const RemoteJobClient& client, RemoteJobRecord& job,
-                     std::stop_token stop) -> RemoteJobState {
+                     uint64_t log_offset, std::stop_token stop)
+    -> RemoteJobState {
   const auto& s = job.invocation;
   const auto fingerprint = crypto::sha256_hex(job.spec);
   RemoteJobState reply;
   if (job.cancel_requested) {
     reply = client.cancel(s.execution_service, job.instance, s.execution_job_id,
-                          fingerprint);
+                          fingerprint, log_offset);
   } else {
     reply = client.status(s.execution_service, job.instance, s.execution_job_id,
-                          stop);
+                          log_offset, stop);
     if (reply.state == "missing" || reply.state == "uploading") {
       if (job.accepted)
         return {"interrupted",
@@ -151,6 +213,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
 
   auto& history = service_.history();
   ExecutionResult output;
+  LiveRemoteLog live_log(request.log_limit_bytes, request.log);
   std::mutex wait_mutex;
   std::condition_variable_any next_status;
   while (!request.detach.stop_requested()) {
@@ -158,9 +221,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     job.cancel_requested |= request.cancel_requested();
     const auto stop = job.cancel_requested ? request.detach : request.stop;
     std::optional<RemoteJobState> reply;
+    bool more_log = false;
     try {
-      reply = poll_remote_job(client_, job, stop);
+      reply = poll_remote_job(client_, job, live_log.cursor(), stop);
       if (stop.stop_requested()) continue;
+      more_log = live_log.accept(*reply);
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,
@@ -187,7 +252,11 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
+      // A stopped job keeps its workspace until release: collect the rest
+      // of its log first. Each poll is a bounded exchange that advances the
+      // cursor and stays interruptible as before.
       if (job.cancel_requested) {
+        if (more_log) continue;
         output.failure =
             FailureData::make(FailureKind::cancelled, "Run cancelled");
         return output;
@@ -197,7 +266,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
             service_.store().state_dir() / "modules", node.outputs,
-            request.display, request.stop,
+            request.display, live_log.recorded(), request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -224,9 +293,12 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     } else if (reply &&
                (reply->state == "failed" || reply->state == "cancelled" ||
                 reply->state == "interrupted")) {
+      if (more_log) continue;
       output.failure = remote_failure(*reply);
       return output;
     }
+    // A log behind the job's own continues without waiting.
+    if (more_log) continue;
     // The worker protocol reports progress by polling. Stop interrupts the
     // interval and the exchange so Cancel can use a new connection immediately.
     std::unique_lock lock(wait_mutex);

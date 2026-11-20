@@ -434,10 +434,11 @@ table VersionCanvasCard {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
-  /// What it is, which decides its shape: trigger, input, branch, merge,
-  /// draft, subgraph or code.
+  /// What it is, which decides its shape: trigger, input, branch, fork,
+  /// merge, draft, subgraph or code.
   kind:string (id: 3, required);
-  /// The inputs of a Merge, which decide its width; 0 for others.
+  /// The inputs of a Merge or the outputs of a Fork, which decide its width;
+  /// 0 for others.
   fan:uint32 (id: 4);
   /// Folded on the canvas: only its header shows.
   collapsed:bool (id: 5);

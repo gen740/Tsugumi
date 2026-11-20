@@ -9,7 +9,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
 | **Code Card** | A Card whose environment is defined in `default.nix` and whose processing is in `src/` or its Nix `run` script ([Your first Card](CardGuide.md)) |
-| **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Merge or Collect |
+| **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Fork, Merge or Collect |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
@@ -23,7 +23,9 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Run** | One execution of a Workflow. Records the version (commit) at its start |
 | **Invocation** | One execution of a Card within a Run. In a loop, the same Card is invoked many times |
-| **Batch** | An ordered set of values sent together on one wire. A run list or batch input can produce several invocations for one trigger |
+| **Batch** | An ordered set of values sent together on one wire. A run list, a value sweep or a batch input can produce several invocations for one trigger. An ordinary FlatBuffers vector is one value, not a batch |
+| **Value sweep** | An Input Card parameter written as `"sweep": [...]` instead of `"data"`: each value is handed on in its own invocation ([Run lists and Collect](features.md#run-lists-and-collect)) |
+| **Implementation label** | The name of one implementation: a run list entry's `label`, or a value sweep's `name=value`. Shown in the history and used to pair members when comparing runs |
 | **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
 | **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card, or missing required inputs. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |

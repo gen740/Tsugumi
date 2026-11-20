@@ -17,13 +17,52 @@ public enum VMHostIPC {
     return URL(fileURLWithPath: selected ?? "/private/tmp").appendingPathComponent("\(prefix)\(digest).sock").path
   }
 
-  private static func address(_ path: String) throws -> sockaddr_un {
+  /// The address of the socket file at `path`. As in the core's
+  /// `unix_socket::Address`, a path that does not fit in sun_path is reached
+  /// through a short link to its folder in TSUGUMI_SOCKET_DIR (else /tmp)
+  /// `/tsugumi-<uid>/`, a folder only this user can enter.
+  static func address(_ path: String) throws -> sockaddr_un {
     var address = sockaddr_un()
     address.sun_family = sa_family_t(AF_UNIX)
-    let bytes = Array(path.utf8) + [0]
-    guard bytes.count <= MemoryLayout.size(ofValue: address.sun_path) else { throw LauncherError.notReady("VM host socket path is too long") }
+    let limit = MemoryLayout.size(ofValue: address.sun_path) - 1
+    func failure(_ why: String) -> LauncherError {
+      .notReady("Unix socket path \(path) is \(path.utf8.count) bytes; this system allows \(limit): \(why)")
+    }
+    var text = path
+    if text.utf8.count > limit {
+      guard path.hasPrefix("/"), let slash = path.lastIndex(of: "/") else { throw failure("it must be absolute to be shortened") }
+      let folder = slash == path.startIndex ? "/" : String(path[..<slash])
+      text = try shortFolder(folder, failure) + String(path[slash...])
+      guard text.utf8.count <= limit else { throw failure("the shortened path \(text) is still too long") }
+    }
+    let bytes = Array(text.utf8) + [0]
     withUnsafeMutableBytes(of: &address.sun_path) { target in target.copyBytes(from: bytes) }
     return address
+  }
+
+  private static func shortFolder(_ folder: String, _ failure: (String) -> LauncherError) throws -> String {
+    let selected = ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"].flatMap { $0.isEmpty ? nil : $0 }
+    let root = (selected ?? "/tmp") + "/tsugumi-\(geteuid())"
+    if mkdir(root, 0o700) != 0 && errno != EEXIST { throw failure("cannot create \(root): \(String(cString: strerror(errno)))") }
+    var status = stat()
+    guard lstat(root, &status) == 0, status.st_mode & S_IFMT == S_IFDIR, status.st_uid == geteuid(),
+          status.st_mode & 0o077 == 0 else { throw failure("\(root) must be a folder only this user can access") }
+    // FNV-1a, the same link name the core computes.
+    var hash: UInt64 = 14695981039346656037
+    for byte in folder.utf8 { hash = (hash ^ UInt64(byte)) &* 1099511628211 }
+    let link = root + "/" + String(format: "%016llx", hash)
+    if symlink(folder, link) == 0 { return link }
+    guard errno == EEXIST else { throw failure("cannot create \(link): \(String(cString: strerror(errno)))") }
+    if (try? FileManager.default.destinationOfSymbolicLink(atPath: link)) == folder { return link }
+    // A different folder with the same name: replace the link atomically.
+    let pending = link + ".\(getpid())"
+    unlink(pending)
+    guard symlink(folder, pending) == 0, rename(pending, link) == 0 else {
+      let error = errno
+      unlink(pending)
+      throw failure("cannot replace \(link): \(String(cString: strerror(error)))")
+    }
+    return link
   }
 
   public static func connect(path: String) throws -> Int32 {

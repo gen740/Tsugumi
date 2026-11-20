@@ -127,8 +127,10 @@ in {
     with closing(sqlite3.connect(project / ".tsugumi" / "runs.sqlite")) as db:
         writes, = db.execute("SELECT count(*) FROM logs WHERE run_id=? AND stream=?",
                              (run_id, LogStream.build)).fetchone()
-    # Pipe reads can end anywhere. Require substantially fewer writes than
-    # complete records without asserting a particular split.
+    # The reader collects lines across pipe reads and delivers them on an
+    # interval, so writes follow elapsed time, not how the OS splits reads
+    # (a read often holds one or two lines). 1,200 lines must not
+    # become one write per line or per read.
     assert writes < 600
 
     if state == RunState.failed:

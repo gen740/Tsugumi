@@ -59,25 +59,43 @@ auto input_location(const std::vector<stdfs::path>& file_roots,
   throw std::runtime_error("remote file input is outside the run's folders");
 }
 
-auto import_logs(const stdfs::path& path, RemoteInvocationResult& result)
-    -> void {
+auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
+                 RemoteInvocationResult& result) -> void {
   std::ifstream stream(path, std::ios::binary);
-  std::string line;
-  while (std::getline(stream, line)) {
-    remote::LogJson entry;
-    // Decode the complete entry directly. A JSON DOM would own another copy
-    // of the line and validate it before decoding the same bytes again.
-    if (hosq::decode_document_into<hosq::json::FastReader<>>(
-            entry, line, {.error_path = false}) ||
-        *entry.stream <= static_cast<uint64_t>(LogStream::unspecified) ||
-        *entry.stream > static_cast<uint64_t>(LogStream::MAX))
-      throw std::runtime_error("invalid remote log entry");
-    result.logs.emplace_back(static_cast<LogStream>(*entry.stream),
-                             std::move(*entry.text));
+  // The complete result is authoritative: the entries recorded while the job
+  // ran must be exactly its prefix, so none is recorded twice or lost.
+  crypto::Sha256 prefix;
+  std::string buffer(64 << 10, '\0');
+  for (uint64_t left = recorded.bytes; left > 0;) {
+    const auto size = static_cast<std::streamsize>(
+        std::min<uint64_t>(left, buffer.size()));
+    stream.read(buffer.data(), size);
+    if (stream.gcount() != size)
+      throw std::runtime_error("remote log is shorter than its recorded part");
+    prefix.update(buffer.data(), static_cast<size_t>(size));
+    left -= static_cast<uint64_t>(size);
   }
+  if (recorded.bytes && prefix.finish_hex() != recorded.sha256)
+    throw std::runtime_error("remote log differs from its recorded part");
+  std::string line;
+  while (std::getline(stream, line))
+    result.logs.push_back(decode_remote_log_entry(line));
 }
 
 }  // namespace
+
+auto decode_remote_log_entry(std::string_view line)
+    -> std::pair<LogStream, std::string> {
+  remote::LogJson entry;
+  // Decode the complete entry directly. A JSON DOM would own another copy
+  // of the line and validate it before decoding the same bytes again.
+  if (hosq::decode_document_into<hosq::json::FastReader<>>(
+          entry, line, {.error_path = false}) ||
+      *entry.stream <= static_cast<uint64_t>(LogStream::unspecified) ||
+      *entry.stream > static_cast<uint64_t>(LogStream::MAX))
+    throw std::runtime_error("invalid remote log entry");
+  return {static_cast<LogStream>(*entry.stream), std::move(*entry.text)};
+}
 
 auto stage_remote_archive(const RemoteJobClient& client,
                           const std::string& service,
@@ -240,7 +258,8 @@ auto import_remote_result(
     const std::string& result_digest, const std::string& spec,
     const stdfs::path& directory, const stdfs::path& module_cache,
     const std::vector<types::PortType>& outputs,
-    const WorkerProc::DisplaySink& display, std::stop_token stop,
+    const WorkerProc::DisplaySink& display, const RemoteLogPrefix& recorded,
+    std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
@@ -412,7 +431,7 @@ auto import_remote_result(
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }
-  import_logs(temp / "logs.jsonl", result);
+  import_logs(temp / "logs.jsonl", recorded, result);
   if (display && decoded_display) display(*decoded_display);
   return result;
 }

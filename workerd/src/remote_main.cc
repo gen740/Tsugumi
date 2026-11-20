@@ -25,16 +25,19 @@
 #include <cstring>
 #include <filesystem>
 #include <fstream>
+#include <functional>
 #include <iostream>
 #include <map>
 #include <memory>
 #include <mutex>
+#include <span>
 #include <sstream>
 #include <thread>
 #include <vector>
 
 #include "journal.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/invocation.hh"
@@ -43,6 +46,7 @@ extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store) -> void;
+auto jobs_main(stdfs::path root, std::span<char*> args) -> int;
 namespace {
 using namespace std::chrono_literals;
 constexpr size_t kConnections = 64;
@@ -138,7 +142,7 @@ auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
   cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
-  return ::open((journal.root() / "locks" / (job + ".supervisor")).c_str(),
+  return ::open(journal.supervisor_lock_path(job).c_str(),
                 O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
 }
 
@@ -260,6 +264,16 @@ class Daemon {
           journal->job_path(q.job_id) / "work/log-truncated", ec);
       return status;
     };
+    const auto log_slice = [&](uint64_t offset, uint32_t limit) {
+      auto range = journal->log(q.job_id, offset,
+                                std::min(limit, kLogChunkBytes), q.core_life_id);
+      return [offset, range = std::move(range)](R::JobStatusT status) {
+        status.log_offset = offset;
+        status.log_size = range.first;
+        status.log_bytes.assign(range.second.begin(), range.second.end());
+        return status;
+      };
+    };
     switch (q.body.type) {
       case R::RequestBody::PutBlobRequest:
         journal->put(q.job_id, *q.body.AsPutBlobRequest(), q.core_life_id);
@@ -289,6 +303,9 @@ class Daemon {
       case R::RequestBody::StatusRequest: {
         auto status =
             with_log_status(journal->status(q.job_id, q.core_life_id).status());
+        const auto& query = *q.body.AsStatusRequest();
+        status =
+            log_slice(query.log_offset, query.log_limit)(std::move(status));
         if (status.state == R::JobState::Running) {
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
@@ -302,10 +319,16 @@ class Daemon {
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {
-        const auto state =
-            journal->cancel(q.job_id, q.body.AsCancelRequest()->fingerprint);
+        const auto& query = *q.body.AsCancelRequest();
+        // Check the reader before cancelling; the slice may predate this
+        // cancellation, and the next one continues from its end.
+        std::function<R::JobStatusT(R::JobStatusT)> slice =
+            [](R::JobStatusT status) { return status; };
+        if (query.log_limit)
+          slice = log_slice(query.log_offset, query.log_limit);
+        const auto state = journal->cancel(q.job_id, query.fingerprint);
         if (state.state == R::JobState::Cancelling) notify_cancel(state);
-        return reply(with_log_status(state.status()));
+        return reply(slice(with_log_status(state.status())));
       }
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
@@ -372,10 +395,20 @@ class Daemon {
           log(e.what());
         }
       }
-    std::ranges::sort(pending, [](const auto& a, const auto& b) {
-      return stdfs::last_write_time(a.first->job_path(a.second) / "spec.fb") <
-             stdfs::last_write_time(b.first->job_path(b.second) / "spec.fb");
-    });
+    // Read each submission time once: `tsugumi-workerd jobs remove` can erase
+    // a queued job's spec meanwhile, and its claim then finds the tombstone.
+    std::vector<std::pair<stdfs::file_time_type, size_t>> order;
+    for (size_t i = 0; i < pending.size(); ++i) {
+      std::error_code ec;
+      order.emplace_back(
+          stdfs::last_write_time(
+              pending[i].first->job_path(pending[i].second) / "spec.fb", ec),
+          i);
+    }
+    std::ranges::sort(order);
+    decltype(pending) sorted;
+    for (const auto& [_, i] : order) sorted.push_back(std::move(pending[i]));
+    pending = std::move(sorted);
     active_jobs_.store(static_cast<uint32_t>(active + pending.size()));
     for (const auto& [p, job] : pending) {
       if (active >= config_.max_jobs || stopping) break;
@@ -535,13 +568,10 @@ auto supervise(const std::string& self, const stdfs::path& root,
 }
 
 auto unix_listener(const stdfs::path& path) -> int {
-  sockaddr_un address{};
-  const auto text = path.string();
-  if (!path.is_absolute() || text.size() >= sizeof address.sun_path)
-    throw std::runtime_error(
-        "Unix socket path must be absolute and shorter than " +
-        std::to_string(sizeof address.sun_path) +
-        " bytes (choose one with --socket): " + text);
+  if (!path.is_absolute())
+    throw std::runtime_error("Unix socket path must be absolute: " +
+                             path.string());
+  const auto address = unix_socket::Address(path.string());
   // The singleton lock owns this private endpoint; never unlink arbitrary
   // files.
   struct stat st{};
@@ -551,10 +581,9 @@ auto unix_listener(const stdfs::path& path) -> int {
     ::unlink(path.c_str());
   }
   int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
-  address.sun_family = AF_UNIX;
-  std::memcpy(address.sun_path, text.data(), text.size());
   if (fd < 0 ||
-      ::bind(fd, reinterpret_cast<sockaddr*>(&address), sizeof address) != 0 ||
+      ::bind(fd, reinterpret_cast<const sockaddr*>(&address),
+             sizeof address) != 0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on Unix socket");
   ::chmod(path.c_str(), 0600);
@@ -685,6 +714,9 @@ auto remote_workerd_main(int argc, char** argv) -> int {
       invoke(argv[2], argv[3], argv[4]);
       return 0;
     }
+    if (argc >= 2 && std::string_view(argv[1]) == "jobs")
+      return jobs_main(default_root(),
+                       std::span(argv + 2, static_cast<size_t>(argc - 2)));
     const auto self = stdfs::canonical("/proc/self/exe").string();
     if (argc == 7 && std::string_view(argv[1]) == "--supervise")
       return supervise(self, argv[2], argv[3], std::stoi(argv[4]), argv[5],

@@ -6,7 +6,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Build and navigate a Workflow
 
-- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Branch, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
+- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Branch, Fork, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
 - **Sweep inputs and implementations.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one vector or Directory on. [Run lists and Collect](#run-lists-and-collect)
 - **See references between Card definitions.** Turn on **Nix references**, then hover a Card or open the list. Follow `inputs.data` to the Card connected to the `data` input. [Nix references](Usage.md#canvas-tools)
@@ -72,6 +72,7 @@ Every Card has a permanent identifier and a separate human name in `_meta.json.n
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (declared inputs to `out`, a union named by input port with root `tsugumi.merge.Merged`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
+| fork | Splits a value by name: `value` goes out unchanged on every output declared in `outputs` (default `a` and `b`), each time it arrives. Its log says where it went (`fork -> a, b`). Every output always runs downstream, so a Fork never makes a path conditional |
 | Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
@@ -80,7 +81,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 ### Typed ports
 
-- An output port can carry several wires. Each connected input receives the same emitted value.
+- An output port can carry several wires. Each connected input receives the same emitted value. A Fork does the same as a named step on the Canvas, with one output per destination.
 - An output port's type is declared in a FlatBuffers schema (`_outputs.fbs`), and the type of each downstream input port is derived automatically from upstream. Structural compatibility is checked when wiring, and a merge builds a union type automatically.
 - Values flow between Cards as FlatBuffers bytes. Automated tests check that 64-bit integers, enums, structs, unions and File / Directory pass between C++ / Python / bash (and R and Julia through an in-memory JSON adapter) without loss.
 
@@ -95,12 +96,14 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 ### Run lists and Collect
 
-The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows three inputs, two implementations and one collected result.
+The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows a value sweep of three inputs, two named implementations and one collected result.
 
-- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ "echo first" "echo second" ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid.
+- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ "echo first" "echo second" ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
+- An Input Card supplies a batch directly: a parameter written as `"sweep": [8, 12, 16]` instead of `"data"` hands on each value in its own invocation. Several swept parameters give their Cartesian product, with the last one varying fastest; an arriving `start` batch is the outer axis. Each member is labeled with its values, such as `value=8`. A parameter of a list type (`uint64[]`) with `data` stays one ordinary FlatBuffers vector; with `sweep`, each element of the sweep is one vector. `sweep: [x]` is still a one-member batch (×1), and `sweep: []` sends an empty batch (×0).
+- History rows and the batch list show each member's label. Comparing two runs, a Card that ran an execution list compares one member at a time, chosen by name: members pair by label, or by implementation number when unlabeled, and a name repeated once per arriving input pairs by its occurrence. A member present in one run only is said so.
 - Results follow the order of the input port names, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
 - An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
-- There are at most 256 combinations per trigger, 4,096 worker invocations per Run and 32 MiB of serialized port values for all the inputs of one activation and for all its outputs. If one invocation fails, the runtime cancels its siblings and withholds the batch. The history keeps each invocation's outcome. A partial rerun with last inputs uses the whole saved batch, including saved Files and Directories.
+- There are at most 256 combinations per trigger (input batches, run list and value sweep together), 4,096 worker invocations per Run and 32 MiB of serialized port values for all the inputs of one activation and for all its outputs. If one invocation fails, the runtime cancels its siblings and withholds the batch. The history keeps each invocation's outcome. A partial rerun with last inputs uses the whole saved batch, including saved Files and Directories.
 - A collected value can be at most 16 MiB. Collect can copy up to 1,000 files and 64 GiB, with a total limit of 10,000 batch members and filesystem entries. Directory collection rejects symbolic links and special files.
 
 ## 3. Reproducible environments with Nix
@@ -127,7 +130,7 @@ in
 
 - Set `exports` in the upstream Code Card's `default.nix`. If a downstream Code Card receives its output on the `data` port, that Card can use the exported attributes through `inputs.data`. The same exports are available to each implementation in a run list.
 - The name after `inputs.` is the downstream input port name. The port must resolve to one Code Card that always runs first. `tsugumi` and `sources` are reserved for the SDK and configured sources.
-- Collect, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A wire with several possible producers still carries its data, but a Nix reference to that input is ambiguous.
+- Collect, Fork, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A wire with several possible producers still carries its data, but a Nix reference to that input is ambiguous.
 - Static diagnostics describe directly written references and flag unknown or ambiguous ports. Nix also checks references reached through an alias during evaluation.
 
 - The [Canvas overlay](Usage.md#canvas-tools) draws the static references from this resolution. Nested targets meet their visible container and the list preserves the full paths. An invalid reference remains visible with its diagnostic. Saving a source refreshes the resolution.

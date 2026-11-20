@@ -27,6 +27,7 @@
 
 #include "agent/wire.hh"
 #include "tsugumi/rpc/peer_tls.hh"
+#include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
@@ -90,13 +91,9 @@ auto ParseEndpoint(const std::string& endpoint, bool resolve = true)
     -> Address {
   Address result;
   if (endpoint.starts_with("unix:/")) {
-    auto* address = reinterpret_cast<sockaddr_un*>(&result.storage);
-    const auto path = endpoint.substr(5);
-    Require(path.size() < sizeof address->sun_path,
-            "Worker socket path is too long");
-    address->sun_family = AF_UNIX;
-    std::memcpy(address->sun_path, path.c_str(), path.size() + 1);
-    result.size = sizeof *address;
+    const auto address = unix_socket::Address(endpoint.substr(5));
+    std::memcpy(&result.storage, &address, sizeof address);
+    result.size = sizeof address;
   } else {
     std::smatch match;
     Require(

@@ -4,6 +4,7 @@ The socket-free C++ suite covers journal races and protocol verification. This
 suite runs via tests/ci-remote-worker.sh on Linux, outside the build sandbox.
 """
 import concurrent.futures
+import fcntl
 import hashlib
 import json
 import os
@@ -410,12 +411,23 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     gate = tmp_path / "hold"
     os.mkfifo(gate)
     launcher = tools / "unshare"
+    entry = json.dumps({"stream": LogStream.standard_output, "text": "live entry\n"}).encode()
+    later = json.dumps({"stream": LogStream.standard_error, "text": "after restart\n"}).encode() + b"\n"
+
+    def log_slice(job, offset, limit=1 << 20):
+        reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
+        assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes or b"")
+
+    # Like the invocation, append a flushed JSONL entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
+                        'for arg do case "$arg" in */work) mkdir -p "$arg/result" && '
+                        'printf \'%s\\n\' "$TEST_ENTRY" >> "$arg/result/logs.jsonl";; esac; done\n'
                         'echo partial-log\necho $$ > "$TEST_CHILD_PID"\nread -r line < "$TEST_GATE"\n')
     launcher.chmod(0o755)
     peer = Worker(tmp_path, binary, env={**os.environ,
         "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate)})
+        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": entry.decode()})
     first, second = "7" * 64, "8" * 64
     directory = peer.state / "projects" / peer.scope / "jobs" / first
 
@@ -435,7 +447,16 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         assert accepted.body.state == R.JobState.Queued
         pid = process_file(peer.process, child_pid, child)
         assert pid is not None and Path(f"/proc/{pid}").exists()
+        # The running job's log arrives in slices bounded by the worker.
+        assert log_slice(first, 0, 5) == (0, len(entry) + 1, entry[:5])
+        assert log_slice(first, 5) == (5, len(entry) + 1, entry[5:] + b"\n")
         peer.restart()
+        # A cursor survives the listener restart and returns only new bytes.
+        cursor = len(entry) + 1
+        assert log_slice(first, cursor) == (cursor, cursor, b"")
+        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+            log.write(later)
+        assert log_slice(first, cursor) == (cursor, cursor + len(later), later)
         acknowledged = peer.call(R.RequestBody.CancelRequest,
                                  R.CancelRequestT(fingerprint=fingerprints[first]), job=first)
         assert acknowledged.body.state in (R.JobState.Cancelling, R.JobState.Cancelled)
@@ -446,8 +467,15 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         blob = peer.call(R.RequestBody.GetBlobRequest, R.GetBlobRequestT(digest=digest), job=first)
         assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
+        # Cancellation keeps the log until release, for the same core life only.
+        assert log_slice(first, 0) == (0, cursor + len(later), entry + b"\n" + later)
+        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+            log.write(b"x" * (300 << 10))
+        assert len(log_slice(first, 0)[2]) == 256 << 10
         # A new life cannot collect the old result, but can use the freed slot.
         peer.core_life_id = "f" * 64
+        other = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=first)
+        assert other.bodyType == R.ReplyBody.Failure
         peer.call(R.RequestBody.ProbeRequest, R.ProbeRequestT())
         digest = peer.upload(second, b"next input")
         spec = peer.spec(digest)
@@ -504,3 +532,77 @@ def test_limits_require_delegation(worker):
     spec.memoryBytes = 256 << 20
     response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=R.pack(spec)), job=job)
     assert response.bodyType == R.ReplyBody.Failure and response.body.code == R.ErrorCode.Rejected
+
+
+def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
+    binary = worker.command[0]
+
+    def jobs(*args):
+        return subprocess.run([binary, "jobs", *args, "--state-dir", str(worker.state)],
+                              capture_output=True, text=True, check=False)
+
+    def listed(*args):
+        result = jobs("list", "--json", *args)
+        assert result.returncode == 0, result.stderr
+        return {row["job_id"]: row for row in json.loads(result.stdout)["jobs"]}
+
+    staged, cancelled, released = "a" * 64, "b" * 64, "f" * 64
+    worker.upload(staged, b"staged input")
+    for job in (cancelled, released):
+        spec = worker.spec(worker.upload(job, b"input"))
+        fingerprint = hashlib.sha256(spec).hexdigest()
+        worker.call(R.RequestBody.CancelRequest, R.CancelRequestT(fingerprint=fingerprint), job=job)
+    worker.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=released)
+    # Queued and running records need a listener that does not act on them.
+    worker.process.terminate()
+    worker.process.wait()
+    worker.log.close()
+    project = worker.state / "projects" / worker.scope
+    queued, running = "d" * 64, "e" * 64
+    for job, state in ((queued, R.JobState.Queued), (running, R.JobState.Running)):
+        (project / "jobs" / job).mkdir(mode=0o700)
+        (project / "jobs" / job / "state").write_text(json.dumps({
+            "state": state, "fingerprint": "0" * 64, "result": "", "diagnostic": "",
+            "pid": 4242, "start": 1, "boot": "", "core_life_id": worker.core_life_id}))
+    lock = (project / "locks" / f"{running}.supervisor").open("w")
+    fcntl.flock(lock, fcntl.LOCK_EX)
+
+    rows = listed()
+    assert set(rows) == {staged, cancelled, queued, running}
+    assert rows[staged]["state"] == "uploading" and "never submitted" in rows[staged]["reason"]
+    assert rows[cancelled]["state"] == "cancelled" and "not released" in rows[cancelled]["reason"]
+    assert rows[running]["reason"] == "running (supervisor pid 4242)"
+    assert all(row["project_scope"] == worker.scope and row["core_last_seen"] == "unknown"
+               and row["core_life_id"] == worker.core_life_id and row["bytes"] > 0
+               and row["last_written"].endswith("Z") for row in rows.values())
+    assert listed("--all")[released]["state"] == "released"
+    text = jobs("list")
+    assert text.returncode == 0 and staged[:12] in text.stdout and released[:12] not in text.stdout
+
+    def name(job):
+        return f"{worker.scope[:8]}/{job[:8]}"
+
+    assert jobs("remove", staged[:8]).returncode != 0
+    assert jobs("remove", f"{worker.scope}/{'9' * 64}").returncode != 0
+    result = jobs("remove", name(staged), name(cancelled))
+    assert result.returncode == 0, result.stderr
+    assert sorted(path.name for path in (project / "jobs" / staged).iterdir()) == ["state"]
+    assert set(listed()) == {queued, running}
+    assert listed("--all")[cancelled]["state"] == "released"
+
+    refused = jobs("remove", name(queued))
+    assert refused.returncode != 0 and "--active" in refused.stderr
+    assert listed()[queued]["state"] == "queued"
+    refused = jobs("remove", "--active", name(running))
+    assert refused.returncode != 0 and "supervisor process is running it" in refused.stderr
+    lock.close()
+    assert "no supervisor runs it" in listed()[running]["reason"]
+    result = jobs("remove", "--active", name(queued), name(running))
+    assert result.returncode == 0, result.stderr
+    assert listed() == {}
+    assert jobs("list").stdout.startswith("No job data")
+
+    # The tombstone still rejects the removed job's late transfer.
+    worker.start()
+    late = worker.call(R.RequestBody.PutBlobRequest, R.put_blob_chunk(hashlib.sha256(b"x").hexdigest(), 1, 0, b"x"), job=staged)
+    assert late.bodyType == R.ReplyBody.Failure and late.body.code == R.ErrorCode.Rejected

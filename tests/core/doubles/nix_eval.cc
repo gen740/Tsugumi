@@ -30,6 +30,8 @@ struct BuildPlan {
   schema::Opt<"log", schema::v::String> log;
   schema::Opt<"cached", schema::v::Bool> cached;
   schema::Opt<"closure", schema::v::Array<schema::v::String>> closure;
+  // Run list labels, one per implementation ("" for none); default: none.
+  schema::Opt<"labels", schema::v::Array<schema::v::String>> labels;
 };
 
 auto check_interrupted(const NixCall& call) -> void {
@@ -72,6 +74,12 @@ auto manifest_text(const BuildPlan& plan, const NixCall& call,
   if (result.implementation_count > call.max_implementations)
     throw NixImplementationLimit(
         "input and run list expansion exceeds 256 combinations");
+  if (const auto* labels = schema::get(plan.labels))
+    result.implementation_labels = *labels;
+  else
+    result.implementation_labels.assign(result.implementation_count, "");
+  check_implementation_labels(result.implementation_labels,
+                              result.implementation_count);
   return schema::text(*value);
 }
 

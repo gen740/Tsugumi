@@ -378,7 +378,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
         return git(project, "rev-parse", "HEAD").strip()
 
     root = tmp_path / "p"
-    builtin_project(root, extra_cards=[card("wide", "merge"), card("b", "branch"), card("m", "merge")],
+    builtin_project(root, extra_cards=[card("wide", "merge"), card("b", "branch"), card("m", "merge"), card("f", "fork")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
     wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
@@ -388,8 +388,8 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     canvas = c.call("VersionCanvasRequest", commit=first)
     cards = {text(k.id): k for k in canvas.cards}
     assert {k: text(v.kind) for k, v in cards.items()} == {
-        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "b": "branch", "m": "merge"}
-    assert (cards["wide"].fan, cards["m"].fan, cards["b"].fan, cards["out"].fan) == (3, 2, 0, 0)
+        "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "b": "branch", "m": "merge", "f": "fork"}
+    assert (cards["wide"].fan, cards["m"].fan, cards["f"].fan, cards["b"].fan, cards["out"].fan) == (3, 2, 2, 0, 0)
     raw_layout = '{"cards":{"out":{"x":3,"y":7,"collapsed":true}},"future":1}'
     (root / "layout.json").write_text(raw_layout)
     assert text(c.call("VersionCanvasRequest", commit=commit_all(root)).layoutJson) == raw_layout

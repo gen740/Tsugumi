@@ -329,6 +329,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::shared_ptr<BatchCancellation> cancellation;
     std::optional<InvocationSummaryData> prepared;
     const CardBuild* implementation = nullptr;
+    // The member of an Input Card's value sweep this invocation hands on.
+    std::optional<uint64_t> sweep_index;
     PreparedExecution* execution = nullptr;
     std::optional<uint32_t> batch_index, batch_size;
     bool execution_list = false;
@@ -872,7 +874,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     // Until evaluation identifies a member, keep its diagnostics off the
     // invocation history. Use the same budget as the rest of its log, and
-    // keep each read's accepted prefix together as one history write.
+    // keep each delivered chunk's accepted prefix together as one history
+    // write.
     workerd::InvocationLog pending_budget(kInvocationLogLimitBytes);
     std::vector<std::string> pending_logs;
     bool published = false;
@@ -1074,6 +1077,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint32_t count = 0;
     bool reserved = false;
     const bool code = node.kind == Template::Code;
+    // An Input Card's value sweep multiplies like a run list: its values are
+    // the Card's own implementations of the arriving combination.
+    const bool sweep =
+        node.kind == Template::Input && has_value_sweep(node.settings);
+    const auto sweep_size =
+        sweep ? static_cast<uint32_t>(value_sweep_size(node.settings)) : 1u;
+    batch.execution_list |= sweep;
     std::optional<FailureData> failure;
     try {
       if (work.activation > node.settings.max_runs)
@@ -1084,6 +1094,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              {"max_runs", std::to_string(node.settings.max_runs)}});
       count = input_combinations(node, work.groups);
       remember_inputs(rt, work);
+      if (sweep) {
+        if (count != 0 && sweep_size > kMaxExecutionBatchSize / count)
+          throw batch_limit(
+              node, "input and value sweep expansion exceeds 256 combinations");
+        count *= sweep_size;
+      }
       if (code && count != 0) {
         work.prepared = new_invocation(work);
         auto& s = *work.prepared;
@@ -1135,8 +1151,11 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (code)
         member.implementation =
             &implementations.at(index % implementations.size());
+      if (sweep) member.sweep_index = index % sweep_size;
       const auto inputs_index =
-          code ? index / static_cast<uint32_t>(implementations.size()) : index;
+          code    ? index / static_cast<uint32_t>(implementations.size())
+          : sweep ? index / sweep_size
+                  : index;
       member.inputs = batch_inputs(node, work.groups, inputs_index);
       auto produced = invoke(member, worker_lane);
       {
@@ -1278,8 +1297,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     auto s = prepared ? std::move(*w.prepared) : new_invocation(w);
     s.batch_index = w.batch_index;
     s.batch_size = w.batch_size;
-    if (w.implementation)
+    if (w.implementation) {
       s.implementation_index = w.implementation->implementation_index;
+      s.implementation_label = w.implementation->implementation_label;
+    }
+    if (w.sweep_index) {
+      // The record shows the values this member handed on.
+      auto member = value_sweep_member(node.settings, *w.sweep_index);
+      s.implementation_index = static_cast<uint32_t>(*w.sweep_index + 1);
+      s.implementation_label = std::move(member.label);
+      s.params_json = NixRunner::params_json(member.params, false);
+    }
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
     for (const auto& t : w.inputs) {
@@ -1619,7 +1647,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       const std::vector<Value>& inputs,
       const std::optional<std::pair<std::string, std::string>>& out_alias)
       -> void {
-    // Files received as inputs may be passed on unchanged (branch, a
+    // Files received as inputs may be passed on unchanged (branch, fork, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
     std::set<std::string> forwarded;
@@ -1792,6 +1820,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         break;
       }
       case Template::Input: {
+        const auto params =
+            w.sweep_index
+                ? value_sweep_member(node.settings, *w.sweep_index).params
+                : node.settings.params;
         for (const auto& port : node.outputs) {
           if (!port.type)
             throw Failed(FailureKind::validation_failed,
@@ -1799,10 +1831,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           // Message fields are filled from params of the same name.
           const auto* root = port.type->root();
           std::vector<hosq::json::GenericDom<>> owned;
-          owned.reserve(node.settings.params.size());
+          owned.reserve(params.size());
           std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>
               members;
-          for (const auto& prm : node.settings.params) {
+          for (const auto& prm : params) {
             if (!prm.data || !root->fields()->LookupByKey(prm.name.c_str()))
               continue;
             const hosq::json::GenericDom<>* val = &*prm.data;
@@ -1862,6 +1894,18 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         p.outputs.push_back({cond ? "a" : "b", v->kind, v->type, v->bytes, {}});
         card_log(node.path, s.invocation, LogStream::standard_output,
                  std::string("branch -> ") + (cond ? "a" : "b") + "\n");
+        break;
+      }
+      case Template::Fork: {
+        const Value* v = input(in, "value");
+        if (!v) throw Failed(FailureKind::input_missing, "fork needs value");
+        std::string sent;
+        for (const auto& port : node.outputs) {
+          p.outputs.push_back({port.name, v->kind, v->type, v->bytes, {}});
+          sent += (sent.empty() ? "" : ", ") + port.name;
+        }
+        card_log(node.path, s.invocation, LogStream::standard_output,
+                 "fork -> " + sent + "\n");
         break;
       }
       case Template::Collect:
