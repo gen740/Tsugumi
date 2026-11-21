@@ -207,6 +207,7 @@ extension ProjectSession {
   }
 
   func listTemplates() async throws -> [Tsugumi_Host_TemplateEntryT] {
+    guard let projectId else { throw RPCError.disconnected }
     let request = Tsugumi_Host_TemplateListRequestT()
     request.projectId = projectId
     let reply: Tsugumi_Host_TemplateListT = try await CoreHostClient.shared.hostCall(.templatelistrequest, request)

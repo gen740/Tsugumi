@@ -91,7 +91,7 @@ struct TemplatePicker: View {
         Button {
           Task { await copy(entry) }
         } label: {
-          Text(entry.name ?? "").frame(maxWidth: .infinity, alignment: .leading)
+          Text(entry.name).frame(maxWidth: .infinity, alignment: .leading)
         }
         .disabled(busy || !session.isEditable)
       }
@@ -99,8 +99,10 @@ struct TemplatePicker: View {
   }
 
   private var addition: some View {
-    VStack(alignment: .leading, spacing: 12) {
-      Text(mode == .git ? "Git からインポート…" : "テンプレートを追加…").font(.headline)
+    let title: LocalizedStringKey = mode == .git ? "Git からインポート…" : "テンプレートを追加…"
+    let submit: LocalizedStringKey = mode == .git ? "インポート" : "追加"
+    return VStack(alignment: .leading, spacing: 12) {
+      Text(title).font(.headline)
       Picker("保存先", selection: $store) {
         Text("選択").tag(nil as Tsugumi_Host_TemplateStore?)
         Text("プロジェクト").tag(Optional(Tsugumi_Host_TemplateStore.project))
@@ -124,7 +126,7 @@ struct TemplatePicker: View {
           mode = .list
         }
         .keyboardShortcut(.cancelAction)
-        Button(mode == .git ? "インポート" : "追加") { Task { await save() } }
+        Button(submit) { Task { await save() } }
           .keyboardShortcut(.defaultAction)
           .disabled(!canSave)
       }

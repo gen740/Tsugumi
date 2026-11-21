@@ -983,7 +983,7 @@
   "入力を追加": "Add Input",
   "入力ポート": "Input ports",
   "入力ポートの名前": "Input port name",
-  "入力値": "Input value",
+  "入力値": "Input Value",
   "入力元": "Input sources",
   "入力元 {0}": {"text": "Source of {0}", "mac": ["@"]},
   "入力待ち": "Waiting",

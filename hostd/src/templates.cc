@@ -272,13 +272,32 @@ auto ReadHostTemplate(const f::path& store, const std::string& name,
   return CheckTemplate(Read(store, name, check));
 }
 
-auto HostTemplateNames(const f::path& store) -> std::vector<std::string> {
+auto HostTemplateNames(const f::path& store, const TemplatePathCheck& check)
+    -> std::vector<std::string> {
   std::vector<std::string> names;
   if (!f::is_directory(f::symlink_status(store))) return names;
   for (const auto& entry : f::directory_iterator(store)) {
     const auto name = entry.path().filename().string();
-    if (TemplateName(name) && f::is_directory(entry.symlink_status()))
-      names.push_back(name);
+    if (!TemplateName(name) || !f::is_directory(entry.symlink_status()))
+      continue;
+    try {
+      if (check) check(entry.path().string());
+      const auto listing = fs::list_beneath(store, name, kTemplateEntries);
+      if (!listing.links.empty() || !listing.special.empty()) continue;
+      if (check)
+        for (const auto& path : listing.files)
+          check((entry.path() / path).string());
+      if (std::ranges::any_of(listing.files, [](const auto& path) {
+            const auto slash = path.find('/');
+            return path.ends_with("/_card.json") && slash == path.rfind('/') &&
+                   valid_id(path.substr(0, slash));
+          }))
+        names.push_back(name);
+    } catch (const fs::Error&) {
+      // A folder may disappear between enumeration and opening.
+    } catch (const Failure& error) {
+      if (error.code != "not_found") throw;
+    }
   }
   std::ranges::sort(names);
   return names;

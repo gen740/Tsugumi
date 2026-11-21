@@ -301,7 +301,6 @@ auto Prepare(
   };
   auto copy_wires = [&](const std::vector<std::string>& source_wires,
                         const std::map<std::string, std::string>& copied_ids) {
-    if (source_wires.empty()) return;
     auto root = json::Object(required(prefix + "tsugumi.json"),
                              prefix + "tsugumi.json");
     auto graph = json::Object(json::Get(root, "canvas", "{}"),
@@ -618,7 +617,8 @@ auto Prepare(
     }
     const auto fragment = json::Object(json::Get(contents.files, "tsugumi.json", "{}"));
     const auto canvas = json::Object(json::Get(fragment, "canvas", "{}"));
-    copy_wires(json::Array(json::Get(canvas, "connections", "[]")), copied_ids);
+    const auto wires = json::Array(json::Get(canvas, "connections", "[]"));
+    if (!wires.empty()) copy_wires(wires, copied_ids);
   } else if (const auto* imported = body.AsProjectImport()) {
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';

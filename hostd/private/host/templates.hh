@@ -32,7 +32,8 @@ auto ReadTemplateSource(const Tsugumi::Host::TemplateAddT& request,
 auto ReadHostTemplate(const std::filesystem::path& store,
                       const std::string& name, const TemplatePathCheck& check)
     -> DocumentTemplate;
-auto HostTemplateNames(const std::filesystem::path& store)
+auto HostTemplateNames(const std::filesystem::path& store,
+                       const TemplatePathCheck& check = {})
     -> std::vector<std::string>;
 auto AddHostTemplate(const std::filesystem::path& store,
                      const std::string& name, const DocumentTemplate& contents)

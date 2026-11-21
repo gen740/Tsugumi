@@ -171,21 +171,11 @@ auto Tools::ListTemplates(const std::string& project, bool agent,
   for (const auto& name : names)
     if (!hidden.contains(name) && visible("templates/" + name))
       entry(H::TemplateStore::Project, name);
+  host::TemplatePathCheck check;
+  if (excluded) check = [&](const auto& path) { excluded->Check(path); };
   for (const auto& name :
-       host::HostTemplateNames(dependencies.host_templates)) {
-    const auto root = dependencies.host_templates / name;
-    if (!visible(root)) continue;
-    if (agent) {
-      try {
-        host::ReadHostTemplate(
-            dependencies.host_templates, name,
-            [&](const auto& path) { excluded->Check(path); });
-      } catch (const std::exception&) {
-        continue;
-      }
-    }
+       host::HostTemplateNames(dependencies.host_templates, check))
     entry(H::TemplateStore::Host, name);
-  }
   return result;
 }
 
