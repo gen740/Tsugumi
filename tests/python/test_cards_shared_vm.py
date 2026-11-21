@@ -192,6 +192,35 @@ def test_isolation(env):
     assert st.state == RunState.succeeded, detail
 
 
+def test_card_limits_are_delegated_and_released(env):
+    terminal_probe = (
+        'root=/sys/fs/cgroup/tsugumi/$TSUGUMI_PROJECT_ID; found=0; '
+        'for group in "$root"/tsugumi-card-*; do '
+        '[ -d "$group" ] || continue; '
+        'printf "card-limits %s / %s\\n" "$(<"$group/cpu.max")" "$(<"$group/memory.max")"; '
+        'found=1; done; [ "$found" = 1 ] || echo no-card-cgroup'
+    )
+    limits = {"limits": {"cpu": 0.5, "memoryMiB": 32}}
+    resident = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
+                    sandbox=limits, reuseWorker=True)
+    connection = load(env, {"limited": resident}, [card("limited", "limited")], [])
+    _, status = run_and_wait(connection, "limited")
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert "card-limits 500000 1000000 / 33554432" in env.exec(terminal_probe)
+
+    oom = bash(
+        'buffer=x; for ((i = 0; i < 27; ++i)); do buffer="$buffer$buffer"; done; '
+        'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
+        sandbox=limits, timeoutSeconds=60,
+    )
+    connection = load(env, {"limited": oom}, [card("limited", "limited")], [])
+    run_id, status = run_and_wait(connection, "limited")
+    assert status.state == RunState.failed
+    invocation, = connection.call("RunInvocationsRequest", runId=run_id, card=path("limited")).records
+    assert invocation.failure.kind == FailureKind.worker_failed
+    assert "no-card-cgroup" in env.exec(terminal_probe).splitlines()
+
+
 def test_nix_connected_exports(env):
     a = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
              extra='''  exports = { greet = name: "hello ${name}"; };
