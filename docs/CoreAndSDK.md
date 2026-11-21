@@ -48,11 +48,20 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 
 **Today.** None of these steps has started.
 
+## The bundled SDKs
+
+**Decided.**
+
+- R, Julia and Ruby will later use generated, typed C++ glue. This is part of the plan for the SDKs bundled with Tsugumi, not a constraint of the ABI.
+- How values are mapped inside an SDK is that SDK's business.
+
+**Today.** R, Julia and Ruby return values that the worker converts from JSON to each port's FlatBuffer ([Building results](CardGuide.md#building-results)).
+
 ## Philosophy constraints that still hold
 
 **Decided.** These hold through the whole change ([Philosophy](Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept)):
 
-- Run data travel only on `tsugumid`'s channel.
+- Run data travel only on `tsugumid`'s channel. This covers Tsugumi's own transport. I/O that a Card starts through its grants is a permitted side effect ([Grants](SandboxContract.md#grants)).
 - Only a person deletes stored run data.
 - Definitions (code and environment) may be shared by the machine.
 
