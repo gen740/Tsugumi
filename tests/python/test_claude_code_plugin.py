@@ -417,6 +417,20 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         assert not error, text
         assert json.loads(text)["reply"] == "SaveResult"
         assert json.loads((root / "proj/definitions/start/_card.json").read_text()) == {"type": "trigger"}
+
+        source = root / "local-template"
+        (source / "start").mkdir(parents=True)
+        (source / "start/_card.json").write_text('{"type":"trigger"}')
+        add = {"family": "templates", "action": "add", "arguments": {
+            "store": "project", "name": "added-via-mcp", "path": str(source),
+        }}
+        added = root / "proj/templates/added-via-mcp/start/_card.json"
+        allow_pending_access(mcp, "tools", add, user)
+        assert not added.exists()
+        text, error = mcp.call("tools", add)
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert added.is_file()
     finally:
         user.close()
     # A second open reuses the host and repeats no rules; create: true makes a new project.

@@ -1808,6 +1808,21 @@ auto Tools::Handle(const RequestIn& request, bool human,
               conversations->GetConversation(conversation).project;
           const auto digest = crypto::sha256_hex(call.name + "\n" + project +
                                                  "\n" + json::Encode(args));
+          // Explicitly guarded calls wait for approval before recording a
+          // sent receipt. A retry must resume the approved call ID.
+          if (spec->approval_required) {
+            auto approval = db.prepare(
+                "SELECT call FROM permission_requests WHERE conversation=? "
+                "AND project=? AND access=? AND digest=? AND state "
+                "IN ('pending','allowed') ORDER BY rowid DESC LIMIT 1");
+            approval.bind(1, conversation)
+                .bind(2, project)
+                .bind(3, static_cast<int>(host::ApprovalKind::Operation))
+                .bind(4, digest);
+            if (approval.step()) result.id = approval.text(0);
+          }
+          if (!result.id.empty())
+            return wire::AgentReply(request.request_id, std::move(result));
           auto receipts =
               conversations->ConversationDatabase(conversation)
                   .prepare(
