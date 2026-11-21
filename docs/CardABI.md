@@ -96,7 +96,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 - A display that a Card's own thread sends after the call has returned is not an error, and it can keep updating. This widens what Cards can do.
 - It is appended, not overwritten, to the invocation that was started most recently when it arrived, together with its arrival time. The history therefore shows that it came after the return.
-- Each display call says whether that display is kept in the record. When the flag is omitted, the display is **not** recorded.
+- Each display call says whether that display is kept in the record, through an argument of `display` ([The Card's shape](#the-cards-shape-in-every-language)). When the argument is omitted, the display is **not** recorded.
 - A frame with a stale `call_id` must not kill the worker.
 
 **Today.**
@@ -136,8 +136,11 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 **Decided.**
 
-- In every language a Card is `(input, [report]) -> output`.
-- Cancellation and remaining time are globals of the SDK.
+- In every language a Card is `(input) -> output`. There is no `Report` object.
+- Side effects go through global functions of the SDK. In C++:
+  - `card::display(...)`, overloaded by value type, for example `card::display(Table{...})`, a scalar or an image. Argument-dependent lookup may be used;
+  - `cancelled()` and `remaining_ms()`, beside it.
+- The per-call record flag is an argument of `display`.
 
 **Today.** Entry points take up to three roles, `inputs`, `report` and `run`, as listed in [Inputs, results and reports](CardGuide.md#inputs-results-and-reports).
 
@@ -145,5 +148,4 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 These questions are not decided yet:
 
-- How `[report]` is made optional in C++: an overload chosen by archive member, or always passing `Report`.
 - An opt-in accessor for the raw tables.

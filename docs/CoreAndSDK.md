@@ -77,6 +77,9 @@ What an SDK might otherwise have described lives elsewhere:
 3. Make the SDK self-contained in this repository.
 4. Split it out into its own repository.
 
+- The default SDK ships with the core until the split.
+- The migration to [Card ABI 9](CardABI.md) happens on `main`. C++ moves first; each other language is unavailable until it is ported.
+
 **Today.** None of these steps has started.
 
 ## The bundled SDKs
@@ -102,6 +105,5 @@ What an SDK might otherwise have described lives elsewhere:
 
 These questions are not decided yet:
 
-- Whether a default SDK ships with the core until the split.
 - Whether Cards whose body is Bash remain.
 - Whether the core evaluates the manifest, `run`, exports and views.
