@@ -13,7 +13,7 @@ TEST(RemoteExecutionCapabilities,
   node.path = {"work"};
   node.settings.execution_service = "worker";
   node.settings.system = "aarch64-linux";
-  node.settings.execution_resources = ExecutionResources{500, 256u << 20};
+  node.settings.sandbox.limits = ExecutionResources{500, 256u << 20};
   RemoteTarget cached;
   cached.id = "worker";
   cached.available = true;

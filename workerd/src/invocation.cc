@@ -158,7 +158,7 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto run_worker(const W::WorkerCall& call,
+auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
                 const remote::InvocationJson& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
                 const stdfs::path& store, const WorkerStoreResult& env,
@@ -196,7 +196,12 @@ auto run_worker(const W::WorkerCall& call,
   spawn.program.pre_run = manifest.pre_run->value_or("");
   spawn.program.post_run = manifest.post_run->value_or("");
   spawn.program.views = manifest.views->value_or("");
-  spawn.network = *invocation.network;
+  spawn.sandbox = {job.filesystem,
+                   job.pid,
+                   job.ipc,
+                   job.identity,
+                   {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
+  spawn.network = job.network;
   spawn.uid = 65534;
   spawn.gid = 65534;
   spawn.ro_paths = {input.string()};
@@ -347,10 +352,10 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
-    auto secrets = job->secrets.empty() ? Secrets{}
-                                        : receive_secrets(directory, *job);
+    auto secrets =
+        job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(
-        *call, invocation, input, directory, store, environment, log,
+        *call, *job, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) {
           display = wire::standalone_display(data);
         },

@@ -92,7 +92,7 @@ def write_project(root, arguments: str, main: str, pyproject: str | None = PYPRO
     put(root / "definitions/start/_card.json", json.dumps({"type": "trigger"}))
     d = root / "definitions/card"
     put(d / "_card.json", json.dumps({"type": "code", "language": "python", "inputs": [{"name": "start"}],
-                                      **({} if sandbox or IN_VM else {"sandbox": False})}))
+                                      **({} if sandbox or IN_VM else {"sandbox": {"filesystem": False}})}))
     put(d / "default.nix", nix(arguments))
     put(d / "_outputs.fbs", OUTPUTS)
     put(d / "src/main.py", main)

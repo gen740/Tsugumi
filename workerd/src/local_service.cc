@@ -36,7 +36,13 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.program.pre_run = source.pre_run;
           spawn.program.post_run = source.post_run;
           spawn.program.views = source.views;
-          spawn.sandbox = source.sandbox;
+          spawn.sandbox = {
+              source.filesystem,
+              source.pid,
+              source.ipc,
+              source.identity,
+              {static_cast<uint32_t>(source.cpu_millis), source.memory_bytes}};
+          spawn.gui = source.gui;
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
           spawn.hidden_paths = source.hidden_paths;

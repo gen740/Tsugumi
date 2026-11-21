@@ -189,7 +189,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     proc::Spec repair;
     repair.cwd = "/";
-    if (sp.sandbox)
+    if (sp.sandbox.filesystem)
       repair.argv = {"/usr/bin/sandbox-exec", "-p",
                      seatbelt_profile(sp, sp.scratch, scripts.string())};
     repair.argv.insert(repair.argv.end(),
@@ -248,7 +248,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     for (const auto& b : sp.binds)
       argv.insert(argv.end(),
                   {b.write ? "--bind" : "--ro-bind", b.source, b.target});
-    if (sp.network && sp.sandbox)
+    if (sp.network && sp.sandbox.filesystem)
       // Name resolution and the CA bundle of the environment (a sandbox
       // starts without /etc; unsandboxed, the real one is there).
       for (const char* f :
@@ -258,7 +258,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
     throw Failed(FailureKind::unsupported,
                  "folders of the Mac need the shared VM (bubblewrap)");
-  if (sp.sandbox) {
+  if (sp.sandbox.filesystem) {
 #ifdef __APPLE__
     if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
       throw Failed(FailureKind::permission_denied,

@@ -698,16 +698,24 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
     if (native.endsWith('-darwin')) return `macOS (${native})`
     return id
   }
-  const resourceLimits = serviceId !== 'local' && service?.resourceLimits === true
-  const resources = get(def, 'executionResources')
+  const sandbox = get(def, 'sandbox')
+  const grants = get(def, 'grants')
+  const limits = get(sandbox, 'limits')
+  const setSandbox = (key: string, value: J | undefined) => {
+    const next = isObj(sandbox) ? clone(sandbox) as JObj : obj()
+    next.set(key, value)
+    model.setSetting('sandbox', next.size ? next : undefined)
+  }
+  const resourceLimits = serviceId === 'auto' || service?.resourceLimits === true
   const resource = (name: string, label: string, example: string) => (
     <Row label={label}>
-      <TextField name={name} value={numText(get(resources, name)) ?? str(get(resources, name)) ?? ''} placeholder={example} style={{ width: 140 }}
+      <TextField name={name} value={numText(get(limits, name)) ?? str(get(limits, name)) ?? ''} placeholder={example} style={{ width: 140 }}
         onChange={(value) => {
           const text = value.trim()
-          const next = isObj(resources) ? clone(resources) as JObj : obj()
-          next.set(name, !text ? undefined : /^[0-9]+$/.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
-          model.setSetting('executionResources', next.size ? next : undefined)
+          const next = isObj(limits) ? clone(limits) as JObj : obj()
+          const number = name === 'cpu' ? /^[0-9]+(?:\.[0-9]+)?$/ : /^[0-9]+$/
+          next.set(name, !text ? undefined : number.test(text) ? new JNum(text.replace(/^0+(?=\d)/, '')) : text)
+          setSandbox('limits', next.size ? next : undefined)
         }} />
     </Row>
   )
@@ -804,12 +812,12 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
               )}
               {resourceLimits && <>
                 <Row><span className="caption secondary">{L('CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。')}</span></Row>
-                {resource('cpuMillis', L('CPU 上限（ミリコア）'), '1000')}
-                {resource('memoryBytes', L('メモリ上限（バイト）'), '1073741824')}
+                {resource('cpu', L('CPU 上限（コア）'), '0.5')}
+                {resource('memoryMiB', L('メモリ上限（MiB）'), '1024')}
               </>}
-              {resources !== undefined && <Row>
+              {limits !== undefined && <Row>
                 {!resourceLimits && <span className="caption">{L('この実行サービスではリソースを指定できません。')}</span>}
-                <Button kind="borderless" onClick={() => model.setSetting('executionResources', undefined)}>{L('リソース指定を削除')}</Button>
+                <Button kind="borderless" onClick={() => setSandbox('limits', undefined)}>{L('リソース指定を削除')}</Button>
               </Row>}
               {toggle('reuseWorker', L('worker の状態を残す'), false,
                 L('オン: 読み込んだ worker を次の呼び出しや次の実行でも使い、状態（static 変数など）を残します。オフ: 呼び出しごとに新しい worker です。'),
@@ -818,25 +826,42 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
                 <Row><span className="caption">{L('外部の実行サービスでは worker の状態を残せません。')}</span></Row>
               )}
               <Row label={L('ファイルアクセスを制限')}>
-                <Toggle checked={bool(get(def, 'sandbox')) ?? true} disabled={serviceId !== 'local' && bool(get(def, 'sandbox')) !== false}
-                  onChange={(v) => (v ? model.setSetting('sandbox', undefined) : serviceId === 'local' && setConfirmSandboxOff(true))} />
+                <Toggle checked={bool(get(sandbox, 'filesystem')) ?? true} disabled={serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) !== false}
+                  onChange={(v) => (v ? setSandbox('filesystem', undefined) : setConfirmSandboxOff(true))} />
               </Row>
-              {serviceId !== 'local' && bool(get(def, 'sandbox')) === false && (
+              {serviceId !== 'local' && serviceId !== 'auto' && bool(get(sandbox, 'filesystem')) === false && (
                 <Row><span className="caption">{L('外部の実行サービスにはファイルアクセスの制限が必要です。')}</span></Row>
               )}
+              {([
+                ['pid', L('PID 名前空間を分離')],
+                ['ipc', L('IPC 名前空間を分離')],
+                ['identity', L('実行ユーザーと権限を分離')],
+              ] as const).map(([key, label]) => (
+                <Row key={key} label={label}>
+                  <Toggle checked={bool(get(sandbox, key)) ?? true} onChange={(v) => setSandbox(key, v ? undefined : false)} />
+                </Row>
+              ))}
               {confirmSandboxOff && (
                 <Confirm title={L('この Card のファイルアクセス制限を解除しますか？')} confirm={L('制限を解除する')}
                   message={L('アクセスできる範囲は実行環境の権限と共有フォルダに依存します。ネットワーク制限も実行環境によっては無効になります。')}
-                  onConfirm={() => { setConfirmSandboxOff(false); model.setSetting('sandbox', false) }} onCancel={() => setConfirmSandboxOff(false)} />
+                  onConfirm={() => { setConfirmSandboxOff(false); setSandbox('filesystem', false) }} onCancel={() => setConfirmSandboxOff(false)} />
               )}
             </>
           )}
         </Section>
       )}
       {kind === 'code' && (
-        <Section title={<span className="label"><Icon name="flask" />Experimental</span>}>
-          {toggle('network', L('ネットワークへのアクセスを許可する'), false, L('オフ（デフォルト）: ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。'))}
-          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local'} /></Row>
+        <Section title={L('アクセス許可')}>
+          {([
+            ['network', L('ネットワークへのアクセスを許可する')],
+            ['gui', L('GUI へのアクセスを許可する')],
+          ] as const).map(([key, label]) => (
+            <Row key={key} label={label}>
+              <Toggle checked={bool(get(grants, key)) ?? false}
+                onChange={(v) => setGrant(model, key, v ? true : undefined)} />
+            </Row>
+          ))}
+          <Row><HostFoldersEditor model={model} remote={serviceId !== 'local' && serviceId !== 'auto'} /></Row>
         </Section>
       )}
       {diags.length > 0 && (
@@ -854,11 +879,18 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
+function setGrant(model: CardEditorModel, key: string, value: J | undefined) {
+  const grants = get(model.definition, 'grants')
+  const next = isObj(grants) ? clone(grants) as JObj : obj()
+  next.set(key, value)
+  model.setSetting('grants', next.size ? next : undefined)
+}
+
 /** Folders of the host this Card's worker may read (Experimental): each at
  *  /host/<name> in the worker, read-only unless allowed to write. Only the
  *  folder's path is kept in the project. */
 function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: boolean }) {
-  const folders = arr(get(model.definition, 'hostFolders')) ?? []
+  const folders = arr(get(get(model.definition, 'grants'), 'hostPaths')) ?? []
   const usable = app.status?.hostFolders ?? true
   const [picking, setPicking] = useState(false)
   const [present, setPresent] = useState<Record<string, boolean>>({})
@@ -880,14 +912,15 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
   const edit = (fn: (list: J[]) => void) => {
     const list = folders.map((f) => clone(f))
     fn(list)
-    model.setSetting('hostFolders', list.length ? list : undefined)
+    setGrant(model, 'hostPaths', list.length ? list : undefined)
   }
   const add = (p: string) => {
-    const taken = new Set(folders.map((f) => str(get(f, 'name'))).filter(Boolean))
+    const normalize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+    const taken = new Set(folders.map((f) => normalize(str(get(f, 'name')) ?? '')))
     const last = p.replace(/\/+$/, '').split('/').pop() ?? ''
     const base = [...last].map((c) => (/[A-Za-z0-9\-_.]/.test(c) ? c : '-')).join('')
     let name = !base || base === '.' || base === '..' ? 'folder' : base
-    for (let n = 2; taken.has(name); n++) name = `${base}-${n}`
+    for (let n = 2; taken.has(normalize(name)); n++) name = `${base}-${n}`
     edit((l) => l.push(obj([['path', p], ['name', name]])))
   }
   return (

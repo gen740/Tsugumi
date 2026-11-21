@@ -92,7 +92,7 @@ def workspace(out):
 
 def python_card(operation, *, service=None, resident=False, run_list=False):
     expression = f"builtins.genList (_: {PYTHON_RUN}) 100" if run_list else PYTHON_RUN
-    result = {"type": "code", "language": "python", "sandbox": True,
+    result = {"type": "code", "language": "python", "sandbox": {},
               "reuseWorker": resident, "recordIO": False,
               "_outputs": FILE if operation in ("file-1gib", "file-sparse-1gib", "source") else
               DIRECTORY if operation == "directory-10000" else VALUE,

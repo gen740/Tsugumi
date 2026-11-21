@@ -45,6 +45,10 @@ auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
   return reply(std::move(error));
 }
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT> {
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                 bytes.size());
+  if (!verifier.VerifyBuffer<R::JobSpec>())
+    throw Error(R::ErrorCode::Invalid, "invalid remote JobSpec");
   return std::unique_ptr<R::JobSpecT>(
       flatbuffers::GetRoot<R::JobSpec>(bytes.data())->UnPack());
 }

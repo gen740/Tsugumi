@@ -70,7 +70,7 @@ TEST_F(VersionNote,
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).record_json, {}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"type":"code","language":"python","network":true,"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
+      R"({"type":"code","language":"python","grants":{"network":true},"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
   Put("definitions/a/src/main.py",
       "# CHANGED_SOURCE_SENTINEL\n" + std::string(15000, '#'));
   Put("definitions/c/_card.json", R"({"type":"code"})");

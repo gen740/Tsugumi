@@ -253,8 +253,8 @@ def test_network_is_off_unless_the_card_allows_it(env):
 printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_OUTPUT"
 """
     cards = {"trigger": {"type": "trigger"}}
-    for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": False},
-                           "open": {"network": True}, "open_unsandboxed": {"network": True, "sandbox": False}}.items():
+    for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": {"filesystem": False}},
+                           "open": {"grants": {"network": True}}, "open_unsandboxed": {"grants": {"network": True}, "sandbox": {"filesystem": False}}}.items():
         cards[name] = bash(body, inputs=["go"], outputs=outputs, recordIO=True,
                            pre=REACH + '; export PRE_REACH="$reachable"', **settings)
     names = [n for n in cards if n != "trigger"]
@@ -278,9 +278,9 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     (shared / "hello.txt").write_text("from the Mac")
     read = bash('cat /host/data/hello.txt; if echo x > /host/data/new.txt 2>/dev/null; then echo wrote; else echo read-only; fi; '
                 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
-                hostFolders=[{"path": str(shared), "name": "data"}])
+                grants={"hostPaths": [{"path": str(shared), "name": "data"}]})
     write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
-                  hostFolders=[{"path": str(shared), "name": "out", "write": True}])
+                  grants={"hostPaths": [{"path": str(shared), "name": "out", "write": True}]})
     other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
     load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),

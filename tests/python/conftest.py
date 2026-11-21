@@ -241,7 +241,7 @@ def demo_environment(tmp_path: Path, demo: str, edit=None, language: str = "ja")
     for f in dst.rglob("definitions/*/_card.json"):
         card = json.loads(f.read_text())
         if card.get("language"):
-            card["sandbox"] = False
+            card["sandbox"] = {"filesystem": False}
             f.write_text(json.dumps(card))
     daemon = Daemon(dst).start()
     daemon.client_hello = True

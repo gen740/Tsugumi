@@ -27,14 +27,26 @@ std::vector<std::string> widenings(const Resolution* before,
         s.execution_service != "auto" &&
         (!b || b->settings.execution_service != s.execution_service))
       out.push_back("execution_service " + key + " " + s.execution_service);
-    if (s.network && !(b && b->settings.network))
+    if (s.grants.network && !(b && b->settings.grants.network))
       out.push_back("network " + key);
-    if (!s.sandbox && (!b || b->settings.sandbox))
+    if (s.grants.gui && !(b && b->settings.grants.gui))
+      out.push_back("gui " + key);
+    const SandboxOptions defaults;
+    const auto& prior = b ? b->settings.sandbox : defaults;
+    if (!s.sandbox.filesystem && prior.filesystem)
       out.push_back("sandbox_off " + key);
-    for (const auto& f : s.host_folders) {
+    auto relaxed = [](uint64_t next, uint64_t old) {
+      return old && (!next || next > old);
+    };
+    if ((!s.sandbox.pid && prior.pid) || (!s.sandbox.ipc && prior.ipc) ||
+        (!s.sandbox.identity && prior.identity) ||
+        relaxed(s.sandbox.limits.cpu_millis, prior.limits.cpu_millis) ||
+        relaxed(s.sandbox.limits.memory_bytes, prior.limits.memory_bytes))
+      out.push_back("sandbox_options " + key);
+    for (const auto& f : s.grants.host_paths) {
       const HostFolder* had = nullptr;
       if (b)
-        for (const auto& g : b->settings.host_folders)
+        for (const auto& g : b->settings.grants.host_paths)
           if (g.path == f.path) had = &g;
       if (!had)
         out.push_back(

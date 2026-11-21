@@ -138,8 +138,9 @@ auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
   if (!stdfs::create_directory(path))
     throw std::runtime_error("cannot create private job cgroup");
   const auto quota = std::to_string(spec.cpu_millis * 1000) + " 1000000";
-  cgroup_write(path / "cpu.max", quota);
-  cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
+  if (spec.cpu_millis) cgroup_write(path / "cpu.max", quota);
+  if (spec.memory_bytes)
+    cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
   return ::open(journal.supervisor_lock_path(job).c_str(),
@@ -265,8 +266,8 @@ class Daemon {
       return status;
     };
     const auto log_slice = [&](uint64_t offset, uint32_t limit) {
-      auto range = journal->log(q.job_id, offset,
-                                std::min(limit, kLogChunkBytes), q.core_life_id);
+      auto range = journal->log(
+          q.job_id, offset, std::min(limit, kLogChunkBytes), q.core_life_id);
       return [offset, range = std::move(range)](R::JobStatusT status) {
         status.log_offset = offset;
         status.log_size = range.first;
@@ -291,13 +292,16 @@ class Daemon {
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
-        if (spec->cpu_millis &&
-            (config_.cgroup.empty() ||
-             spec->memory_bytes <
-                 static_cast<uint64_t>(::sysconf(_SC_PAGESIZE))))
+        if (!spec->filesystem)
           throw Error(R::ErrorCode::Rejected,
-                      "hard limits require a delegated cgroup v2 subtree and "
-                      "at least one page of memory");
+                      "remote execution requires filesystem isolation");
+        if (spec->cpu_millis > 256'000 ||
+            spec->memory_bytes > (uint64_t{1} << 40) ||
+            (spec->memory_bytes && spec->memory_bytes < (uint64_t{1} << 20)))
+          throw Error(R::ErrorCode::Rejected, "invalid sandbox limits");
+        if ((spec->cpu_millis || spec->memory_bytes) && config_.cgroup.empty())
+          throw Error(R::ErrorCode::Rejected,
+                      "sandbox limits require a delegated cgroup v2 subtree");
         return reply(
             journal->submit(q.job_id, data, *spec, q.core_life_id).status());
       }
@@ -611,7 +615,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     if (!spec->secrets.empty() && ::fcntl(kSecretChannelFd, F_GETFD) < 0)
       throw std::runtime_error("the job's Card secret channel is missing");
     fs::write_atomic(work / "spec.fb", bytes, 0600);
-    if (spec->cpu_millis) {
+    if (spec->cpu_millis || spec->memory_bytes) {
       if (cgroup_root.empty())
         throw std::runtime_error("resource limits require a delegated cgroup");
       make_cgroup(group, *spec);
@@ -628,7 +632,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
         ::_exit(126);
       ::dup2(adapter.value, 1);
       ::dup2(adapter.value, 2);
-      if (spec->cpu_millis) {
+      if (spec->cpu_millis || spec->memory_bytes) {
         int fd = ::open((group / "cgroup.procs").c_str(), O_WRONLY);
         if (fd < 0 || ::write(fd, "0", 1) != 1) ::_exit(126);
         ::close(fd);
@@ -694,8 +698,8 @@ auto unix_listener(const stdfs::path& path) -> int {
   }
   int fd = ::socket(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0);
   if (fd < 0 ||
-      ::bind(fd, reinterpret_cast<const sockaddr*>(&address),
-             sizeof address) != 0 ||
+      ::bind(fd, reinterpret_cast<const sockaddr*>(&address), sizeof address) !=
+          0 ||
       ::listen(fd, 64) != 0)
     throw std::runtime_error("cannot listen on Unix socket");
   ::chmod(path.c_str(), 0600);

@@ -13,7 +13,7 @@ auto host_requirements(const Resolution& resolution, uint64_t rev)
         (node.settings.execution_service != kLocalExecutionService &&
          node.settings.execution_service != "auto"))
       continue;
-    for (const auto& folder : node.settings.host_folders) {
+    for (const auto& folder : node.settings.grants.host_paths) {
       auto value = std::make_unique<Tsugumi::RPC::HostFolderRequirementT>();
       value->card = std::make_unique<Tsugumi::Data::CardPathT>();
       value->card->segments = node.path;

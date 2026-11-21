@@ -55,9 +55,15 @@ struct CardPermission: RawRepresentable, Hashable {
   static func of(_ card: JSONValue?) -> [CardPermission] {
     guard let card else { return [] }
     var out: [CardPermission] = []
-    if card["network"]?.bool == true { out.append(.network) }
-    if card["sandbox"]?.bool == false { out.append(.sandboxOff) }
-    let folders = card["hostFolders"]?.array ?? []
+    let grants = card["grants"]
+    let sandbox = card["sandbox"]
+    if grants?["network"]?.bool == true { out.append(.network) }
+    if grants?["gui"]?.bool == true { out.append(CardPermission(rawValue: "gui")!) }
+    if ["pid", "ipc", "identity"].contains(where: { sandbox?[$0]?.bool == false }) {
+      out.append(CardPermission(rawValue: "sandbox_options")!)
+    }
+    if sandbox?["filesystem"]?.bool == false { out.append(.sandboxOff) }
+    let folders = grants?["hostPaths"]?.array ?? []
     if folders.contains(where: { $0["write"]?.bool == true }) { out.append(.hostFolderWrite) }
     else if !folders.isEmpty { out.append(.hostFolderRead) }
     return out

@@ -1,4 +1,11 @@
 {
+  "CPU 上限（コア）": "CPU limit (cores)",
+  "メモリ上限（MiB）": "Memory limit (MiB)",
+  "PID 名前空間を分離": "Isolate PID namespace",
+  "IPC 名前空間を分離": "Isolate IPC namespace",
+  "実行ユーザーと権限を分離": "Isolate user and capabilities",
+  "アクセス許可": "Grants",
+  "GUI へのアクセスを許可する": "Allow GUI access",
   "\n…（先頭 256 KiB を表示）": "\n… (the first 256 KiB shown)",
   "\n保持したファイル: {0}": "\nKept file: {0}",
   "\n保持したファイルの内容がありません（scratch は保持履歴ではありません）。": "\nThe kept file content is missing (scratch is separate from retained history).",

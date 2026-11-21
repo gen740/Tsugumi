@@ -16,6 +16,8 @@ table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
+  filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
+  network:bool;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
   // Names of the Card secrets the Card's process receives. Their values are
@@ -63,7 +65,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 11.
+  // Zero means no advertised contract; writers explicitly send contract 12.
   worker_contract:uint;
   active_jobs:uint;
 }

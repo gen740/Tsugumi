@@ -100,7 +100,13 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->pre_run = spawn.program.pre_run;
   target->post_run = spawn.program.post_run;
   target->views = spawn.program.views;
-  target->sandbox = spawn.sandbox;
+  target->filesystem = spawn.sandbox.filesystem;
+  target->pid = spawn.sandbox.pid;
+  target->ipc = spawn.sandbox.ipc;
+  target->identity = spawn.sandbox.identity;
+  target->cpu_millis = spawn.sandbox.limits.cpu_millis;
+  target->memory_bytes = spawn.sandbox.limits.memory_bytes;
+  target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
   target->hidden_paths = spawn.hidden_paths;

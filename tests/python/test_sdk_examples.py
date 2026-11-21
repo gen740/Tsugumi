@@ -49,7 +49,7 @@ def test_card_guide_runs_as_written(tmp_path, variant):
             p.write_text(content)
     # A host tsugumid runs code Cards without the sandbox, as conftest.demo_environment does.
     card_file = root / "definitions/multiply/_card.json"
-    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": False, "recordIO": True}))
+    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": {"filesystem": False}, "recordIO": True}))
     d = Daemon(root).start()
     try:
         c = d.client()
@@ -69,7 +69,7 @@ def test_card_owned_webgpu_module(tmp_path, wasm):
     fixture = "view-point-cloud-wasm" if wasm else "view-point-cloud"
     shutil.copytree(ROOT / "tests/fixtures" / fixture, root)
     card_file = root / "definitions/cloud/_card.json"
-    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": False}))
+    card_file.write_text(json.dumps({**json.loads(card_file.read_text()), "sandbox": {"filesystem": False}}))
     d = Daemon(root).start()
     try:
         c = d.client()
@@ -111,7 +111,7 @@ def test_line_chart_uses_binary_view_input(tmp_path):
     root = tmp_path / "line-chart"
     shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
     definition = root / "definitions/cloud"
-    (definition / "_card.json").write_text('{"type":"code","language":"python","inputs":[{"name":"start"}],"sandbox":false}')
+    (definition / "_card.json").write_text('{"type":"code","language":"python","inputs":[{"name":"start"}],"sandbox":{"filesystem":false}}')
     (definition / "default.nix").write_text(
         '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; '
         'in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }')

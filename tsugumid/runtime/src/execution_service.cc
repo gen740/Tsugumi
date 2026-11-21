@@ -49,9 +49,6 @@ auto LocalExecutionService::prepare(const Node& node,
                                     const std::filesystem::path& /*directory*/,
                                     BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
-  if (node.settings.execution_resources)
-    throw Failed(FailureKind::unsupported,
-                 "local worker cannot enforce executionResources");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native, node.settings.system.empty()
                                           ? native_system()
@@ -122,10 +119,11 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (!service_.options().control_dir.empty())
     sp.hidden_paths.push_back(service_.options().control_dir.string());
   sp.hidden_paths.push_back(state_dir.string());
-  sp.network = node.settings.network;
+  sp.network = node.settings.grants.network;
+  sp.gui = node.settings.grants.gui;
   const std::string card_key = path_key(node.path);
   sp.card = card_key;
-  for (const auto& f : node.settings.host_folders) {
+  for (const auto& f : node.settings.grants.host_paths) {
     std::string source = f.path;
     if (const auto& root = service_.options().host_folders; !root.empty())
       source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
@@ -144,9 +142,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   std::string key =
       build.package.value_or("") + "|" + build.bash.value_or("") + "|" +
       build.pre_run + "|" + build.post_run + "|" + build.views + "|" +
-      (sp.sandbox ? "s" : "u") + "|" + (uid ? std::to_string(*uid) : "-") +
-      "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" +
-      build.key + "|" + std::to_string(build.implementation_index);
+      std::to_string(sp.sandbox.filesystem) + std::to_string(sp.sandbox.pid) +
+      std::to_string(sp.sandbox.ipc) + std::to_string(sp.sandbox.identity) +
+      "|" + std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
+      std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
+      std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
+      (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
+      "|" + std::to_string(build.implementation_index);
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;

@@ -39,7 +39,7 @@ def test_core_crash_ends_the_service_owning_an_active_worker(core_factory, proje
     client = daemon.connect()
     gate = Gate(tmp_path, "active")
     Project(project).card(
-        "work", {"type": "code", "sandbox": False, "reuseWorker": resident},
+        "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": resident},
         outputs="table Outputs {} root_type Outputs;", manifest={"run": {"package": str(project / "definitions/work")}},
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
@@ -64,7 +64,7 @@ def test_resident_connection_returns_with_its_call_counter(core_factory, project
     gate = Gate(tmp_path, "resident")
     gate.release()
     Project(project).card(
-        "work", {"type": "code", "sandbox": False, "reuseWorker": True},
+        "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True},
         outputs="table Outputs {} root_type Outputs;", manifest={"run": {"package": str(project / "definitions/work")}},
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)

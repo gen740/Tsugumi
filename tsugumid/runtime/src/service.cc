@@ -375,6 +375,13 @@ class SelectedExecution final : public PreparedExecution {
 };
 }  // namespace
 
+namespace {
+auto supports_remote_options(const Settings& settings) -> bool {
+  return settings.sandbox.filesystem && !settings.reuse_worker &&
+         !settings.grants.gui && settings.grants.host_paths.empty();
+}
+}  // namespace
+
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
@@ -397,7 +404,12 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       candidates.push_back(
           {target.id, target.grade,
            target.available &&
-               (!capacity || worker_slots_[target.id] < capacity)});
+               (!capacity || worker_slots_[target.id] < capacity),
+           target.id == kLocalExecutionService ||
+               (supports_remote_options(node.settings) &&
+                (node.settings.execution_service != "auto" ||
+                 !node.settings.sandbox.limits.limited() ||
+                 target.resource_limits))});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
@@ -407,8 +419,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           select_worker(candidates, node.settings.worker_condition.get(),
                         node.settings.execution_service, resident_id);
       if (!choice.matches)
-        throw Failed(FailureKind::invalid_request,
-                     "no registered worker satisfies workerCondition");
+        throw Failed(FailureKind::unsupported,
+                     "no registered worker supports the Card's settings and "
+                     "workerCondition");
       if (!choice.index) break;
       const auto target = targets[*choice.index];
       if (target.id != "local") {
@@ -496,7 +509,8 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
   return ordered;
 }
 
-auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {
+auto Service::remote_targets(std::stop_token stop) const
+    -> std::vector<RemoteTarget> {
   try {
     auto targets = remote_jobs_.catalog(stop);
     auto local =
@@ -543,6 +557,10 @@ auto Service::execution_diagnostic(const Node& node,
     for (const auto& target : targets) {
       if (settings.worker_condition &&
           !settings.worker_condition->matches(target.grade))
+        continue;
+      if (target.id != kLocalExecutionService &&
+          (!supports_remote_options(settings) ||
+           (settings.sandbox.limits.limited() && !target.resource_limits)))
         continue;
       if (target.available) return std::nullopt;
       if (!blocked) blocked = &target;
@@ -751,21 +769,25 @@ void Service::dispatch(RequestIn req) {
                              "Project core was started without RPC tracing"));
       const auto* debug = request->value_as_CoreTraceRequest();
       if (req.websocket) {
-        const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
+        const auto* path =
+            std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
         const auto capability = path ? fs::read_file(path) : std::nullopt;
         if (!capability || capability->empty() || !debug->capability() ||
-            !crypto::equal_secret(debug->capability()->string_view(), *capability))
-          return fail(req, FailureData::make(FailureKind::permission_denied,
-                                            "RPC capture requires local host access"));
+            !crypto::equal_secret(debug->capability()->string_view(),
+                                  *capability))
+          return fail(
+              req, FailureData::make(FailureKind::permission_denied,
+                                     "RPC capture requires local host access"));
       }
       if (trace_owner_ && trace_owner_ != req.conn)
-        return fail(req, FailureData::make(FailureKind::busy,
-                                          "Another host connection owns RPC tracing"));
+        return fail(
+            req, FailureData::make(FailureKind::busy,
+                                   "Another host connection owns RPC tracing"));
       T::SnapshotT snapshot;
       if (auto mode = debug->mode()) {
         if (*mode > static_cast<uint8_t>(T::Mode::MAX))
           return fail(req, FailureData::make(FailureKind::invalid_request,
-                                            "Unknown RPC trace mode"));
+                                             "Unknown RPC trace mode"));
         trace_owner_ = req.conn;
         trace::SetMode(static_cast<trace::Mode>(*mode));
         snapshot.mode = static_cast<T::Mode>(*mode);
@@ -792,8 +814,8 @@ void Service::dispatch(RequestIn req) {
       }
       FBB b;
       auto value = T::Snapshot::Pack(b, &snapshot);
-      reply(req, wire::reply(b, req.request_id,
-                             R::ReplyPayload::TraceSnapshot, value.Union()));
+      reply(req, wire::reply(b, req.request_id, R::ReplyPayload::TraceSnapshot,
+                             value.Union()));
       return;
     }
     case P::ProjectActivityRequest: {
@@ -1138,8 +1160,8 @@ std::optional<Service::ViewRecord> Service::load_view(
 
 auto Service::busy() -> bool {
   return !mutation_lane_->idle() || !read_pool_->idle() ||
-         !cancel_lane_->idle() ||
-         !shell_lane_->idle() || scheduler_->active_status().has_value();
+         !cancel_lane_->idle() || !shell_lane_->idle() ||
+         scheduler_->active_status().has_value();
 }
 
 RunStatusData Service::current_run_status() {
@@ -1559,7 +1581,8 @@ void Service::save(RequestIn& req) {
                      "until it ends",
                      {{"run_id", *active->run_id}});
     }
-    const auto response = prepare_save_reply(staged, *base, r->operation_data());
+    const auto response =
+        prepare_save_reply(staged, *base, r->operation_data());
     complete_save(req, op_id, "save", digest, *base, staged, response,
                   check_cancelled);
   } catch (const Failed& f) {
@@ -1583,9 +1606,9 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
                             const Document& base, Store::Staged& staged,
                             const PreparedSaveReply& response,
                             const std::function<void()>& check_cancelled) {
-  store_->commit(staged, kind, digest,
-                 [&](const Delta*) { return response.receipt; },
-                 check_cancelled);
+  store_->commit(
+      staged, kind, digest, [&](const Delta*) { return response.receipt; },
+      check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
   reply(req, receipt_reply(req.request_id, response.receipt, false));
   if (staged.delta.doc)
@@ -1754,7 +1777,8 @@ auto pack_comments(FBB& b, const std::vector<comments::Change>& changes) {
         b, b.CreateString(c.card), b.CreateString(c.text),
         b.CreateString(c.change),
         c.resolution.empty() ? 0 : b.CreateString(c.resolution),
-        c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVectorOfStrings(c.cards)));
+        c.by.empty() ? 0 : b.CreateString(c.by),
+        b.CreateVectorOfStrings(c.cards)));
   return b.CreateVector(entries);
 }
 }  // namespace
@@ -1792,8 +1816,8 @@ void Service::version_graph(RequestIn& req) {
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head),
                                   b.CreateString(g.branch), g.dirty,
                                   b.CreateVector(commits));
-  auto bytes = wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph,
-                           vg.Union());
+  auto bytes =
+      wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union());
   check_frame(bytes.size(), "the version graph");
   reply(req, std::move(bytes));
 }
@@ -1833,8 +1857,8 @@ void Service::version_diff(RequestIn& req) {
   const auto diff = versions_->diff(
       r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
   FBB b;
-  const auto value = R::CreateVersionDiff(b, b.CreateString(diff.text),
-                                         diff.truncated);
+  const auto value =
+      R::CreateVersionDiff(b, b.CreateString(diff.text), diff.truncated);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff,
                          value.Union()));
 }
@@ -2163,8 +2187,8 @@ void Service::operation_get(RequestIn& req) {
     pending = pending_ops_.count(op_id) > 0;
   }
   if (shell_receipt && pending) bytes.reset();
-  reply(req, operation_reply(req.request_id, bytes ? &*bytes : nullptr,
-                             pending));
+  reply(req,
+        operation_reply(req.request_id, bytes ? &*bytes : nullptr, pending));
 }
 
 namespace {

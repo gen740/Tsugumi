@@ -1,8 +1,6 @@
 // Owner side of one tsugumi-worker process.
 #pragma once
 
-#include "tsugumi/rpc/trace.hh"
-
 #include <sys/types.h>
 
 #include <array>
@@ -16,6 +14,7 @@
 #include <thread>
 #include <vector>
 
+#include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/values.hh"
 
@@ -40,7 +39,7 @@ struct WorkerSpawn {
   // scripts/ for preRun / a bash run / postRun. Created with the worker
   // and removed when it ends, so it lives as long as the worker.
   std::string scratch;
-  bool sandbox = true;
+  SandboxOptions sandbox;
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
   // never project data roots. Local inputs use inputs_dir().
   std::vector<std::string> ro_paths;
@@ -53,6 +52,7 @@ struct WorkerSpawn {
   // Experimental, per Card: outside network (otherwise the worker has its
   // own network namespace with nothing in it) and folders of the Mac.
   bool network = false;
+  bool gui = false;
   struct Bind {
     std::string source;
     std::string target;
@@ -75,6 +75,7 @@ bool worker_uid_on_host();
 
 class WorkerProc {
   trace::Link trace_link_;
+
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;

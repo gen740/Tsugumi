@@ -2328,8 +2328,8 @@ TEST_F(AgentProjectFixture,
            "\"card_json\":" +
            Quote(body) + ",\"keep_meta\":true}}]}";
   };
-  const auto network = save(R"({"type":"draft","network":true})");
-  const auto sandbox = save(R"({"type":"draft","sandbox":false})");
+  const auto network = save(R"({"type":"draft","grants":{"network":true}})");
+  const auto sandbox = save(R"({"type":"draft","sandbox":{"filesystem":false}})");
   const auto a = Tool(conversation, "project_save", network, "save-a");
   const auto b = Tool(conversation, "project_save", sandbox, "save-b");
   const auto independent =
@@ -2372,8 +2372,8 @@ TEST_F(AgentProjectFixture,
             result.View());
   const auto settings =
       Read(directory.path / "project/definitions/work/_card.json");
-  EXPECT_TRUE(JsonBool(settings, "/network"));
-  EXPECT_EQ(settings.find("\"sandbox\":false"), std::string::npos);
+  EXPECT_TRUE(JsonBool(settings, "/grants/network"));
+  EXPECT_EQ(settings.find("\"filesystem\":false"), std::string::npos);
 }
 
 TEST_F(AgentProjectFixture, DiagnosticShellSupportsPythonAsyncioWhenAvailable) {
@@ -2411,7 +2411,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       R"({"name":"External edit","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})");
   const auto definition =
       directory.path / "project/definitions/work/_card.json";
-  Write(definition, R"({"type":"draft","network":true})");
+  Write(definition, R"({"type":"draft","grants":{"network":true}})");
   const auto pending =
       Tool(conversation, "project_reload", arguments, "reload-a");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -2425,7 +2425,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
                    })
                   .Code()
                   .empty());
-  Write(definition, R"({"type":"draft","sandbox":false})");
+  Write(definition, R"({"type":"draft","sandbox":{"filesystem":false}})");
   const auto result =
       Tool(conversation, "project_reload", arguments, "reload-a");
   // The same arguments now require different permissions. Like other changed
