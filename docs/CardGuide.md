@@ -483,6 +483,8 @@ FlatBuffer from `_params.fbs`. The function table also provides one display
 callback, logging, cancellation, deadlines, structured failures and typed
 JSON conversion. The same entry handles interpreter preparation, source
 loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
+ABI 8 is what the code does today; its replacement, [Card ABI 9](CardABI.md), is
+decided but not implemented yet.
 
 ## Worker state
 
