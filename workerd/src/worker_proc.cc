@@ -53,6 +53,10 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
       rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
   std::string buf(prefix.data(), prefix.size());
   buf += frame;
+  struct Wipe {
+    std::string& data;
+    ~Wipe() { workerd::clear_secret(data); }
+  } wipe{buf};
   size_t offset = 0;
   while (offset < buf.size()) {
     if (cancel && cancel->load())
@@ -110,6 +114,8 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
       " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") "
       "(subpath \"/private/etc\")"
       " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+  if (std::string_view(TSUGUMI_CACERT).size())
+    read += " (literal " + quote(TSUGUMI_CACERT) + ")";
   read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
           quote(scratch) + ")";
   if (!sp.bash.empty()) read += " (literal " + quote(sp.bash) + ")";
@@ -153,6 +159,10 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
 
 }  // namespace
 
+WorkerSecrets::~WorkerSecrets() {
+  for (auto& [name, value] : values) workerd::clear_secret(value);
+}
+
 bool worker_uid_on_host() {
 #ifdef __APPLE__
   return true;
@@ -178,7 +188,11 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   // directory with exactly the Card's identity and sandbox, then open it with
   // O_NOFOLLOW. Even a surviving child swapping in a hard link cannot enlist
   // the core's broader authority to chmod a protected host inode.
-  recover_permissions_ = [sp, scripts](int parent, const char* name) {
+  const auto profile = sp.sandbox.filesystem
+                           ? seatbelt_profile(sp, scratch_, scripts.string())
+                           : std::string{};
+  recover_permissions_ = [profile, uid = sp.uid, gid = sp.gid](int parent,
+                                                              const char* name) {
     std::filesystem::path target(name);
     if (parent != AT_FDCWD) {
       char path[PATH_MAX];
@@ -189,13 +203,12 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     proc::Spec repair;
     repair.cwd = "/";
-    if (sp.sandbox.filesystem)
-      repair.argv = {"/usr/bin/sandbox-exec", "-p",
-                     seatbelt_profile(sp, sp.scratch, scripts.string())};
+    if (!profile.empty())
+      repair.argv = {"/usr/bin/sandbox-exec", "-p", profile};
     repair.argv.insert(repair.argv.end(),
                        {"/bin/chmod", "-h", "u+rwx", target.string()});
-    repair.uid = sp.uid;
-    repair.gid = sp.gid;
+    repair.uid = uid;
+    repair.gid = gid;
     const auto result = proc::run(repair, nullptr, std::nullopt, {});
     if (!proc::exited_ok(result.status))
       throw std::system_error(
@@ -203,10 +216,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
           "cannot restore staging directory permissions: " + target.string());
   };
 #endif
-  for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"})
+  for (const char* d : {"work", "tmp", "out", "scripts", "inputs"})
     std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
-    for (const char* d : {"work", "tmp", "out", "home"}) {
+    for (const char* d : {"work", "tmp", "out"}) {
       const auto path = scratch_ + "/" + d;
       if (::chown(path.c_str(), *sp.uid, sp.gid.value_or(*sp.uid)) != 0) {
         const int error = errno;
@@ -239,6 +252,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   args.push_back(sp.bash);
 
   proc::Spec spec;
+  std::string certificate = TSUGUMI_CACERT;
   auto own = [&](std::vector<std::string>& argv) {
     for (const auto& p : sp.ro_paths)
       argv.insert(argv.end(), {"--ro-bind", p, p});
@@ -248,11 +262,19 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     for (const auto& b : sp.binds)
       argv.insert(argv.end(),
                   {b.write ? "--bind" : "--ro-bind", b.source, b.target});
+    if (!scratch_.starts_with("/tmp/"))
+      argv.insert(argv.end(), {"--bind", tmp_dir(), "/tmp"});
+    if (!certificate.empty() && sp.sandbox.filesystem) {
+      argv.insert(argv.end(),
+                  {"--ro-bind", certificate, "/tsugumi-ca-bundle.crt"});
+      certificate = "/tsugumi-ca-bundle.crt";
+    }
+    argv.insert(argv.end(), {"--chdir", work_dir()});
     if (sp.network && sp.sandbox.filesystem)
       // Name resolution and the CA bundle of the environment (a sandbox
       // starts without /etc; unsandboxed, the real one is there).
       for (const char* f :
-           {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
+           {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"})
         argv.insert(argv.end(), {"--ro-bind-try", f, f});
   };
   if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
@@ -332,22 +354,23 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     spec.gid = sp.gid;
   }
   spec.argv.insert(spec.argv.end(), args.begin(), args.end());
-  // A home of the worker's own (for its life): libraries that keep settings
-  // or caches there (astropy, matplotlib, ...) work during runtime preparation
-  // and during invocations.
-  std::string home = scratch_ + "/home";
-  spec.env = {"PATH=/var/empty",
+  spec.env = {"PATH=" + sp.path,
               "LANG=C.UTF-8",
-              "HOME=" + home,
-              "XDG_CONFIG_HOME=" + home + "/.config",
-              "XDG_CACHE_HOME=" + home + "/.cache",
-              "MPLCONFIGDIR=" + home + "/.matplotlib"};
+              "HOME=" + work_dir(),
+              "TMPDIR=" + tmp_dir(),
+              "TSUGUMI_WORK_DIR=" + work_dir(),
+              "TSUGUMI_TMP_DIR=" + tmp_dir(),
+              "TSUGUMI_OUTPUT_DIR=" + out_dir(),
+              "TSUGUMI_WORKER=" + sp.worker_binary};
+  for (const auto& bind : sp.binds)
+    spec.env.push_back(grant_environment(std::filesystem::path(bind.target).filename().string()) +
+                       "=" + bind.target);
   if (trace::LaunchEnabled())
     spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-  if (sp.network)
-    for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-      if (const char* x = std::getenv(v))
-        spec.env.push_back(std::string(v) + "=" + x);
+  if (!certificate.empty()) {
+    spec.env.push_back("SSL_CERT_FILE=" + certificate);
+    spec.env.push_back("NIX_SSL_CERT_FILE=" + certificate);
+  }
   // Not where tsugumid runs, which the sandbox does not let it read (getcwd
   // fails): libraries ask for the current directory while they are imported.
   spec.cwd = work_dir();
@@ -382,7 +405,36 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   ::setsockopt(control_fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
   alive_ = true;
-  resume_logs();
+  try {
+    if (sp.secrets) {
+      flatbuffers::FlatBufferBuilder builder;
+      std::vector<flatbuffers::Offset<W::EnvVar>> environment;
+      for (const auto& [name, value] : sp.secrets->values)
+        environment.push_back(W::CreateEnvVar(
+            builder, builder.CreateString(name), builder.CreateString(value)));
+      const auto start = W::CreateWorkerStart(builder, builder.CreateVector(environment));
+      W::FinishWorkerMessageBuffer(
+          builder, W::CreateWorkerMessage(builder, flatbuffers::nullopt,
+                                           W::WorkerPayload::WorkerStart,
+                                           start.Union()));
+      struct Wipe {
+        flatbuffers::FlatBufferBuilder& builder;
+        std::string frame;
+        ~Wipe() {
+          workerd::wipe_secret({reinterpret_cast<char*>(builder.GetBufferPointer()),
+                               builder.GetSize()});
+          workerd::clear_secret(frame);
+        }
+      } wipe{builder, {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                       builder.GetSize()}};
+      send_frame(trace_link_, data_fd_, wipe.frame, nullptr,
+                 std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    }
+    resume_logs();
+  } catch (...) {
+    terminate(true);
+    throw;
+  }
 }
 
 WorkerProc::WorkerProc(Borrowed borrowed)
@@ -590,20 +642,18 @@ void WorkerProc::send(int fd, const std::string& frame) {
 WorkerOutcome WorkerProc::call(
     std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
-    const DisplaySink& display, const std::function<void()>& sent) {
+    const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
   } catch (const Failed& error) {
     workerd::clear_secret(frame);
-    if (sent) sent();
     // A partially sent call cannot be resumed or reused.
     terminate();
     outcome.failure = error.failure;
     return outcome;
   }
   workerd::clear_secret(frame);
-  if (sent) sent();
   std::string rbuf;
   bool cancel_sent = false;
   std::optional<std::chrono::steady_clock::time_point> kill_at;

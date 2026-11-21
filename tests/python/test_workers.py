@@ -155,7 +155,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     # The bash run writes its File output in the worker staging area.
     # No directory descriptor from outside the sandbox is passed in.
     make = bash('test -d "$TSUGUMI_OUTPUT_DIR" && test ! -e /proc/self/fd/900 && '
-                'echo "line $TSUGUMI_INVOCATION-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
+                'echo "line $RANDOM-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"type": "trigger"}, "make": make,
                    "read": {"type": "code", "language": "cpp", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},

@@ -67,9 +67,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Card secrets come from hostd for this invocation only and stay in memory:
   // the worker sets them in the Card's process environment. A missing one
   // fails here, before anything of the Card can run.
-  auto secrets = service_.card_secrets(node, request.stop);
+  auto secrets = std::make_shared<WorkerSecrets>();
+  secrets->values = service_.card_secrets(node, request.stop);
   s.secrets.clear();
-  for (const auto& secret : secrets) s.secrets.push_back(secret.first);
+  for (const auto& secret : secrets->values) s.secrets.push_back(secret.first);
 
   s.build_cached = build.cached;
   s.emulator = build.emulator;
@@ -100,6 +101,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // The shell and PATH are the definition's (the manifest's), so they are in
   // the recorded environment and do not change with this build of the core.
   sp.bash = build.shell;
+  sp.path = build.path;
+  if (!secrets->values.empty()) sp.secrets = std::move(secrets);
   sp.program = {build.package, build.bash, build.pre_run, build.post_run,
                 build.views};
   sp.sandbox = node.settings.sandbox;
@@ -155,6 +158,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
+  sp.secrets.reset();
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -171,15 +175,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     const auto ptype = NixRunner::params_type(node);
     return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,
                                          NixRunner::params_buffer(node),
-                                         NixRunner::params_json(node, false)};
+                                         build.bash || node.settings.language == "r"
+                                             ? std::optional(NixRunner::params_json(node, false))
+                                             : std::nullopt};
   };
-  invocation.path = build.path;
-  invocation.environment = std::move(secrets);
-  invocation.on_call_sent = [&environment = invocation.environment] {
-    for (auto& variable : environment) workerd::clear_secret(variable.second);
-    environment.clear();
-  };
-  invocation.worker_binary = sp.worker_binary;
   invocation.output_directory = request.directory / "out";
   if (::geteuid() == 0 && worker_uid_on_host())
     invocation.output_owner = std::make_pair(kCardUid, kCardUid);

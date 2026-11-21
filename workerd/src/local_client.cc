@@ -20,6 +20,10 @@ LocalWorkers::~LocalWorkers() {
 }
 
 auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
+  struct Wipe {
+    L::MessageT& message;
+    ~Wipe() { clear_spawn_secrets(message); }
+  } wipe{message};
   std::lock_guard guard(mutex_);
   try {
     if (fd_ < 0) {
@@ -42,9 +46,6 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       spec.stderr_fd = STDERR_FILENO;
       if (trace::LaunchEnabled())
         spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-      for (const auto* variable : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-        if (const auto* value = std::getenv(variable))
-          spec.env.push_back(std::string(variable) + "=" + value);
       try {
         pid_ = proc::spawn(spec);
       } catch (...) {
@@ -57,6 +58,7 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
     }
     trace::Link link;
     send_local(fd_, message, nullptr, &link);
+    clear_spawn_secrets(message);
     if (!receive_local(fd_, reply, &link))
       throw std::runtime_error("local workerd exited");
     if (!reply.message->error.empty())
@@ -93,6 +95,15 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   auto& target = request.spawn = std::make_unique<L::SpawnT>();
   target->worker_binary = spawn.worker_binary;
   target->bash = spawn.bash;
+  target->path = spawn.path;
+  if (spawn.secrets) {
+    for (const auto& [name, value] : spawn.secrets->values) {
+      auto entry = std::make_unique<Tsugumi::Worker::EnvVarT>();
+      entry->name = name;
+      entry->value = value;
+      target->secrets.push_back(std::move(entry));
+    }
+  }
   target->store_path = spawn.store_path;
   target->package = spawn.program.package.value_or("");
   target->script = spawn.program.bash.value_or("");

@@ -71,11 +71,13 @@ auto validate_secret_names(const R::JobSpecT& spec) -> void {
       throw Error(R::ErrorCode::Invalid, "invalid Card secret name");
   }
 }
-auto clear_secret(std::string& value) -> void {
+auto wipe_secret(std::span<char> value) -> void {
   volatile char* bytes = value.data();
   for (size_t i = 0; i < value.size(); ++i) bytes[i] = 0;
+}
+auto clear_secret(std::string& value) -> void {
+  wipe_secret(value);
   value.clear();
-  value.shrink_to_fit();
 }
 auto terminal(R::JobState state) -> bool {
   return state == R::JobState::Succeeded || state == R::JobState::Failed ||

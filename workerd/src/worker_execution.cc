@@ -223,22 +223,9 @@ auto run_invocation(const ReleaseWorker& release_worker,
         invocation.stage_inputs ? staged : invocation.inputs;
     const auto params = invocation.prepare_params ? invocation.prepare_params()
                                                   : invocation.params;
-    std::vector<std::pair<std::string, std::string>> environment{
-        {"PATH", invocation.path},
-        {"HOME", worker.work_dir()},
-        {"LANG", "C.UTF-8"},
-        {"TSUGUMI_RUN_ID", invocation.run_id},
-        {"TSUGUMI_CARD", path_key(invocation.card)},
-        {"TSUGUMI_INVOCATION", std::to_string(invocation.number)},
-    };
-    // Keep the local environment order too (observable to a native Card).
-    if (local && params.json)
+    std::vector<std::pair<std::string, std::string>> environment;
+    if (params.json)
       environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
-    environment.emplace_back("TSUGUMI_WORKER", invocation.worker_binary);
-    if (!local && params.json)
-      environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
-    environment.insert(environment.end(), invocation.environment.begin(),
-                       invocation.environment.end());
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (invocation.timeout_ms)
       deadline = std::chrono::steady_clock::now() +
@@ -250,8 +237,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
         params.bfbs, params.root, params.bytes, invocation.outputs,
         worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
         environment, invocation.timeout_ms);
-    for (auto& value : environment) clear_secret(value.second);
-    environment.clear();
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");
@@ -261,7 +246,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
     between_calls = false;
     auto outcome =
         worker.call(std::move(frame), id, invocation.cancel, deadline,
-                    invocation.display, invocation.on_call_sent);
+                    invocation.display);
     result.failure = std::move(outcome.failure);
     between_calls = true;
     if (invocation.stop_before_outputs)

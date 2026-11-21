@@ -57,7 +57,8 @@ assert os.environ.pop("MPLBACKEND", None) is not None
 libc = ctypes.CDLL(None)
 libc.getenv.argtypes = [ctypes.c_char_p]
 libc.getenv.restype = ctypes.c_char_p
-print("source run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
+assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
+print("source started", flush=True)
 def main(inputs, report):
     assert "MPLBACKEND" not in os.environ
     assert libc.getenv(b"MPLBACKEND") is None
@@ -68,9 +69,9 @@ def main(inputs, report):
     c = core_factory(project_root=tmp_path / "p").connect()
     first, shown = shown_by_probe(c)
     assert shown == "loaded"
-    assert "source run=" + first in log(c, first, "show")
+    assert "source started" in log(c, first, "show")
     second, shown = shown_by_probe(c)
-    assert shown == "loaded" and "source run=" not in log(c, second, "show")
+    assert shown == "loaded" and "source started" not in log(c, second, "show")
     reused, = c.call("RunInvocationsRequest", runId=second, card=path("show")).records
     assert reused.workerReused
 
@@ -81,7 +82,8 @@ def test_python_source_loading_is_killed_at_the_invocation_deadline(core_factory
     from Tsugumi.Data.FailureKind import FailureKind
     source = '''
 import os, time
-print("source run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
+assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
+print("source started", flush=True)
 time.sleep(60)
 def main(inputs, report):
     raise AssertionError("main must not run")
@@ -94,7 +96,7 @@ def main(inputs, report):
     assert st.state == RunState.failed
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert invocation.failure.kind == FailureKind.timeout
-    assert "source run=" + run_id in log(c, run_id, "show")
+    assert "source started" in log(c, run_id, "show")
 
 
 def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_path):

@@ -209,9 +209,11 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                  "run cancelled before external submission");
   const auto ptype = NixRunner::params_type(request.node);
   const auto params = NixRunner::params_buffer(request.node);
-  const std::vector<std::pair<std::string, std::string>> env{
-      {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
-  };
+  std::vector<std::pair<std::string, std::string>> env;
+  if (request.node.settings.language == "bash" ||
+      request.node.settings.language == "r")
+    env.emplace_back("TSUGUMI_PARAMS_JSON",
+                     NixRunner::params_json(request.node, false));
   auto call = worker_call_frame(
       1, request.summary.run_id, request.node.path, request.summary.invocation,
       inputs, ptype->bfbs, ptype->root_type, params, request.node.outputs, "",

@@ -15,6 +15,7 @@ struct LocalPacket {
   std::array<int, 4> descriptors{-1, -1, -1, -1};
   ~LocalPacket();
 };
+auto clear_spawn_secrets(Tsugumi::LocalWorker::MessageT& message) -> void;
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
                 const std::array<int, 4>* descriptors = nullptr,
                 trace::Link* link = nullptr) -> void;

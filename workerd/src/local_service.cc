@@ -26,10 +26,18 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
         case L::Action::Acquire: {
           if (!request.spawn)
             throw std::runtime_error("missing worker spawn specification");
-          const auto& source = *request.spawn;
+          auto& source = *request.spawn;
           WorkerSpawn spawn;
           spawn.worker_binary = source.worker_binary;
           spawn.bash = source.bash;
+          spawn.path = source.path;
+          if (!source.secrets.empty()) {
+            spawn.secrets = std::make_shared<WorkerSecrets>();
+            for (auto& entry : source.secrets)
+              spawn.secrets->values.emplace_back(std::move(entry->name),
+                                                 std::move(entry->value));
+            clear_spawn_secrets(*packet.message);
+          }
           spawn.store_path = source.store_path;
           if (!source.package.empty()) spawn.program.package = source.package;
           if (source.has_script) spawn.program.bash = source.script;

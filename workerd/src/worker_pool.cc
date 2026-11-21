@@ -121,7 +121,8 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card,
     std::lock_guard<std::mutex> l(mu_);
     resident_keys_[card] = key;
   }
-  if (!reuse && mode_ == WorkerPoolMode::standby) refill(standby_key, sp);
+  if (!reuse && !sp.secrets && mode_ == WorkerPoolMode::standby)
+    refill(standby_key, sp);
   return lease;
 }
 

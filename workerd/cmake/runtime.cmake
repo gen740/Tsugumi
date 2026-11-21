@@ -2,7 +2,8 @@ add_library(tsugumi_worker_values STATIC src/values.cc src/value_wire.cc src/mod
 target_include_directories(tsugumi_worker_values PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(tsugumi_worker_values PUBLIC tsugumi_document tsugumi_util)
 
-set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for sandbox: true Cards")
+set(TSUGUMI_BWRAP "" CACHE FILEPATH "bubblewrap used for Linux Card isolation")
+set(TSUGUMI_CACERT "$ENV{TSUGUMI_CACERT}" CACHE FILEPATH "CA bundle from the Nix cacert package")
 
 # One implementation of worker ownership and invocation, shared by the core and
 # remote launcher. Embed these objects in the core archive for installed users;
@@ -11,5 +12,5 @@ add_library(tsugumi_worker_runtime OBJECT src/worker_proc.cc src/worker_pool.cc 
 target_include_directories(tsugumi_worker_runtime PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include
 )
 target_link_libraries(tsugumi_worker_runtime PUBLIC tsugumi_trace_codec tsugumi_workerd_support tsugumi_worker_values Threads::Threads)
-target_compile_definitions(tsugumi_worker_runtime PRIVATE TSUGUMI_BWRAP="${TSUGUMI_BWRAP}")
+target_compile_definitions(tsugumi_worker_runtime PRIVATE TSUGUMI_BWRAP="${TSUGUMI_BWRAP}" TSUGUMI_CACERT="${TSUGUMI_CACERT}")
 target_compile_options(tsugumi_worker_runtime PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)

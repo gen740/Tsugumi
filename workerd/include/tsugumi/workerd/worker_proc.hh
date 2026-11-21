@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -30,11 +31,18 @@ struct WorkerProgram {
   std::string views;
 };
 
+struct WorkerSecrets {
+  std::vector<std::pair<std::string, std::string>> values;
+  ~WorkerSecrets();
+};
+
 struct WorkerSpawn {
   std::string worker_binary;
   std::string bash;
   std::string store_path = "/nix/store";
   WorkerProgram program;
+  std::string path;
+  std::shared_ptr<WorkerSecrets> secrets;
   // The worker's own folder: work/, tmp/, out/, home/, inputs/, and
   // scripts/ for preRun / a bash run / postRun. Created with the worker
   // and removed when it ends, so it lives as long as the worker.
@@ -100,12 +108,10 @@ class WorkerProc {
 
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
-  // Once the frame is sent it is cleared, and `sent` runs: the call's Card
-  // secrets then live only in the worker's process.
   WorkerOutcome call(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
-      const DisplaySink& display, const std::function<void()>& sent = {});
+      const DisplaySink& display);
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }

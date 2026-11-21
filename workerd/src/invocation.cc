@@ -186,6 +186,11 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
   WorkerSpawn spawn;
   spawn.worker_binary = *worker_binary;
   spawn.bash = *shell;
+  spawn.path = *path;
+  if (!secrets.empty()) {
+    spawn.secrets = std::make_shared<WorkerSecrets>();
+    spawn.secrets->values = std::move(secrets);
+  }
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
   spawn.program.package = *run->package;
@@ -243,18 +248,9 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  request.path = *path;
-  request.worker_binary = spawn.worker_binary;
   for (const auto* v : *call.environment())
     if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      request.environment.emplace_back(v->name()->str(), v->value()->str());
-  // Each Card secret is an environment variable of the same name in the
-  // Card's process only; this process drops its copy once the call is sent.
-  for (auto& secret : secrets) request.environment.push_back(std::move(secret));
-  request.on_call_sent = [&environment = request.environment] {
-    for (auto& variable : environment) workerd::clear_secret(variable.second);
-    environment.clear();
-  };
+      request.params.json = v->value()->str();
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
