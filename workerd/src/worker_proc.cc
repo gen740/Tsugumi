@@ -19,6 +19,7 @@
 
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
@@ -46,8 +47,10 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
                 const std::atomic<bool>* cancel,
                 std::optional<std::chrono::steady_clock::time_point> deadline)
     -> void {
-  uint32_t len = static_cast<uint32_t>(frame.size());
-  std::string buf(reinterpret_cast<const char*>(&len), sizeof len);
+  rpc::frame::CheckSize(frame.size(), workerd::kMaxWorkerFrameBytes);
+  const auto prefix =
+      rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
+  std::string buf(prefix.data(), prefix.size());
   buf += frame;
   size_t offset = 0;
   while (offset < buf.size()) {
@@ -654,10 +657,12 @@ WorkerOutcome WorkerProc::call(
       return outcome;
     }
     rbuf.append(buf, static_cast<size_t>(r));
-    while (rbuf.size() >= 4) {
-      uint32_t len;
-      std::memcpy(&len, rbuf.data(), 4);
-      if (len == 0 || len > workerd::kMaxWorkerFrameBytes) {
+    while (rbuf.size() >= rpc::frame::kPrefixBytes) {
+      uint32_t len = 0;
+      try {
+        len = rpc::frame::DecodePrefix(rbuf.data(),
+                                       workerd::kMaxWorkerFrameBytes);
+      } catch (const rpc::frame::Error&) {
         terminate();
         outcome.failure = FailureData::make(FailureKind::worker_failed,
                                             "corrupt frame from worker");

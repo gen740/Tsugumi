@@ -21,6 +21,13 @@ target_link_libraries(tsugumi_rpc_trace_tests PRIVATE tsugumi_trace_codec
   flatbuffers::flatbuffers GTest::gtest_main)
 gtest_discover_tests(tsugumi_rpc_trace_tests TEST_PREFIX "core_rpc_trace."
   DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30 ENVIRONMENT "TSUGUMI_RPC_TRACE=1")
+add_executable(tsugumi_rpc_frame_tests rpc_frame_test.cc)
+target_link_libraries(tsugumi_rpc_frame_tests PRIVATE tsugumi_client_transport GTest::gtest_main)
 if(TSUGUMI_INSTALLED_CORE)
-  install(TARGETS tsugumi_rpc_trace_tests RUNTIME DESTINATION libexec/tsugumi-tests)
+  target_include_directories(tsugumi_rpc_frame_tests PRIVATE ${TSUGUMI_CORE_ROOT}/include)
+endif()
+gtest_discover_tests(tsugumi_rpc_frame_tests TEST_PREFIX "core_rpc_frame."
+  DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 30)
+if(TSUGUMI_INSTALLED_CORE)
+  install(TARGETS tsugumi_rpc_trace_tests tsugumi_rpc_frame_tests RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

@@ -52,6 +52,7 @@
 
 #include "tsugumi/message_json.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/sdk/abi.h"
 #include "tsugumi/util/flatbuffer_schema.hh"
 #include "tsugumi/util/json.hh"
@@ -73,50 +74,27 @@ std::mutex g_write_mu;
 std::atomic<bool> g_cancel{false};
 std::atomic<pid_t> g_child{0};
 
-bool read_full(int fd, void* p, size_t n) {
-  auto* c = static_cast<char*>(p);
-  while (n > 0) {
-    ssize_t r = ::read(fd, c, n);
-    if (r == 0) return false;
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      return false;
-    }
-    c += r;
-    n -= static_cast<size_t>(r);
-  }
-  return true;
-}
+namespace frame = tsugumi::rpc::frame;
 
-bool write_full(int fd, const void* p, size_t n) {
-  const auto* c = static_cast<const char*>(p);
-  while (n > 0) {
-    ssize_t w = ::write(fd, c, n);
-    if (w < 0) {
-      if (errno == EINTR) continue;
-      return false;
-    }
-    c += w;
-    n -= static_cast<size_t>(w);
-  }
-  return true;
-}
-
+// A bad or truncated frame ends the worker as a closed stream does.
 std::optional<std::string> read_frame(int fd) {
-  std::array<char, 4> prefix{};
-  if (!read_full(fd, prefix.data(), prefix.size())) return std::nullopt;
-  const auto len = tsugumi::workerd::decode_length(prefix.data());
-  if (len == 0 || len > kMaxFrame) return std::nullopt;
-  std::string buf(len, '\0');
-  if (!read_full(fd, buf.data(), len)) return std::nullopt;
-  return buf;
+  try {
+    return frame::Read(fd, kMaxFrame);
+  } catch (const frame::Error&) {
+    return std::nullopt;
+  }
 }
 
+// The core notices a broken connection on its side.
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
   std::lock_guard<std::mutex> l(g_write_mu);
-  const auto prefix = tsugumi::workerd::encode_length(b.GetSize());
-  write_full(kData, prefix.data(), prefix.size());
-  write_full(kData, b.GetBufferPointer(), b.GetSize());
+  try {
+    frame::Write(kData,
+                 {reinterpret_cast<const char*>(b.GetBufferPointer()),
+                  b.GetSize()},
+                 kMaxFrame);
+  } catch (const frame::Error&) {
+  }
 }
 
 std::string get_env(const std::vector<std::string>& env,
