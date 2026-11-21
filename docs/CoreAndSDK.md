@@ -88,9 +88,14 @@ What an SDK might otherwise have described lives elsewhere:
 
 **Decided.**
 
-- Every display is a view module ([Card ABI 9: the display form](CardABI.md#the-display-form)). The core ships default view modules on the UI side for text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite. They move out of `sdk/nix/builtin-views.nix`.
+- Every display is a view module ([Card ABI 9: the display form](CardABI.md#the-display-form)). There are two kinds:
+  1. **Wasm + WebGPU only.** The host runs these natively: a Wasm runtime plus native WebGPU (Dawn or wgpu-native), with no WebKit.
+  2. **JS/DOM modules**, which run in WebKit.
+- The core ships default view modules on the UI side for text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite. They move out of `sdk/nix/builtin-views.nix`.
+- The default modules (table, image, line chart and so on) are of kind 1.
+- This brings Dawn back. It reverses the removal of Dawn in [#225](https://github.com/gen740/Tsugumi/pull/225).
 - The native renderers are removed: `ui/web/src/ui/display.tsx`, `DisplayContent` and `PointCloudView` in the Mac app's `CanvasItems.swift`, and `TablePage`.
-- The module contract:
+- The contract for JS/DOM modules (kind 2):
   - The host hands the module one root element plus the data, and the module draws freely.
   - The only convention is an update event when new data arrive: a `CustomEvent` named `tsugumi:data`, dispatched on the root element, whose `detail` is `{config, blobs}`. The module listens for it if it wants.
   - Resizing is the module's own business, for example with `ResizeObserver`.
@@ -104,6 +109,19 @@ What an SDK might otherwise have described lives elsewhere:
   - the whole thumbnail machinery;
   - the `displaySummary` line on the Card's face.
 - Displays appear only in views: the expanded window, run comparison and chat evidence.
+
+The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. Each view drew the same table at 1200×800 @2x, and the footprint is summed over every process involved:
+
+| | Native | WKWebView + iframes, same Wasm | WKWebView + iframes, HTML | One WKWebView per view |
+| --- | --- | --- | --- | --- |
+| N=20, idle | 162 MB | 759 MB | 757 MB | about 1130 MB |
+| N=50, idle | 381 MB | 1799 MB | 967 MB | about 2760 MB |
+| N=20, first frame | 85 ms | 482 ms | 409 ms | about 1000 ms |
+| N=50, update round | 9.5 ms | 33 ms (vsync) | 156 ms | — |
+
+- Right after drawing, the gap narrows to 2–3×, because the Metal driver pool sits in the host or in the GPU process either way.
+- The native figures exclude compositing and process start.
+- The native text matched an HTML table at 2x.
 - The Card's description, which a person sets, is unrelated and stays.
 
 **Today.**
@@ -156,7 +174,14 @@ What an SDK might otherwise have described lives elsewhere:
 
 These questions are not decided yet:
 
-- **Proposed host architecture for displays:**
+- **The native module contract**, the next design topic (from a Codex study):
+  - a single `view_dispatch` entry, with `Init`, `DataChanged`, `Viewport`, `Input`, `Action` and `Frame`;
+  - optional host services:
+    - `text_rasterize`, through Core Text, Pango or Canvas2D;
+    - `view_emit`, for `Semantics`, `SelectionText` and `ScrollExtent`;
+  - Dawn in a helper process that can be restarted;
+  - the same `.wasm` in the browser through a JS shim.
+- **Proposed host architecture for JS/DOM displays:**
   - one shared WebView per window, run comparison or chat, with one sandboxed iframe per display;
   - iframes mount lazily and unmount when off screen, with about 8 live at once under LRU.
 

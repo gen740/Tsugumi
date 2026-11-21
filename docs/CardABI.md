@@ -73,6 +73,49 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 - `WorkerProc::clear_scratch` empties the work, temporary, output and input folders after each call (`workerd/src/worker_proc.cc`).
 - The result frame is limited to 16 MiB ([Building results](CardGuide.md#building-results)). There is no budget for entry count.
 
+## What a run records
+
+**Decided.**
+
+- There is no automatic deletion. Only a person deletes.
+- A run records these categories:
+
+  | Category | What | Setting |
+  | --- | --- | --- |
+  | Run summary | Success or failure, the failure's details, timings and the versions used | Always recorded |
+  | Logs | stdout and stderr | On or off |
+  | Displays | Displays whose call sets the record flag | The flag on each display call; not recorded by default |
+  | Values | Input and output values | `recordIO` |
+  | Files and artifacts | File and Directory values, artifacts | `retainArtifact` |
+
+- Each category except the run summary can be turned on or off. The project sets the defaults, and each Card may override them per category.
+- The log size limit is a project setting.
+- A person can delete records from the history tree for each run and each category.
+- A recorded display is appended as a row that holds its module, config, blobs, arrival time, run and Card. No invocation is guessed.
+- The latest-replaces `invocations.display` column and the `displays` table go.
+- Where records are stored:
+  - Structured data live in SQLite. These are FlatBuffers values and the display data sent to modules.
+  - What should exist only as files stays as files. These are File and Directory values and artifacts.
+
+**Today.** The run tables are created by `run_tables` in `tsugumid/runtime/src/history.cc` (schema version 16). The same tables are used for the copy in `.tsugumi/runs.sqlite`.
+
+| Table | What it holds |
+| --- | --- |
+| `runs` | One row per run: state, revisions, accepted/started/ended times, failure, source hash, target and flags (artifacts, local, partial) |
+| `run_cards`, `run_batches`, `run_commits` | The Cards of a run, each Card's batches and outputs, and the run's commit |
+| `build_environments`, `environment_paths`, `run_substituters` | Build environments with their derivation and manifest, their store paths, and the substituters used |
+| `invocations` | One row per invocation: state, phase, times, duration, failure, `record_io`, input sources, the latest `display`, `build_cached` and detail |
+| `schemas`, `ivalues` | Port schemas (`bfbs`), and each invocation's input and output values: kind, schema, size, bytes and hash, with an `artifact_id` and a file content hash for File values |
+| `logs`, `log_truncations`, `log_terminal_ends`, `log_terminal_tiles` | stdout and stderr chunks with their offsets, where they were truncated, and terminal rendering state |
+| `artifacts` | Retained outputs: run, Card, invocation, output port, kind, name and members |
+| `displays` | One display per run and Card (`INSERT OR REPLACE`), with a revision |
+
+The local history also has `run_definition_paths`, `active_environments`, `statuses`, `remote_jobs`, `remote_releases`, `last_inputs` and `receipts`.
+
+- The log limit is fixed at 128 MiB for each invocation (`kInvocationLogLimitBytes` in `workerd/include/tsugumi/workerd/log_limits.hh`).
+- Logs are always recorded.
+- Deletion is per range of runs ([Run History](RunHistory.md)).
+
 ## Effects and their lifetimes
 
 **Decided.**
@@ -98,7 +141,9 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 **Decided.**
 
-- Every display is a view module of Wasm and/or JavaScript. Inside it, the module is free to use the DOM, a canvas or WebGPU.
+- Every display is a view module. There are two kinds ([Displays in the UI](CoreAndSDK.md#displays-in-the-ui)):
+  1. Wasm + WebGPU only, which the host runs natively;
+  2. JS/DOM modules, which run in WebKit.
 - `Data.Display` becomes module + config + blobs.
 - Today's fixed kinds become default view modules that the core ships on the UI side ([Displays in the UI](CoreAndSDK.md#displays-in-the-ui)). The kinds are text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite.
 - The SDK's overloads, such as `card::display(Table{...})`, stay. Inside, they encode the data for those default modules.
