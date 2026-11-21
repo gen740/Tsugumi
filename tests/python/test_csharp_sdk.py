@@ -21,7 +21,7 @@ def write_project(root, cards, connections):
         for definition in root.glob("definitions/*/_card.json"):
             body = json.loads(definition.read_text())
             if "language" in body:
-                body["sandbox"] = True
+                body["sandbox"] = {"filesystem": True}
                 definition.write_text(json.dumps(body))
 
 NIX = '''{ pkgs, inputs, params }:

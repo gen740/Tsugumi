@@ -58,7 +58,7 @@ def write_project(root, cards: dict, connections: list):
         d = root / "definitions" / id_
         settings = c["card"].copy()
         if not IN_VM and sys.platform != "linux":
-            settings["sandbox"] = False
+            settings["sandbox"] = {"filesystem": False}
         put(d / "_card.json", json.dumps(settings))
         put(d / "default.nix", c["nix"])
         put(d / "_outputs.fbs", c.get("outputs", NO_OUTPUTS))

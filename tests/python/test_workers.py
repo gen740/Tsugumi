@@ -270,18 +270,19 @@ printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_O
 
 
 def test_mac_folders_are_read_only_unless_written(env, tmp_path):
-    """Experimental host folders: a folder of the Mac named by a Card is
-    shared with its project only, at /host/<name> in the worker, read-only
-    unless the Card writes there."""
+    """A Card receives each granted Mac folder through its environment.
+    A grant is read-only by default and allows writes only if requested."""
     shared = tmp_path / "mac-folder"
     shared.mkdir()
     (shared / "hello.txt").write_text("from the Mac")
-    read = bash('cat /host/data/hello.txt; if echo x > /host/data/new.txt 2>/dev/null; then echo wrote; else echo read-only; fi; '
+    read = bash('cat "$TSUGUMI_GRANT_DATA/hello.txt"; '
+                'if echo x > "$TSUGUMI_GRANT_DATA/new.txt" 2>/dev/null; then echo wrote; else echo read-only; fi; '
                 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
                 grants={"hostPaths": [{"path": str(shared), "name": "data"}]})
-    write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
+    write_ = bash('echo made > "$TSUGUMI_GRANT_OUT/made.txt" && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
                   grants={"hostPaths": [{"path": str(shared), "name": "out", "write": True}]})
-    other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
+    other = bash('test -z "${TSUGUMI_GRANT_DATA-}${TSUGUMI_GRANT_OUT-}" || exit 1; '
+                 'ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
     load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),
           card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")])
@@ -290,6 +291,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     env.start()
     c = env.client()
     run_id, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")
