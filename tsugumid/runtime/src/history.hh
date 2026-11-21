@@ -241,12 +241,12 @@ class History {
                                                std::vector<int64_t>* seqs);
   static int64_t max_run_seq(sql::Db& db);
   static std::vector<std::string> unfinished_runs(sql::Db& db);
-  LogRead read_log(sql::Db& db, const std::string& run_id,
-                   const std::optional<CardPath>& card,
-                   std::optional<uint64_t> invocation, LogStream stream,
-                   uint64_t offset, bool tail, uint64_t limit,
-                   std::optional<uint64_t> before, bool terminal,
-                   std::optional<uint64_t> since);
+  static auto read_log(sql::Db& db, const std::string& run_id,
+                       const std::optional<CardPath>& card,
+                       std::optional<uint64_t> invocation, LogStream stream,
+                       uint64_t offset, bool tail, uint64_t limit,
+                       std::optional<uint64_t> before, bool terminal,
+                       std::optional<uint64_t> since) -> LogRead;
 
   // Cursors carry a paging position.
   std::string make_cursor(int64_t hi, const std::string& after) const;
