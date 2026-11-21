@@ -211,9 +211,12 @@ def test_card_limits_are_delegated_and_released(env):
     oom = bash(
         'buffer=x; for ((i = 0; i < 27; ++i)); do buffer="$buffer$buffer"; done; '
         'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-        sandbox=limits, timeoutSeconds=60,
+        sandbox=limits, reuseWorker=True, timeoutSeconds=60,
     )
+    # The old resident must be gone before running the replacement. Keep reuse
+    # enabled so no unused standby worker can hide a leaked cgroup.
     connection = load(env, {"limited": oom}, [card("limited", "limited")], [])
+    assert "no-card-cgroup" in env.exec(terminal_probe).splitlines()
     run_id, status = run_and_wait(connection, "limited")
     assert status.state == RunState.failed
     invocation, = connection.call("RunInvocationsRequest", runId=run_id, card=path("limited")).records
