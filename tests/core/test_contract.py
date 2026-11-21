@@ -546,7 +546,7 @@ def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, co
     from harness.scenario import Gate
     gate = Gate(tmp_path, "live")
     settings = {"recordLogs": card_logs} if card_logs is not None else {}
-    worker_project(client, project, tmp_path / "worker", [
+    worker_project(client, project, tmp_path / "case", [
         {"op": "log", "stream": "stdout", "text": "output"},
         gate.action(),
         {"op": "failure", "message": "record the failure summary"},
