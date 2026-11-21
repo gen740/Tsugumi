@@ -20,7 +20,7 @@ def write_project(root, cards, connections):
     if os.environ.get("TSUGUMI_TEST_HOST_SANDBOX") == "1":
         for definition in root.glob("definitions/*/_card.json"):
             body = json.loads(definition.read_text())
-            if "language" in body:
+            if body.get("type") == "code":
                 body["sandbox"] = True
                 definition.write_text(json.dumps(body))
 
