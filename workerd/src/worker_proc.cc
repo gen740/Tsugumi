@@ -419,9 +419,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
         argv.insert(argv.end(), {"--tmpfs", "/dev/shm"});
       if (::access("/dev/mqueue", F_OK) == 0)
         argv.insert(argv.end(), {"--tmpfs", "/dev/mqueue"});
-    } else if (!sp.sandbox.ipc && filesystem) {
-      for (const char* path : {"/dev/shm", "/dev/mqueue"})
-        argv.insert(argv.end(), {"--bind-try", path, path});
+    } else if (sp.sandbox.ipc) {
+      argv.insert(argv.end(), {"--tmpfs", "/dev/shm"});
     }
     // Paths under the original /tmp must remain visible after mounting scratch.
     const auto under_tmp = [](const std::string& path) {
@@ -440,6 +439,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     if (filesystem) {
       argv.insert(argv.end(), {"--ro-bind", inputs_dir(), inputs_dir()});
       read_only_inputs_ =
+          sp.sandbox.ipc &&
           std::ranges::none_of(sp.binds, &WorkerSpawn::Bind::write);
       for (const auto& bind : sp.binds)
         argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
@@ -716,7 +716,7 @@ void WorkerProc::clear_scratch() {
     return;
   }
   try {
-    for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
+    for (const auto& d : {tmp_dir(), out_dir(), inputs_dir()})
       fs::clear_staging(d, recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,

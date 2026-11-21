@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <functional>
 #include <memory>
 #include <mutex>
@@ -138,7 +139,7 @@ class WorkerProc {
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
   std::string out_dir() const { return scratch_ + "/out"; }
   std::string inputs_dir() const { return scratch_ + "/inputs"; }
-  // Empties work/, tmp/ and the invocation input/output staging areas.
+  // Empties tmp/ and the invocation input/output staging areas.
   void clear_scratch();
   auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.

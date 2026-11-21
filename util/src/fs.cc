@@ -358,6 +358,37 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
   return size;
 }
 
+auto link_beneath(const stdfs::path& root, const stdfs::path& rel,
+                  const stdfs::path& destination) -> std::optional<uint64_t> {
+#ifdef __linux__
+  const int source = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{source};
+  struct stat status{};
+  if (::fstat(source, &status) != 0)
+    throw Error("fstat " + rel.string() + ": " + std::strerror(errno));
+  if (!S_ISREG(status.st_mode))
+    throw NotRegularFile(rel, S_ISDIR(status.st_mode));
+  // Follow the kernel's reference to this open inode. A path replaced after
+  // validation must never be the file that ends up in the input mount.
+  const auto pinned = "/proc/self/fd/" + std::to_string(source);
+  if (::linkat(AT_FDCWD, pinned.c_str(), AT_FDCWD, destination.c_str(),
+               AT_SYMLINK_FOLLOW) == 0)
+    return static_cast<uint64_t>(status.st_size);
+  const int error = errno;
+  if (error != EXDEV && error != EPERM && error != EACCES && error != EMLINK &&
+      error != EOPNOTSUPP && error != ENOENT)
+    throw Error("link " + rel.string() + ": " + std::strerror(error));
+#else
+  (void)root;
+  (void)rel;
+  (void)destination;
+#endif
+  return std::nullopt;
+}
+
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries) {
   Listing out;

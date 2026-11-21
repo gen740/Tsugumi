@@ -256,7 +256,6 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
-  request.stop_before_outputs = true;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
@@ -314,11 +313,19 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     const auto source = blob(*file.sha256);
     stdfs::create_directories(path.parent_path());
     uint64_t done = 0;
-    progress(*file.path, 0, *file.size);
-    fs::copy_beneath(blobs, *file.sha256, path, [&](std::string_view chunk) {
-      done += chunk.size();
+    if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
+      done = *size;
       progress(*file.path, done, *file.size);
-    });
+    } else {
+      progress(*file.path, 0, *file.size);
+      fs::copy_beneath(blobs, source.filename(), path,
+                       [&](std::string_view chunk) {
+                         done += chunk.size();
+                         progress(*file.path, done, *file.size);
+                       });
+    }
+    if (done != *file.size)
+      throw std::runtime_error("remote invocation input size does not match");
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();

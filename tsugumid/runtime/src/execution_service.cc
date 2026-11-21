@@ -220,10 +220,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
   };
-  // Input storage belongs to the project; only the copied values cross the
-  // worker boundary. A fixed read-only mount preserves resident reuse.
+  // The mount stays fixed while each invocation replaces its entries.
   invocation.stage_inputs = [&](WorkerProc& worker) {
     auto inputs = request.inputs;
+    const auto roots = service_.file_roots();
     for (size_t i = 0; i < inputs.size(); ++i) {
       if (request.cancel.load())
         throw Failed(FailureKind::cancelled, "staging inputs cancelled");
@@ -231,10 +231,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       const auto destination =
           std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
       std::filesystem::create_directories(destination);
-      inputs[i] = service_.keep_file_value(
-          inputs[i], destination, request.cancel,
-          [&](std::string_view name, uint64_t done, uint64_t total) {
-            if (request.transfer) request.transfer("copy", name, done, total);
+      inputs[i] = workerd::stage_input(
+          inputs[i], roots, destination, worker.read_only_inputs(),
+          request.cancel,
+          [&](const std::filesystem::path& name, uint64_t done,
+              uint64_t total) {
+            if (request.transfer)
+              request.transfer("copy", name.generic_string(), done, total);
           });
     }
     return inputs;

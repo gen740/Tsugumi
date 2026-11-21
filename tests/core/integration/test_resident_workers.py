@@ -11,7 +11,7 @@ from Tsugumi.Data.RunState import RunState
 
 def test_more_than_32_residents_keep_their_state(core_factory, tmp_path):
     """A 33rd resident does not evict the first Card's worker or its state."""
-    definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/count"; n=0; '
+    definition = bash('f="$HOME/count"; n=0; '
                       'test ! -f "$f" || read -r n < "$f"; n=$((n+1)); echo "$n" > "$f"; '
                       'printf \'{"out":{"value":%s}}\' "$n" > "$TSUGUMI_OUTPUT"; '
                       'printf \'{"text":"%s"}\' "$n" > "$TSUGUMI_REPORT"', reuseWorker=True)
@@ -37,7 +37,7 @@ def test_resident_definition_change_records_fresh_state(core_factory, tmp_path):
     graph = Project(root)
     for greeting, count, reused in [("first", "1", False), ("first", "2", True), ("changed", "1", False)]:
         definition = bash('echo ' + greeting + '; '
-                          'f="${TSUGUMI_WORK_DIR%/*}/home/count"; n=0; '
+                          'f="$HOME/count"; n=0; '
                           'test ! -f "$f" || read -r n < "$f"; n=$((n+1)); echo "$n" > "$f"; '
                           'printf \'{"out":{"value":%s}}\' "$n" > "$TSUGUMI_OUTPUT"; '
                           'printf \'{"text":"%s"}\' "$n" > "$TSUGUMI_REPORT"', reuseWorker=True)
@@ -74,7 +74,7 @@ def test_dead_resident_is_reported_in_the_next_invocation(core_factory, tmp_path
 
 def test_living_resident_is_discarded_after_a_card_failure(core_factory, tmp_path):
     """Even a cooperative failure discards state and records why the next worker is fresh."""
-    definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/failed"; '
+    definition = bash('f="$HOME/failed"; '
                       'if test ! -e "$f"; then touch "$f"; exit 19; fi; echo recovered', reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
@@ -91,7 +91,7 @@ def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_p
     """Rejecting a partial special file does not discard the resident's independent state."""
     from projects import FILE_FBS
     from Tsugumi.Data.FailureKind import FailureKind
-    definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/called"; '
+    definition = bash('f="$HOME/called"; '
                       'if test ! -e "$f"; then touch "$f"; mkfifo "$TSUGUMI_OUTPUT_DIR/result"; '
                       'else echo recovered > "$TSUGUMI_OUTPUT_DIR/result"; fi; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
@@ -111,7 +111,7 @@ def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_p
 def test_missing_required_output_discards_resident_state(core_factory, tmp_path):
     """A result rejected for a missing required output cannot keep its mutated resident state."""
     from Tsugumi.Data.FailureKind import FailureKind
-    definition = bash('f="${TSUGUMI_WORK_DIR%/*}/home/called"; '
+    definition = bash('f="$HOME/called"; '
                       'if test ! -e "$f"; then touch "$f"; echo \'{}\' > "$TSUGUMI_OUTPUT"; '
                       'else printf \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"; fi',
                       reuseWorker=True, recordIO=True)
