@@ -13,7 +13,7 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 - A Card SDK is a swappable part, chosen per Card. It will later move to its own repository, so that users can build their own SDK.
 - A Card selects its SDK in its `default.nix`, by the SDK that gets injected into it, not in `_card.json`. This leaves room for third-party SDK implementations without tying the Card document to Nix evaluation.
 - The contract between the core and an SDK is the common [Card ABI](CardABI.md).
-- Bash, `preRun` and `postRun` live inside the SDK, not in the core.
+- Bash-bodied Cards, `preRun` and `postRun` are abolished for now. If they return, it will be as an SDK extension for each language that needs them, not in the core.
 
 **Today.**
 
@@ -22,6 +22,19 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 - `preRun → run → postRun` are steps that the worker runs ([Worker state](CardGuide.md#worker-state)).
 - hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)), and `InputTypes` takes a `language` used to render SDK definitions ([Protocol](Protocol.md#inputtypes)).
 - The SDKs live in [sdk/](../sdk/) of this repository, with the [Nix SDK](../sdk/nix/default.nix).
+
+## What the core evaluates
+
+**Decided.**
+
+- `manifestFor` is abolished. The core's `entry_nix` evaluates the Card's attributes directly:
+  - `run`: one or more derivations containing `lib/main.so`, plus their labels;
+  - `views`;
+  - `exports`.
+- An SDK's Nix entry only returns the derivation.
+- This removes the manifest JSON that is defined in two places today.
+
+**Today.** `entry_nix` in `tsugumid/runtime/src/nix.cc` calls `tsugumi.manifestFor` ([sdk/nix/default.nix](../sdk/nix/default.nix)). The SDK writes the manifest JSON, and `schema::CardManifest` decodes it again (`nix.cc:773`).
 
 ## What the core needs from an SDK
 
@@ -84,10 +97,17 @@ What an SDK might otherwise have described lives elsewhere:
 
 ## The bundled SDKs
 
-**Decided.**
+**Decided.** These points are part of the plan for the SDKs bundled with Tsugumi, not constraints of the ABI.
 
-- R, Julia and Ruby will later use generated, typed C++ glue. This is part of the plan for the SDKs bundled with Tsugumi, not a constraint of the ABI.
 - How values are mapped inside an SDK is that SDK's business.
+- R, Julia and Ruby start by passing values as JSON inside their SDK:
+  - Generated, typed C++ in that SDK's `main.so` converts FlatBuffers to and from JSON, with no reflection.
+  - The interpreter uses its ordinary JSON library.
+  - The ABI, and the values passed from Card to Card, stay FlatBuffers.
+  - In R, integers beyond 2^53 become decimal strings.
+  - NaN and Inf become fixed tokens.
+  - `[ubyte]` becomes base64.
+- The SDK may later switch to direct C-API glue without touching the ABI.
 
 **Today.** R, Julia and Ruby return values that the worker converts from JSON to each port's FlatBuffer ([Building results](CardGuide.md#building-results)).
 
@@ -105,5 +125,5 @@ What an SDK might otherwise have described lives elsewhere:
 
 These questions are not decided yet:
 
-- Whether Cards whose body is Bash remain.
-- Whether the core evaluates the manifest, `run`, exports and views.
+- Where `builtinViews` live: in the core and UI, or in the SDK. Today they are in the Nix SDK (`sdk/nix/builtin-views.nix`).
+- Whether the build of a foreign or remote worker moves to the core's Nix. That would change the 2026-11-13 rule "a Card brings its worker from its SDK commit" into "the worker comes from the core, and the ABI is the promise across versions".
