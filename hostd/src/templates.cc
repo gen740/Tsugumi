@@ -1,5 +1,7 @@
 #include "host/templates.hh"
 
+#include <unistd.h>
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
