@@ -27,12 +27,16 @@ class CancelledCopy : public AgentProjectFixture,
 TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   StartProject();
   const auto folder = directory.path / "sample-template";
-  Write(folder / "start/_card.json", R"({"type":"trigger"})");
+  Write(folder / "start/_card.json",
+        R"({"type":"input","params":[{"name":"value","type":"double","data":1}]})");
+  Write(folder / "start/_outputs.fbs",
+        "namespace sample; table Value { value:double; } "
+        "table Outputs { value:Value (required); } root_type Outputs;");
   Write(folder / "plan/_card.json", R"({"type":"draft"})");
   Write(folder / "plan/src/notes.txt", "source");
   Write(
       folder / "tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}}]}})");
+      R"({"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"value"},"to":{"card":"plan","port":""}}]}})");
   Write(folder / "layout.json",
         R"({"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}})");
   H::TemplateAddT addition;
@@ -103,7 +107,11 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
     ASSERT_TRUE(replied.Code().empty()) << replied.View();
     const auto* reply =
         replied.HostValue()->value_as_ProjectOperationResult()->reply();
-    ASSERT_EQ(reply->value_type(), Tsugumi::RPC::ReplyPayload::SaveResult);
+    const auto* failure = reply->value_as_Failure();
+    ASSERT_EQ(reply->value_type(), Tsugumi::RPC::ReplyPayload::SaveResult)
+        << op << (failure && failure->diagnostic()
+                      ? ": " + failure->diagnostic()->str()
+                      : "");
   };
   success(H::TemplateStore::Project, "project-copy");
   success(H::TemplateStore::Project,
