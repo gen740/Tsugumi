@@ -103,6 +103,12 @@ export class Scene {
     return { ...this.origin(k), ...this.geometry(k).size }
   }
 
+  /** A Card's outline (routing Cards are smaller than their box). */
+  outlineRect(k: CardKey): Rect {
+    const o = this.origin(k), r = this.geometry(k).outlineRect
+    return { x: r.x + o.x, y: r.y + o.y, width: r.width, height: r.height }
+  }
+
   portWorld(k: CardKey, port: string, output: boolean): Pt {
     const o = this.origin(k), p = this.geometry(k).port(port, output)
     return { x: o.x + p.x, y: o.y + p.y }

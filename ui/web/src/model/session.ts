@@ -264,21 +264,32 @@ export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
   return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
 }
 
-export function displaySummary(d: DisplaySnapshot): string {
-  const v = d.value
-  switch (v.kind) {
-    case 'unavailable': return L('この結果は表示できません')
-    case 'text': return v.text.split('\n')[0] ?? ''
-    case 'markdown': {
-      // The first line with text, without Markdown marks.
-      const line = v.text.split('\n').find((l) => l.trim()) ?? ''
-      return line.replace(/^[#>*\-` ]+|[#>*\-` ]+$/g, '').replace(/\*\*/g, '')
+export interface DisplayModule {
+  name: string
+  config: string
+  blobs: ModuleBlobs
+}
+
+/** ABI 8 still carries typed Display values and store paths for SDK defaults. */
+export function displayModule(value: DisplayValue): DisplayModule | undefined {
+  const builtin = (name: string, config: object, blobs: ModuleBlobs = {}): DisplayModule =>
+    ({ name: `tsugumi:${name}`, config: JSON.stringify(config), blobs })
+  switch (value.kind) {
+    case 'unavailable': return undefined
+    case 'text': case 'markdown': return builtin(value.kind, { text: value.text })
+    case 'scalar': return builtin('scalar', { value: value.value, label: value.label })
+    case 'table': return builtin('table', { columns: value.columns, rows: value.rows })
+    case 'image': return builtin('image', { mediaType: value.mediaType, alt: value.alt }, { image: value.data })
+    case 'points': return builtin('points', {}, {
+      x: new Uint8Array(Float32Array.from(value.x).buffer),
+      y: new Uint8Array(Float32Array.from(value.y).buffer),
+      z: new Uint8Array(Float32Array.from(value.z).buffer),
+      colors: new Uint8Array(Uint32Array.from(value.colors).buffer),
+    })
+    case 'module': {
+      const sdkDefault = /-tsugumi-view-(line-chart|plotly|vega-lite)$/.exec(value.name)?.[1]
+      return { name: sdkDefault ? `tsugumi:${sdkDefault}` : value.name, config: value.json, blobs: value.blobs }
     }
-    case 'scalar': return `${v.label} = ${Number(v.value.toPrecision(6))}`
-    case 'table': return L('表 {0} 列 × {1} 行', v.columns.length, v.rows.length)
-    case 'image': return v.alt || L('画像')
-    case 'points': return L('点群 {0} 点', v.x.length)
-    case 'module': return plotTitle(v.name, v.json) ?? L('モジュール {0}', v.name)
   }
 }
 
@@ -300,26 +311,12 @@ function displayable(v: DisplayValue): boolean {
     case 'module':
       if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
           Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
-      try { JSON.parse(v.json); return true } catch { return false }
+      return true
   }
 }
 
 /** A built-in view's title or line-series summary (as an image shows its alt
  *  text), or what it is when it has none. */
-function plotTitle(name: string, json: string): string | undefined {
-  let v: any
-  try { v = JSON.parse(json) } catch { return undefined }
-  if (name.endsWith('-tsugumi-view-line-chart')) {
-    const series = Array.isArray(v?.series) ? v.series : []
-    return L('折れ線 {0} 系列 · {1} 点', series.length, Math.max(0, ...series.map((s: any) => Number(s.count) || 0)))
-  }
-  const plotly = name.endsWith('-tsugumi-view-plotly')
-  if (!plotly && !name.endsWith('-tsugumi-view-vega-lite')) return undefined
-  const t = plotly ? v?.layout?.title : v?.title
-  const text = typeof t === 'string' ? t : typeof t?.text === 'string' ? t.text : ''
-  return text || (plotly ? L('Plotly のグラフ') : L('Vega-Lite のグラフ'))
-}
-
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
 /** Undo consists solely of the host's guarded inverse edits. */

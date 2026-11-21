@@ -7,6 +7,11 @@ export function registerModuleClient(client: RPCClient) { clients.push(new WeakR
 export function moduleSource(identity: string): Promise<string> {
   if (!cache.has(identity)) {
     const load = async () => {
+      if (/^tsugumi:(text|markdown|scalar|table|image|points|line-chart|plotly|vega-lite)$/.test(identity)) {
+        const response = await fetch(`/modules/${identity.slice('tsugumi:'.length)}.js`)
+        if (!response.ok || !response.headers.get('content-type')?.includes('javascript')) throw new Error('Display module is unavailable')
+        return response.text()
+      }
       let error: unknown = new Error('No module connection')
       for (const weak of [...clients].reverse()) {
         const client = weak.deref()

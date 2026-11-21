@@ -397,10 +397,10 @@ private struct ComparedRunCardView: View {
   @State private var shown: ComparedRunRow?
   private var row: ComparedRunRow { shown ?? latest }
   private var batch: Bool { RunComparison.inBatch(latest.left?.summary) || RunComparison.inBatch(latest.right?.summary) }
-  private var a: Tsugumi_RPC_RecordResultT? { row.left?.record }
-  private var b: Tsugumi_RPC_RecordResultT? { row.right?.record }
-  private var leftDisplay: DisplaySnapshot? { a?.record?.display.flatMap(recordedDisplay) }
-  private var rightDisplay: DisplaySnapshot? { b?.record?.display.flatMap(recordedDisplay) }
+  @State private var leftDisplays = RecordedDisplays()
+  @State private var rightDisplays = RecordedDisplays()
+  private var leftDisplay: DisplaySnapshot? { leftDisplays.display }
+  private var rightDisplay: DisplaySnapshot? { rightDisplays.display }
   private let changed = Color.accentColor.opacity(0.09)
 
   var body: some View {
@@ -432,6 +432,10 @@ private struct ComparedRunCardView: View {
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
           ComparedFieldsView(title: "出力", values: RunComparison.values(true, row.left, row.right),
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
+          HStack(alignment: .top, spacing: 12) {
+            VStack { DisplayRecordPicker(history: leftDisplays) }.frame(maxWidth: .infinity)
+            VStack { DisplayRecordPicker(history: rightDisplays) }.frame(maxWidth: .infinity)
+          }
           if leftDisplay != nil || rightDisplay != nil {
             HStack { Text("表示").bold(); if !RunComparison.sameDisplay(leftDisplay, rightDisplay) { Text("相違あり").font(.caption) } }
             HStack(alignment: .top, spacing: 12) {
@@ -452,6 +456,14 @@ private struct ComparedRunCardView: View {
     }
     .task(id: "\(leftRun)|\(rightRun)|\(latest.card)") { await loadMembers() }
     .task(id: member) { await loadMember() }
+    .task(id: "\(leftRun)|\(latest.card)") {
+      await leftDisplays.load(rpc: session.rpc, run: leftRun, card: path(latest.card), known: latest.left?.record)
+    }
+    .task(id: "\(rightRun)|\(latest.card)") {
+      await rightDisplays.load(rpc: session.rpc, run: rightRun, card: path(latest.card), known: latest.right?.record)
+    }
+    .task(id: leftDisplays.selection) { await leftDisplays.show(rpc: session.rpc, run: leftRun, card: path(latest.card)) }
+    .task(id: rightDisplays.selection) { await rightDisplays.show(rpc: session.rpc, run: rightRun, card: path(latest.card)) }
   }
 
   private func loadMembers() async {
@@ -492,21 +504,9 @@ private struct ComparedRunCardView: View {
 
   @ViewBuilder private func retainedDisplay(_ display: DisplaySnapshot?) -> some View {
     Group {
-      if let display { DisplayContent(display: display, large: true) }
+      if let display { DisplayView(display: display) }
       else { Text("表示の記録がありません").foregroundStyle(.secondary) }
-    }.frame(maxWidth: .infinity).frame(height: displayHeight(display)).clipped()
-  }
-
-  private func displayHeight(_ display: DisplaySnapshot?) -> CGFloat {
-    switch display?.value {
-    case .table(_, let rows)?: return min(400, 50 + CGFloat(rows.prefix(100).reduce(1) { $0 + max(1, $1.map { $0.components(separatedBy: "\n").count }.max() ?? 1) }) * 20)
-    case .text(let text)?, .markdown(let text)?:
-      let lines = text.components(separatedBy: "\n").reduce(0) { $0 + max(1, Int(ceil(Double($1.count) / 60))) }
-      return min(400, max(60, CGFloat(lines) * 22 + 16))
-    case .scalar?: return 120
-    case nil: return 60
-    default: return 400
-    }
+    }.frame(maxWidth: .infinity).frame(height: display == nil ? 60 : 360).clipped()
   }
 
   @ViewBuilder private func status(_ side: ComparedRunCard?) -> some View {

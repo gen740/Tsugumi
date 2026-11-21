@@ -46,7 +46,7 @@ for (const id of ids) {
     for (const flow of ['topToBottom', 'leftToRight'] as const) {
       for (const compact of [true, false]) {
         const html = renderToStaticMarkup(createElement(Canvas, {
-          data: { ...d, flow }, frame: IDLE, base: '', compact, motion: false, onSelect() {},
+          data: { ...d, flow }, frame: IDLE, compact, motion: false, onSelect() {},
           view: { width: 800, height: 600, camera: { x: 0, y: 0, zoom: 1 } },
         }))
         const svg = /<svg class="cv-wires"[\s\S]*?<\/svg>/.exec(html)?.[0]

@@ -3,7 +3,7 @@ import { agentAppearance } from '../model/agentAppearance'
 import { InlineParamEdit, RevisionEditNotice } from './revisionEdit'
 import { activeNixLinks, nixCurve, nixLinks as linksIn, nixReferences } from '../model/nixReferences'
 // The canvas of one scope: grid, groups, connections, Cards, sticky notes
-// and output frames, with pan/zoom, selection, wiring and drag & drop.
+// with pan/zoom, selection, wiring and drag & drop.
 // Inside a Card in Card, the outer Card's inputs and outputs are drawn as
 // bars above and below the inner graph.
 import { CSSProperties, Fragment, ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
@@ -886,7 +886,7 @@ function BoundaryBars({ b, zoom, screen, drag, onDown }: {
   )
 }
 
-// ---- Groups, notes, output frames ------------------------------------------------------------
+// ---- Groups and notes ------------------------------------------------------------
 
 type ItemEvents = {
   style: CSSProperties

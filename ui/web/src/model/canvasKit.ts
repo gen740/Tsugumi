@@ -985,6 +985,14 @@ export const union = (a: Rect, b: Rect): Rect => {
   return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y }
 }
 
+// ---- Camera ------------------------------------------------------------------------
+
+export interface Camera {
+  x: number
+  y: number
+  zoom: number
+}
+
 /** Frames `r` (world units) in the part of a view of `size` not covered by floating controls. */
 export function fitCamera(r: Rect, size: { width: number; height: number }, insets = { top: 0, left: 0, bottom: 0, right: 0 }, maxZoom = 1.5, margin = 40): Camera | undefined {
   if (size.width <= 0 || size.height <= 0) return undefined

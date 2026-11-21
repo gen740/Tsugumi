@@ -359,13 +359,13 @@ def test_remote_display_serves_card_owned_modules(project, core_factory, module_
       printf '%s' '__DISPLAY_REPORT__' > "$TSUGUMI_REPORT"
       printf '%s' '{}' > "$TSUGUMI_OUTPUT"
     """.replace("__DISPLAY_REPORT__", report)
-    entry = f'export function initialise(root) {{ root.textContent = "{marker}"; }}\n'
+    entry = f'export default function mount(root) {{ root.textContent = "{marker}"; }}\n'
     if view == "own-js":
         views = f'views.own = inputs.tsugumi.viewModule {{ src = ./view; name = "{marker}-js"; }};'
     else:
         # Exercise the SDK's shared-index.js / Card-owned view.wasm layout
         # without building the much larger WebGPU template for this RPC test.
-        entry = (f'// {marker}\nexport function initialise(root) {{ '
+        entry = (f'// {marker}\nexport default function mount(root) {{ '
                  'root.textContent = new WebAssembly.Instance(new WebAssembly.Module(tsugumiWasm)).exports.answer(); }\n')
         views = f"""
           views.own = pkgs.runCommand "{marker}-wasm" {{ nativeBuildInputs = [ pkgs.wabt ]; }} ''
@@ -377,7 +377,6 @@ def test_remote_display_serves_card_owned_modules(project, core_factory, module_
             ''}}/index.js $out/index.js
           '';
         """
-    entry += 'export function update(){}\nexport function resize(){}\nexport function dispose(){}\n'
     definition = {"type": "code", "language": "bash", "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": "{ pkgs, inputs, params }: { " + views + " run = ''" + script + "''; }"}

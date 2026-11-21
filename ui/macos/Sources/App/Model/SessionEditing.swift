@@ -440,7 +440,7 @@ extension ProjectSession {
     } catch { notice = error.localizedDescription; return nil }
   }
 
-  // MARK: - Layout: notes, groups, output frames
+  // MARK: - Layout: notes and groups
 
   func reserveReference(_ kind: String, scope: String = "") async throws -> String {
     let project = projectId

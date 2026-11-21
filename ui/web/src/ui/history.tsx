@@ -11,7 +11,7 @@ import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select,
 import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
-import { DisplayContent } from './display'
+import { DisplayView } from './moduleViewer'
 import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
@@ -441,7 +441,7 @@ export function VisualizationWindow({ session, cardKey }: { session: ProjectSess
         <span className="spacer" />
         <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
       </div>
-      <div className="flex1 min0 col"><DisplayContent display={d} large emptyNote={session.noResultNote(cardKey)} /></div>
+      <div className="flex1 min0 col"><DisplayView display={d} emptyNote={session.noResultNote(cardKey)} /></div>
     </div>
   )
 }

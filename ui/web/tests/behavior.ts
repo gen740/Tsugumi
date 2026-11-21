@@ -22,7 +22,6 @@ await import("./folderAttachments")
 await import("./booleanInput")
 await import("./reports")
 
-await import("./table")
 await import("./artifactHTML")
 
 await import("./draft")

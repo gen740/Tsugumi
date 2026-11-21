@@ -645,7 +645,7 @@ struct VisualizationWindow: View {
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
-      DisplayContent(display: session.displays[cardKey], large: true, emptyNote: session.noResultNote(cardKey))
+      DisplayView(display: session.displays[cardKey], emptyNote: session.noResultNote(cardKey))
     }
     .padding(16)
     .navigationTitle(session.displayName(cardKey))

@@ -69,7 +69,7 @@ enum SmokeTest {
           switch d.value {
           case .text(let t): return String(t.prefix(200))
           case .scalar(let v, let l): return "\(l)=\(v)"
-          default: return d.summary
+          default: return d.module?.name ?? "unavailable"
           }
         }
         await s.undo()

@@ -45,7 +45,7 @@ struct ResolvedCard {
   var nixReferences: [CardNixReference] = []
 }
 
-/// Decode a retained display without changing the live canvas.
+/// Decode the ABI 8 wire values used by both live and retained displays.
 func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
   let value: DisplayValue
   switch d.value?.type {
@@ -189,6 +189,12 @@ enum DisplayValue {
   case module(name: String, json: String, blobs: [String: Data] = [:])
 }
 
+struct DisplayModule: Equatable {
+  let name: String
+  let config: String
+  var blobs: [String: Data] = [:]
+}
+
 extension DisplayValue {
   var displayable: Bool {
     switch self {
@@ -207,9 +213,34 @@ extension DisplayValue {
     case .module(let name, let json, let blobs):
       let pattern = #"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$"#
       return name.range(of: pattern, options: .regularExpression) != nil && json.utf8.count <= 1 << 20 &&
-        (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) != nil &&
         blobs.count <= 64 && blobs.keys.allSatisfy { $0 != "." && $0 != ".." && $0.range(of: #"^[a-zA-Z0-9_.-]{1,128}$"#, options: .regularExpression) != nil } &&
         blobs.values.reduce(0) { $0 + $1.count } <= 8 << 20
+    }
+  }
+}
+
+extension DisplayValue {
+  var module: DisplayModule? {
+    func builtin(_ name: String, _ config: [String: Any], blobs: [String: Data] = [:]) -> DisplayModule? {
+      guard let json = try? JSONSerialization.data(withJSONObject: config, options: .sortedKeys) else { return nil }
+      return DisplayModule(name: "tsugumi:" + name, config: String(decoding: json, as: UTF8.self), blobs: blobs)
+    }
+    switch self {
+    case .unavailable: return nil
+    case .text(let text): return builtin("text", ["text": text])
+    case .markdown(let text): return builtin("markdown", ["text": text])
+    case .scalar(let value, let label): return builtin("scalar", ["value": value, "label": label])
+    case .table(let columns, let rows): return builtin("table", ["columns": columns, "rows": rows])
+    case .image(let type, let data, let alt):
+      return builtin("image", ["mediaType": type, "alt": alt], blobs: ["image": data])
+    case .points(let x, let y, let z, let colors):
+      return builtin("points", [:], blobs: [
+        "x": x.withUnsafeBytes { Data($0) }, "y": y.withUnsafeBytes { Data($0) },
+        "z": z.withUnsafeBytes { Data($0) }, "colors": colors.withUnsafeBytes { Data($0) },
+      ])
+    case .module(let name, let json, let blobs):
+      let sdkDefault = ["line-chart", "plotly", "vega-lite"].first { name.hasSuffix("-tsugumi-view-" + $0) }
+      return DisplayModule(name: sdkDefault.map { "tsugumi:" + $0 } ?? name, config: json, blobs: blobs)
     }
   }
 }
@@ -227,9 +258,7 @@ struct DisplaySnapshot {
   /// Preserve the result's content even when it cannot be rendered.
   let content: DisplayValue
   let value: DisplayValue
-  /// What the Card's result row says of it. Worked out once, here: the canvas
-  /// asks at every move, and a figure's title is found by parsing its JSON.
-  let summary: String
+  let module: DisplayModule?
 
   init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
     self.runId = runId
@@ -237,7 +266,7 @@ struct DisplaySnapshot {
     self.revision = revision
     self.content = value
     self.value = value.displayable ? value : .unavailable
-    summary = Self.summary(of: self.value)
+    module = self.value.module
   }
 }
 
@@ -892,6 +921,8 @@ final class ProjectSession {
       reconnect()
       return
     }
+    // What the Agent's save changed, seen against the document before it.
+    let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -908,7 +939,9 @@ final class ProjectSession {
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-
+    project = confirmedProject
+    layout = confirmedLayout
+  }
 
   func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
     guard let v = e.value else { return }

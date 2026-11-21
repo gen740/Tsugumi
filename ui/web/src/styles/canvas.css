@@ -152,12 +152,7 @@ pre.display-text.display-scroll { overflow: auto; flex: 1; min-height: 0; }
 .display-table th { font-weight: 700; border-bottom: 1px solid var(--separator); white-space: nowrap; }
 .display-table td { white-space: nowrap; }
 .display-image { max-width: 100%; max-height: 100%; object-fit: contain; image-rendering: pixelated; }
-.display-points { position: relative; flex: 1; min-height: 0; background: var(--text-bg); cursor: grab; }
-.display-points canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
-.display-points-caption { position: absolute; right: 4px; bottom: 4px; }
 .display-histogram { flex: 1; min-height: 0; display: flex; align-items: flex-end; gap: 2px; }
 .display-histogram > div { flex: 1; border-radius: 2px; background: color-mix(in srgb, var(--accent) 70%, transparent); min-height: 1px; }
-.display-module { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
 .display-viewer { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 4px; }
-.display-viewer-frame { flex: 1; min-height: 0; position: relative; overflow: hidden; background: white; }
-.display-viewer-frame > iframe { position: absolute; left: 0; top: 0; border: 0; transform-origin: 0 0; }
+.display-viewer > iframe { display: block; border: 0; flex: 1; min-height: 0; width: 100%; }
