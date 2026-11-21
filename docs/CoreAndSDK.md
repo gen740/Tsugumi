@@ -13,12 +13,14 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 - A Card SDK is a swappable part, chosen per Card. It will later move to its own repository, so that users can build their own SDK.
 - A Card selects its SDK in its `default.nix`, by the SDK that gets injected into it, not in `_card.json`. This leaves room for third-party SDK implementations without tying the Card document to Nix evaluation.
 - The contract between the core and an SDK is the common [Card ABI](CardABI.md).
+- The worker comes from the core, including the build of a worker for a foreign system or a remote host (decided 2026-11-22). This revises the 2026-11-13 rule that a Card brings its worker from its SDK commit. Across versions, the promise is the Card ABI.
 - Bash-bodied Cards, `preRun` and `postRun` are abolished for now. If they return, it will be as an SDK extension for each language that needs them, not in the core.
 
 **Today.**
 
 - `_card.json` names a `language` from a fixed list (`python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia`, `ruby`; [Code Card settings](CardGuide.md#code-card-settings)).
 - The kernel runs a Bash Card's program directly, and Package Cards load `lib/main.so` ([Another system](features.md#another-system-x86_64-linux)).
+- For another system, a Card's build makes the worker (`worker` of the Nix SDK) from the Card's own nixpkgs ([Another system](features.md#another-system-x86_64-linux)).
 - `preRun → run → postRun` are steps that the worker runs ([Worker state](CardGuide.md#worker-state)).
 - hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)), and `InputTypes` takes a `language` used to render SDK definitions ([Protocol](Protocol.md#inputtypes)).
 - The SDKs live in [sdk/](../sdk/) of this repository, with the [Nix SDK](../sdk/nix/default.nix).
@@ -67,22 +69,32 @@ What an SDK might otherwise have described lives elsewhere:
 
 - Templates are independent of the SDK, and of the core and the UI.
 - There are template stores at two levels:
-  - the host;
-  - the project (local).
+  - the host, under Tsugumi's support folder;
+  - the project: `templates/` in the project, versioned with it.
+- When names collide, both are listed, each labelled with its store. Neither shadows the other.
+- A template is a folder of Card definition folders. It may hold several Cards or a partial graph, plus an optional `layout.json` fragment. IDs are remapped when it is copied.
 - Users can add templates.
 - A "make template" skill may create templates at the project level.
-- Templates can be injected from git.
+- Templates can be imported from git, given a URL, a ref and a subdirectory. v1 supports public repositories only.
 - The core manages the list: it stores, lists and copies templates, and imports them from git.
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
+- The Agent may list and copy templates. Adding or importing one needs a person's approval.
 - Scaffolding a new Card is the Agent's job.
+- The "New Card" menu offers:
+  - Draft, Trigger, Input, Branch, Fork, Merge and Collect;
+  - "From template…", with Project and Host sections and nothing preselected.
+- No templates ship in the core. Example templates live in the separate SDK repository, which will be split out later.
 - These are removed:
   - the fixed language lists;
-  - `ui/shared/templates`.
+  - `ui/shared/templates`;
+  - the language presets;
+  - the button that writes a `pythonCard` `default.nix`.
 
 **Today.**
 
 - `language` in `_card.json` is a fixed list ([Code Card settings](CardGuide.md#code-card-settings)).
 - [ui/shared/templates](../ui/shared/templates/) holds one scaffold per language.
+- The Card log view has a button that writes a `pythonCard` `default.nix` (`ui/web/src/ui/cardLog.tsx`, `ui/macos/Sources/App/Detail/CardLogViews.swift`).
 
 ## Displays in the UI
 
@@ -92,7 +104,8 @@ What an SDK might otherwise have described lives elsewhere:
   1. **Wasm + WebGPU only.** The host runs these natively: a Wasm runtime plus native WebGPU (Dawn or wgpu-native), with no WebKit.
   2. **JS/DOM modules**, which run in WebKit.
 - The core ships default view modules on the UI side for text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite. They move out of `sdk/nix/builtin-views.nix`.
-- The default modules (table, image, line chart and so on) are of kind 1.
+- Table, image, line chart, text, markdown, scalar and points are kind 1 defaults. Plotly and Vega-Lite are JS libraries, so they are kind 2 defaults.
+- Until the native host exists, the kind 1 defaults ship as JS modules in the WebKit host. Wasm versions replace them later (decided 2026-11-22).
 - This brings Dawn back. It reverses the removal of Dawn in [#225](https://github.com/gen740/Tsugumi/pull/225).
 - The native renderers are removed: `ui/web/src/ui/display.tsx`, `DisplayContent` and `PointCloudView` in the Mac app's `CanvasItems.swift`, and `TablePage`.
 - The contract for JS/DOM modules (kind 2):
@@ -174,6 +187,7 @@ The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. E
 
 These questions are not decided yet:
 
+- The name of the separate SDK repository, for example `tsugumi-kit` or `tsugumi-sdk`.
 - **The native module contract**, the next design topic (from a Codex study):
   - a single `view_dispatch` entry, with `Init`, `DataChanged`, `Viewport`, `Input`, `Action` and `Frame`;
   - optional host services:
@@ -188,4 +202,3 @@ These questions are not decided yet:
   The measurements behind it, on an M3 Max with macOS 27.2: 20 Plotly views took 1128 MB with one WKWebView per view, and 728 MB in one WKWebView with 20 iframes. An iframe with little in it costs about 0.7 MB.
 - What to do without WebGPU (macOS before 26, WebKitGTK).
 - A watchdog for a runaway module in the shared WebView process.
-- Whether the build of a foreign or remote worker moves to the core's Nix. That would change the 2026-11-13 rule "a Card brings its worker from its SDK commit" into "the worker comes from the core, and the ABI is the promise across versions".

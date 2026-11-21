@@ -163,7 +163,7 @@ The local history also has `run_definition_paths`, `active_environments`, `statu
 **Decided.**
 
 - A display that a Card's own thread sends after the call has returned is not an error, and it can keep updating. This widens what Cards can do.
-- It is appended, not overwritten, to the invocation that was started most recently when it arrived, together with its arrival time. The history therefore shows that it came after the return.
+- It is not attached to any invocation. A recorded display is a row holding its module, config, blobs, arrival time, run and Card ([What a run records](#what-a-run-records)); no invocation is guessed. A display that is not recorded is only shown live.
 - Each display call says whether that display is kept in the record, through an argument of `display` ([The Card's shape](#the-cards-shape-in-every-language)). When the argument is omitted, the display is **not** recorded.
 - A frame with a stale `call_id` must not kill the worker.
 
