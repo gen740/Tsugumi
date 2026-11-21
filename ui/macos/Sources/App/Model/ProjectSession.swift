@@ -387,15 +387,12 @@ final class ProjectSession {
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
-  private var loadingProvenance: Set<String> = []
   private var stopRunId: String?
   private(set) var stopError: String?
   var stopRequested: Bool { stopRunId != nil }
   var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
     didSet {
-      if let status = runStatus, let id = status.runId { runProvenance[id] = status }
       if oldValue?.runId != currentRunId || !runActive || runStatus?.state == .cancelling {
         stopError = nil
       }
@@ -404,9 +401,9 @@ final class ProjectSession {
       }
     }
   }
-  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
+  @ObservationIgnored private var displayViewers: [UUID: CardKey] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
   private(set) var batchHistoryRevision = 0
@@ -521,7 +518,6 @@ final class ProjectSession {
   /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
   var connectionFailed = false
 
-  var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
 
   private func connect(endpoint: Endpoint? = nil) async {
     guard !closed else { return }
@@ -537,8 +533,6 @@ final class ProjectSession {
       try Task.checkCancellation()
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
-      displayGeometries = try await CoreHostClient.shared.hostCall(
-        .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
@@ -810,8 +804,7 @@ final class ProjectSession {
     }
     resolution = r
     diagnostics = all
-    // A result belongs to a Card of the document. A Card that comes back asks for
-    // its own again: displayedCards changed (refreshVisibleDisplays).
+    // A result belongs to a Card of the current document.
     for k in displays.keys where r[k] == nil { displays[k] = nil }
   }
 
@@ -899,11 +892,6 @@ final class ProjectSession {
       reconnect()
       return
     }
-    // The Cards that send displays, before this change (definitions and
-    // resolution are replaced below).
-    let shown = displayedCards
-    // What the Agent's save changed, seen against the document before it.
-    let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
@@ -920,11 +908,7 @@ final class ProjectSession {
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-    // A Draft implemented (or any Card that became code) sends its displays too.
-    if displayedCards != shown { Task { await refreshVisibleDisplays() } }
-    project = confirmedProject
-    layout = confirmedLayout
-  }
+
 
   func applyRunEvent(_ e: Tsugumi_RPC_RunEventT) {
     guard let v = e.value else { return }
@@ -973,20 +957,11 @@ final class ProjectSession {
 
   func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
     let k = key(d.card.path)
+    guard displayViewers.values.contains(k) else { return }
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
     if let display = recordedDisplay(d) {
       displays[k] = display
-      // A reconnected canvas may receive a display from an older run.
-      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
-        loadingProvenance.insert(display.runId)
-        Task {
-          defer { loadingProvenance.remove(display.runId) }
-          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
-            runProvenance[display.runId] = record.run.status
-          }
-        }
-      }
     }
   }
 
@@ -1266,10 +1241,6 @@ final class ProjectSession {
     }
   }
 
-  /// Cards whose displays the canvas shows: what a Card shows is up to its
-  /// code (the display SDK), so every Card that can run may send displays.
-  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { kind($0) == .code }) }
-
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {
     displays[k] = nil
@@ -1291,9 +1262,22 @@ final class ProjectSession {
     return try await client.resolveNixSource(ref: ref)
   }
 
+  func openDisplayViewer(_ id: UUID, card: CardKey) {
+    let alreadyOpen = displayViewers.values.contains(card)
+    displayViewers[id] = card
+    if !alreadyOpen { Task { await refreshVisibleDisplays() } }
+  }
+
+  func closeDisplayViewer(_ id: UUID) {
+    guard let card = displayViewers.removeValue(forKey: id), !displayViewers.values.contains(card) else { return }
+    displays[card] = nil
+    Task { await refreshVisibleDisplays() }
+  }
+
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
-    try? await client.setVisible(subscription: subscription, cards: displayedCards.sorted().map(path), enabled: true)
+    let cards = Set(displayViewers.values).sorted().map(path)
+    try? await client.setVisible(subscription: subscription, cards: cards, enabled: !cards.isEmpty)
   }
 
   // MARK: - Runs

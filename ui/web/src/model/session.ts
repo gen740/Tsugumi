@@ -22,7 +22,6 @@ import {
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
-import { FigureState, figureMode } from './moduleThumbnails'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
 import { Observable } from './observable'
 import { VisualizationTemplate, visualizationTemplates } from './visualizationTemplates'
@@ -438,8 +437,6 @@ export class ProjectSession extends Observable {
   private closed = false
 
   // Runs
-  private runProvenance = new Map<string, R.RunStatusT>()
-  private loadingProvenance = new Set<string>()
   private stopRunId?: string
   stopError?: string
   get stopRequested() { return this.stopRunId !== undefined }
@@ -451,15 +448,14 @@ export class ProjectSession extends Observable {
   set runStatus(status: R.RunStatusT | undefined) {
     const previousId = this.currentRunId
     this._runStatus = status
-    if (status?.runId) this.runProvenance.set(s(status.runId), status)
     if (previousId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
       this.stopError = undefined
     if (this.stopRunId !== this.currentRunId || !this.runActive || status?.state === D.RunState.cancelling)
       this.stopRunId = undefined
   }
-  markForRun(runId: string) { return runMark(this.runProvenance.get(runId)) }
   cardStates = new Map<CardKey, CardRunState>()
   displays = new Map<CardKey, DisplaySnapshot>()
+  private displayViewers = new Map<CardKey, number>()
   lastFinished = 0
   remoteHistoryRevision = 0
   batchHistoryRevision = 0
@@ -620,7 +616,6 @@ export class ProjectSession extends Observable {
       this.changed()
       if (env.state !== 'ready') return
       const c = await this.reach(env.endpoint!, env.token, connection.signal)
-      this.displayGeometries = await this.layoutHost.displayGeometry()
       const opened = await c.open(this.viewId)
       if (this.closed || epoch !== this.connectionEpoch) {
         c.close()
@@ -912,8 +907,7 @@ export class ProjectSession extends Observable {
     }
     this.resolution = r
     this.diagnostics = all
-    // A result belongs to a Card of the document. A Card that comes back asks for
-    // its own again: displayedCards changed (refreshVisibleDisplays).
+    // A result belongs to a Card of the current document.
     for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
@@ -929,9 +923,6 @@ export class ProjectSession extends Observable {
     }
     const beforePresence = connectionsOf(this.confirmedProject)
     this.presence.finish()
-    // The Cards that send displays, before this change (definitions and
-    // resolution are replaced below).
-    const shown = [...this.displayedCards].sort().join('|')
     this.rev = d.rev ?? this.rev
     this.executionRev = d.executionRev ?? this.executionRev
     if (d.projectJson !== null) {
@@ -957,8 +948,6 @@ export class ProjectSession extends Observable {
     }
     this.refreshDerivedLayout()
     this.applyResolution(d.resolution, d.diagnostics)
-    // A Draft implemented (or any Card that became code) sends its displays too.
-    if ([...this.displayedCards].sort().join('|') !== shown) void this.refreshVisibleDisplays()
     this.project = clone(this.confirmedProject)
     this.layout = clone(this.confirmedLayout)
   }
@@ -1020,20 +1009,13 @@ export class ProjectSession extends Observable {
 
   private applyDisplay(d: D.DisplayT) {
     const k = key(segs(d.card))
+    if (!this.displayViewers.has(k)) return
     const rev = d.revision ?? 0n
     const old = this.displays.get(k)
     if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
     const display = recordedDisplay(d)
     if (display) {
       this.displays.set(k, display)
-      // A reconnected canvas may receive a display from an older run.
-      if (this.client && !this.runProvenance.has(display.runId) && !this.loadingProvenance.has(display.runId)) {
-        this.loadingProvenance.add(display.runId)
-        void this.client.record(display.runId, path(k), display.invocation).then(record => {
-          if (record.run?.status) this.runProvenance.set(display.runId, record.run.status)
-          this.changed()
-        }).catch(() => {}).finally(() => this.loadingProvenance.delete(display.runId))
-      }
     }
   }
 
@@ -1245,14 +1227,26 @@ export class ProjectSession extends Observable {
     }, 600)
   }
 
-  /** Cards whose displays the canvas shows: every Card that can run may send displays. */
-  get displayedCards(): Set<CardKey> {
-    return new Set([...this.resolution.keys()].filter((k) => this.kind(k) === 'code'))
+  /** Subscribe only while at least one live viewer for a Card is open. */
+  observeDisplay(card: CardKey): () => void {
+    const count = this.displayViewers.get(card) ?? 0
+    this.displayViewers.set(card, count + 1)
+    if (!count) void this.refreshVisibleDisplays()
+    return () => {
+      const remaining = (this.displayViewers.get(card) ?? 1) - 1
+      if (remaining) this.displayViewers.set(card, remaining)
+      else {
+        this.displayViewers.delete(card)
+        this.displays.delete(card)
+        void this.refreshVisibleDisplays()
+      }
+    }
   }
 
-  async refreshVisibleDisplays() {
+  private async refreshVisibleDisplays() {
     if (!this.client || !this.subscription) return
-    await this.client.setVisible(this.subscription, [...this.displayedCards].sort().map(path), true).catch(() => {})
+    const cards = [...this.displayViewers.keys()].sort().map(path)
+    await this.client.setVisible(this.subscription, cards, cards.length > 0).catch(() => {})
   }
 
   // ---- Runs --------------------------------------------------------------------
@@ -1679,16 +1673,16 @@ export class ProjectSession extends Observable {
     return key([id])
   }
 
-  private selectOperation(action: H.ProjectSelectionAction, scope: string[], cards: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = [], connections?: J[], at = { x: 0, y: 0 }) {
+  private selectOperation(action: H.ProjectSelectionAction, scope: string[], cards: Iterable<CardKey>, notes: Iterable<string> = [], connections?: J[], at = { x: 0, y: 0 }) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
     void this.operate(H.ProjectOperationBody.ProjectSelection, new H.ProjectSelectionT(prefix.replace(/\/$/, ''), action,
-      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(), [...frames].map(k => this.layoutKey(k)).sort(),
+      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(), [],
       connections ? serialize(connections) : null, at.x, at.y, sceneRequest(this.layoutScene(scope)))).catch(e => this.cardEditFailed(e))
   }
 
-  deleteSelection(cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, scope: string[]) {
-    this.selectOperation(H.ProjectSelectionAction.Delete, scope, cards, notes, frames)
+  deleteSelection(cards: Set<CardKey>, notes: Set<string>, scope: string[]) {
+    this.selectOperation(H.ProjectSelectionAction.Delete, scope, cards, notes)
   }
 
   /** Source text as the draft sees it. */
@@ -1939,7 +1933,7 @@ export class ProjectSession extends Observable {
     } catch (e) { this.cardEditFailed(e); return undefined }
   }
 
-  // ---- Layout: notes, groups, output frames --------------------------------------------
+  // ---- Layout: notes and groups --------------------------------------------
 
   referenceIdProvider?: (kind: string, scope: string, occupied: string[]) => Promise<string>
   private async reserveReference(kind: string, scope = ''): Promise<string> {
@@ -2038,27 +2032,6 @@ export class ProjectSession extends Observable {
     if (before) void this.operateLayoutEntity(scope, 'groups', id, before, undefined).catch(e => this.cardEditFailed(e))
   }
 
-  displayFrame(k: CardKey): J | undefined {
-    return get(this.layoutOf(path(k).slice(0, -1)), 'displays', this.layoutKey(k))
-  }
-
-  /** A frame without a place of its own is drawn beside its Card, so it goes where the Card goes. */
-  frameFollowsCard(k: CardKey, moving: Set<CardKey>): boolean {
-    return moving.has(k) && dbl(get(this.displayFrame(k), 'x')) === undefined
-  }
-
-  updateDisplayFrame(k: CardKey, fn: (d: JObj) => void) {
-    void this.operateFields(() => {
-      const scope = path(k).slice(0, -1), prefix = this.projectPrefix(scope)
-      if (prefix === undefined) throw new Error('Unknown Card scope')
-      const before = this.displayFrame(k), r = this.displayRect(k)
-      const after = clone(before) ?? obj([['x', real(r.x)], ['y', real(r.y)], ['width', real(r.width)], ['height', real(r.height)]])
-      if (!isObj(after)) throw new Error('Invalid frame')
-      fn(after)
-      return [this.fieldEdit(prefix + 'layout.json', ['displays', this.layoutKey(k)], before, after)]
-    }).catch(e => this.cardEditFailed(e))
-  }
-
   /** Where a scope's boundary ports are drawn (inside a Card in Card). */
   boundaryPosition(scope: string[], side: string): { x: number; y: number } | undefined {
     const v = get(this.layoutOf(scope), 'boundary', side)
@@ -2096,21 +2069,6 @@ export class ProjectSession extends Observable {
     void this.operateFields(() => [this.fieldEdit('layout.json', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
   }
 
-  /** Lays out a scope's Cards, output frames and notes (layout only, one undo).
-   *  tsugumi-hostd works the layout out (LayoutArrange) from what the canvas draws:
-   *  Cards are placed, ports then take the order that crosses fewer wires, and
-   *  the Cards are placed once more for that order. */
-  displayGeometries?: H.DisplayGeometriesT
-
-  /** Transform the host's rectangle from measured Card-local to world units. */
-  displayRect(k: CardKey, origin = this.placedPosition(k)) {
-    const f = this.displayFrame(k), size = this.geometry(k).size
-    const d = this.flow === 'topToBottom' ? this.displayGeometries?.topToBottom : this.displayGeometries?.leftToRight
-    return { x: dbl(get(f, 'x')) ?? origin.x + size.width * (d?.anchorX ?? 0) + (d?.x ?? 0),
-      y: dbl(get(f, 'y')) ?? origin.y + size.height * (d?.anchorY ?? 0) + (d?.y ?? 0),
-      width: dbl(get(f, 'width')) ?? d?.width ?? 0, height: dbl(get(f, 'height')) ?? d?.height ?? 0 }
-  }
-
   layoutHost = layoutHost
 
   async arrange(scope: string[]) {
@@ -2135,12 +2093,6 @@ export class ProjectSession extends Observable {
       const from = str(get(c, 'from', 'card')), fromPort = str(get(c, 'from', 'port')), to = str(get(c, 'to', 'card')), toPort = str(get(c, 'to', 'port'))
       return from && fromPort !== undefined && to && toPort !== undefined ? [{ from, fromPort, to, toPort }] : []
     })
-    // A frame without a place of its own is drawn beside its Card.
-    const frames = ids.flatMap((id) => {
-      const k = key([...scope, id]), f = this.displayFrame(k)
-      if ((!this.displays.has(k) && f === undefined) || bool(get(f, 'hidden')) === true) return []
-      return [{ id, ...this.displayRect(k) }]
-    })
     const notes = this.notes(scope).flatMap((n) => {
       const id = str(get(n, 'id'))
       return id ? [{ id, x: dbl(get(n, 'x')) ?? 0, y: dbl(get(n, 'y')) ?? 0, width: dbl(get(n, 'width')) ?? 240, height: dbl(get(n, 'height')) ?? 120 }] : []
@@ -2153,7 +2105,7 @@ export class ProjectSession extends Observable {
         at: this.boundaryPosition(scope, side),
       }
     }
-    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames, notes, inputs: bar('inputs'), outputs: bar('outputs') }
+    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames: [], notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
 
@@ -2433,36 +2385,6 @@ export class ProjectSession extends Observable {
     return D.CardState.succeeded
   }
 
-  /** How the Card's figure on the canvas follows its results: its
-   *  `displayMode`, whether the Card runs, and whether one upstream of it
-   *  does (its figure is about to be replaced). */
-  figureState(k: CardKey): FigureState {
-    const mode = figureMode(str(this.cardSetting(k, 'displayMode')))
-    if (!this.runActive) return { mode, running: false, stale: false }
-    const busy = (c: CardKey) => {
-      const st = this.canvasCardState(c)
-      return st === D.CardState.ready || st === D.CardState.preparing || st === D.CardState.running || this.compositeState(c) === D.CardState.running
-    }
-    // Upstream in the Card's own Workflow, then upstream of each Card in Card it is inside.
-    const upstream = (c: CardKey): boolean => {
-      const scope = path(c).slice(0, -1)
-      const conns = this.connections(scope)
-      const seen = new Set<string>(), todo = [path(c)[scope.length]]
-      while (todo.length) {
-        const id = todo.pop()!
-        for (const conn of conns) {
-          const from = str(get(conn, 'from', 'card'))
-          if (!from || str(get(conn, 'to', 'card')) !== id || seen.has(from)) continue
-          seen.add(from)
-          if (busy(key([...scope, from]))) return true
-          todo.push(from)
-        }
-      }
-      return scope.length > 0 && upstream(key(scope))
-    }
-    return { mode, running: busy(k), stale: upstream(k) }
-  }
-
   /** The inner Card and port an outer output of a Card in Card comes from. */
   boundarySource(k: CardKey, port: string): [CardKey, string] | undefined {
     const ep = get(this.boundary(k), 'outputs', port)
@@ -2495,22 +2417,19 @@ export class ProjectSession extends Observable {
     // definition cannot be read, what the core says about it.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
     if (kind === 'invalid') summary = diags.find((x) => x.error)?.message ?? L('Card の定義を読めません')
-    const frame = this.displayFrame(k)
-    const display = (this.displays.has(k) || frame !== undefined) && bool(get(frame, 'hidden')) !== true
-    const d = this.displays.get(k)
     const sym = str(get(def, 'symbol'))
     const editing = kind === 'draft' && this.inlineDraft?.card === k
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
+      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
-      result: state?.transfer ?? pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
+      result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
       failure: state && (state.state === D.CardState.failed || state.state === D.CardState.blocked) ? state.failure ?? cardState(state.state).label : undefined,
       errors: diags.filter((x) => x.error).map((x) => x.message), warnings: diags.filter((x) => !x.error).map((x) => x.message),
-      collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), hasDisplay: display, permissions: cardPermissions(def),
+      collapsed: !editing && (opts.collapsed ?? this.collapsed(k)), permissions: cardPermissions(def),
       draftEditing: editing, untitled: this.draftUntitled(k), openComments: cardComments(m).filter((c) => !c.resolved).length,
       portGrid: prefs.showGrid ? prefs.gridSize : undefined,
     }
@@ -2540,12 +2459,12 @@ export class ProjectSession extends Observable {
     catch (error) { this.cardEditFailed(error) }
   }
 
-  async moveSelection(scope: string[], cards: Set<CardKey>, notes: Set<string>, frames: Set<CardKey>, dx: number, dy: number, snap = 0): Promise<void> {
+  async moveSelection(scope: string[], cards: Set<CardKey>, notes: Set<string>, dx: number, dy: number, snap = 0): Promise<void> {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
     const local = (keys: Set<CardKey>) => [...keys].map(k => this.layoutKey(k)).sort()
     try {
-      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), local(frames), dx, dy, snap, sceneRequest(this.layoutScene(scope))))
+      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), [], dx, dy, snap, sceneRequest(this.layoutScene(scope))))
     } catch (e) { this.cardEditFailed(e) }
   }
 

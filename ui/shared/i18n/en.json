@@ -1111,6 +1111,7 @@
   "受け取り 入力": "receive input",
   "可視化": "Visualization",
   "可視化 {0}": {"text": "Display {0}", "mac": ["@"]},
+  "可視化を開く": "Open Display",
   "可視化 · {0}": "Visualization · {0}",
   "可視化（図を描く Card）": "Visualization",
   "右の実行": "Right run",

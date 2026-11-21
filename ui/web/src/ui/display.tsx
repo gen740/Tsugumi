@@ -8,13 +8,10 @@ import { Button, Empty } from './controls'
 import { tablePage } from '../model/tablePage'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
-import type { FigureState } from '../model/moduleThumbnails'
-import { ModuleThumbnail } from './moduleThumbnail'
 import { moduleSource, ModuleBlobs } from '../model/moduleSources'
 
 /** Renders a Display value at `zoom` (on the canvas) or larger (`large`, the expanded viewer). */
-/** `figure`: how a chart preview on the canvas follows the Card's results (its `displayMode`, and whether it or a Card upstream runs). */
-export function DisplayContent({ display, large = false, zoom = 1, emptyNote, figure }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string; figure?: FigureState }) {
+export function DisplayContent({ display, large = false, zoom = 1, emptyNote }: { display?: DisplaySnapshot; large?: boolean; zoom?: number; emptyNote?: string }) {
   const size = (small: number, big: number) => (large ? big : small) * zoom
   // Scrolls in the large viewer; on the canvas (where the wheel moves the
   // canvas) the content is cut at the frame, with no scroll bar.
@@ -23,7 +20,7 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
   )
   const v = display?.value
   if (!v) {
-    if (large) return <Empty title={L('まだ結果がありません')} icon="chart.xyaxis.line" description={L('実行すると表示されます。')} />
+    if (large) return <Empty title={L('まだ結果がありません')} icon="chart.xyaxis.line" description={emptyNote ?? L('実行すると表示されます。')} />
     return <div className="display-center secondary" style={{ fontSize: size(10, 13) }}>{emptyNote ?? L('まだ結果がありません（実行すると表示されます）')}</div>
   }
   switch (v.kind) {
@@ -47,7 +44,7 @@ export function DisplayContent({ display, large = false, zoom = 1, emptyNote, fi
     case 'points':
       return <PointCloudView x={v.x} y={v.y} z={v.z} colors={v.colors} />
     case 'module':
-      return <ModuleDisplayView name={v.name} json={v.json} blobs={v.blobs} lineage={`${display?.runId}#${display?.invocation}`} large={large} zoom={zoom} figure={figure} />
+      return <ViewerFrame name={v.name} json={v.json} blobs={v.blobs} large={large} zoom={zoom} />
   }
 }
 
@@ -213,8 +210,4 @@ function ViewerFrame({ name, json, blobs, large, zoom }: { name: string; json: s
       {error && <div className="secondary" style={{ fontSize: 10 * zoom }}>{error}</div>}
     </div>
   )
-}
-
-function ModuleDisplayView({ name, json, blobs, lineage, large, zoom, figure }: { name: string; json: string; blobs: ModuleBlobs; lineage: string; large: boolean; zoom: number; figure?: FigureState }) {
-  return large ? <ViewerFrame name={name} json={json} blobs={blobs} large={large} zoom={zoom} /> : <ModuleThumbnail name={name} json={json} blobs={blobs} lineage={lineage} zoom={zoom} figure={figure} />
 }

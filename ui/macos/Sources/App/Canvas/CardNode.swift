@@ -180,19 +180,6 @@ extension ProjectSession {
     return .succeeded
   }
 
-  /// How the Card's figure on the canvas follows its results: its
-  /// `displayMode`, whether the Card runs, and whether one upstream of it does.
-  func figureState(_ k: CardKey) -> FigureState {
-    let mode = FigureMode(rawValue: cardSetting(k, "displayMode")?.string ?? "") ?? .update
-    guard runActive else { return FigureState(mode: mode) }
-    let busy: (CardKey) -> Bool = { c in
-      if let s = self.canvasCardState(c), [.ready, .preparing, .running].contains(s) { return true }
-      return self.compositeState(c) == .running
-    }
-    return FigureState(mode: mode, running: busy(k),
-                       stale: FigureState.upstreamBusy(k, connections: { self.connections(in: $0) }, busy: busy))
-  }
-
   /// The inner Card and port an outer output of a Card in Card comes from.
   func boundarySource(_ k: CardKey, output port: String) -> (CardKey, String)? {
     guard let ep = boundary(k)?["outputs"]?[port], let c = ep["card"]?.string, let p = ep["port"]?.string else { return nil }
@@ -226,19 +213,18 @@ extension ProjectSession {
     if kind == .invalid { summary = diags.first(where: \.error)?.message ?? String(localized: "Card の定義を読めません") }
     if summary?.isEmpty ?? true { summary = nil }
     let editing = kind == .draft && inlineDraft?.card == k
-    let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
       title: title, kind: kind,
       symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
-      result: state?.transfer ?? state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
+      result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
-      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: displays[k].map { markForRun($0.runId) } ?? (state != nil || batch != nil ? runMark(runStatus) : nil),
+      invocation: empty ? 0 : state?.invocation ?? 0, runContinues: runActive, runMark: (state != nil || batch != nil ? runMark(runStatus) : nil),
       failure: state.flatMap { $0.state == .failed || $0.state == .blocked ? ($0.failure ?? $0.state.label) : nil },
       errors: diags.filter(\.error).map(\.message), warnings: diags.filter { !$0.error }.map(\.message),
-      collapsed: !editing && (collapsed ?? self.collapsed(k)), hasDisplay: display, permissions: CardPermission.of(def),
+      collapsed: !editing && (collapsed ?? self.collapsed(k)), permissions: CardPermission.of(def),
       draftEditing: editing, untitled: draftUntitled(k),
       portGrid: AppPreferences.shared.showGrid ? AppPreferences.shared.gridSize : nil,
       openComments: CardComment.list(in: m).filter { !$0.resolved }.count)

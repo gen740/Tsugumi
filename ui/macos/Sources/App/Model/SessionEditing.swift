@@ -161,11 +161,11 @@ extension ProjectSession {
     return key([id])
   }
 
-  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], frames: Set<CardKey> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
+  private func selectionOperation(_ action: Tsugumi_Host_ProjectSelectionAction, cards: Set<CardKey>, notes: Set<String> = [], in scope: [String], connections: [JSONValue]? = nil, at point: CGPoint = .zero) {
     guard let prefix = projectPrefix(scope) else { return }
     let body = Tsugumi_Host_ProjectSelectionT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")); body.action = action
-    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted()
     body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y; body.scene = layoutScene(scope)
     _ = enqueueOperation(.projectselection, body: body)
   }
@@ -544,70 +544,32 @@ extension ProjectSession {
     }
   }
 
-  func displayFrame(_ k: CardKey) -> JSONValue? { layout(of: Array(path(k).dropLast()))["displays"]?[layoutKey(k)] }
-
-  func updateDisplayFrame(_ k: CardKey, _ fn: @escaping (inout JSONValue) -> Void) {
-    queueFields { [self] in
-      let scope = Array(path(k).dropLast())
-      guard let prefix = projectPrefix(scope) else { throw RPCError.disconnected }
-      let before = displayFrame(k), r = displayRect(k, origin: placedPosition(k))
-      var after = before ?? .object([("x", .real(r.minX)), ("y", .real(r.minY)), ("width", .real(r.width)), ("height", .real(r.height))]); fn(&after)
-      return [fieldEdit(prefix + "layout.json", [.string("displays"), .string(layoutKey(k))], old: before, new: after)]
-    }
-  }
-
-  /// Closes a frame; its Card stays. The layout keeps a frame only with its
-  /// place and size, so one still drawn beside its Card gets them now.
-  func closeDisplayFrame(_ k: CardKey) {
-    let r = displayRect(k, origin: placedPosition(k))
-    updateDisplayFrame(k) { f in
-      f["x"] = .real(r.minX.rounded()); f["y"] = .real(r.minY.rounded())
-      f["width"] = .real(r.width); f["height"] = .real(r.height); f["hidden"] = .bool(true)
-    }
-  }
-
-  /// The Cards of a scope whose output frame shows: once their code has shown
-  /// something (display SDK), until the frame is closed.
-  func framedCards(in scope: [String]) -> [CardKey] {
-    cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }.filter {
-      (displays[$0] != nil || displayFrame($0) != nil) && displayFrame($0)?["hidden"]?.bool != true
-    }
-  }
-
-  /// A frame without a place of its own is drawn beside its Card, so it goes
-  /// where the Card goes and is not moved itself.
-  func frameFollowsCard(_ k: CardKey, moving cards: Set<CardKey>) -> Bool {
-    cards.contains(k) && displayFrame(k)?["x"]?.double == nil
-  }
-
   /// What a marquee (world units) touches in a scope.
-  func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>) {
+  func marqueeItems(_ r: CGRect, in scope: [String]) -> (cards: Set<CardKey>, notes: Set<String>) {
     let keys = cards(in: scope).compactMap { $0["id"]?.string }.map { key(scope + [$0]) }
     return (Set(keys.filter { r.intersects(CGRect(origin: placedPosition($0), size: geometry($0).size)) }),
-            Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }),
-            Set(framedCards(in: scope).filter { r.intersects(displayRect($0, origin: placedPosition($0))) }))
+            Set(notes(in: scope).filter { r.intersects(noteRect($0)) }.compactMap { $0["id"]?.string }))
   }
 
   /// Moves a selection (world units) as one edit: one save, one undo. Layout
   /// only: no computation is re-resolved for a move. Ports around the moved Cards
   /// are then reordered in the same undo step when that removes wire crossings. With a grid (`snap`) the
   /// Cards go by whole grids from where they are drawn, and what moves with them
-  /// goes by the same step, so the arrangement stays. Notes and frames alone
+  /// goes by the same step, so the arrangement stays. Notes alone
   /// land on whole numbers, as when dragged alone.
   @discardableResult
-  func moveSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
-    let scope = cards.first.map { Array(path($0).dropLast()) } ?? frames.first.map { Array(path($0).dropLast()) } ?? scopeHolding("notes", notes.first ?? "") ?? []
+  func moveSelection(cards: Set<CardKey>, notes: Set<String>, by moved: CGSize, snap: Double?) -> Task<Void, Never> {
+    let scope = cards.first.map { Array(path($0).dropLast()) } ?? scopeHolding("notes", notes.first ?? "") ?? []
     let body = Tsugumi_Host_ProjectMoveT()
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted(); body.frames = frames.map { layoutKey($0) }.sorted()
+    body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted()
     body.dx = moved.width; body.dy = moved.height; body.snap = snap ?? 0; body.scene = layoutScene(scope)
     return enqueueOperation(.projectmove, body: body)
   }
 
-  /// Deletes a selection as one edit. Notes go. A frame alone is closed and its
-  /// Card stays (the frame's own Remove Frame); a deleted Card takes its frame with it.
-  func deleteSelection(cards: Set<CardKey>, notes: Set<String>, frames: Set<CardKey>, in scope: [String]) {
-    selectionOperation(.delete, cards: cards, notes: notes, frames: frames, in: scope)
+  /// Deletes the selected Cards and notes as one edit.
+  func deleteSelection(cards: Set<CardKey>, notes: Set<String>, in scope: [String]) {
+    selectionOperation(.delete, cards: cards, notes: notes, in: scope)
   }
 
   /// Where a scope's boundary ports are drawn (inside a Card in Card).
@@ -664,11 +626,6 @@ extension ProjectSession {
       let w = Tsugumi_Host_LayoutWireT()
       w.from = f; w.fromPort = fp; w.to = t; w.toPort = tp
       return w
-    }
-    scene.frames = framedCards(in: scope).map { k in
-      let r = displayRect(k, origin: placedPosition(k)), b = Tsugumi_Host_LayoutBoxT()
-      b.id = path(k).last!; b.x = r.minX; b.y = r.minY; b.width = r.width; b.height = r.height
-      return b
     }
     scene.notes = notes(in: scope).compactMap { n in
       guard let id = n["id"]?.string else { return nil }

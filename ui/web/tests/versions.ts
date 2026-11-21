@@ -19,7 +19,7 @@ function nodeData(kind: CardKind, fan: number): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
     title: 'c', kind, inputs: ports(kind === 'merge' ? fan : 1), outputs: ports(1), params: [],
-    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false,
+    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
   }
 }
 

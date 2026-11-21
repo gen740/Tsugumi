@@ -17,7 +17,7 @@ const ids = JSON.parse(fs.readFileSync(path.join(root, 'demos', 'ja', 'index.jso
 assert.ok(ids.length > 0)
 
 const node = (kind: CardKind, inputs = [] as { name: string }[], outputs = [] as { name: string }[]) => ({
-  title: 'x', kind, inputs, outputs, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false,
+  title: 'x', kind, inputs, outputs, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false,
 }) as unknown as CardNodeData
 
 for (const id of ids) {
@@ -31,7 +31,7 @@ for (const id of ids) {
     }
   }
   const rects = d.cards.map((c: CardNodeData & { id: string; x: number; y: number }) => {
-    const g = new CardGeometry({ ...c, title: c.id, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: !!d.outputs[c.id] }, d.flow)
+    const g = new CardGeometry({ ...c, title: c.id, invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false }, d.flow)
     return { id: c.id, x: c.x, y: c.y, ...g.size }
   })
   for (const [i, a] of rects.entries()) {

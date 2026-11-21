@@ -37,8 +37,6 @@ const resolved = (s: Session, cards: string[]) =>
     cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
   assert.equal(s.displays.has(k), false, 'no result of the Card that had the name')
-  assert.equal(s.displayFrame(k), undefined, 'no frame of the Card that had the name')
-  assert.equal(s.nodeData(k).hasDisplay, false)
   assert.equal(s.cardStates.has(k), false, 'no run state of the Card that had the name')
 }
 
@@ -65,7 +63,6 @@ const clean = (s: Session, k: string) => {
   // Undo removes the new Card. Orphan frames are normalized by the host.
   await s.undo()
   assert.equal(s.instance('b'), undefined, s.saveError)
-  assert.equal(s.displayFrame('b'), undefined)
 }
 
 {
@@ -88,7 +85,6 @@ const clean = (s: Session, k: string) => {
   assert.equal(k, 'draft')
   clean(s, k)
   assert.equal(s.displays.has('a'), true)
-  assert.notEqual(s.displayFrame('a'), undefined)
 }
 
 {

@@ -3,7 +3,6 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import { moduleSource, registerModuleClient } from '../src/model/moduleSources'
-import { moduleThumbnailKey } from '../src/model/moduleThumbnails'
 
 // Exercise the real lifecycle runtime with a DOM stand-in and a real ES module.
 const script = fs.readFileSync(path.join(process.argv[2], 'ui/shared/modules/viewer.js'), 'utf8')
@@ -63,9 +62,6 @@ const client = { async call(_: unknown, request: { offset: bigint }) {
 registerModuleClient(client as never)
 const [a, b] = await Promise.all([moduleSource('test-identity'), moduleSource('test-identity')])
 assert.equal(a, 'A\0B'); assert.equal(a, b); assert.equal(reads, 2)
-const keyA = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 255]) })
-const keyB = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 254]) })
-assert.notEqual(keyA, keyB)
 assert.match(script, /frame.sandbox = 'allow-scripts'/)
 assert.match(script, /connect-src 'none'/)
 console.log('module views: ES lifecycle, blobs, visibility, snapshots, RPC paging and cache passed')

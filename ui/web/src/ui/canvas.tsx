@@ -10,10 +10,9 @@ import { CSSProperties, Fragment, ReactNode, useEffect, useLayoutEffect, useRef,
 import { app } from '../model/app'
 import { HelperBirds } from './helperBirds'
 import { WritingPanels } from './writingPanel'
-import { Boundary, canvasFor, linkEnds, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
+import { Boundary, canvasFor, midPoint, noteRect, pathToScreen, SceneDrag } from '../model/canvas'
 import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
-import { holdsDisplay } from '../model/moduleThumbnails'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
   CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
@@ -26,14 +25,13 @@ import {
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
 import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggle } from './controls'
-import { DisplayContent } from './display'
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
 import { visualizationTemplates } from '../model/visualizationTemplates'
 
 // Kept here for the views that import them from the canvas.
-export { DEFINITION_DRAG, DisplayContent, openWorkflowWindow }
+export { DEFINITION_DRAG, openWorkflowWindow }
 export const kindIcon = (k: string) => (KIND_ICON as Record<string, string>)[k] ?? 'circle'
 export const noteColor = (id: J | string | undefined) => {
   const c = typeof id === 'string' ? id : str(id as J | undefined)
@@ -65,7 +63,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const [pending, setPending] = useState<{ from: [CardKey, string]; fromOutput: boolean; point: Pt }>()
   const [marquee, setMarquee] = useState<{ start: Pt; end: Pt }>()
   const [panning, setPanning] = useState(false)
-  const [frameDrag, setFrameDrag] = useState<{ card: CardKey; dx: number; dy: number }>()
   const [noteDrag, setNoteDrag] = useState<{ id: string; dx: number; dy: number }>()
   const [hover, setHover] = useState<HoverTarget>()
   const [hoverAt, setHoverAt] = useState<Pt>({ x: 0, y: 0 })
@@ -95,7 +92,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const cam = cv.camera
   const z = cam.zoom
   const scope = tab.scope
-  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || frameDrag || noteDrag)
+  const interacting = !!(cardDrag || pending || marquee || panning || boundaryDrag || noteDrag)
   const screen = (w: Pt) => cv.screen(w)
   const local = (e: { clientX: number; clientY: number }): Pt => {
     const r = root.current?.getBoundingClientRect()
@@ -124,7 +121,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     const el = root.current
     if (!el) return
     const onWheel = (e: WheelEvent) => {
-      if ((e.target as HTMLElement).closest('.cv-find, .display-scroll, .cv-draft-edit')) return
+      if ((e.target as HTMLElement).closest('.cv-find, .cv-draft-edit')) return
       e.preventDefault()
       clearHover()
       const r = el.getBoundingClientRect()
@@ -203,7 +200,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       else n.add(k)
       tab.selectedConnection = undefined
       // Adding to the selection keeps what a marquee caught.
-      tab.setSelection(n, tab.selectedNotes, tab.selectedFrames)
+      tab.setSelection(n, tab.selectedNotes)
     } else {
       tab.selectedConnection = undefined
       tab.setSelection([k])
@@ -363,7 +360,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         const r = { x: Math.min(a.x, b.x), y: Math.min(a.y, b.y), width: Math.abs(b.x - a.x), height: Math.abs(b.y - a.y) }
         tab.selectedConnection = undefined
         const items = scene.itemsIn(r)
-        tab.setSelection(items.cards, items.notes, items.frames)
+        tab.setSelection(items.cards, items.notes)
       })
       return
     }
@@ -391,7 +388,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         if (!tab.selection.has(k)) tab.setSelection([k])
         keys = new Set(tab.selection)
       }
-      setCardDrag({ keys, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+      setCardDrag({ keys, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
     }, (ev, moved) => {
       setCardDrag(undefined)
       if (!moved || !keys) return select(k, toggle)
@@ -400,14 +397,14 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   }
 
   const moveSelection = (dx: number, dy: number) =>
-    cv.moveSelection(tab.selection, tab.selectedNotes, tab.selectedFrames, dx, dy, prefs.showGrid ? prefs.gridSize : undefined)
+    cv.moveSelection(tab.selection, tab.selectedNotes, dx, dy, prefs.showGrid ? prefs.gridSize : undefined)
 
-  /** Drags the selection from one of its notes or frames. */
+  /** Drags the selection from one of its notes. */
   const dragSelection = (e: React.PointerEvent) => {
     const start = { x: e.clientX, y: e.clientY }
     drive(e, 3, (ev) => {
       clearHover()
-      setCardDrag({ keys: tab.selection, frames: tab.selectedFrames, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
+      setCardDrag({ keys: tab.selection, dx: (ev.clientX - start.x) / z, dy: (ev.clientY - start.y) / z })
     }, (ev, moved) => {
       setCardDrag(undefined)
       if (moved) moveSelection((ev.clientX - start.x) / z, (ev.clientY - start.y) / z)
@@ -653,59 +650,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         )
       })}
 
-      {scene.outputKeys.map((k) => {
-        const r = scene.frameRect(k)
-        const d = frameDrag?.card === k ? frameDrag : undefined
-        const p = screen(r)
-        return (
-          <OutputFrameView key={'f:' + k} session={session} cardKey={k} zoom={z} selected={tab.selectedFrames.has(k)}
-            style={placed({ x: p.x + (d?.dx ?? 0), y: p.y + (d?.dy ?? 0) }, r.width * z, r.height * z)}
-            onExpand={() => app.openWindow(session, { kind: 'visual', card: k })}
-            onClose={() => cv.closeFrame(k)}
-            onResize={(dx, dy) => session.updateDisplayFrame(k, (f) => {
-              f.set('x', real(Math.round(r.x)))
-              f.set('y', real(Math.round(r.y)))
-              f.set('width', real(Math.round(Math.max(180, r.width + dx / z))))
-              f.set('height', real(Math.round(Math.max(100, r.height + dy / z))))
-            })}
-            onPointerDown={(e) => {
-              if (e.button !== 0) return
-              e.stopPropagation()
-              focus()
-              if (tab.selectedFrames.has(k)) return dragSelection(e)
-              const start = { x: e.clientX, y: e.clientY }
-              let first = true
-              // Follows the pointer while dragged; the layout changes once, on release.
-              drive(e, 3, (ev) => {
-                if (first) tab.setSelection([])
-                first = false
-                setFrameDrag({ card: k, dx: ev.clientX - start.x, dy: ev.clientY - start.y })
-              }, (ev, moved) => {
-                setFrameDrag(undefined)
-                if (!moved) return
-                session.updateDisplayFrame(k, (f) => {
-                  f.set('x', real(Math.round(r.x + (ev.clientX - start.x) / z)))
-                  f.set('y', real(Math.round(r.y + (ev.clientY - start.y) / z)))
-                  f.set('width', real(r.width))
-                  f.set('height', real(r.height))
-                })
-              })
-            }}
-            onContextMenu={(e) => showMenu(e, [
-              { label: L('拡大して表示'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
-              { label: L('チャットに参照を追加'), action: () => app.chat(session).addReference({ kind: 'display', card: k }) },
-              'divider',
-              { label: L('枠を削除（Card は残ります）'), action: () => cv.closeFrame(k) },
-            ])} />
-        )
-      })}
-
-      {/* The link's ports, where the link meets the Card and the frame. */}
-      {wires.filter((w) => w.style === 'display').flatMap((w, i) => linkEnds(w.d).map((p, j) => {
-        const s = screen(p)
-        return <span key={`l${i}:${j}`} className="cv-link-dot" style={{ left: s.x - 3.5, top: s.y - 3.5 }} />
-      }))}
-
       {session.notes(scope).map((n) => {
         const id = str(get(n, 'id'))
         if (!id) return null
@@ -768,7 +712,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       })}
 
       <WritingPanels writers={app.chat(session).writers} team={app.chat(session).team} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)}
-        obstacles={() => [...scene.cardKeys.map((k) => scene.cardRect(k)), ...scene.outputKeys.map((k) => scene.frameRect(k))]}
+        obstacles={() => scene.cardKeys.map((k) => scene.cardRect(k))}
         screen={screen} zoom={z} size={cv.size} />
       <HelperBirds chat={app.chat(session)} known={(k) => scene.cardKeys.includes(k)} rect={(k) => scene.outlineRect(k)} screen={screen} zoom={z} size={cv.size} />
 
@@ -879,6 +823,7 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     { label: L('設定…'), action: () => app.openWindow(session, { kind: 'card', card: k }) },
     { label: L('コメント…'), action: () => app.openWindow(session, { kind: 'card', card: k, category: 'notes' }) },
     { label: L('実行履歴…'), action: () => app.openWindow(session, { kind: 'executions', card: k }) },
+    kind === 'code' && { label: L('可視化を開く'), action: () => app.openWindow(session, { kind: 'visual', card: k }) },
     { label: L('成果物…'), action: () => app.openWindow(session, { kind: 'artifacts', card: k }) },
     { label: L('ログを表示'), action: () => showLog(workspace, k) },
     { label: L('Skill を実行'), submenu: app.chat(session).skills.filter(s => s.scoped).map(s => ({ label: `$${s.name} (${s.scope?.join(', ') ?? ''})`, disabled: app.chat(session).busy, action: () => {
@@ -897,9 +842,6 @@ export function cardMenu(workspace: Workspace, session: ProjectSession, tab: Wor
     'divider',
     { label: L('複製'), disabled: !editable, action: () => void session.duplicate(targets, tab.scope).then((s) => tab.setSelection(s)) },
     { label: session.collapsed(k) ? L('展開') : L('折りたたむ'), action: () => session.setCollapsed(targets, !session.collapsed(k)) },
-    get(session.displayFrame(k), 'hidden') === true && {
-      label: L('出力表示を戻す'), action: () => session.updateDisplayFrame(k, (f) => f.set('hidden', undefined)),
-    },
     [...targets].some((t) => session.hasPortOrder(t)) && {
       label: L('ポートの並びを元に戻す'), disabled: !editable, action: () => session.resetPortOrder(targets),
     },
@@ -1012,44 +954,6 @@ function ResizeHandle({ onEnd }: { onEnd: (dx: number, dy: number) => void }) {
       }}>
       <Icon name="arrow.down.right.and.arrow.up.left" size={8} />
     </span>
-  )
-}
-
-/** A Card's result in its own movable frame. */
-function OutputFrameView({ session, cardKey, zoom: z, selected, onExpand, onClose, onResize, ...ev }: {
-  session: ProjectSession; cardKey: CardKey; zoom: number; selected: boolean; onExpand: () => void; onClose: () => void; onResize: (dx: number, dy: number) => void
-} & ItemEvents) {
-  const figure = session.figureState(cardKey)
-  const latest = session.displays.get(cardKey)
-  const hold = holdsDisplay(figure)
-  const settled = useRef(hold ? undefined : latest)
-  useLayoutEffect(() => { if (!hold) settled.current = latest }, [hold, latest])
-  const d = hold ? settled.current : latest
-  const stop = (e: React.PointerEvent | React.MouseEvent) => e.stopPropagation()
-  return (
-    <div className={`cv-frame${selected ? ' selected' : ''}`} {...ev} style={{ ...ev.style, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
-      <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
-        <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
-        <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{session.displayName(cardKey)}</span>
-        {d && session.markForRun(d.runId) && <span style={{ fontSize: 9 * z }}>{session.markForRun(d.runId)}</span>}
-        {d && (
-          <span className="mono-digits nowrap" style={{ fontSize: 9 * z }} title={L('Run {0} の中で、この Card の {1} 回目の実行の結果', d.runId, d.invocation)}>
-            {L('Run {0} · 実行 #{1}', d.runId.slice(0, 6), d.invocation)}
-          </span>
-        )}
-        <span style={{ flex: 1 }} />
-        <button type="button" className="cv-icon-button" title={L('拡大して表示')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onExpand() }}>
-          <Icon name="arrow.up.left.and.arrow.down.right" size={11 * z} />
-        </button>
-        <button type="button" className="cv-icon-button" title={L('枠を削除（Card は残ります）')} onPointerDown={stop} onDoubleClick={stop} onClick={(e) => { e.stopPropagation(); onClose() }}>
-          <Icon name="xmark" size={11 * z} />
-        </button>
-      </div>
-      <div className="cv-frame-body" aria-busy={hold} style={{ opacity: hold ? 0.4 : 1 }}>
-        <DisplayContent display={d} zoom={z} emptyNote={session.noResultNote(cardKey)} figure={figure.mode === 'live' ? figure : undefined} />
-      </div>
-      <ResizeHandle onEnd={onResize} />
-    </div>
   )
 }
 

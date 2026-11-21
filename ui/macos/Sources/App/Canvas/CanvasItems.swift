@@ -30,6 +30,7 @@ struct CardMenu: View {
     Button("設定…") { openWindow(id: "card", value: ref) }
     Button("コメント…") { openWindow(id: "card", value: CardRef(path: ref.path, card: cardKey, category: .notes)) }
     Button("実行履歴…") { openWindow(id: "executions", value: ref) }
+    if kind == .code { Button("可視化を開く") { openWindow(id: "visual", value: ref) } }
     Button("成果物…") { openWindow(id: "artifacts", value: ref) }
     Button("ログを表示") { workspace.showLog(for: cardKey) }
     Menu("Skill を実行") {
@@ -53,9 +54,6 @@ struct CardMenu: View {
     Button("複製") { Task { tab.selection = await session.duplicate(targets, in: tab.scope) } }
       .disabled(!session.isEditable)
     Button(session.collapsed(cardKey) ? "展開" : "折りたたむ") { session.setCollapsed(targets, !session.collapsed(cardKey)) }
-    if session.displayFrame(cardKey)?["hidden"]?.bool == true {
-      Button("出力表示を戻す") { session.updateDisplayFrame(cardKey) { $0["hidden"] = nil } }
-    }
     if targets.contains(where: { session.hasPortOrder($0) }) {
       Button("ポートの並びを元に戻す") { session.resetPortOrder(targets) }
         .disabled(!session.isEditable)
@@ -172,60 +170,6 @@ struct ResizeHandle: View {
   }
 }
 
-/// A Card's result in its own movable frame.
-struct OutputFrameView: View {
-  let session: ProjectSession
-  let cardKey: CardKey
-  var selected = false
-  let onExpand: () -> Void
-  let onClose: () -> Void
-  let onResize: (CGSize) -> Void
-  @Environment(\.canvasZoom) private var z
-  @State private var settled: DisplaySnapshot?
-
-  private struct DisplayChange: Equatable {
-    let hold: Bool
-    let runId: String?
-    let invocation: UInt64?
-    let revision: UInt64?
-  }
-
-  var body: some View {
-    let figure = session.figureState(cardKey)
-    let latest = session.displays[cardKey]
-    let display = figure.holdsDisplay ? settled : latest
-    VStack(alignment: .leading, spacing: 4 * z) {
-      HStack(spacing: 6 * z) {
-        Image(systemName: "chart.xyaxis.line").font(.system(size: 10 * z)).foregroundStyle(.purple)
-        Text(session.displayName(cardKey)).font(.system(size: 10 * z, weight: .bold)).lineLimit(1)
-        if let d = display {
-          if let mark = session.markForRun(d.runId) { Text(mark).font(.system(size: 9 * z)) }
-          Text("Run \(String(d.runId.prefix(6))) · 実行 #\(d.invocation)").font(.system(size: 9 * z).monospacedDigit()).foregroundStyle(.secondary)
-            .help("Run \(d.runId) の中で、この Card の \(d.invocation) 回目の実行の結果")
-        }
-        Spacer()
-        Button(action: onExpand) { Image(systemName: "arrow.up.left.and.arrow.down.right").font(.system(size: 11 * z)) }
-          .buttonStyle(.borderless).help("拡大して表示")
-        Button(action: onClose) { Image(systemName: "xmark").font(.system(size: 11 * z)) }
-          .buttonStyle(.borderless).help("枠を削除（Card は残ります）")
-      }
-      .foregroundStyle(.secondary)
-      DisplayContent(display: display, zoom: z, emptyNote: session.noResultNote(cardKey),
-                     figure: figure.mode == .live ? figure : FigureState())
-        .opacity(figure.holdsDisplay ? 0.4 : 1)
-    }
-    .onChange(of: DisplayChange(hold: figure.holdsDisplay, runId: latest?.runId, invocation: latest?.invocation,
-                                revision: latest?.revision), initial: true) {
-      if !figure.holdsDisplay { settled = latest }
-    }
-    .padding(8 * z)
-    .background(RoundedRectangle(cornerRadius: 8 * z).fill(Color(nsColor: .windowBackgroundColor)))
-    .overlay(RoundedRectangle(cornerRadius: 8 * z).strokeBorder(Color.purple.opacity(0.45)))
-    .overlay { if selected { RoundedRectangle(cornerRadius: 8 * z).strokeBorder(Color.accentColor, lineWidth: 2.4) } }
-    .overlay(alignment: .bottomTrailing) { ResizeHandle(onEnd: onResize) }
-  }
-}
-
 /// Renders a Display value (text, Markdown, scalar, line chart, table, …) at
 /// `zoom` (on the canvas) or larger (`large`, the expanded viewer).
 struct DisplayContent: View {
@@ -234,8 +178,6 @@ struct DisplayContent: View {
   var zoom: CGFloat = 1
   /// Why there is no result, when it is not that nothing has run yet.
   var emptyNote: String?
-  /// How a chart preview on the canvas follows the Card's results.
-  var figure = FigureState()
 
   @State private var tablePage = 0
 
@@ -316,14 +258,9 @@ struct DisplayContent: View {
     case .points(let x, let y, let z, let colors)?:
       PointCloudView(identity: display?.identity, x: x, y: y, z: z, colors: colors)
     case .module(let name, let json, let blobs)?:
-      // Interactive in the expanded view; on the canvas a picture of the figure.
-      if large {
-        ModuleViewer(name: name, json: json, blobs: blobs, interactive: true, zoom: zoom)
-      } else {
-        ModuleThumbnail(name: name, json: json, blobs: blobs, lineage: "\(display?.runId ?? "")#\(display?.invocation ?? 0)", zoom: zoom, figure: figure)
-      }
+      ModuleViewer(name: name, json: json, blobs: blobs, interactive: true, zoom: zoom)
     case nil where large:
-      ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text("実行すると表示されます。"))
+      ContentUnavailableView("まだ結果がありません", systemImage: "chart.xyaxis.line", description: Text(emptyNote ?? String(localized: "実行すると表示されます。")))
     case nil:
       Text(emptyNote ?? String(localized: "まだ結果がありません（実行すると表示されます）"))
         .font(.system(size: size(10, 13))).foregroundStyle(.secondary)
