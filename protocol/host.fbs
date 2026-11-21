@@ -500,8 +500,9 @@ table InputType {
 }
 table InputTypes { rev:ulong = null; inputs:[InputType]; }
 
-// Pure editing support: paths select a language and label diagnostics, never files.
-table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
+// Format supplied editor text. The .json or .nix extension selects the formatter
+// and the supplied path labels diagnostics.
+table FileFormatRequest { path:string (required); text:string (required); }
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
 // Language applies on every read, including commits/runs created by another client.
 table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }

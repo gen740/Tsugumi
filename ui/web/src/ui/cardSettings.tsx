@@ -1483,10 +1483,12 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, session.rev])
 
+  const canFormat = (p: string) => /[^/]\.(json|nix)$/.test(p)
+
   const format = async (p: string) => {
     const rpc = session.rpc
     const source = model.loadedText(p)
-    if (!rpc || source === undefined || formatting) return
+    if (!rpc || !canFormat(p) || source === undefined || formatting) return
     setFormatting(true)
     try {
       const r = await hostCall<H.FileFormatResultT>(H.RequestPayload.FileFormatRequest,
@@ -1544,7 +1546,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
           : model.isEdited(p) ? <span className="caption2" style={{ color: 'var(--orange)' }}>{L('未適用')}</span> : null}
         <span className="spacer" />
         {formatMessage && <span className="caption secondary ellipsis">{formatMessage}</span>}
-        {!generatedFile && (
+        {!generatedFile && canFormat(p) && (
           <Button small disabled={formatting || model.loadedText(p) === undefined} help={L('ソースコードを整形（{0}）', prefs.label('formatSource'))}
             onClick={() => void format(p)}>{L('整形')}</Button>
         )}
@@ -1599,7 +1601,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   const editor = (
     <div key="editor" className="src-pane" onKeyDown={(e) => {
-      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED)) return
+      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED) || !canFormat(shown)) return
       if (prefs.action(e.nativeEvent, false) === 'formatSource') {
         e.preventDefault()
         e.stopPropagation()

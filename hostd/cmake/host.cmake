@@ -51,11 +51,9 @@ add_library(tsugumi_host_core STATIC
   ${PROJECT_SOURCE_DIR}/hostd/src/projects.cc
   ${_tsugumi_host_environment_sources}
 )
-# Absolute paths to the pinned host tools. Empty means unavailable; never search PATH.
-foreach(tool CLANG RUFF NIX SH)
-  set(TSUGUMI_FORMAT_${tool} "" CACHE STRING "Host formatter ${tool}: absolute path or @bundle/name on macOS")
-  target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_FORMAT_${tool}="${TSUGUMI_FORMAT_${tool}}")
-endforeach()
+# Empty disables Nix formatting.
+set(TSUGUMI_FORMAT_NIX "" CACHE STRING "nixfmt: absolute path or @bundle/name on macOS")
+target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_FORMAT_NIX="${TSUGUMI_FORMAT_NIX}")
 if(APPLE)
   target_link_libraries(tsugumi_host_core PRIVATE "-framework CoreFoundation")
 else()

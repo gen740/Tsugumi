@@ -1629,7 +1629,7 @@ private struct SourceCategory: View {
       else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
       Spacer()
       if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-      if !generatedFile {
+      if !generatedFile && canFormat(path) {
         Button("整形") { format(path) }.disabled(formatting || model.loadedText(path) == nil).controlSize(.small)
           .shortcut(.formatSource)
           .help(tip(String(localized: "ソースコードを整形"), .formatSource))
@@ -1716,8 +1716,12 @@ private struct SourceCategory: View {
     }
   }
 
+  private func canFormat(_ path: String) -> Bool {
+    ["json", "nix"].contains((path as NSString).pathExtension)
+  }
+
   private func format(_ p: String) {
-    guard model.session.rpc != nil, let source = model.loadedText(p) else { return }
+    guard !formatting, canFormat(p), model.session.rpc != nil, let source = model.loadedText(p) else { return }
     formatting = true
     Task {
       do {

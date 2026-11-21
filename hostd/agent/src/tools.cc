@@ -399,14 +399,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
     H::FileFormatRequestT request;
     request.path = json::Text(args, "path");
     request.text = json::Text(args, "text");
-    const auto language = json::Text(args, "language");
-    bool known = language.empty();
-    for (auto value : Tsugumi::Data::EnumValuesFormatLanguage())
-      if (language == Tsugumi::Data::EnumNameFormatLanguage(value)) {
-        request.language = value;
-        known = true;
-      }
-    if (!known) throw Failure("unsupported", "Unknown formatting language");
     auto formatted = host::Format(request);
     std::vector<std::string> diagnostics;
     for (const auto& d : formatted.diagnostics) {

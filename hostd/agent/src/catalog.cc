@@ -297,9 +297,8 @@ auto Catalog::shared() const -> json::Members {
 Catalog::Catalog() {
   tools_.push_back(
       {{"project_file_format",
-        "Return formatted text for path and language using the host's "
-        "formatter.",
-        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
+        "Format supplied editor text for a .json or .nix path.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"additionalProperties":false})"},
        "FileFormatRequest",
        false,
        false,

@@ -628,7 +628,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRecentForgetRequest` | `paths: [string]` |
 | `LayoutValidateRequest` | `json: string` (required), `removed_cards: [string]` |
 | `VersionCanvasRequest` | `layout_json: string` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
-| `FileFormatRequest` | `path: string` (required), `text: string` (required), `language: FormatLanguage` |
+| `FileFormatRequest` | `path: string` (required), `text: string` (required) |
 | `HostVersionGraphRequest` | `project: string` (required), `language: string`, `limit: uint` |
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
 | `PermissionKindsRequest` | `language: string` |
