@@ -18,7 +18,10 @@ table JobSpec {
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
-
+  // Names of the Card secrets the Card's process receives. Their values are
+  // never part of the spec: they arrive in a JobSecretsRequest just before the
+  // process starts and are kept only in memory.
+  secrets:[string];
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
@@ -37,12 +40,19 @@ table CancelRequest { fingerprint:string (required); log_offset:ulong; log_limit
 table ReleaseRequest { fingerprint:string (required); }
 // Broker-local; never forwarded to the remote listener.
 table CatalogRequest {}
+table CardSecret { name:string (required); value:string (required, trace_secret); }
 // Broker-local: the values of the Card secrets one invocation declares, read
 // from hostd's secret store just before the call, within the project the
 // capability authorizes. The reply lists only the names that are set; the
 // core fails the invocation for any other.
 table CardSecretsRequest { names:[string] (required); }
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest }
+// The values of a running job's Card secrets, for that job only. Accepted once,
+// while the job reports `secrets_wanted`, from its submitting core life, for
+// exactly the names of its spec. The listener hands them to the job's process
+// through memory and keeps no copy; nothing writes them to the journal or any
+// file. A listener restart before delivery fails the job, and nothing resends.
+table JobSecretsRequest { fingerprint:string (required); secrets:[CardSecret] (required); }
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -53,7 +63,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 10.
+  // Zero means no advertised contract; writers explicitly send contract 11.
   worker_contract:uint;
   active_jobs:uint;
 }
@@ -64,10 +74,12 @@ table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ub
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
   // Echo of the requested cursor, the log's current size, and its bytes from
   // log_offset. Bytes may end inside a JSONL entry. Status and Cancel replies.
-  log_offset:ulong; log_size:ulong; log_bytes:[ubyte]; }
+  log_offset:ulong; log_size:ulong; log_bytes:[ubyte];
+  // The running job has built its environment and waits for the values of
+  // its spec's Card secrets (JobSecretsRequest) before its process starts.
+  secrets_wanted:bool; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
-table CardSecret { name:string (required); value:string (required, trace_secret); }
 table CardSecrets { secrets:[CardSecret] (required); }
 union ReplyBody { Capabilities, Catalog, BlobChunk, JobStatus, Ack, Failure, CardSecrets }
 table Reply { body:ReplyBody (required); }

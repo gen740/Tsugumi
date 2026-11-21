@@ -53,6 +53,26 @@ auto validate_log_limit(const R::JobSpecT& spec) -> void {
       spec.log_limit_bytes > kInvocationLogLimitBytes)
     throw Error(R::ErrorCode::Invalid, "invalid invocation log limit");
 }
+auto validate_secret_names(const R::JobSpecT& spec) -> void {
+  if (spec.secrets.size() > 256)
+    throw Error(R::ErrorCode::Invalid, "too many Card secret names");
+  std::set<std::string_view> seen;
+  for (const auto& name : spec.secrets) {
+    const bool valid =
+        !name.empty() && name.size() <= 64 && name[0] >= 'a' &&
+        name[0] <= 'z' && std::ranges::all_of(name, [](char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        });
+    if (!valid || !seen.insert(name).second)
+      throw Error(R::ErrorCode::Invalid, "invalid Card secret name");
+  }
+}
+auto clear_secret(std::string& value) -> void {
+  volatile char* bytes = value.data();
+  for (size_t i = 0; i < value.size(); ++i) bytes[i] = 0;
+  value.clear();
+  value.shrink_to_fit();
+}
 auto terminal(R::JobState state) -> bool {
   return state == R::JobState::Succeeded || state == R::JobState::Failed ||
          state == R::JobState::Cancelled || state == R::JobState::Interrupted ||

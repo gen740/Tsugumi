@@ -204,7 +204,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->log_truncated,
           j->log_offset,
           j->log_size,
-          std::string(j->log_bytes.begin(), j->log_bytes.end())};
+          std::string(j->log_bytes.begin(), j->log_bytes.end()),
+          j->secrets_wanted};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -425,6 +426,23 @@ auto RemoteJobClient::release(std::string_view service,
   R::ReleaseRequestT body;
   body.fingerprint = fingerprint;
   require_ack(request(command(std::move(body), service, instance, job)));
+}
+auto RemoteJobClient::deliver_secrets(
+    std::string_view service, std::string_view instance, std::string_view job,
+    std::string_view fingerprint,
+    std::vector<std::pair<std::string, std::string>>& secrets,
+    std::stop_token stop) const -> void {
+  R::JobSecretsRequestT body;
+  body.fingerprint = fingerprint;
+  for (auto& [name, value] : secrets) {
+    auto secret = std::make_unique<R::CardSecretT>();
+    secret->name = name;
+    secret->value = std::move(value);
+    workerd::clear_secret(value);
+    body.secrets.push_back(std::move(secret));
+  }
+  secrets.clear();
+  require_ack(request(command(std::move(body), service, instance, job), stop));
 }
 auto RemoteJobClient::card_secrets(const std::vector<std::string>& names,
                                    std::stop_token stop) const

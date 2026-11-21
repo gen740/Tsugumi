@@ -57,6 +57,18 @@ A run lives only while the `tsugumid` process that started it lives, on local an
 
 The invocation's **Run History → Info** shows its service, job ID, architecture, limits and last confirmed state. **Disconnected** means the outcome is unconfirmed. Within the same core life, restoring the same registration and journal resumes polling and result transfer, without a second submission. The remote worker contract requires a fresh random `core_life_id` for each core. Each core creates this identity and sends it in scoped requests. Regular status and log exchanges detect a lost connection; there is no separate heartbeat or silence expiry. Another core life cannot resume the job. Independent Card-call/build timeouts and explicit cancellation still apply.
 
+## Card secrets
+
+A Card's [secrets](security.md#card-secrets) reach a remote worker for one job only, and only in memory. The job's `JobSpec` lists the names the Card declares, never a value, so the fingerprint, the journal and the copy of the spec in the job's scratch hold names alone.
+
+1. Before uploading anything, the core checks with hostd that every declared name is set for the project; a missing one fails the invocation, naming it, and nothing is submitted.
+2. The listener starts the job's supervisor with one end of a pipe; only the listener holds the other. The supervisor passes it to the invocation unread, and nothing the invocation starts inherits it.
+3. Once the invocation has realised the Card's environment and only the Card's process remains to start, it creates an empty `work/secrets-wanted` marker, and status replies carry `secrets_wanted`.
+4. The core then reads the values from hostd and sends them in a `JobSecretsRequest` for that job: through hostd's broker, which fills in the project's scope, over the mutually authenticated TLS connection. The listener accepts it once, only from the submitting core life, for the job's fingerprint and exactly its declared names, writes the values into the pipe and closes it. The listener keeps no copy, and the RPC traces of hostd and the core redact the values.
+5. The invocation sets each value as an environment variable of the same name in the Card's process, as locally, and drops its own copy once the call has reached that process. preRun's environment returns to the worker through a pipe too, never a file.
+
+A listener restart before step 4 closes the pipe: the invocation fails, saying the worker restarted before the Card started, and nothing sends the values again; a person runs the Card again. A delivery whose outcome the core cannot confirm is not repeated either; if the values did not arrive, the invocation fails after five minutes. A restart after the values arrived does not affect the job: its supervisor and invocation continue as usual.
+
 ## Journal and scratch lifetime
 
 State defaults to `$XDG_STATE_HOME/tsugumi/remote-execution` or `$HOME/.local/state/tsugumi/remote-execution`; override with `--state-dir` or `TSUGUMI_REMOTE_STATE_DIR`.

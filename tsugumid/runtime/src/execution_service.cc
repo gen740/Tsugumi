@@ -10,6 +10,7 @@
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -172,6 +173,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   };
   invocation.path = build.path;
   invocation.environment = std::move(secrets);
+  invocation.on_call_sent = [&environment = invocation.environment] {
+    for (auto& variable : environment) workerd::clear_secret(variable.second);
+    environment.clear();
+  };
   invocation.worker_binary = sp.worker_binary;
   invocation.output_directory = request.directory / "out";
   if (::geteuid() == 0 && worker_uid_on_host())
