@@ -78,6 +78,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
   - **`cancelled`**;
   - **`remaining_ms`**.
 - Cancellation state is process-global, not thread-local.
+- `tsugumid` wraps each display with the Card's and the run's identity; the worker does not. `WorkerCall` drops `run_id` and `invocation`.
 - Lifetimes:
   - The display callback stays valid for the life of the process.
   - `host` and the other effects are valid only during the call.
@@ -86,6 +87,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 **Today.**
 
 - The ABI 8 function table also carries logging, failures and JSON conversion.
+- The worker fills the Card, `run_id` and invocation of each `Display` (`protocol/data.fbs`), and `WorkerCall` carries them.
 - The SDKs give `Report` and `Run` objects whose callbacks belong to one invocation. A retained one rejects later calls: for example C# throws `ObjectDisposedException` ([C#](CSharp.md)), and Python's Matplotlib display does nothing outside a call (`sdk/python/tsugumi/mpl.py`).
 
 ## Display after the call returns
@@ -94,14 +96,14 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 - A display that a Card's own thread sends after the call has returned is not an error, and it can keep updating. This widens what Cards can do.
 - It is appended, not overwritten, to the invocation that was started most recently when it arrived, together with its arrival time. The history therefore shows that it came after the return.
-- Each display call says whether that display is kept in the record.
+- Each display call says whether that display is kept in the record. When the flag is omitted, the display is **not** recorded.
 - A frame with a stale `call_id` must not kill the worker.
 
 **Today.**
 
 - `on_display` in `tsugumid/runtime/src/scheduler.cc` drops a display whose run, Card or invocation is not the current one.
 - Each display replaces the previous one. Only the latest display of each invocation, and of each Card in a run, is stored (`History::put_display`, `INSERT OR REPLACE`).
-- Earlier displays of an invocation are shown live and not recorded. No option chooses this: it follows from replacement. The per-call flag replaces that implicit rule with an explicit choice on each display call.
+- Earlier displays of an invocation are shown live and not recorded. No option chooses this: it follows from replacement.
 - A frame with an unknown `call_id` fails the call with `worker_failed` (`workerd/src/worker_proc.cc`).
 
 ## Failures
@@ -145,5 +147,3 @@ These questions are not decided yet:
 
 - How `[report]` is made optional in C++: an overload chosen by archive member, or always passing `Report`.
 - An opt-in accessor for the raw tables.
-
-One proposal touches the display path; it is listed with the other proposals under [The sandbox contract: Open](SandboxContract.md#open): moving the identity wrapping of displays to `tsugumid`.

@@ -12,9 +12,13 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 - The contract fixes meanings, not path strings.
 - Each kind of worker implements the contract with its own means: bubblewrap on Linux, and Seatbelt with the environment on native macOS.
 - The environment, `HOME`, `TMPDIR` and the working directory are fixed for the lifetime of the process.
+- The contract states what the worker **provides**. It does not defend against the Card's own code: `main.so` shares the worker's address space.
+- So that nothing about identity is left for the Card to see, the identity wrapping of displays moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id` and `invocation` ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
+- The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
 
 **Today.**
 
+- `WorkerCall` carries `run_id`, the Card and the invocation (`protocol/worker.fbs`).
 - The working directory and the environment are set again on each call ([Worker state](CardGuide.md#worker-state)).
 - Each call also sets `HOME` to the worker's work directory.
 
@@ -44,12 +48,15 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 | Working directory = `HOME` | yes | The process. With `reuseWorker` it carries across invocations and runs of the same Card | Other processes, and runs of other Cards |
 | TMP | yes | The path is fixed for the process; the contents are cleared for each invocation | Other runs |
 
+`/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care.
+
 File and Directory outputs are created under the working directory ([Card ABI 9](CardABI.md#file-and-directory-outputs)).
 
 **Today.**
 
 - `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories.
 - The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [Security §4](security.md#sandbox-true-the-default)).
+- bubblewrap mounts an in-memory tmpfs at `/tmp`, separate from `TMPDIR` (`workerd/src/worker_proc.cc`).
 
 ## File and Directory inputs
 
@@ -76,18 +83,32 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - the GUI;
   - the network.
 - Grants reach the Card as environment variables.
+- The TLS CA is confined to the Card. It defaults to Nix's `cacert` and never comes from the launcher's environment.
 - **I/O that the Card starts through a grant is an explicitly permitted side effect.** For example, a Card can download from the network or write into a read-write host path. "Run data travel only on `tsugumid`'s channel" ([The core and the Card SDK](CoreAndSDK.md#philosophy-constraints-that-still-hold)) covers Tsugumi's own transport, not what a Card does through its grants.
 
 **Today.**
 
 - `network` and `hostFolders` are set in `_card.json`. A host folder is mounted at `/host/<name>`, read-only by default ([Outside access](features.md#outside-access-experimental)).
 - There is no GUI grant.
+- For a Card with the network, the worker passes on `SSL_CERT_FILE` and `NIX_SSL_CERT_FILE` from its own environment, which it inherits from its launcher (`workerd/src/worker_proc.cc`, `workerd/src/local_client.cc`).
 
 ## Sandbox options and grants are on/off settings
 
 **Decided.**
 
 - Sandbox options and grants are plain on/off settings, shown as individual checkboxes.
+- The options, for now (more can be added later):
+
+  | Option | Meaning |
+  | --- | --- |
+  | `filesystem` | Only the Nix closure, scratch, inputs and enabled host paths are visible |
+  | `network` | Network access |
+  | `pid` | A separate PID namespace |
+  | `ipc` | A separate IPC namespace |
+  | `identity` | uid 65534, with capabilities dropped |
+  | `limits` | cgroup v2 CPU and memory limits, on local Linux workers too |
+  | host paths | Host paths, read-only or read-write |
+  | GUI | The GUI |
 - There is no permission dialog. When a setting is off, the operation fails inside the Card.
 - There is no "declared but not granted" state.
 - Turning every isolation option off means no sandbox; there is no separate no-sandbox mode.
@@ -101,6 +122,8 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 
 - `sandbox` (on by default) is a single Card setting, and `sandbox: false` is a separate mode ([`sandbox: false`](security.md#sandbox-false)).
 - An Agent's save that turns the sandbox off, allows the network or adds a host folder waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
+- Seatbelt on native macOS honours `filesystem` and `network` only partly, and has none of `pid`, `ipc` or `limits`.
+- Local Linux workers have no CPU or memory limits, only a deadline.
 - Remote Cards require filesystem isolation, and host-folder grants are not available on them ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
 
 ## What each kind of worker does today
@@ -141,25 +164,6 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 
 ## Open
 
-**Proposals**, not decided:
+This question is not decided yet:
 
-- The option list, each switchable:
-  - `filesystem`: only the Nix closure, scratch, inputs and enabled host paths are visible;
-  - `network`;
-  - `pid`;
-  - `ipc`;
-  - `identity`: uid 65534, with capabilities dropped;
-  - `limits`: cgroup v2 CPU and memory;
-  - host paths (read-only or read-write);
-  - the GUI.
-
-  Seatbelt honours `filesystem` and `network` only partly, and has none of `pid`, `ipc` or `limits`.
-- The contract defines what the worker provides. It does not defend against the Card's own code, because `main.so` shares the worker's address space. So that there is nothing for the Card to see, the display's identity wrapping moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id` and `invocation`.
-- bubblewrap's `/tmp` is the same place as `TMPDIR`: a bind of scratch, not a tmpfs, cleared for each invocation.
-- The "container" worker kind is dropped. It does not exist; the tests use the shared VM.
-- The TLS CA environment variables come from the Nix closure, not from the launcher's environment.
-
-**Open questions:**
-
-- CPU and memory limits through cgroups on local Linux workers. Native macOS cannot provide them.
 - Whether the UI shows guarantees that a worker cannot give.
