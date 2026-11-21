@@ -1053,18 +1053,26 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
       {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
       {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
         <Section title={L('記録と成果物')}>
-          <Row label={L('入出力を記録')}>
-            <Toggle checked={bool(get(def, 'recordIO')) ?? false} onChange={(v) => model.setSetting('recordIO', v ? true : undefined)} />
-          </Row>
-          <Row label={L('成果物を保持')}>
-            <Toggle checked={bool(get(def, 'retainArtifact')) ?? false} onChange={(v) => model.setSetting('retainArtifact', v ? true : undefined)} />
-          </Row>
+          {([
+            ['recordLogs', L('標準出力と標準エラーを記録')],
+            ['recordDisplays', L('記録指定のある表示を記録')],
+            ['recordIO', L('入出力の値を記録')],
+            ['retainArtifact', L('出力ファイルと成果物を保持')],
+          ] as const).map(([key, label]) => {
+            const value = bool(get(def, key))
+            return <Row key={key} label={label}>
+              <Select value={value === undefined ? 'inherit' : value ? 'on' : 'off'}
+                onChange={(v) => model.setSetting(key, v === 'inherit' ? undefined : v === 'on')}
+                options={[{ value: 'inherit', label: L('プロジェクト設定に従う') },
+                  { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
+            </Row>
+          })}
           {/* Only File / Directory outputs can be kept as artifacts. */}
-          <Row label={L('保持する出力')}>
+          <Row label={L('成果物にする出力')}>
             {keepable.length === 0
               ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('File / Directory の出力がないため、保持できる出力はありません')}</span>
               : <Select value={str(get(def, 'artifactOutput')) ?? ''} onChange={(v) => model.setSetting('artifactOutput', v || undefined)}
-                  options={[{ value: '', label: L('選んでください') },
+                  options={[{ value: '', label: L('なし') },
                     ...keepable.map((p) => ({ value: p.name, label: L('{0}（{1}）', p.name, p.kind === D.PortKind.File ? 'File' : 'Directory') }))]} />}
           </Row>
         </Section>

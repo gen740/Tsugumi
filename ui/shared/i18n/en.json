@@ -1,4 +1,13 @@
 {
+  "標準出力と標準エラーを記録": "Record stdout and stderr",
+  "記録指定のある表示を記録": "Record displays marked for recording",
+  "入出力の値を記録": "Record input and output values",
+  "出力ファイルと成果物を保持": "Keep output files and artifacts",
+  "成果物にする出力": "Output to list as an artifact",
+  "プロジェクト設定に従う": "Use project setting",
+  "記録の既定値": "Recording Defaults",
+  "呼び出しごとのログ上限（バイト）": "Log limit per invocation (bytes)",
+  "0〜1073741824。0 の場合もログは実行中に表示されます。": "0 to 1073741824. Live logs are still shown at 0.",
   "\n…（先頭 256 KiB を表示）": "\n… (the first 256 KiB shown)",
   "\n保持したファイル: {0}": "\nKept file: {0}",
   "\n保持したファイルの内容がありません（scratch は保持履歴ではありません）。": "\nThe kept file content is missing (scratch is separate from retained history).",
