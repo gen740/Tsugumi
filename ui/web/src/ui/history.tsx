@@ -4,10 +4,9 @@ import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
-import { bool } from '../../shared/json'
 import { describeValue } from '../wire/flatjson'
 import { D, R, s, segs, sOpt } from '../wire/rpc'
-import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
+import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
 import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
@@ -22,6 +21,35 @@ export function FailureSourceLink({ failure, onOpenSource }: { failure: D.Failur
   const source = args.get('source'), line = Number(args.get('line'))
   if (!source || !Number.isSafeInteger(line) || line < 1) return null
   return <Row><Button onClick={() => onOpenSource(source, line)}>{args.get('cell') ?? source} · {source}:{line}</Button></Row>
+}
+
+function DeleteRunCategory({ session, runId }: { session: ProjectSession; runId: string }) {
+  const [pending, setPending] = useState<{ target: string; category: R.RunRecordCategory; label: string; refs: string[] }>()
+  const [busy, setBusy] = useState(false)
+  const [error, setError] = useState<string>()
+  const prepare = async (category: R.RunRecordCategory, label: string) => {
+    setBusy(true); setError(undefined)
+    try {
+      const refs = category === R.RunRecordCategory.Files ? await session.runFileReferences(runId) : []
+      setPending({ target: runId, category, label, refs })
+    } catch (e) { setError(errorText(e)) }
+    finally { setBusy(false) }
+  }
+  return <>
+    <MenuButton label={L('記録を削除…')} disabled={busy || session.runActive || !session.connected} items={() =>
+      ([[R.RunRecordCategory.Logs, L('標準出力と標準エラー')],
+        [R.RunRecordCategory.Values, L('値')],
+        [R.RunRecordCategory.Files, L('ファイルと成果物')]] as const)
+        .map(([category, label]) => ({ label, destructive: true, action: () => void prepare(category, label) }))} />
+    {pending && <Confirm title={L('実行 {0} の「{1}」を削除しますか？', pending.target, pending.label)}
+      message={pending.refs.length ? L('参照している実行: {0}。削除後、それらの参照は削除済みと表示されます。', pending.refs.join(', ')) : undefined}
+      confirm={L('削除')} onCancel={() => setPending(undefined)} onConfirm={() => {
+        setBusy(true)
+        void session.deleteRunCategory(pending.target, pending.category).catch(e => setError(errorText(e)))
+          .finally(() => setBusy(false))
+      }} />}
+    {error && <span role="alert" className="callout">{L('削除できませんでした: {0}', error)}</span>}
+  </>
 }
 
 type Filter = 'all' | 'succeeded' | 'failed'
@@ -78,7 +106,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
     return () => {
       alive = false
     }
-  }, [session.lastFinished, session.currentRunId, session.remoteHistoryRevision, session.rpc, cardKey, attempt])
+  }, [session.lastFinished, session.currentRunId, session.remoteHistoryRevision, session.recordingRevision, session.rpc, cardKey, attempt])
   // Another run: its own latest call is shown, never the previous run's number.
   useEffect(() => {
     setInvocation(undefined)
@@ -103,7 +131,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
     return () => {
       alive = false
     }
-  }, [runId, cardKey, cursor, session.rpc, session.remoteHistoryRevision, batchRevision])
+  }, [runId, cardKey, cursor, session.rpc, session.remoteHistoryRevision, session.recordingRevision, batchRevision])
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setRecord(undefined)
@@ -113,7 +141,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
     return () => {
       alive = false
     }
-  }, [runId, invocation, cardKey, session.rpc, session.remoteHistoryRevision, batchRevision])
+  }, [runId, invocation, cardKey, session.rpc, session.remoteHistoryRevision, session.recordingRevision, batchRevision])
 
   if (!loaded) return <div className="center-fill col gap8"><Spinner /><span className="secondary">{L('履歴を読み込んでいます…')}</span></div>
   if (!runs.length && error) {
@@ -184,6 +212,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                   </>}
                 </div>
                 <span className="spacer" />
+                <DeleteRunCategory session={session} runId={runId} />
                 <Button small disabled={record?.exists === false} help={L('この呼び出しのログを「ログ」で開きます')} onClick={() => model.openLog(runId, invocation)}>{L('ログ')}</Button>
               </div>
               <div className="flex1 col min0">
@@ -231,7 +260,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                         {record.orphaned && <Row><span className="secondary">{L('この Card は文書から削除されています。')}</span></Row>}
                       </Section>
                       {/* Not recorded is a setting of this Card, said as such: the section stays, greyed. */}
-                      {rec?.recordIo === false || record.recordingDisabled ? (
+                      {(rec?.recordIo === false || record.recordingDisabled) && !rec?.inputs.length && !rec?.outputs.length ? (
                         <Section title={<span className="history-section-off">{L('入出力（記録していません）')}</span>}>
                           <div className="history-io-off col gap8 pad10">
                             <span className="label secondary"><Icon name="nosign" />{L('この Card は入出力を記録しない設定です。値は残っていません。')}</span>
@@ -268,7 +297,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
 function ValueBox({ v }: { v: D.NamedValueT }) {
   const text = useMemo(() => describeValue({
     name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId),
-    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
+    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, fileDeleted: v.fileDeleted, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
   }), [v])
   return <pre className="value-box selectable">{text}</pre>
 }
@@ -305,13 +334,13 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     void rpc.history(path(cardKey), true, 100).then((p) => {
       if (!alive) return
       setRuns(p.runs)
-      setRunId((cur) => cur ?? (p.runs[0] ? s(p.runs[0].status!.runId) : undefined))
+      setRunId((cur) => p.runs.some(r => s(r.status?.runId) === cur) ? cur : sOpt(p.runs[0]?.status?.runId))
       setError(undefined)
     }).catch((e) => alive && setError(L('成果物を読み込めません: ') + errorText(e))).finally(() => alive && setLoaded(true))
     return () => {
       alive = false
     }
-  }, [session.lastFinished, session.rpc, cardKey, attempt])
+  }, [session.lastFinished, session.recordingRevision, session.rpc, cardKey, attempt])
   useEffect(() => {
     const rpc = session.rpc
     if (!rpc || !runId) return setArtifacts([])
@@ -325,7 +354,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     return () => {
       alive = false
     }
-  }, [runId, cardKey])
+  }, [runId, cardKey, session.recordingRevision])
   const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.kind === D.PortKind.Directory ? m : null)
   useEffect(() => {
     setPreview(undefined)
@@ -366,13 +395,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       </Empty>
     )
   }
-  if (!runs.length) {
-    const retains = bool(session.cardSetting(cardKey, 'retainArtifact')) === true
-    return (
-      <Empty title={L('保持された成果物はありません')} icon="shippingbox"
-        description={retains ? L('成果物を保持する設定です。実行すると、ここに残ります。') : L('この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。')} />
-    )
-  }
+  if (!runs.length) return <Empty title={L('保持された成果物はありません')} icon="shippingbox" />
 
   const q = search.toLowerCase()
   const mark = runMark(runs.find(r => s(r.status?.runId) === runId))

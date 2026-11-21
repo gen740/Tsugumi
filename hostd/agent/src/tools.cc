@@ -264,6 +264,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
   const auto inspected = InspectProject(project, stop);
   const auto policy = ExclusionsFor(project, host::CaptureSaveBase(inspected));
   auto args = json::Object(arguments);
+  if (name == "log_range") args.erase("live");
   const bool recorded = UsesRecordedDefinitions(name);
   policy.CheckRequest(name, args, recorded);
   if (name == "project_inspect") {

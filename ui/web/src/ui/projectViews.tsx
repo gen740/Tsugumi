@@ -5,7 +5,7 @@ import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
 import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
-import { arr, bool, clone, get, isObj, J, JObj, obj, parse, serialize, str } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, JObj, num, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
 import { Button, Confirm, Empty, Form, HSplit, InfoButton, MenuButton, Row, Section, Select, Spinner, TextField, Toggle, Value } from './controls'
@@ -276,6 +276,19 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
   )
 }
 
+const recordingDefaults = {
+  recordLogs: true,
+  recordDisplays: true,
+  recordIO: false,
+  retainArtifact: false,
+}
+type RecordingKey = keyof typeof recordingDefaults
+const recordingKeys = Object.keys(recordingDefaults) as RecordingKey[]
+function projectRecording(project: J) {
+  return Object.fromEntries(recordingKeys.map(k => [k, bool(get(project, k)) ?? recordingDefaults[k]])) as typeof recordingDefaults
+}
+const projectLogLimit = (project: J) => numText(get(project, 'logLimitBytes')) ?? '134217728'
+
 function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [selectedProject, setSelectedProject] = useState(() => clone(session.project))
   const [name, setName] = useState(str(get(session.project, 'name')) ?? '')
@@ -284,21 +297,30 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   const [versionPaths, setVersionPaths] = useState(savedPaths)
   const excludeText = (project: J) => (arr(get(project, 'agentExclude')) ?? app.status?.agentExclude ?? []).map(x => typeof x === 'string' ? x : str(x) ?? '').join('\n')
   const [agentExclude, setAgentExclude] = useState(() => excludeText(session.project))
+  const [recording, setRecording] = useState(() => projectRecording(session.project))
+  const [logLimit, setLogLimit] = useState(() => projectLogLimit(session.project))
+  const savedRecording = projectRecording(selectedProject)
+  const changedRecording = recordingKeys.filter(k => recording[k] !== savedRecording[k])
+  const changedLogLimit = logLimit !== projectLogLimit(selectedProject)
+  const validLogLimit = /^\d+$/.test(logLimit) && Number(logLimit) <= 1073741824
   const [message, setMessage] = useState<string>()
   const [revisionEdit] = useState(() => { const e = new RevisionEdit(); e.reload(session.rev); return e })
   useObserve(revisionEdit)
   const pin = app.status?.nixpkgsPin ?? undefined
   const initialPaths = (arr(get(selectedProject, 'versionPaths')) ?? []).map(x => str(x) ?? '').join('\n')
-  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject)
+  const changed = name !== (str(get(selectedProject, 'name')) ?? '') || pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '') || versionPaths !== initialPaths || agentExclude !== excludeText(selectedProject) || changedRecording.length > 0 || changedLogLimit
   const load = () => {
     setSelectedProject(clone(session.project))
     setName(str(get(session.project, 'name')) ?? '')
     setPkgs(str(get(session.project, 'pkgsPath')) ?? '')
     setVersionPaths(savedPaths)
     setAgentExclude(excludeText(session.project))
+    setRecording(projectRecording(session.project))
+    setLogLimit(projectLogLimit(session.project))
     revisionEdit.reload(session.rev)
   }
   const save = async (overwrite = false) => {
+    if (!validLogLimit) return
     const paths = versionPaths.split(/\r?\n/).filter(x => x.length > 0)
     const before = revisionEdit.jsonBase('tsugumi.json', selectedProject, overwrite)
     const after = clone(before)
@@ -307,8 +329,17 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     if (pkgs !== (str(get(selectedProject, 'pkgsPath')) ?? '')) after.set('pkgsPath', pkgs || 'tsugumi:default')
     if (versionPaths !== initialPaths) after.set('versionPaths', paths)
     if (agentExclude !== excludeText(selectedProject)) after.set('agentExclude', agentExclude.split(/\r?\n/).filter(x => x.length > 0))
+    for (const k of changedRecording) after.set(k, recording[k])
+    if (changedLogLimit) after.set('logLimitBytes', num(Number(logLimit)))
     if (!await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) return
     setSelectedProject(after)
+    const saved = projectRecording(after)
+    setRecording(current => {
+      const next = { ...current }
+      for (const k of recordingKeys) if (current[k] === recording[k]) next[k] = saved[k]
+      return next
+    })
+    setLogLimit(current => current === logLimit ? projectLogLimit(after) : current)
     setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
     setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
     setMessage(L('保存しました。'))
@@ -339,6 +370,16 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section info={L('信頼すると、このプロジェクトの Skill が自動で適用され、組み込み Skill を上書きできます。信頼しなくても、プロジェクトを開いて読むことや、名前を指定して Skill を使うことはできます。')}>
             <Row label={L('このプロジェクトを信頼する')}><Toggle checked={session.projectTrust === 1} disabled={!!session.trustedFolder} onChange={(trusted) => void session.setProjectTrust(trusted)} /></Row>
           </Section>
+          <Section title={L('記録の既定値')}>
+            <Row label={L('標準出力と標準エラーを記録')}><Toggle checked={recording.recordLogs} onChange={recordLogs => setRecording({ ...recording, recordLogs })} /></Row>
+            <Row label={L('記録指定のある表示を記録')}><Toggle checked={recording.recordDisplays} onChange={recordDisplays => setRecording({ ...recording, recordDisplays })} /></Row>
+            <Row label={L('入出力の値を記録')}><Toggle checked={recording.recordIO} onChange={recordIO => setRecording({ ...recording, recordIO })} /></Row>
+            <Row label={L('出力ファイルと成果物を保持')}><Toggle checked={recording.retainArtifact} onChange={retainArtifact => setRecording({ ...recording, retainArtifact })} /></Row>
+            <Row label={L('呼び出しごとのログ上限（バイト）')}>
+              <TextField value={logLimit} onChange={setLogLimit} mono />
+            </Row>
+            <Row><span className={validLogLimit ? 'secondary caption' : 'callout'}>{L('0〜1073741824。0 の場合もログは実行中に表示されます。')}</span></Row>
+          </Section>
           <TrustedFoldersSettings />
           <NixSourceSettings session={session} />
           <Section>
@@ -346,12 +387,13 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}\nagentExclude:\n${agentExclude}`}
+      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `pkgsPath: ${pkgs}`, `versionPaths:\n${versionPaths}`, `agentExclude:\n${agentExclude}`,
+        ...recordingKeys.map(k => `${k}: ${recording[k]}`), `logLimitBytes: ${logLimit}`].join('\n')}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}
         <span className="spacer" />
-        <Button kind="prominent" disabled={!changed || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
+        <Button kind="prominent" disabled={!changed || !validLogLimit || revisionEdit.applying || !session.isEditable} onClick={() => void save()}>{L('保存')}</Button>
       </div>
     </div>
   )

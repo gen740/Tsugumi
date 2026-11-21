@@ -16,7 +16,8 @@ table JobSpec {
   system:string (required); derivation:string (required); output:string (required);
   invocation_sha256:string (required); input_blobs:[string] (required);
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
-  // Core recording policy for combined build/stdout/stderr JSONL bytes.
+  // Core recording policy for captured stdout and stderr bytes. Zero keeps
+  // live transport available and disables persisted stdout/stderr.
   log_limit_bytes:ulong;
   // Names of the Card secrets the Card's process receives. Their values are
   // never part of the spec: they arrive in a JobSecretsRequest just before the

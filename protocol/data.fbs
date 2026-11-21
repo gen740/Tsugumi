@@ -82,6 +82,8 @@ table NamedValue {
   /// SHA-256 (hex) of a recorded File's content, independent of its storage
   /// path. Kept with the record even when the file is no longer available.
   file_content_hash:string (id: 10);
+  /// The run that owned this forwarded file no longer has its file record.
+  file_deleted:bool (id: 11);
 }
 
 // ---- Display ---------------------------------------------------------------

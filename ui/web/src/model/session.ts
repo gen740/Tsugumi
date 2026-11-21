@@ -462,6 +462,7 @@ export class ProjectSession extends Observable {
   displays = new Map<CardKey, DisplaySnapshot>()
   lastFinished = 0
   remoteHistoryRevision = 0
+  recordingRevision = 0
   batchHistoryRevision = 0
   private runBatches = new Map<CardKey, R.RunBatchT>()
   timeline: TimelineEntry[] = []
@@ -846,6 +847,10 @@ export class ProjectSession extends Observable {
         if (d) this.applyDisplay(d)
         break
       }
+      case R.NotificationPayload.RunCategoryDeleteResult:
+        this.recordingRevision++
+        this.changed()
+        break
       case R.NotificationPayload.LogAvailable:
         for (const listener of this.logListeners) listener(e.value as R.LogAvailableT)
         break
@@ -2291,6 +2296,19 @@ export class ProjectSession extends Observable {
     const result = await this.client.deleteRunScratch(uuid(), paths)
     await this.refreshCacheUsage()
     return result
+  }
+
+  async runFileReferences(runId: string): Promise<string[]> {
+    if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
+    const reply = await hostCall<R.RunFileReferencesT>(H.RequestPayload.RunFileReferencesRequest,
+      new H.RunFileReferencesRequestT(this.projectId, runId), H.ReplyPayload.RunFileReferences)
+    return reply.runIds.map(s)
+  }
+
+  async deleteRunCategory(runId: string, category: R.RunRecordCategory) {
+    if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
+    await hostCall<R.RunCategoryDeleteResultT>(H.RequestPayload.RunCategoryDeleteRequest,
+      new H.RunCategoryDeleteRequestT(this.projectId, runId, category, uuid()), H.ReplyPayload.RunCategoryDeleteResult)
   }
 
   async deleteRunHistory(endedBefore: Date | null): Promise<R.RunHistoryDeleteResultT> {

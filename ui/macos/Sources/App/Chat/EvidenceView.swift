@@ -47,7 +47,7 @@ struct EvidenceMarkup: ViewModifier {
         }
         return .handled
       })
-      .task(id: "\(text)|\(session.rev)|\(String(describing: session.lastFinished))") {
+      .task(id: "\(text)|\(session.rev)|\(String(describing: session.lastFinished))|\(session.recordingRevision)") {
         allowed = []
         for href in Self.links(MarkdownDocument.parse(text).blocks) {
           guard !Task.isCancelled else { return }
@@ -118,10 +118,15 @@ struct EvidenceView: View {
         }.frame(maxWidth: .infinity, alignment: .leading)
       }
     }.padding(20).frame(minWidth: 650, minHeight: 450)
-      .task { await load() }
+      .task(id: session.recordingRevision) { await load() }
       .sheet(item: $selected) { EvidenceView(session: session, target: $0) }
   }
   private func load() async {
+    artifact = nil
+    artifactMember = nil
+    preview = nil
+    record = nil
+    rows = []
     if target.kind == "card", let file = target.file, let card = target.card,
        let directory = session.definitionDir(key(card)), let rpc = session.rpc {
       do {

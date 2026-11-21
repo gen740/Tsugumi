@@ -15,13 +15,14 @@ from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
+from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 
 def file_fanout_project(root: Path) -> None:
     write(root,
           defs={"trigger": {"type": "trigger"},
                 "doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
-                        "_outputs": FILE_FBS},
-                "sink": dict(SINK, recordIO=True)},
+                        "_outputs": FILE_FBS, "retainArtifact": True},
+                "sink": dict(SINK, retainArtifact=True)},
           cards=[card("src", "doc"), card("a", "sink"), card("b", "sink")],
           conns=[conn("src", "doc", "a", "in"), conn("src", "doc", "b", "in")],
           files={"definitions/doc/data/report.txt": "quarterly numbers\n"})
@@ -56,9 +57,11 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
     first, st = run_and_wait(c, "src")
     assert st.state == RunState.succeeded
     for branch in ("a", "b"):
-        recorded = recorded_input_json(c, tmp_path / "decode", first, branch)
-        assert Path(recorded["value"]).read_text() == "quarterly numbers\n"
+        record = c.call("RunRecordRequest", runId=first, card=path(branch), invocation=1).record
+        value = next(value for value in record.inputs if text(value.name) == "in")
+        assert Path(text(value.filePath)).read_text() == "quarterly numbers\n"
 
+    c.call("RunCategoryDeleteRequest", runId=first, category=RunRecordCategory.Files, opId=new_id())
     c.call("ProjectCacheClearRequest", opId=new_id())
     _, st2 = run_and_wait(c, "b", propagate=False)
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)

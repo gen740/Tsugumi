@@ -10,6 +10,8 @@ import TsugumiRPC
     let card: [String]?
     let invocation: UInt64?
     let stream: Tsugumi_Data_LogStream
+    let live: Bool
+    let recordingRevision: Int
   }
 
   private(set) var loaded = false
@@ -82,7 +84,7 @@ import TsugumiRPC
   private func available(_ notice: Tsugumi_RPC_LogAvailableT?) {
     guard let source else { return }
     if let notice {
-      guard notice.runId == source.runId, notice.card?.path == source.card,
+      guard notice.live == source.live, notice.runId == source.runId, notice.card?.path == source.card,
             source.invocation == nil || notice.invocation == source.invocation,
             notice.endOffset == nil || notice.stream == source.stream else { return }
       if let end = notice.endOffset, notice.invocation == source.invocation {
@@ -150,7 +152,7 @@ import TsugumiRPC
         let result = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
                                             stream: source.stream, offset: before == nil ? read.offset : 0,
                                             tail: read.kind == .tail, limit: read.limit, before: before,
-                                            terminal: form == .terminal, terminalSince: read.since)
+                                            terminal: form == .terminal, terminalSince: read.since, live: source.live)
         let raw = result.text, offset = result.offset ?? 0, end = result.nextOffset ?? offset
         let size = result.sizeBytes ?? end, line = result.lineNumber, startsLine = result.startsLine
         let truncated = result.logTruncatedAtBytes, rawSize = result.rawSizeBytes, reset = result.reset
@@ -226,7 +228,7 @@ private enum LogExportError: LocalizedError {
     var offset: UInt64 = 0
     while offset < size {
       let slice = try await rpc.logRange(runId: source.runId, card: source.card, invocation: source.invocation,
-                                         stream: source.stream, offset: offset, limit: LogWindow.readBytes)
+                                         stream: source.stream, offset: offset, limit: LogWindow.readBytes, live: source.live)
       guard let next = slice.nextOffset, next > offset else { throw LogExportError.incomplete }
       try output.write(contentsOf: Data(slice.text.utf8.prefix(Int(min(next, size) - offset))))
       offset = next

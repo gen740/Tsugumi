@@ -1,3 +1,4 @@
+import { useObserve } from '../model/observable'
 import { decodeLog } from '../model/logWindow'
 import { runMark } from '../model/runMark'
 import { createContext, ReactNode, useContext, useEffect, useState } from 'react'
@@ -36,6 +37,7 @@ export function evidenceLink(href: string, label: ReactNode): ReactNode | undefi
 }
 function EvidenceLink({ href, children }: { href: string; children: ReactNode }) {
   const context = useContext(EvidenceContext)
+  useObserve(context?.session)
   const [valid, setValid] = useState(false)
   const target = parseEvidence(href)
   useEffect(() => {
@@ -43,7 +45,7 @@ function EvidenceLink({ href, children }: { href: string; children: ReactNode })
     setValid(false)
     if (target && context) void resolveEvidence(context.session, target).then(v => { if (alive) setValid(v) })
     return () => { alive = false }
-  }, [href, context?.session, context?.session.rev, context?.session.lastFinished])
+  }, [href, context?.session, context?.session.rev, context?.session.lastFinished, context?.session.recordingRevision])
   if (!valid || !target || !context) return <span aria-disabled="true" style={{ color: 'var(--secondary)' }} title={L('このプロジェクトに根拠の記録がありません')}>{children}</span>
   return <a href={href} onClick={e => {
     e.preventDefault()
@@ -74,6 +76,7 @@ function EvidenceArtifactExport({ session, target, artifact, member }: { session
 
 /** A cited record opens at its exact run, invocation, stream and byte offset. */
 export function EvidenceView({ session, href }: { session: ProjectSession; href: string }) {
+  useObserve(session)
   const [body, setBody] = useState<ReactNode>(L('読み込み中…'))
   useEffect(() => {
     let alive = true
@@ -116,7 +119,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
           {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
             <h4>{label as string}</h4>
-            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
+            {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, fileDeleted: v.fileDeleted, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
           </section>)}
         </>
       }
@@ -126,6 +129,6 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
     }
     void load().then(v => { if (alive) setBody(v) }).catch(e => { if (alive) setBody(String(e.message ?? e)) })
     return () => { alive = false }
-  }, [session, href])
+  }, [session, href, session.recordingRevision])
   return <div className="scroll pad16"><h2>{L('根拠の記録')}</h2><p className="caption selectable">{href}</p>{body}</div>
 }

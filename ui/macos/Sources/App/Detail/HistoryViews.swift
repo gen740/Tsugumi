@@ -9,6 +9,7 @@ struct ExecutionHistoryRefresh: Equatable {
   let card: CardRunState?
   let connected: Bool
   let remoteHistoryRevision: Int
+  let recordingRevision: Int
 
   @MainActor init(session: ProjectSession, card: CardKey) {
     runId = session.currentRunId
@@ -16,6 +17,7 @@ struct ExecutionHistoryRefresh: Equatable {
     self.card = session.executionBatch(card)?.executionList == true ? nil : session.cardStates[card]
     connected = session.connected
     remoteHistoryRevision = session.remoteHistoryRevision
+    recordingRevision = session.recordingRevision
   }
 }
 
@@ -158,6 +160,7 @@ struct CardExecutionView: View {
               }
             } trailing: {
               if let runId {
+                DeleteRunCategory(session: session, runId: runId)
                 Button("ログ") { model.openLog(runId: runId, invocation: invocation) }
                   .disabled(record?.exists == false).help("この呼び出しのログを「ログ」で開きます")
               }
@@ -220,7 +223,7 @@ struct CardExecutionView: View {
     if let r = record {
       Form {
         infoSection(r)
-        if !ioRecorded {
+        if !ioRecorded, r.record?.inputs.isEmpty != false, r.record?.outputs.isEmpty != false {
           Section {
             Label("この Card は入出力を記録しない設定です。値は残っていません。", systemImage: "nosign")
               .foregroundStyle(.secondary)
@@ -468,6 +471,64 @@ struct ExecutionHistoryControlBounds: PreferenceKey {
 }
 
 /// Retained outputs of one Card: run/invocation → outputs → files → preview.
+private struct DeleteRunCategory: View {
+  let session: ProjectSession
+  let runId: String
+  private struct Selection {
+    let runId: String
+    let category: Tsugumi_RPC_RunRecordCategory
+    let label: String
+    let references: [String]
+  }
+  @State private var selection: Selection?
+  @State private var confirming = false
+  @State private var busy = false
+  @State private var error: String?
+
+  var body: some View {
+    Menu("記録を削除…") {
+      Button("標準出力と標準エラー") { prepare(.logs, String(localized: "標準出力と標準エラー")) }
+      Button("値") { prepare(.values, String(localized: "値")) }
+      Button("ファイルと成果物") { prepare(.files, String(localized: "ファイルと成果物")) }
+    }
+    .disabled(busy || session.runActive || !session.connected)
+    .confirmationDialog(
+      Text("実行 \(selection?.runId ?? "") の「\(selection?.label ?? "")」を削除しますか？"),
+      isPresented: $confirming, titleVisibility: .visible, presenting: selection
+    ) { selection in
+      Button("削除", role: .destructive) {
+        busy = true
+        Task {
+          defer { busy = false }
+          do { try await session.deleteRunCategory(selection.runId, selection.category) }
+          catch let failure { error = String(describing: failure) }
+        }
+      }
+      Button("キャンセル", role: .cancel) {}
+    } message: { selection in
+      if !selection.references.isEmpty {
+        Text("参照している実行: \(selection.references.joined(separator: ", "))。削除後、それらの参照は削除済みと表示されます。")
+      }
+    }
+    if let error {
+      Text("削除できませんでした: \(error)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+    }
+  }
+
+  private func prepare(_ category: Tsugumi_RPC_RunRecordCategory, _ label: String) {
+    busy = true
+    error = nil
+    Task {
+      defer { busy = false }
+      do {
+        let refs = category == .files ? try await session.runFileReferences(runId) : []
+        selection = Selection(runId: runId, category: category, label: label, references: refs)
+        confirming = true
+      } catch let failure { error = String(describing: failure) }
+    }
+  }
+}
+
 struct CardArtifactsView: View {
   let session: ProjectSession
   let cardKey: CardKey
@@ -497,16 +558,13 @@ struct CardArtifactsView: View {
           Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
-        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool == true
-        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox",
-                               description: Text(retains ? "成果物を保持する設定です。実行すると、ここに残ります。"
-                                                         : "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。"))
+        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox")
       } else {
         content
       }
     }
     .navigationTitle(session.displayName(cardKey))
-    .task(id: session.lastFinished) { await loadRuns() }
+    .task(id: ExecutionHistoryRefresh(session: session, card: cardKey)) { await loadRuns() }
   }
 
   private var content: some View {
@@ -573,7 +631,7 @@ struct CardArtifactsView: View {
       }
       if let error { Text(error).font(.caption).foregroundStyle(.red).padding(6) }
     }
-    .task(id: runId) { await loadArtifacts() }
+    .task(id: "\(runId ?? "")|\(session.recordingRevision)") { await loadArtifacts() }
     .task(id: "\(artifactId ?? "")|\(member ?? "")") { await loadPreview() }
   }
 
@@ -588,7 +646,7 @@ struct CardArtifactsView: View {
     guard let rpc = session.rpc else { error = String(localized: "実行環境に接続していません"); return }
     do {
       runs = try await rpc.history(card: path(cardKey), artifactsOnly: true, limit: 100).runs.compactMap { $0 }
-      if runId == nil { runId = runs.first?.status.runId }
+      if !runs.contains(where: { $0.status.runId == runId }) { runId = runs.first?.status.runId }
       error = nil
     } catch { self.error = String(localized: "成果物を読み込めません: ") + "\(error)" }
   }
