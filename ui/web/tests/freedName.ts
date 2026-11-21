@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 // A name a Card has had can be taken again: the new Card (the next Draft)
 // starts without that Card's result and frame.
 import assert from 'node:assert/strict'
@@ -94,7 +94,7 @@ const clean = (s: Session, k: string) => {
 {
   // Copies of Cards start clean too.
   const s = session([])
-  const a = await s.addCard('python', [], { x: 0, y: 0 }, 'a')
+  const a = await addCodeCard(s, { x: 0, y: 0 }, 'a')
   await framed(s, 'a-2')
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])

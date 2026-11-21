@@ -24,6 +24,120 @@ namespace {
 class CancelledCopy : public AgentProjectFixture,
                       public ::testing::WithParamInterface<bool> {};
 
+TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
+  StartProject();
+  const auto folder = directory.path / "sample-template";
+  Write(folder / "start/_card.json", R"({"type":"trigger"})");
+  Write(folder / "plan/_card.json", R"({"type":"draft"})");
+  Write(folder / "plan/src/notes.txt", "source");
+  Write(
+      folder / "tsugumi.json",
+      R"({"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}}]}})");
+  Write(folder / "layout.json",
+        R"({"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}})");
+  H::TemplateAddT addition;
+  addition.name = "Shared name";
+  H::TemplateFolderT local;
+  local.path = folder.string();
+  addition.source.Set(local);
+  auto operate = [&](const H::ProjectOperationBodyUnion& body,
+                     const std::string& op) {
+    H::ProjectOperateRequestT request;
+    request.project_id = project_id;
+    request.op_id = op;
+    request.body = body;
+    return Call(*host, H::RequestPayload::ProjectOperateRequest,
+                [&](Builder& b) {
+                  return H::ProjectOperateRequest::Pack(b, &request).Union();
+                });
+  };
+  auto list = [&] {
+    return Call(*host, H::RequestPayload::TemplateListRequest, [&](Builder& b) {
+      return H::CreateTemplateListRequest(b, b.CreateString(project_id))
+          .Union();
+    });
+  };
+  H::ProjectOperationBodyUnion body;
+  body.Set(addition);
+  const auto added = operate(body, "add-template");
+  ASSERT_TRUE(added.Code().empty()) << added.View();
+  ASSERT_EQ(added.HostValue()
+                ->value_as_ProjectOperationResult()
+                ->reply()
+                ->value_type(),
+            Tsugumi::RPC::ReplyPayload::SaveResult);
+  const auto disk = directory.path / "project";
+  ASSERT_TRUE(std::filesystem::is_regular_file(
+      disk / "templates/Shared name/plan/src/notes.txt"));
+  EXPECT_FALSE(std::filesystem::exists(disk / "definitions/plan"));
+
+  Write(folder / "plan/src/notes.txt", "host source");
+  H::HostTemplateAddRequestT add_host;
+  add_host.addition = std::make_unique<H::TemplateAddT>(addition);
+  auto add_to_host = [&] {
+    return Call(*host, H::RequestPayload::HostTemplateAddRequest,
+                [&](Builder& b) {
+                  return H::HostTemplateAddRequest::Pack(b, &add_host).Union();
+                });
+  };
+  EXPECT_TRUE(add_to_host().Code().empty());
+  EXPECT_EQ(add_to_host().Code(), "value_conflict");
+
+  const auto listed = list();
+  ASSERT_TRUE(listed.Code().empty()) << listed.View();
+  const auto* entries = listed.HostValue()->value_as_TemplateList()->entries();
+  ASSERT_EQ(entries->size(), 2u);
+  EXPECT_EQ(entries->Get(0)->store(), H::TemplateStore::Project);
+  EXPECT_EQ(entries->Get(1)->store(), H::TemplateStore::Host);
+  for (const auto* entry : *entries)
+    EXPECT_EQ(entry->name()->str(), addition.name);
+
+  H::ProjectTemplateCopyT copy;
+  copy.name = addition.name;
+  copy.x = 10;
+  copy.y = 20;
+  auto success = [&](H::TemplateStore store, const std::string& op) {
+    copy.store = store;
+    body.Set(copy);
+    const auto replied = operate(body, op);
+    ASSERT_TRUE(replied.Code().empty()) << replied.View();
+    const auto* reply =
+        replied.HostValue()->value_as_ProjectOperationResult()->reply();
+    ASSERT_EQ(reply->value_type(), Tsugumi::RPC::ReplyPayload::SaveResult);
+  };
+  success(H::TemplateStore::Project, "project-copy");
+  success(H::TemplateStore::Project,
+          "project-copy");  // Replay uses the same IDs.
+  success(H::TemplateStore::Host, "host-copy");
+  const auto document = Read(disk / "tsugumi.json");
+  namespace json = tsugumi::json;
+  const auto graph = json::Object(json::Object(document).at("canvas"));
+  EXPECT_EQ(json::Array(graph.at("cards")).size(), 4u);
+  const auto wires = json::Array(graph.at("connections"));
+  ASSERT_EQ(wires.size(), 2u);
+  auto endpoint = [&](size_t index, const char* end) {
+    return json::Text(json::Object(json::Object(wires[index]).at(end)), "card");
+  };
+  EXPECT_NE(endpoint(0, "from"), endpoint(1, "from"));
+  EXPECT_NE(endpoint(0, "to"), endpoint(1, "to"));
+  EXPECT_EQ(Read(disk / "definitions" / endpoint(0, "to") / "src/notes.txt"),
+            "source");
+  EXPECT_EQ(Read(disk / "definitions" / endpoint(1, "to") / "src/notes.txt"),
+            "host source");
+  const auto layout = json::Object(Read(disk / "layout.json"));
+  const auto positions = json::Object(layout.at("cards"));
+  EXPECT_EQ(std::stod(json::Object(positions.at(endpoint(0, "to"))).at("x")),
+            260);
+
+  copy.name = "../outside";
+  body.Set(copy);
+  EXPECT_EQ(operate(body, "unsafe-template").Code(), "invalid_request");
+  copy.name = "missing";
+  body.Set(copy);
+  EXPECT_EQ(operate(body, "stale-template").Code(), "not_found");
+  EXPECT_EQ(Read(disk / "tsugumi.json"), document);
+}
+
 TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   StartProject();
   const auto first = Conversation("settings-first");

@@ -40,7 +40,7 @@ root_type Outputs;
 
 
 def scaffold_card(language):
-    files = json.loads((ROOT / 'ui/shared/templates' / f'{language}.json').read_text())
+    files = json.loads((ROOT / 'tests/fixtures/card-templates' / f'{language}.json').read_text())
     return {'card': json.loads(files['_card.json']), 'nix': files['default.nix'],
             'outputs': files['_outputs.fbs'].replace('@NAMESPACE@', 'example'),
             'src': {name.removeprefix('src/'): body for name, body in files.items() if name.startswith('src/')}}

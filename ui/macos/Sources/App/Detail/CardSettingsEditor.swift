@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import InputTemplates
 import TsugumiAgentClient
 import TsugumiRPC
 
@@ -95,22 +94,18 @@ final class CardEditorModel {
 
   func implementAs(_ value: String) {
     if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
-      do {
-        guard let files = try InputTemplates.load()[value],
-              let card = files["_card.json"], let outputs = files["_outputs.fbs"] else {
-          throw CocoaError(.fileReadCorruptFile)
+      let boolean = value == DefinitionTemplate.booleanInput.rawValue
+      let type = boolean ? "bool" : "double"
+      definition = .object([("type", .string("input")), ("params", .array([
+        .object([("name", .string("value")), ("type", .string(type)), ("data", boolean ? .bool(false) : .number("0"))])
+      ]))])
+      if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
+        let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
+        if untouched || (!created.contains(p) && texts[p] == nil) {
+          let schema = "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
+          createFile("_outputs.fbs", text: schema)
+          presetOutputs = schema
         }
-        definition = try JSONValue.parse(card)
-        if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
-          let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
-          if untouched || (!created.contains(p) && texts[p] == nil) {
-            let schema = outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card")
-            createFile("_outputs.fbs", text: schema)
-            presetOutputs = schema
-          }
-        }
-      } catch {
-        message = error.localizedDescription
       }
     } else { definition = .object([("type", .string(value))]) }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
@@ -1537,7 +1532,7 @@ private struct SourceCategory: View {
     }
     .onAppear {
       if model.shownFile == nil {
-        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".rb") || $0.hasSuffix(".cs") || ["rmd", "qmd"].contains(($0 as NSString).pathExtension.lowercased()) }) ?? files.first { model.openFile(f) }
+        if let f = files.first { model.openFile(f) }
       }
     }
     .alert("ファイルを作成", isPresented: $showNew) {

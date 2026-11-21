@@ -150,6 +150,7 @@ struct VersionFiles {
   auto descends(const std::string& path) const -> bool {
     if (!Document::valid_version_path(path)) return false;
     if (path == "definitions" || path == "skills" || path == "externals" ||
+        path == "templates" ||
         Document::is_document_file(path + "/_card.json") || includes(path))
       return true;
     return std::any_of(extra.begin(), extra.end(), [&](const auto& p) {
@@ -712,7 +713,7 @@ void Versions::checkout(
   // Untracked and ignored paths survive an ordinary checkout. Give Git the
   // same input here and install this exact tree after validation.
   std::set<std::string> roots{"tsugumi.json", "layout.json", "definitions",
-                              "externals", "skills"};
+                              "externals", "skills", "templates"};
   for (auto* tree : {baseline.get(), target_tree.get()})
     for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
       const std::string name =

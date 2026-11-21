@@ -250,7 +250,8 @@ table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (requ
 table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; folder:string; }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
-table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
+enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Branch, Fork, Merge, Collect }
+table ProjectCreateCard { project_path:string; id:string (required); kind:BuiltinCard; name:string; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {
   project_path:string;
@@ -268,7 +269,21 @@ table ProjectReplaceDocuments { expected_rev:ulong; documents:[ProjectDocument];
 enum ProjectSelectionAction:ubyte { Place, Delete, DeleteDefinitions, DisconnectInputs, DisconnectOutputs, RemoveConnections }
 table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; frames:[string]; connections_json:string; x:double; y:double; scene:LayoutScene; }
 table ProjectReload { expected_rev:ulong; approved_permissions:[string]; }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload }
+enum TemplateStore:ubyte { Unspecified, Project, Host }
+table TemplateEntry { store:TemplateStore; name:string (required); }
+table TemplateListRequest { project_id:string (required); }
+table TemplateList { entries:[TemplateEntry]; }
+// A folder path or a public HTTPS Git repository, ref and template subdirectory.
+table TemplateFolder { path:string (required); }
+table TemplateGit { url:string (required); ref:string (required); subdirectory:string (required); }
+union TemplateSource { TemplateFolder, TemplateGit }
+table TemplateAdd { name:string (required); source:TemplateSource; }
+table HostTemplateAddRequest { addition:TemplateAdd (required); }
+// The project store belongs to the root project, even when copying into a subgraph.
+table ProjectTemplateCopy {
+  project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);
@@ -534,7 +549,7 @@ union RequestPayload {
   DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
-  CardSecretListRequest, CardSecretSetRequest,
+  CardSecretListRequest, CardSecretSetRequest, TemplateListRequest, HostTemplateAddRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -548,7 +563,7 @@ union ReplyPayload {
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
-  CardSecretList,
+  CardSecretList, TemplateList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

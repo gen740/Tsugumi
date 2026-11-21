@@ -119,6 +119,12 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
   std::lock_guard saving(save_mutex);
   const auto& project = operation.project_id;
   auto resolved_context = context;
+  resolved_context.host_templates = dependencies.host_templates;
+  resolved_context.read_template_source = [&](const auto& source) {
+    if (context.origin != "ui")
+      throw Failure("invalid_request", "Adding a template requires approval");
+    return host::ReadTemplateSource(source, stop);
+  };
   resolved_context.demo = [&](const auto& name) {
     const auto folder = demo_references.Project(name);
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
@@ -132,6 +138,63 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
                                   stop, &reply.wire);
                               return reply;
                             });
+}
+
+auto Tools::ListTemplates(const std::string& project, bool agent,
+                          std::stop_token stop) -> H::TemplateListT {
+  const auto base = host::CaptureSaveBase(InspectProject(project, stop));
+  const auto excluded =
+      agent ? std::optional(ExclusionsFor(project, base)) : std::nullopt;
+  auto visible = [&](const auto& path) {
+    return !excluded || !excluded->Contains(path);
+  };
+  H::TemplateListT result;
+  auto entry = [&](H::TemplateStore store, const auto& name) {
+    auto item = std::make_unique<H::TemplateEntryT>();
+    item->store = store;
+    item->name = name;
+    result.entries.push_back(std::move(item));
+  };
+  std::set<std::string> names;
+  std::set<std::string> hidden;
+  for (const auto& path : host::ProjectPaths(base)) {
+    if (!path.starts_with("templates/")) continue;
+    const auto relative = std::string_view(path).substr(10);
+    const auto slash = relative.find('/');
+    if (slash == std::string_view::npos) continue;
+    const std::string name(relative.substr(0, slash));
+    if (!host::TemplateName(name)) continue;
+    if (!visible(path)) hidden.insert(name);
+    const auto card = relative.substr(slash + 1);
+    if (card.ends_with("/_card.json") && card.find('/') == card.rfind('/'))
+      names.insert(name);
+  }
+  for (const auto& name : names)
+    if (!hidden.contains(name) && visible("templates/" + name))
+      entry(H::TemplateStore::Project, name);
+  for (const auto& name :
+       host::HostTemplateNames(dependencies.host_templates)) {
+    const auto root = dependencies.host_templates / name;
+    if (!visible(root)) continue;
+    if (agent) {
+      try {
+        host::ReadHostTemplate(
+            dependencies.host_templates, name,
+            [&](const auto& path) { excluded->Check(path); });
+      } catch (const std::exception&) {
+        continue;
+      }
+    }
+    entry(H::TemplateStore::Host, name);
+  }
+  return result;
+}
+
+auto Tools::AddHostTemplate(const H::TemplateAddT& request,
+                            std::stop_token stop) -> void {
+  const auto contents = host::ReadTemplateSource(request, stop);
+  std::lock_guard saving(save_mutex);
+  host::AddHostTemplate(dependencies.host_templates, request.name, contents);
 }
 
 auto Tools::SaveProject(const std::string& project, json::Members original,
@@ -993,20 +1056,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       call.name == "run_environment_paths") {
     if (!args.contains("limit")) args["limit"] = "8";
   }
-  if (call.name == "document_template") {
-    const auto edit =
-        host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
-    std::vector<std::string> files;
-    for (const auto& file : edit.files)
-      files.push_back(json::Encode(json::Members{
-          {"path", json::Quote(file.path)}, {"text", json::Quote(file.text)}}));
-    return {json::Encode(json::Members{
-                {"definition_json", json::Quote(edit.definition_json)},
-                {"files", json::Encode(files)}}),
-            false,
-            {},
-            {}};
-  }
+  if (call.name == "document_template")
+    throw Failure("invalid_request", "Choose a Card template from a store");
   if (call.name == "demo_list" || call.name == "demo_read") {
     const auto policy = Exclusions(project, stop);
     return {call.name == "demo_list"

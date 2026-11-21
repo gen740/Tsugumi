@@ -39,6 +39,14 @@ Choose **New Project** on Home and select a destination. A new folder is created
 | Duplicate, select a range | `c`; `Shift` + drag |
 | Go back Home | The house button at the top right of the Canvas, or `⌘⇧H` (after any save that is needed; not while running) |
 
+## Reuse Cards from a template
+
+Choose **Add Card → From Template…** on the Canvas or in the Card definitions window. Project and Host templates appear in separate sections. Choose one entry to insert its Cards with fresh IDs and internal connections. A template copied twice produces two independent sets of Cards. Undo removes the whole copy.
+
+Use **Add Template…** to select a folder on the host, or **Import from Git…** to enter a public HTTPS Git repository, a branch, tag or commit, and a template subdirectory. Choose a name and a destination store. A Project template is versioned under the project's `templates/` directory. A Host template is kept under `templates/` in the Host support folder and is available across projects on that host.
+
+A template folder contains one directory per Card, each with the original Card definition and sources. Put internal wiring in the optional `tsugumi.json` fragment using `canvas.connections`. Put positions in the optional `layout.json` fragment using `cards`, keyed by the original Card ID. [Example folders and import values](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
+
 ## Canvas tools
 
 Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its `value` output to a Branch’s `condition` input. Connect the value to route to the Branch’s other input and run with the toggle both ways. The timeline shows which branch ran. The same preset is available when implementing a Draft. [Card types and execution](features.md#2-cards-and-workflows)

@@ -3,7 +3,7 @@ import { operationFixture } from './operationFixture'
 // is checked against the core; unrelated fixtures keep their readable keys.
 import { DisplayGeometriesT, DisplayGeometryT } from '../shared/gen/tsugumi/host'
 import type { ProjectSession } from '../src/model/session'
-import { get, str } from '../shared/json'
+import { get, parse, str } from '../shared/json'
 export function cardIds<T extends ProjectSession>(s: T): T {
   // The same geometry returned by the host (covered by HostLayout's RPC test).
   s.displayGeometries = new DisplayGeometriesT(
@@ -38,3 +38,15 @@ export function cardIds<T extends ProjectSession>(s: T): T {
 }
 
 export const hostEdits = operationFixture
+
+/** Install a Code definition for tests that need one on the canvas. */
+export async function addCodeCard(s: ProjectSession, at: { x: number; y: number }, name = 'card') {
+  const card = await s.addCard('draft', [], at, name)
+  await s.applyMutation(session => {
+    session.updateCard(card, definition => {
+      definition.set('type', 'code')
+      definition.set('inputs', parse('[{"name":"in"}]'))
+    })
+  })
+  return card
+}

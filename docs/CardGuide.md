@@ -24,9 +24,9 @@ When it is done, the Canvas looks like this. Below are the same Cards as on the 
 ## Making it on screen
 
 1. Make a project with "New Project…" on the home screen.
-2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Python step", naming them `start`, `settings` and `multiply`.
+2. Right-click the Canvas and, from "Add Card", place "Trigger", "Input Value" and "Draft", naming them `start`, `settings` and `multiply`.
 3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
-4. Open each Card (the `s` key or "Settings" in the context menu) and make it the same as the files in the next section.
+4. Open each Card (the `s` key or "Settings" in the context menu) and apply the files in the next section. In the Draft’s settings, choose Code as the implementation kind.
 
 A Card's settings look like this. Switch between "Source", "Ports" and "Nix Definition" in the list on the left to edit, and "Apply" puts the change into the Workflow.
 

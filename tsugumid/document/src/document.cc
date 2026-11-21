@@ -144,6 +144,8 @@ auto Document::classify_source_path(const std::string& rel) -> SourcePath {
       rel.find("/.tsugumi/") == std::string::npos &&
       !rel.ends_with("/.tsugumi"))
     return SourcePath::Source;
+  if (rel.starts_with("templates/") && valid_version_path(rel))
+    return SourcePath::Source;
   return rel.starts_with("skills/") ? SourcePath::Source
                                     : SourcePath::Protected;
 }
@@ -399,7 +401,9 @@ std::string execution_fingerprint(const Document& doc) {
     h.update(execution_json(def.card_json, "displayMode"));
   }
   for (const auto& [path, src] : doc.sources) {
-    if (path.starts_with("skills/") || Document::is_card_meta_file(path))
+    if (path.starts_with("skills/") || path.starts_with("templates/") ||
+        local_document_path(path).starts_with("templates/") ||
+        Document::is_card_meta_file(path))
       continue;
     // External projects carry layout as a source file; it never identifies a
     // run.
@@ -470,7 +474,7 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
       doc->definitions.emplace(id, std::move(d));
     }
   }
-  for (const char* area : {"definitions", "skills", "externals"}) {
+  for (const char* area : {"definitions", "skills", "externals", "templates"}) {
     auto listing = fs::list_tree(root / area);
     if (!listing.links.empty())
       throw DocumentError(

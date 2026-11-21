@@ -17,6 +17,7 @@
   cardNixpkgs,
   hosq,
   nixfmt,
+  git,
   withFormatters ? true,
 }:
 # Clang on Linux too (with GCC's libstdc++, as the Nix libraries linked here):
@@ -58,6 +59,7 @@ clangStdenv.mkDerivation {
       "-DTSUGUMI_FORMAT_NIX=${nixfmt}/bin/nixfmt"
     ]
     ++ [
+      "-DTSUGUMI_TEMPLATE_GIT=${git}/bin/git"
       "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
       "-DHOSQ_INCLUDE_DIR=${hosq}/include"
       "-DTSUGUMI_BUILD_TESTS=OFF"

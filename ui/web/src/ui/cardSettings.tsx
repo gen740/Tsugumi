@@ -3,7 +3,6 @@
 // "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
-import inputTemplates from '../../../shared/templates/input/Sources/InputTemplates/inputs.json'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
@@ -120,13 +119,15 @@ export class CardEditorModel extends Observable {
 
   implementAs(value: string) {
     if (value === 'input' || value === 'input_bool') {
-      const files = inputTemplates[value]
-      this.definition = parse(files['_card.json'])
+      const type = value === 'input_bool' ? 'bool' : 'double'
+      this.definition = obj([['type', 'input'], ['params', [
+        obj([['name', 'value'], ['type', type], ['data', type === 'bool' ? false : new JNum('0')]]),
+      ]]])
       const p = this.outputsPath
       if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
         const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
         if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
-          const outputs = files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card')
+          const outputs = `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`
           this.createFile('_outputs.fbs', outputs)
           this.presetOutputs = outputs
         }
@@ -1440,7 +1441,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   useEffect(() => {
     if (shown === undefined) {
-      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.rb') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
+      const f = files[0]
       if (f) model.openFile(f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

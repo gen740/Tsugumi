@@ -8,6 +8,7 @@ import importlib.util
 import json
 from pathlib import Path
 import runpy
+import shutil
 import sys
 from types import SimpleNamespace
 
@@ -31,11 +32,7 @@ class Failure(Exception):
 
 @pytest.fixture
 def scaffold(tmp_path, monkeypatch):
-    template = load('marimo_template', ROOT / 'ui/shared/templates/marimo.py')
-    for name, content in template.files().items():
-        target = tmp_path / name
-        target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_text(content)
+    shutil.copytree(ROOT / 'demos/en/marimo/definitions/notebook', tmp_path, dirs_exist_ok=True)
     card = json.loads((tmp_path / '_card.json').read_text())
     params = {p['name']: p['data'].encode() if p['type'] == 'string' else p['data']
               for p in card['params']}

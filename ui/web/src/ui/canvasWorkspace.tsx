@@ -14,7 +14,8 @@ import { Workspace, WorkflowTab } from '../model/workspace'
 import { get, str } from '../../shared/json'
 import { D } from '../wire/rpc'
 import { runAll } from './actions'
-import { builtinCardItems, GraphCanvas } from './canvas'
+import { GraphCanvas } from './canvas'
+import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemplates'
 import { GuideNest } from './guide'
 import { Button, Divider, MenuButton, Popover } from './controls'
 import { Icon } from './icons'
@@ -104,6 +105,7 @@ function Breadcrumbs({ session, tab }: { session: ProjectSession; tab: WorkflowT
  *  with loops, so there is no progress bar). */
 export function CanvasRunControl({ workspace, session, tab }: { workspace: Workspace; session: ProjectSession; tab: WorkflowTab }) {
   useObserve(session, prefs)
+  const [templatePlacement, setTemplatePlacement] = useState<TemplatePlacement>()
   const [showIssues, setShowIssues] = useState(false)
   const issues = useRef<HTMLSpanElement>(null)
   // Shown as running from the start, and for a moment after a quick run, so
@@ -185,10 +187,11 @@ export function CanvasRunControl({ workspace, session, tab }: { workspace: Works
       </Popover>
       <Divider vertical />
       <MenuButton icon="plus" disabled={!session.isEditable} help={L('Card を追加')}
-        items={() => builtinCardItems((t) => {
+        items={() => newCardItems((t) => {
           void canvasFor(session, tab).addBuiltin(t).then((k) => { if (k && t === 'draft') canvasFor(session, tab).writeDraft(k) })
             .catch((e) => { session.notice = String(e); session.changed() })
-        })} />
+        }, () => setTemplatePlacement({ scope: [...tab.scope], at: canvasFor(session, tab).middle() }))} />
+      {templatePlacement && <TemplatePicker session={session} placement={templatePlacement} onClose={() => setTemplatePlacement(undefined)} />}
     </div>
   )
 }

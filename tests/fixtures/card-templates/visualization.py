@@ -1,12 +1,12 @@
-"""The one source of the Visualization Card starting points (Mac and Web).
+"""Generate Visualization fixtures and the Matplotlib demo source.
 
-Each library's src/main.py is ui/shared/templates/visualization/<library>.py with the
+Each library's src/main.py is tests/fixtures/card-templates/visualization/<library>.py with the
 shared selection code (visualization/select.py) written in, so a Card carries
 all of its own code and there is one copy of it to maintain here. The demo's
 three figures (demos/*/visualization) are the Matplotlib source as it is.
 
-    python3 ui/shared/templates/visualization.py          # write the outputs
-    python3 ui/shared/templates/visualization.py --check  # fail when one is stale
+    python3 tests/fixtures/card-templates/visualization.py          # write the outputs
+    python3 tests/fixtures/card-templates/visualization.py --check  # fail when one is stale
 """
 import json
 import sys
@@ -85,7 +85,7 @@ def outputs():
     data = json.dumps(files, ensure_ascii=False, indent=2) + '''
 '''
     result = {
-        ROOT / "ui/shared/templates/visualization.json": data,
+        ROOT / "tests/fixtures/card-templates/visualization.json": data,
     }
     for language in ("en", "ja"):
         for figure in ("line", "scatter", "histogram"):
@@ -102,4 +102,4 @@ if __name__ == "__main__":
         else:
             path.write_text(content)
     if stale:
-        raise SystemExit("stale (run python3 ui/shared/templates/visualization.py): " + ", ".join(stale))
+        raise SystemExit("stale (run python3 tests/fixtures/card-templates/visualization.py): " + ", ".join(stale))

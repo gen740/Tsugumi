@@ -35,6 +35,7 @@ struct Tools {
   using Conversation = ConversationStore::Conversation;
   using Project = host::ProjectRegistry::Project;
   struct Dependencies {
+    std::filesystem::path host_templates = {};
     std::function<std::string(std::string)> scrub;
     std::function<void(const std::string&, const std::string&)> event;
     std::function<std::string(const std::string&, const std::string&, size_t,
@@ -60,6 +61,10 @@ struct Tools {
   auto OperateProject(const Tsugumi::Host::ProjectOperateRequestT& operation,
                       const host::OperationContext& context,
                       std::stop_token stop) -> host::OperationReply;
+  auto ListTemplates(const std::string& project, bool agent, std::stop_token stop)
+      -> Tsugumi::Host::TemplateListT;
+  auto AddHostTemplate(const Tsugumi::Host::TemplateAddT& request,
+                       std::stop_token stop) -> void;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop) -> std::string;

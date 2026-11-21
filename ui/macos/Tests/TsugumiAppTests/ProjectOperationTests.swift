@@ -739,7 +739,7 @@ extension ProjectOperationTests {
     var placements: [Bool] = []
     s.operateProject = { request in
       let add = try #require(request.body?.value as? Tsugumi_Host_ProjectCreateCardT)
-      #expect(add.x == here.x && add.y == here.y && add.template == "draft")
+      #expect(add.x == here.x && add.y == here.y && add.kind == .draft)
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
       let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#
