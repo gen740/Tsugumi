@@ -387,7 +387,7 @@ def test_link_diagnostics(tmp_path, core_factory):
     assert {text(d.id) for d in after.definitions} == {text(d.id) for d in before.definitions}
 
 
-@pytest.mark.parametrize("settings", [{}, {"maxRuns": 2}, {"network": False}])
+@pytest.mark.parametrize("settings", [{"trigger": "eachInput"}, {"maxRuns": 2}, {"network": False}])
 def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_factory, settings):
     root = tmp_path / "p"
     builtin_project(root)
