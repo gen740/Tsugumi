@@ -74,7 +74,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 **Decided.**
 
 - The effects are exactly these three:
-  - **display**: a `DisplayValue`, which is screen output. The Card never sees an identity;
+  - **display**: screen output, in the one display form below. The Card never sees an identity;
   - **`cancelled`**;
   - **`remaining_ms`**.
 - Cancellation state is process-global, not thread-local.
@@ -89,6 +89,25 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 - The ABI 8 function table also carries logging, failures and JSON conversion.
 - The worker fills the Card, `run_id` and invocation of each `Display` (`protocol/data.fbs`), and `WorkerCall` carries them.
 - The SDKs give `Report` and `Run` objects whose callbacks belong to one invocation. A retained one rejects later calls: for example C# throws `ObjectDisposedException` ([C#](CSharp.md)), and Python's Matplotlib display does nothing outside a call (`sdk/python/tsugumi/mpl.py`).
+
+## The display form
+
+**Decided.**
+
+- Every display is a view module of Wasm and/or JavaScript. Inside it, the module is free to use the DOM, a canvas or WebGPU.
+- `Data.Display` becomes module + config + blobs.
+- Today's fixed kinds become default view modules that the core ships on the UI side ([Displays in the UI](CoreAndSDK.md#displays-in-the-ui)). The kinds are text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite.
+- The SDK's overloads, such as `card::display(Table{...})`, stay. Inside, they encode the data for those default modules.
+- These are removed:
+  - the `Text` … `PointCloud` tables of `protocol/data.fbs`;
+  - the display kinds of the ABI;
+  - the worker's `display_*_impl` functions.
+
+**Today.**
+
+- `DisplayValue` in `protocol/data.fbs` is a union of `DisplayText`, `DisplayScalar`, `DisplayTable`, `DisplayImage`, `DisplayPointCloud` and `DisplayModule`.
+- ABI 8 has the display kinds `TSUGUMI_DISPLAY_TEXT`, `MARKDOWN`, `SCALAR`, `LINE_CHART`, `TABLE`, `IMAGE`, `POINTS` and `MODULE` ([abi.h](../sdk/include/tsugumi/sdk/abi.h)), and `workerd/src/native_main.cc` implements them in `display_*_impl`.
+- Plotly, Vega-Lite and the line chart are modules in [sdk/nix/builtin-views.nix](../sdk/nix/builtin-views.nix).
 
 ## Display after the call returns
 

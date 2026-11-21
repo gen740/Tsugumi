@@ -81,6 +81,34 @@ What an SDK might otherwise have described lives elsewhere:
 - the fixed language lists, such as `language` in `_card.json` ([Code Card settings](CardGuide.md#code-card-settings));
 - [ui/shared/templates](../ui/shared/templates/), which holds one scaffold per language.
 
+## Displays in the UI
+
+**Decided.**
+
+- Every display is a view module ([Card ABI 9: the display form](CardABI.md#the-display-form)). The core ships default view modules on the UI side for text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite. They move out of `sdk/nix/builtin-views.nix`.
+- The native renderers are removed: `ui/web/src/ui/display.tsx`, `DisplayContent` and `PointCloudView` in the Mac app's `CanvasItems.swift`, and `TablePage`.
+- The module contract:
+  - The host hands the module one root element plus the data, and the module draws freely.
+  - The only convention is a DOM event on the root element when new data arrive. The module listens for it if it wants.
+  - Resizing is the module's own business, for example with `ResizeObserver`.
+  - The host disposes of a module by dropping its iframe.
+  - The `initialise` / `update` / `resize` / `dispose` / `snapshot` function contract goes.
+- There is no output frame on the Canvas and no display summary on the Card's face. These are removed:
+  - `OutputFrameView`;
+  - `displays` in `layout.json`;
+  - `DisplayGeometry` in `host.fbs`, and hostd's `DefaultDisplayGeometry`;
+  - the frames of `LayoutScene`;
+  - the whole thumbnail machinery;
+  - the `displaySummary` line on the Card's face.
+- Displays appear only in views: the expanded window, run comparison and chat evidence.
+- The Card's description, which a person sets, is unrelated and stays.
+
+**Today.**
+
+- `ui/shared/modules/viewer.js` calls a module's `initialise`, `update`, `resize` and `dispose`.
+- Displays are drawn on the Canvas in output frames, whose geometry hostd keeps in `layout.json`.
+- The Web UI shows a `displaySummary` line on the Card's face (`ui/web/src/model/session.ts`).
+
 ## Order of work
 
 **Decided.**
@@ -125,5 +153,11 @@ What an SDK might otherwise have described lives elsewhere:
 
 These questions are not decided yet:
 
-- Where `builtinViews` live: in the core and UI, or in the SDK. Today they are in the Nix SDK (`sdk/nix/builtin-views.nix`).
+- **Proposed host architecture for displays:**
+  - one shared WebView per window, run comparison or chat, with one sandboxed iframe per display;
+  - iframes mount lazily and unmount when off screen, with about 8 live at once under LRU.
+
+  The measurements behind it, on an M3 Max with macOS 27.2: 20 Plotly views took 1128 MB with one WKWebView per view, and 728 MB in one WKWebView with 20 iframes. An iframe with little in it costs about 0.7 MB.
+- What to do without WebGPU (macOS before 26, WebKitGTK).
+- A watchdog for a runaway module in the shared WebView process.
 - Whether the build of a foreign or remote worker moves to the core's Nix. That would change the 2026-11-13 rule "a Card brings its worker from its SDK commit" into "the worker comes from the core, and the ABI is the promise across versions".
