@@ -452,10 +452,6 @@ class Builder {
         }
         s.secrets.push_back(name);
       }
-      if (!s.secrets.empty() && s.reuse_worker)
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "a Card with secrets cannot reuse its worker "
-                               "(reuseWorker)"));
     }
     if (const auto* v = schema::get(d.system)) {
       if (!remote && *v == native_system())

@@ -10,7 +10,7 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
   WorkerPool pool(scratch);
   struct Held {
     std::string card;
-    std::string key;
+    uint64_t generation;
     std::unique_ptr<WorkerProc> worker;
   };
   std::map<uint64_t, Held> held;
@@ -72,13 +72,22 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
                               .parent_path()
                               .string();
           reply.call_id = lease.worker->call_id();
-          descriptors = lease.worker->hand_over();
-          held.emplace(reply.lease, Held{request.card, request.key,
-                                         std::move(lease.worker)});
+          try {
+            descriptors = lease.worker->hand_over();
+            held.emplace(reply.lease, Held{request.card, lease.generation,
+                                           std::move(lease.worker)});
+          } catch (...) {
+            pool.release(request.card, lease.generation,
+                         std::move(lease.worker), false);
+            throw;
+          }
           break;
         }
+        case L::Action::Invalidate:
+          pool.invalidate(request.card, request.reason);
+          break;
         case L::Action::Clear:
-          pool.clear(false);
+          pool.clear();
           break;
         case L::Action::Release:
         case L::Action::ClearScratch:
@@ -94,8 +103,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           else {
             worker->set_call_id(request.call_id);
             if (request.keep) worker->resume_logs();
-            pool.release(it->second.card, it->second.key, std::move(worker),
-                         request.keep, request.reason);
+            pool.release(it->second.card, it->second.generation,
+                         std::move(worker), request.keep, request.reason);
             held.erase(it);
           }
           break;

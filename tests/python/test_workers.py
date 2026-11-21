@@ -1,4 +1,4 @@
-"""Workers in the real environment (TSUGUMI_TEST_CONTAINER=1, the shared VM):
+"""Workers in the real environment (TSUGUMI_TEST_SHARED_VM=1, the shared VM):
 a resident worker serves later runs (onRunStart starts each run), a Card
 with File inputs keeps its worker, inputs stay read-only while the call's
 output folder is staged inside the worker, reuseWorker = false gets a fresh
@@ -15,14 +15,14 @@ from harness.observations import decode_scalar, read_output
 from conftest import real_environment
 from projects import card, conn
 from projects import put, run_and_wait, write
-from test_cards_container import NUM, bash, load, log
+from test_cards_shared_vm import NUM, bash, load, log
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
-pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
-                                reason="needs the shared VM (TSUGUMI_TEST_CONTAINER=1)")
+pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
+                                reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 CPP_NIX = """{ pkgs, inputs, params }:
 let
@@ -137,7 +137,7 @@ def test_resident_worker_serves_later_runs(env):
                    "count": {"type": "code", "language": "cpp", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     first, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
@@ -162,7 +162,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
              [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     first, st = run_and_wait(c, "start")
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
@@ -192,7 +192,7 @@ root_type Outputs;
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)

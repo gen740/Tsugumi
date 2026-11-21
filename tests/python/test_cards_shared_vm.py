@@ -1,4 +1,4 @@
-"""Code Card behaviour in the real environment (TSUGUMI_TEST_CONTAINER=1; the
+"""Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM):
 backpressure stalls, the shell step contract, deadlines and cancellation,
 worker reuse, isolation, Nix upstream references, stages and caching, and
@@ -25,8 +25,8 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
 
-pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
-                                reason="needs the container environment (TSUGUMI_TEST_CONTAINER=1)")
+pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
+                                reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 
 

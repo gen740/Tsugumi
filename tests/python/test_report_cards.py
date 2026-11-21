@@ -207,7 +207,7 @@ def test_report_cancel_reaps_renderer_children(project):
     client = connect()
     run = start_run(client, 'start')
     wait_for_log(client, run, 'report', 2, lambda log: 'report-sleeping' in text(log.text or b""))
-    pid = child_pid() if os.environ.get('TSUGUMI_TEST_CONTAINER') != '1' else None
+    pid = child_pid() if os.environ.get('TSUGUMI_TEST_SHARED_VM') != '1' else None
     client.call('RunCancelRequest', runId=run)
     assert wait_run(client, run).state == RunState.cancelled
     assert not client.call('ArtifactListRequest', runId=run).artifacts

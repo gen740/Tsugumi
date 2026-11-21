@@ -272,7 +272,7 @@ def stage_project(root, scenario):
     # Keep the original Python -> C++ -> shell cross-language value workload.
     # Load only the data literals, not the VM/pytest module and its fixtures.
     import ast
-    source = ast.parse((ROOT / "tests/python/test_cards_container.py").read_text())
+    source = ast.parse((ROOT / "tests/python/test_cards_shared_vm.py").read_text())
     constants = {node.targets[0].id: ast.literal_eval(node.value) for node in source.body
                  if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
                  and node.targets[0].id in ("RICH", "PY_MAKE", "CPP_CHECK")}

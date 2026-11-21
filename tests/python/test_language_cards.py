@@ -4,7 +4,7 @@ each display kind reaches the Card's record. Their interpreters live in the
 ABI worker; exceptions fail the Card. A Card keeps no interpreter state unless
 its settings say `reuseWorker: true`: by default every invocation starts a new
 interpreter. Linux CI runs them under bubblewrap, as in the shared VM.
-TSUGUMI_TEST_CONTAINER=1 also exercises the app's VM on macOS."""
+TSUGUMI_TEST_SHARED_VM=1 also exercises the app's VM on macOS."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ table Report { value:string; }
 table Outputs { report:Report (required, tsugumi: "file"); }
 root_type Outputs;
 """
-IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
+IN_VM = os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1"
 NO_OUTPUTS = '''namespace t;
 table Outputs { }
 root_type Outputs;

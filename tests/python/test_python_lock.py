@@ -3,7 +3,7 @@ names its own uv.lock and the hash of the wheels, and gets exactly those,
 installed without the network. Nothing is resolved when a Card is built: a
 lock without a hash, a wrong hash and a lock that no longer matches
 pyproject.toml are failures that say what to do. With
-TSUGUMI_TEST_CONTAINER=1 the Cards run in the shared VM's sandbox."""
+TSUGUMI_TEST_SHARED_VM=1 the Cards run in the shared VM's sandbox."""
 
 from __future__ import annotations
 
@@ -19,7 +19,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 
-IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
+IN_VM = os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1"
 OUTPUTS = '''namespace t;
 table Outputs { }
 root_type Outputs;

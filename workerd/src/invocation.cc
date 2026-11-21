@@ -158,7 +158,7 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
+auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::InvocationJson& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
@@ -264,7 +264,8 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
   request.display = display;
   return workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
-        pool.release(spawn.card, "", std::move(worker), keep, reason);
+        pool.release(spawn.card, lease.generation, std::move(worker), keep,
+                     reason);
       },
       lease, false, request);
 }

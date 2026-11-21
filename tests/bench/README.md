@@ -210,7 +210,7 @@ nix develop -c python3 tests/bench/measure_language_workers.py --languages r jl 
 The stage probe runs a first pass and rerun separately, on native Darwin or Linux.
 `--project /absolute/project --start card/path` can probe another current-format
 project. `large-values` retains the original 100,000-element Python → C++ → shell
-fixture, reusing the current source literals in `test_cards_container.py` without
+fixture, reusing the current source literals in `test_cards_shared_vm.py` without
 importing pytest/VM fixtures. `builtin-chain` uses current Input ports.
 The language probe keeps the unchanged Collatz R/Julia branches and checks that
 27 produces 112 values. Its first/rerun records and per-stage times allow SDK or

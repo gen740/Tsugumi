@@ -19,7 +19,8 @@ auto clear_spawn_secrets(Tsugumi::LocalWorker::MessageT& message) -> void;
 auto send_local(int fd, const Tsugumi::LocalWorker::MessageT& message,
                 const std::array<int, 4>* descriptors = nullptr,
                 trace::Link* link = nullptr) -> void;
-auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr) -> bool;
+auto receive_local(int fd, LocalPacket& packet, trace::Link* link = nullptr)
+    -> bool;
 auto serve_local(int fd, const std::filesystem::path& scratch) -> void;
 
 // One workerd process for this core lifetime, connected by an inherited socket.
@@ -33,6 +34,7 @@ class LocalWorkers {
   auto release(std::unique_ptr<WorkerProc> worker, bool keep,
                const std::string& reason) -> void;
   auto clear() -> void;
+  auto invalidate(const std::string& card, const std::string& reason) -> void;
 
  private:
   auto exchange(Tsugumi::LocalWorker::MessageT message, LocalPacket& reply)

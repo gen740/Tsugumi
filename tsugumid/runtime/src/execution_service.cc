@@ -11,6 +11,7 @@
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -43,9 +44,23 @@ LocalExecutionService::LocalExecutionService(
                    ? service.options().worker_binary.parent_path() /
                          "tsugumi-workerd"
                    : service.options().workerd_binary,
-               service.run_scratch() / "workers") {}
+               service.run_scratch() / "workers"),
+      secrets_salt_(crypto::uuid4()) {}
 
-auto LocalExecutionService::clear() -> void { workers_.clear(); }
+auto LocalExecutionService::clear() -> void {
+  workers_.clear();
+  std::lock_guard lock(secrets_mutex_);
+  secret_versions_.clear();
+}
+
+auto LocalExecutionService::invalidate(const std::string& card,
+                                       const std::string& reason) -> void {
+  try {
+    workers_.invalidate(card, reason);
+  } catch (const Failed& error) {
+    log::warn("cannot retire Card worker " + card + ": " + error.what());
+  }
+}
 
 auto LocalExecutionService::prepare(const Node& node,
                                     const std::filesystem::path& /*directory*/,
@@ -74,11 +89,48 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
 
-  // Card secrets come from hostd for this invocation only and stay in memory:
-  // the worker sets them in the Card's process environment. A missing one
-  // fails here, before anything of the Card can run.
+  // Only a salted digest participates in residency. The values are sent
+  // through the local launch channel when the process is first started.
+  const auto card_key = path_key(node.path);
   auto secrets = std::make_shared<WorkerSecrets>();
-  secrets->values = service_.card_secrets(node, request.stop);
+  try {
+    secrets->values = service_.card_secrets(node, request.stop);
+  } catch (const Failed& error) {
+    if (error.failure.kind == FailureKind::not_found)
+      invalidate(card_key, "a Card secret is no longer available");
+    throw;
+  }
+  std::string secret_version;
+  if (node.settings.reuse_worker && !secrets->values.empty()) {
+    crypto::Sha256 digest;
+    digest.update(secrets_salt_);
+    for (const auto& [name, value] : secrets->values) {
+      const uint64_t name_size = name.size();
+      digest.update(&name_size, sizeof name_size);
+      digest.update(name);
+      const uint64_t size = value.size();
+      digest.update(&size, sizeof size);
+      digest.update(value);
+    }
+    secret_version = digest.finish_hex();
+  }
+  {
+    bool changed = false;
+    {
+      std::lock_guard lock(secrets_mutex_);
+      if (auto prior = secret_versions_.find(card_key);
+          prior != secret_versions_.end()) {
+        changed = prior->second != secret_version;
+        if (secret_version.empty())
+          secret_versions_.erase(prior);
+        else
+          prior->second = secret_version;
+      } else if (!secret_version.empty()) {
+        secret_versions_.emplace(card_key, secret_version);
+      }
+    }
+    if (changed) invalidate(card_key, "a Card secret changed");
+  }
   s.secrets.clear();
   for (const auto& secret : secrets->values) s.secrets.push_back(secret.first);
 
@@ -153,7 +205,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.grants.network;
   sp.gui = node.settings.grants.gui;
-  const std::string card_key = path_key(node.path);
   sp.card = card_key;
   for (const auto& f : node.settings.grants.host_paths) {
     std::string source = f.path;
@@ -180,7 +231,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
       std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
       (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
-      "|" + std::to_string(build.implementation_index);
+      "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;

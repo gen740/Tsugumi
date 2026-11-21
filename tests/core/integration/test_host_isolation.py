@@ -1,8 +1,8 @@
 """A sandboxed Card on a host tsugumid -- bubblewrap on Linux (CI), Seatbelt
 on a Mac (the Web UI) -- reaches nothing on this host: no loopback port, no
 file outside its own areas, no write outside its output. These run without
-the shared VM, so CI checks the isolation; the VM's own (test_cards_container.py,
-test_workers.py) needs TSUGUMI_TEST_CONTAINER=1.
+the shared VM, so CI checks the isolation; the VM's own (test_cards_shared_vm.py,
+test_workers.py) needs TSUGUMI_TEST_SHARED_VM=1.
 
 Writes are judged by what happened on the host. Seatbelt refuses them, while
 under bubblewrap the Card's root is a private tmpfs: the same path is an empty

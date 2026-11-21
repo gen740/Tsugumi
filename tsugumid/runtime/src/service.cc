@@ -348,6 +348,14 @@ auto Service::keep_file_value(
                "file value is outside the run's folders: " + *source);
 }
 
+auto Service::invalidate_resident(const std::string& card) -> void {
+  {
+    std::lock_guard lock(worker_selection_mutex_);
+    resident_targets_.erase(card);
+  }
+  execution_service_->invalidate(card, "the Card definition changed");
+}
+
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
   // Any other id names a registered execution daemon; its backend checks that
   // the service is available when an invocation is prepared.
@@ -1987,6 +1995,10 @@ void Service::cache_clear(RequestIn& req) {
           "cache cannot be cleared while external job results are pending");
     execution_service_
         ->clear();  // resident workers hold the builds being removed
+    {
+      std::lock_guard lock(worker_selection_mutex_);
+      resident_targets_.clear();
+    }
     auto result = nix_->clear_cache();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"

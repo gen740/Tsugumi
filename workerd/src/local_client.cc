@@ -191,4 +191,18 @@ auto LocalWorkers::clear() -> void {
   }
   command(L::Action::Clear, 0);
 }
+auto LocalWorkers::invalidate(const std::string& card,
+                              const std::string& reason) -> void {
+  {
+    std::lock_guard guard(mutex_);
+    if (fd_ < 0) return;
+  }
+  L::MessageT request;
+  request.action = L::Action::Invalidate;
+  request.card = card;
+  request.reason = reason;
+  LocalPacket reply;
+  exchange(std::move(request), reply);
+}
+
 }  // namespace tsugumi::workerd
