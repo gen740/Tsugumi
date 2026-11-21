@@ -43,7 +43,10 @@ sh { name = "top"; script = "echo ${dependency} > $out"; }
 
 
 def nix(*args, env, check=True):
-    got = subprocess.run(["nix", "--extra-experimental-features", "nix-command", *args],
+    # A nix.conf `ssl-cert-file` (as on some CI hosts) wins over the
+    # environment variable; the option wins over both.
+    trust = ["--option", "ssl-cert-file", env["NIX_SSL_CERT_FILE"]] if "NIX_SSL_CERT_FILE" in env else []
+    got = subprocess.run(["nix", "--extra-experimental-features", "nix-command", *trust, *args],
                          env=env, text=True, capture_output=True, timeout=600)
     if check and got.returncode != 0:
         raise AssertionError(f"nix {' '.join(args)} failed:\n{got.stderr}")

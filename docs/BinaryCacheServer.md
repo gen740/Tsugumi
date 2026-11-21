@@ -58,14 +58,14 @@ A client that pushed a path keeps the unsigned narinfo it uploaded in its own na
 
 Every connection is mutual TLS 1.3, with the same Ed25519 public keys as [Execution Services registrations](RemoteExecution.md#install-and-register). There is no separate token system. The client presents a certificate whose public key is listed in `authorized_keys` (one `ed25519:` key per line, as in a worker's `authorized_keys`); otherwise the handshake fails before any request is read. Reading needs the same registration as pushing. The file is re-read at every connection, so removing a line refuses that key's next connection.
 
-A remote worker's existing `identity.pem` holds its key and certificate, so Nix uses it directly through the store URL's `tls-certificate` and `tls-private-key` settings. Nix verifies the server like any HTTPS server: the client trusts `tls-certificate.pem` (through `ssl-cert-file` or `NIX_SSL_CERT_FILE`, appended to the system bundle when other HTTPS caches are used too). The certificate names `localhost`, `127.0.0.1`, `::1` and each `--name`; it stays byte-identical across restarts while the names and the key do not change.
+A remote worker's existing `identity.pem` holds its key and certificate, so Nix uses it directly through the store URL's `tls-certificate` and `tls-private-key` settings. Nix verifies the server like any HTTPS server: the client trusts `tls-certificate.pem` through the `ssl-cert-file` setting, appended to the system bundle when other HTTPS caches are used too. `NIX_SSL_CERT_FILE` works only where no `nix.conf` sets `ssl-cert-file`. The certificate names `localhost`, `127.0.0.1`, `::1` and each `--name`; it stays byte-identical across restarts while the names and the key do not change.
 
 ```sh
 tsugumi-cached --state-dir STATE --host 0.0.0.0 --name cache.example.org
 # On a client whose key is in STATE/authorized_keys:
 store='https://cache.example.org:8766?tls-certificate=ID.pem&tls-private-key=ID.pem'
-NIX_SSL_CERT_FILE=tls-certificate.pem nix copy --to "$store" /nix/store/...-example
-NIX_SSL_CERT_FILE=tls-certificate.pem nix copy --from "$store" \
+nix copy --option ssl-cert-file tls-certificate.pem --to "$store" /nix/store/...-example
+nix copy --option ssl-cert-file tls-certificate.pem --from "$store" \
   --option trusted-public-keys "$(cat signing-key.pub)" /nix/store/...-example
 ```
 
