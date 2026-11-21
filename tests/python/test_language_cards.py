@@ -394,10 +394,9 @@ def test_a_card_keeps_no_interpreter_state_by_default(project, language):
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])
-def test_reuse_worker_carries_globals_options_and_the_random_position(project, language):
-    # What carries with reuseWorker: true is pinned here so that a change is
-    # deliberate. The worker resets the environment and the working directory
-    # for every call, so those two never carry.
+def test_reuse_worker_carries_interpreter_and_process_state(project, language):
+    # The same process serves both calls. Changes made by the Card to its
+    # environment and current directory persist with its interpreter state.
     root, connect = project
     nix, name, source = CARRIED[language]
     write_project(root, {"probe": {"card": {"type": "code", "language": language, "reuseWorker": True},
@@ -411,7 +410,7 @@ def test_reuse_worker_carries_globals_options_and_the_random_position(project, l
         assert reused(c, run_id, "probe") == (n == 2)
     first, second = (dict(item.split("=", 1) for item in shown.split(" ")) for shown in seen)
     assert (first["calls"], first["options"], first["env"], first["moved"]) == ("1", "0", "", "false"), seen
-    assert (second["calls"], second["options"], second["env"], second["moved"]) == ("2", "1", "", "false"), seen
+    assert (second["calls"], second["options"], second["env"], second["moved"]) == ("2", "1", "set", "true"), seen
     assert first["random"] != second["random"], seen
 
 

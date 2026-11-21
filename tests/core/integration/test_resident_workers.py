@@ -149,9 +149,9 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
 int tsugumi_main(const tsugumi_call* c) {
   if (c->phase != TSUGUMI_RUN) return 0;
   char gate[4096], stopped[4096], sending[4096];
-  snprintf(gate, sizeof gate, "%s/../home/stop", c->working_directory);
-  snprintf(stopped, sizeof stopped, "%s/../home/stopped", c->working_directory);
-  snprintf(sending, sizeof sending, "%s/../home/sending", c->working_directory);
+  snprintf(gate, sizeof gate, "%s/stop", c->working_directory);
+  snprintf(stopped, sizeof stopped, "%s/stopped", c->working_directory);
+  snprintf(sending, sizeof sending, "%s/sending", c->working_directory);
   if (mkfifo(gate, 0600) != 0) return 1;
   const pid_t worker = getpid();
   pid_t child = fork();
