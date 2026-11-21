@@ -43,6 +43,8 @@ struct RemoteJobState {
   // and the bytes from that offset.
   uint64_t log_offset = 0, log_size = 0;
   std::string log = {};
+  // The running job waits for its Card secrets (JobSecretsRequest).
+  bool secrets_wanted = false;
 };
 
 struct RemoteProbe {
@@ -113,6 +115,12 @@ class RemoteJobClient {
   auto card_secrets(const std::vector<std::string>& names,
                     std::stop_token stop) const
       -> std::vector<std::pair<std::string, std::string>>;
+  // Hands a running job that waits for them its Card secrets, once. The
+  // values are cleared from `secrets` whether or not the worker accepts them.
+  auto deliver_secrets(std::string_view service, std::string_view instance,
+                       std::string_view job, std::string_view fingerprint,
+                       std::vector<std::pair<std::string, std::string>>& secrets,
+                       std::stop_token stop) const -> void;
 
  private:
   auto request(Tsugumi::RemoteWorker::RequestT message,

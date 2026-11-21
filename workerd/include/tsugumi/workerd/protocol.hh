@@ -16,7 +16,7 @@ inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
 // The largest live log slice one status reply carries.
 inline constexpr uint32_t kLogChunkBytes = 256 << 10;
-inline constexpr uint32_t kContract = 10;
+inline constexpr uint32_t kContract = 11;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -41,5 +41,16 @@ auto failure(R::ErrorCode code, std::string message) -> R::MessageT;
 // Decodes a packed spec. Apply admission policy when accepting a new job.
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT>;
 auto validate_log_limit(const R::JobSpecT& spec) -> void;
+// Card secret names follow the definition's rule ([a-z][a-z0-9_]{0,63}), are
+// unique and at most 256.
+auto validate_secret_names(const R::JobSpecT& spec) -> void;
+// Overwrites and releases a buffer that held a Card secret value.
+auto clear_secret(std::string& value) -> void;
+// The job's Card secrets travel from the listener to its invocation through
+// this inherited pipe descriptor, as one frame holding a CardSecrets reply.
+inline constexpr int kSecretChannelFd = 6;
+// The marker a running job's work directory holds while its invocation waits
+// for its Card secrets; it never holds a value.
+inline constexpr std::string_view kSecretsWanted = "secrets-wanted";
 auto terminal(R::JobState state) -> bool;
 }  // namespace tsugumi::workerd

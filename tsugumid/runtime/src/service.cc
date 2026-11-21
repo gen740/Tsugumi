@@ -403,14 +403,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
     const auto resident_id =
         resident == resident_targets_.end() ? std::string{} : resident->second;
     for (;;) {
-      // Card secrets reach only the local service for now.
-      const auto& service = node.settings.secrets.empty() ||
-                                    node.settings.execution_service != "auto"
-                                ? node.settings.execution_service
-                                : std::string(kLocalExecutionService);
       const auto choice =
           select_worker(candidates, node.settings.worker_condition.get(),
-                        service, resident_id);
+                        node.settings.execution_service, resident_id);
       if (!choice.matches)
         throw Failed(FailureKind::invalid_request,
                      "no registered worker satisfies workerCondition");

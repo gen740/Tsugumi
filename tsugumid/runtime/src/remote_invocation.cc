@@ -237,6 +237,9 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   job.derivation = request.build.derivation.path;
   job.output = request.build.derivation.output;
   job.log_limit_bytes = request.log_limit_bytes;
+  // Names only: the values follow in a JobSecretsRequest once the worker
+  // waits for them.
+  job.secrets = request.node.settings.secrets;
   if (request.node.settings.build_timeout_seconds) {
     const auto budget = *request.node.settings.build_timeout_seconds * 1000;
     if (request.build.preparation_ms >= budget)

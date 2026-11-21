@@ -12,6 +12,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/protocol.hh"
 
 namespace tsugumi {
 
@@ -182,6 +183,13 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   const auto& settings = node.settings;
   auto& s = request.summary;
   stdfs::create_directories(request.directory);
+  // A Card secret that is not set fails here, before anything moves to the
+  // worker. The values are not kept: the worker asks for them once only the
+  // Card's process remains to start.
+  if (!settings.secrets.empty()) {
+    auto check = service_.card_secrets(node, request.stop);
+    for (auto& secret : check) workerd::clear_secret(secret.second);
+  }
   s.execution_service = target_;
   s.execution_job_id = crypto::sha256_hex(
       service_.project_id() + "\n" + s.run_id + "\n" + path_key(node.path) +
@@ -214,6 +222,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
   auto& history = service_.history();
   ExecutionResult output;
   LiveRemoteLog live_log(request.log_limit_bytes, request.log);
+  bool secrets_sent = false;
   std::mutex wait_mutex;
   std::condition_variable_any next_status;
   while (!request.detach.stop_requested()) {
@@ -246,6 +255,31 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       s.execution_state = RemoteExecutionState::disconnected;
     }
     if (request.detach.stop_requested()) throw ExecutionDetached{};
+    // The job has built its environment: its Card secrets go to the worker
+    // for this job only, once. An unconfirmed delivery is never repeated; the
+    // worker fails the job if they did not arrive.
+    if (reply && reply->secrets_wanted && !secrets_sent &&
+        !job.cancel_requested) {
+      secrets_sent = true;
+      try {
+        auto secrets = service_.card_secrets(node, request.stop);
+        s.secrets.clear();
+        for (const auto& secret : secrets) s.secrets.push_back(secret.first);
+        client_.deliver_secrets(s.execution_service, job.instance,
+                                s.execution_job_id, crypto::sha256_hex(job.spec),
+                                secrets, request.stop);
+      } catch (const Failed& error) {
+        s.execution_state = RemoteExecutionState::failed;
+        output.failure = error.failure;
+        return output;
+      } catch (const BrokerRequestRejected& error) {
+        s.execution_state = RemoteExecutionState::failed;
+        output.failure =
+            FailureData::make(FailureKind::worker_failed, error.what());
+        return output;
+      } catch (const std::exception&) {
+      }
+    }
     if (reply && reply->log_truncated && !s.log_truncated_at_bytes) {
       s.log_truncated_at_bytes = request.log_limit_bytes;
       if (request.log_truncated) request.log_truncated();
@@ -324,10 +358,6 @@ auto RemoteExecutionService::prepare(const Node& node,
     throw Failed(
         FailureKind::unsupported,
         "remote worker requires sandbox, no worker reuse or host folders");
-  if (!settings.secrets.empty())
-    throw Failed(FailureKind::unsupported,
-                 "Card secrets are delivered only to the local execution "
-                 "service for now");
   const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");

@@ -25,6 +25,7 @@
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <flatbuffers/idl.h>
 #include <flatbuffers/reflection.h>
 #include <poll.h>
@@ -40,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -561,6 +563,62 @@ int run_shell(const std::string& bash, const std::vector<std::string>& args,
   return status;
 }
 
+// The pipe preRun's environment comes back through. A reader thread drains
+// it while preRun runs, so a large environment never blocks the shell; once
+// the step has ended, what it wrote is read and the pipe closed, even if a
+// detached process still holds the write end.
+class EnvDump {
+ public:
+  EnvDump() {
+    int ends[2];
+    if (::pipe(ends) != 0) return;
+    reader_ = ends[0];
+    writer_ = ends[1];
+    ::fcntl(reader_, F_SETFD, FD_CLOEXEC);
+    ::fcntl(reader_, F_SETFL, O_NONBLOCK);
+    thread_ = std::thread([this] {
+      for (;;) {
+        pollfd ready{reader_, POLLIN, 0};
+        ::poll(&ready, 1, 20);
+        if (drain() || done_.load()) break;
+      }
+      drain();
+    });
+  }
+  EnvDump(const EnvDump&) = delete;
+  auto operator=(const EnvDump&) -> EnvDump& = delete;
+  ~EnvDump() { finish(); }
+  auto writer() const -> int { return writer_; }
+  auto finish() -> std::string {
+    if (writer_ >= 0) ::close(writer_);
+    writer_ = -1;
+    done_ = true;
+    if (thread_.joinable()) thread_.join();
+    if (reader_ >= 0) ::close(reader_);
+    reader_ = -1;
+    return std::move(data_);
+  }
+
+ private:
+  // Reads what is available; true at end of file.
+  auto drain() -> bool {
+    char buffer[65536];
+    for (;;) {
+      const auto n = ::read(reader_, buffer, sizeof buffer);
+      if (n > 0) {
+        data_.append(buffer, static_cast<size_t>(n));
+        continue;
+      }
+      if (n < 0 && errno == EINTR) continue;
+      return n == 0;
+    }
+  }
+  int reader_ = -1, writer_ = -1;
+  std::atomic<bool> done_{false};
+  std::string data_;
+  std::thread thread_;
+};
+
 std::vector<std::string> parse_env_dump(const std::string& dump) {
   std::vector<std::string> out;
   size_t s = 0;
@@ -569,7 +627,7 @@ std::vector<std::string> parse_env_dump(const std::string& dump) {
     if (e == std::string::npos) e = dump.size();
     std::string kv = dump.substr(s, e - s);
     if (kv.find('=') != std::string::npos &&
-        !kv.starts_with("TSUGUMI_ENV_DUMP=") && !kv.starts_with("BASH_") &&
+        !kv.starts_with("TSUGUMI_ENV_DUMP_FD=") && !kv.starts_with("BASH_") &&
         !kv.starts_with("SHLVL=") && !kv.starts_with("_="))
       out.push_back(kv);
     s = e + 1;
@@ -1153,26 +1211,27 @@ void execute(const Options& opt, Call& call,
                    : "signal " + std::to_string(WTERMSIG(status))));
   };
   if (!opt.pre.empty() && may_start("preRun")) {
-    std::string dump = tmp + "/pre-env";
+    // The environment comes back through a pipe, never a file: it holds the
+    // call's Card secrets.
+    EnvDump dump;
     auto pre_env = env;
-    set_env(pre_env, "TSUGUMI_ENV_DUMP", dump);
+    set_env(pre_env, "TSUGUMI_ENV_DUMP_FD", std::to_string(dump.writer()));
     // Sourced, so that its exports and `cd` can be read back afterwards.
     int st = run_shell(
         opt.bash,
         {"-c",
-         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"",
+         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP_FD\"",
          opt.pre},
         pre_env, cwd, call, &timed_out);
+    const auto dumped = dump.finish();
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preRun", st);
     } else {
-      auto next = parse_env_dump(read_text(dump));
+      auto next = parse_env_dump(dumped);
       if (!next.empty()) env = next;
       // A `cd` in preRun carries over (bash keeps PWD current).
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
-    // The dump holds the call's environment, Card secrets included.
-    ::unlink(dump.c_str());
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
     apply_env(body_env(call_env, env));
@@ -1304,13 +1363,20 @@ void control_loop() {
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
   if (argc == 3 && std::string(argv[1]) == "--dump-env") {
-    // Used after preRun to carry its environment into the next steps.
+    // Used after preRun to carry its environment into the next steps,
+    // written to the worker's pipe.
     std::string out;
     for (char** e = environ; *e; ++e) {
       out += *e;
       out.push_back('\0');
     }
-    write_text(argv[2], out);
+    const int fd = std::atoi(argv[2]);
+    for (size_t written = 0; written < out.size();) {
+      const auto n = ::write(fd, out.data() + written, out.size() - written);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) return 1;
+      written += static_cast<size_t>(n);
+    }
     return 0;
   }
   Options opt;

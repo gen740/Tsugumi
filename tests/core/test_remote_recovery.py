@@ -129,7 +129,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=10)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=11)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -143,7 +143,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
-            if caps.workerContract != 10 or not caps.maxJobs:
+            if caps.workerContract != 11 or not caps.maxJobs:
                 return R.failure(R.ErrorCode.Rejected, "invalid capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance

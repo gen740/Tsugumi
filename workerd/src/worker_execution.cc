@@ -13,6 +13,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/staging.hh"
 
 namespace tsugumi::workerd {
@@ -249,6 +250,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
         params.bfbs, params.root, params.bytes, invocation.outputs,
         worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
         environment, invocation.timeout_ms);
+    for (auto& value : environment) clear_secret(value.second);
+    environment.clear();
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");
@@ -257,7 +260,8 @@ auto run_invocation(const ReleaseWorker& release_worker,
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
     auto outcome =
-        worker.call(frame, id, invocation.cancel, deadline, invocation.display);
+        worker.call(std::move(frame), id, invocation.cancel, deadline,
+                    invocation.display, invocation.on_call_sent);
     result.failure = std::move(outcome.failure);
     between_calls = true;
     if (invocation.stop_before_outputs)

@@ -933,7 +933,7 @@ password = os.environ["database_password"]
 PGPASSWORD="$database_password" psql -h db.example -U reader catalog -c 'select 1'
 ```
 
-The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. A Card with secrets cannot use `reuseWorker`, and runs only on the local execution service for now.
+The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. A Card with secrets cannot use `reuseWorker`. On a [remote worker](RemoteExecution.md#card-secrets) it receives them the same way.
 
 What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (above, only `psql` receives it, in its environment rather than its command line), and never write it to a report or an output. See [Card secrets](security.md#card-secrets).
 

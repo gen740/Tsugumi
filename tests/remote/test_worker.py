@@ -534,6 +534,44 @@ def test_limits_require_delegation(worker):
     assert response.bodyType == R.ReplyBody.Failure and response.body.code == R.ErrorCode.Rejected
 
 
+def test_card_secret_names_and_delivery_admission(worker):
+    """A spec names its Card secrets only; their values are accepted once, for
+    the job's fingerprint, while the job waits for them, and never kept."""
+    job = "a" * 64
+    digest = worker.upload(job, b"input")
+    spec = R.JobSpecT.InitFromPackedBuf(worker.spec(digest))
+    for names in (["Token"], ["token", "token"], ["x" * 65]):
+        spec.secrets = names
+        refused = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=R.pack(spec)), job=job)
+        assert refused.bodyType == R.ReplyBody.Failure and refused.body.code == R.ErrorCode.Invalid, names
+    spec.secrets = ["token"]
+    packed = R.pack(spec)
+    fingerprint = hashlib.sha256(packed).hexdigest()
+    accepted = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=packed), job=job)
+    assert accepted.bodyType == R.ReplyBody.JobStatus, vars(accepted.body)
+    sentinel = "raw-card-secret-sentinel-0d4c9e"
+
+    def deliver(fingerprint, name="token"):
+        body = R.JobSecretsRequestT(fingerprint=fingerprint,
+                                    secrets=[R.CardSecretT(name=name, value=sentinel)])
+        return worker.call(R.RequestBody.JobSecretsRequest, body, job=job)
+
+    # The fixture derivation never builds, so the job never waits for them.
+    for refused in (deliver(fingerprint), deliver("0" * 64), deliver(fingerprint, "other")):
+        assert refused.bodyType == R.ReplyBody.Failure and refused.body.code == R.ErrorCode.Rejected
+    status = worker.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job)
+    assert not status.body.secretsWanted
+    other = worker.call(R.RequestBody.JobSecretsRequest, R.JobSecretsRequestT(
+        fingerprint=fingerprint, secrets=[R.CardSecretT(name="token", value=sentinel)]),
+        job=job, coreLifeId="f" * 64)
+    assert other.bodyType == R.ReplyBody.Failure and other.body.code == R.ErrorCode.Rejected
+    worker.wait_state(job, R.JobState.Succeeded, R.JobState.Failed)
+    worker.close()
+    leaks = [str(f) for f in worker.root.rglob("*")
+             if f.is_file() and not f.is_symlink() and sentinel.encode() in f.read_bytes()]
+    assert not leaks
+
+
 def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     binary = worker.command[0]
 
