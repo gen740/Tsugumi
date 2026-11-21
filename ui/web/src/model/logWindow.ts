@@ -130,6 +130,8 @@ export type ReadKind = 'tail' | 'earlier' | 'later' | 'append' | 'status'
 export type LogRead = { kind: ReadKind; offset: number; limit: number; since?: number }
 export type VisibleLines = { first: number; last: number; fragments: ReadonlySet<string> }
 
+// What to read next and what to keep is this view's state: each UI manages its
+// log window itself rather than hostd.
 /** The same ordered byte window is viewed from either edge. The RPC supplies
  *  the starting line of each page, so discarded bytes need not be counted. */
 export class LogWindow {

@@ -312,6 +312,8 @@ enum CardShape {
 /// land one grid apart on the two.
 func snapToGrid(_ v: CGFloat, _ grid: CGFloat) -> CGFloat { ((v / grid + 0.5).rounded(.down)) * grid }
 
+// Presentation from the document and layout.json: each UI computes the shape
+// itself rather than asking hostd (port-grid-contract.json keeps them alike).
 /// Size, outline and port positions of a Card (world units, relative to its
 /// top-left corner). Shared by drawing, wires, the selection and hit-tests.
 ///
@@ -1603,6 +1605,8 @@ private enum WireCost {
   static let portDepth: CGFloat = 44
 }
 
+// Drawn routes are each UI's own work. hostd's route_wires is for Untangle,
+// which edits layout.json, not for drawing.
 /// Routes wires in world units around the Cards. A wire going along the flow
 /// whose curve touches no Card stays that curve. Any other wire takes the
 /// cheapest path on a grid of lines beside the Cards: by length, bends and

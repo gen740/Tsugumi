@@ -5,6 +5,8 @@ import TsugumiRPC
 /// Builds the canvas data of Cards from a project session (and, for previews
 /// in Card settings, from unapplied working copies).
 extension ProjectSession {
+  // Inferring a missing flow from Card places is presentation of layout.json:
+  // each UI does it itself rather than asking hostd.
   /// The direction this project's Cards are laid out in (layout.json
   /// "flow"; projects without it follow the app's default).
   /// Without one, it is read from where the wired Cards sit (mostly to the
@@ -164,6 +166,7 @@ extension ProjectSession {
     return StageProgress(items: items, workerReused: s.workerReused)
   }
 
+  // Presentation: each UI combines the inner Cards' states itself, not hostd.
   /// State of a Card in Card from the Cards inside it: failed or running
   /// when one of them is, succeeded when every one that ran succeeded.
   func compositeState(_ k: CardKey) -> Tsugumi_Data_CardState? {
@@ -250,6 +253,8 @@ extension ProjectSession {
     return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
   }
 
+  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // presentation: each UI works them out itself rather than asking hostd.
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
     guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }
     let saved = layout(of: Array(path(k).dropLast()))["cards"]?[layoutKey(k)]?[output ? "outputOrder" : "inputOrder"]?.array?.compactMap(\.string) ?? []

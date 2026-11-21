@@ -7,6 +7,8 @@ import type { Workspace, WorkflowTab } from '../model/workspace'
 import { get, str } from '../../shared/json'
 import { L } from '../i18n'
 
+// RunRequest always names a Card; finding the root trigger is a UI convenience,
+// so each UI does it itself rather than hostd.
 /** The whole document runs from its root trigger, whichever scope is shown. */
 export function runAll(s: ProjectSession) {
   const trigger = s.cards([]).find((c) => {
