@@ -273,7 +273,7 @@ auto import_remote_result(
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
-  (void)workerd::parse_spec(spec);
+  const auto job = workerd::parse_spec(spec);
   const auto manifest_bytes = download(client, service, instance, job_id,
                                        result_digest, kMaxManifestBytes, stop);
   flatbuffers::Verifier manifest_verifier(
