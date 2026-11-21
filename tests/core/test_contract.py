@@ -534,6 +534,49 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert isinstance(json.loads(line), dict)
 
 
+@pytest.mark.parametrize("project_logs,card_logs,limit,recorded", [
+    (False, None, 16, ""),
+    (False, True, 16, "output"),
+    (True, False, 16, ""),
+    (True, None, 0, ""),
+])
+def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, core_factory,
+                                                            project_logs, card_logs, limit, recorded):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    from harness.scenario import Gate
+    gate = Gate(tmp_path, "live")
+    settings = {"recordLogs": card_logs} if card_logs is not None else {}
+    worker_project(client, project, tmp_path / "worker", [
+        {"op": "log", "stream": "stdout", "text": "output"},
+        gate.action(),
+        {"op": "failure", "message": "record the failure summary"},
+    ], recordIO=False, **settings)
+    snap = client.call("ProjectInspectRequest")
+    config = project_json(snap)
+    for invalid in (-1, (1 << 30) + 1):
+        with pytest.raises(RpcFailure) as failure:
+            client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                        changes=[change("SetProject", json=json.dumps(dict(config, logLimitBytes=invalid)))])
+        assert failure.value.kind == "invalid_document"
+    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(dict(config, recordLogs=project_logs,
+                                                                   logLimitBytes=limit)))])
+    run_id = start_run(client, "work", propagate=False)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    try:
+        gate.wait()
+        client.wait_notification(lambda n: n.valueType == NotificationPayload.LogAvailable and
+                                 n.value.live and text(n.value.runId) == run_id and n.value.invocation == 1)
+        assert text(client.call("LogRangeRequest", **args, live=True).text).strip() == "output"
+    finally:
+        gate.release()
+    assert wait_run(client, run_id).state == RunState.failed
+    assert text(client.call("LogRangeRequest", **args).text).strip() == recorded
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert "record the failure summary" in text(record.summary.failure.diagnostic)
+    assert record.summary.durationMs is not None and not record.outputs
+
+
 def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):
     import os
 

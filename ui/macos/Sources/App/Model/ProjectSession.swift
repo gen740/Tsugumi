@@ -409,6 +409,7 @@ final class ProjectSession {
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
+  private(set) var recordingRevision = 0
   private(set) var batchHistoryRevision = 0
   private var runBatches: [CardKey: Tsugumi_RPC_RunBatchT] = [:]
   /// Invocations of the current (or last) run, for the timeline.
@@ -738,6 +739,8 @@ final class ProjectSession {
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
     case .displayupdated:
       if let d = (e.payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display { applyDisplay(d) }
+    case .runcategorydeleteresult:
+      recordingRevision += 1
     case .logavailable:
       if let log = e.payload.value as? Tsugumi_RPC_LogAvailableT {
         for listener in logListeners.values { listener(log) }

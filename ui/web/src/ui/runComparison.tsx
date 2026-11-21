@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react'
+import { useObserve } from '../model/observable'
 import { ComparedCard, ComparedField, ComparedMember, ComparedRow, Difference, batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay } from '../model/runComparison'
 import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
 import { R, RPCClient, s, segs } from '../wire/rpc'
@@ -10,6 +11,7 @@ import { EnvironmentComparison, EnvironmentReadScope } from './environments'
 import { runMark } from '../model/runMark'
 
 export function RunComparisonView({ session, runs, initial, onClose }: { session: ProjectSession; runs: R.RunSummaryT[]; initial?: string; onClose: () => void }) {
+  useObserve(session)
   const [left, setLeft] = useState(initial ?? s(runs[0]?.status?.runId))
   const [right, setRight] = useState(s(runs.find(r => s(r.status?.runId) !== (initial ?? s(runs[0]?.status?.runId)))?.status?.runId))
   const [rows, setRows] = useState<ComparedRow[]>()
@@ -27,7 +29,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
     const controller = new AbortController()
     void loadRunComparison(session.rpc, left, right, controller.signal).then(v => { if (alive) setRows(v) }).catch(e => alive && setError(errorText(e)))
     return () => { alive = false; controller.abort() }
-  }, [session.rpc, left, right, attempt])
+  }, [session.rpc, left, right, attempt, session.recordingRevision])
   useEffect(() => {
     setDiff(undefined); setDiffError(undefined)
     if (!session.rpc || !from || !to || from === to) return

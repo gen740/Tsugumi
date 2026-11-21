@@ -11,6 +11,7 @@ import TsugumiRPC
     let invocation: UInt64?
     let stream: Tsugumi_Data_LogStream
     let live: Bool
+    let recordingRevision: Int
   }
 
   private(set) var loaded = false

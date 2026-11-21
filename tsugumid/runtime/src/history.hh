@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "model.hh"
+#include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi {
@@ -253,6 +254,13 @@ class History {
   std::pair<int64_t, std::string> open_cursor(const std::string& cursor) const;
 
   const std::filesystem::path& path() const { return path_; }
+
+  static auto file_referencing_runs(sql::Db& db, const std::string& run_id)
+      -> std::vector<std::string>;
+  static auto owns_recorded_file(sql::Db& db, const std::string& run_id,
+                                 const std::string& path) -> bool;
+  static auto delete_category(sql::Db& db, const std::string& run_id,
+                              Tsugumi::RPC::RunRecordCategory category) -> void;
 
   // Deletes the selected finished runs from .tsugumi/runs.sqlite.
   std::vector<std::string> delete_runs(

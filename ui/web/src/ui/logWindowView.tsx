@@ -7,7 +7,7 @@ import { errorText, key, ProjectSession } from '../model/session'
 import { D, RPCFailure, s, segs } from '../wire/rpc'
 import { Button } from './controls'
 
-export interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream; live?: boolean }
+export interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream; live?: boolean; revision?: number }
 
 const EMPTY = new LogWindow('terminal')
 type View = Pick<LogWindow, 'blocks' | 'loaded' | 'size' | 'start' | 'end' | 'waiting' | 'following' | 'truncatedAt'> & {
@@ -21,7 +21,7 @@ type View = Pick<LogWindow, 'blocks' | 'loaded' | 'size' | 'start' | 'end' | 'wa
 }
 
 export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLogs'>, source: LogSource | undefined, form: LogForm): View {
-  const id = source ? JSON.stringify([source.runId, source.card, String(source.invocation), source.stream, source.live, form]) : ''
+  const id = source ? JSON.stringify([source.runId, source.card, String(source.invocation), source.stream, source.live, source.revision, form]) : ''
   const empty: View = {
     id, blocks: EMPTY.blocks, loaded: false, size: 0, start: 0, end: 0, rawSize: 0, waiting: false, following: true,
     follow: () => {}, page: () => {}, visible: () => {}, jump: () => {},

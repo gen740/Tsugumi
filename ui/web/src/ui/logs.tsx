@@ -171,7 +171,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, card?.join('/'), invocation])
-  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream, live: isLiveStream(session, runId, stream) }
+  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream, live: isLiveStream(session, runId, stream), revision: session.recordingRevision }
   const log = useLogStream(session, source, 'terminal')
 
   /** Why nothing is shown, so an empty pane is never ambiguous. */
@@ -264,7 +264,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     ?? (focus !== undefined ? groups.find((g) => g.stages.includes(focus))?.id : undefined) ?? 'execute'
   const current = selected ?? defaultGroup
   const stream = current === 'build' ? D.LogStream.build : current === 'execute' ? executeStream : current === 'save' ? D.LogStream.journal : rawStream
-  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream, live: isLiveStream(session, runId, stream) }
+  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream, live: isLiveStream(session, runId, stream), revision: session.recordingRevision }
   const log = useLogStream(session, source, current === 'save' ? 'journal' : 'terminal')
 
   // State changes (a stage starts or ends) read the record again; new output

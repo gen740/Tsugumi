@@ -17,6 +17,7 @@
 #include "wire.hh"
 
 namespace tsugumi {
+namespace R = Tsugumi::RPC;
 
 namespace {
 
@@ -215,6 +216,8 @@ constexpr const char* kRunCols =
 auto log_truncated_at(sql::Db& db, const std::string& run_id,
                       const CardPath& card, uint64_t invocation,
                       bool build = false) -> std::optional<uint64_t> {
+  // The existing table has one row per invocation key. Build and journal
+  // share a separate budget, represented by the negative invocation number.
   auto st = db.prepare(
       "SELECT limit_bytes FROM log_truncations WHERE "
       "run_id=? AND card=? AND invocation=?");
@@ -235,6 +238,8 @@ InvocationSummaryData inv_row(sql::Db& db, const sql::Stmt& st,
   s.card = unkey(st.text(0));
   s.invocation = st.u64(1);
   s.log_truncated_at_bytes = log_truncated_at(db, run_id, s.card, s.invocation);
+  if (!s.log_truncated_at_bytes)
+    s.log_truncated_at_bytes = log_truncated_at(db, run_id, s.card, s.invocation, true);
   s.state = static_cast<CardState>(st.i64(2));
   if (!st.is_null(3)) s.phase = static_cast<Phase>(st.i64(3));
   s.started_at = st.opt_i64(4);
@@ -1561,22 +1566,24 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
     SavedInputGroup group{
         *entry.port, *entry.execution_list, {}, *entry.partial_result};
     for (const auto& value : *entry.values) {
+      if (!*value.kind || !*value.schema || !*value.root_type || !*value.data_b64)
+        return std::nullopt;
       Value v;
       v.name = group.port;
-      v.kind = static_cast<PortKind>(*value.kind);
+      v.kind = static_cast<PortKind>(**value.kind);
       auto [type, inserted] = loaded_types.try_emplace(
-          std::make_pair(*value.schema, *value.root_type));
+          std::make_pair(**value.schema, **value.root_type));
       if (inserted) {
         auto schema_row = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
-        schema_row.bind(1, *value.schema);
+        schema_row.bind(1, **value.schema);
         if (!schema_row.step()) return std::nullopt;
         auto decoded = std::make_shared<types::Type>();
         decoded->bfbs = schema_row.blob(0);
-        decoded->hash = *value.schema;
-        decoded->root_type = *value.root_type;
+        decoded->hash = **value.schema;
+        decoded->root_type = **value.root_type;
         type->second = std::move(decoded);
       }
-      if (!crypto::base64_decode(*value.data_b64, v.bytes)) return std::nullopt;
+      if (!crypto::base64_decode(**value.data_b64, v.bytes)) return std::nullopt;
       v.type = type->second;
       v.recorded_path = *value.recorded_path;
       group.values.push_back(std::move(v));
@@ -1817,6 +1824,81 @@ std::pair<int64_t, std::string> History::open_cursor(
   if (!crypto::base64_decode(cursor, raw) || schema::decode(raw, c))
     throw Failed(FailureKind::invalid_cursor, "malformed cursor");
   return {*c.hi, *c.after};
+}
+
+auto History::file_referencing_runs(sql::Db& db, const std::string& run_id)
+    -> std::vector<std::string> {
+  const auto prefix = "runs/" + run_id + "/";
+  auto st = db.prepare(
+      "SELECT v.run_id, v.kind, s.bfbs, v.root_type, v.bytes FROM ivalues v "
+      "JOIN schemas s ON s.hash=v.schema_hash "
+      "WHERE v.run_id<>? AND v.kind IN (?,?) AND instr(v.bytes,?)>0 "
+      "ORDER BY v.run_id");
+  st.bind(1, run_id)
+      .bind(2, static_cast<int>(PortKind::File))
+      .bind(3, static_cast<int>(PortKind::Directory))
+      .bind_blob(4, prefix);
+  std::vector<std::string> runs;
+  while (st.step()) {
+    auto id = st.text(0);
+    if (!runs.empty() && runs.back() == id) continue;
+    auto type = std::make_shared<types::Type>();
+    type->bfbs = st.blob(2);
+    type->root_type = st.text(3);
+    flatbuffers::Verifier schema(
+        reinterpret_cast<const uint8_t*>(type->bfbs.data()), type->bfbs.size());
+    if (!reflection::VerifySchemaBuffer(schema) || !type->root()) continue;
+    const auto bytes = st.blob(4);
+    if (!types::verify(*type, bytes)) continue;
+    auto path = path_value({"", static_cast<PortKind>(st.i64(1)), type, bytes, {}});
+    if (path && path->starts_with(prefix)) runs.push_back(std::move(id));
+  }
+  return runs;
+}
+
+auto History::owns_recorded_file(sql::Db& db, const std::string& run_id,
+                                 const std::string& path) -> bool {
+  auto st = db.prepare(
+      "SELECT 1 FROM ivalues WHERE run_id=? AND side=1 AND kind IN (?,?) "
+      "AND instr(bytes,?)>0 LIMIT 1");
+  st.bind(1, run_id)
+      .bind(2, static_cast<int>(PortKind::File))
+      .bind(3, static_cast<int>(PortKind::Directory))
+      .bind_blob(4, path + '\0');
+  return st.step();
+}
+
+auto History::delete_category(sql::Db& db, const std::string& run_id,
+                              R::RunRecordCategory category) -> void {
+  switch (category) {
+    case R::RunRecordCategory::Logs:
+      for (const auto* table : {"logs", "log_terminal_ends", "log_terminal_tiles"})
+        db.prepare(std::string("DELETE FROM ") + table +
+                   " WHERE run_id=? AND stream IN (?,?)")
+            .bind(1, run_id)
+            .bind(2, static_cast<int>(LogStream::standard_output))
+            .bind(3, static_cast<int>(LogStream::standard_error))
+            .run();
+      db.prepare("DELETE FROM log_truncations WHERE run_id=? AND invocation>0")
+          .bind(1, run_id).run();
+      break;
+    case R::RunRecordCategory::Values:
+      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind=?")
+          .bind(1, run_id).bind(2, static_cast<int>(PortKind::FlatBuffer)).run();
+      break;
+    case R::RunRecordCategory::Files:
+      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind IN (?,?)")
+          .bind(1, run_id)
+          .bind(2, static_cast<int>(PortKind::File))
+          .bind(3, static_cast<int>(PortKind::Directory))
+          .run();
+      db.prepare("DELETE FROM artifacts WHERE run_id=?").bind(1, run_id).run();
+      db.prepare("UPDATE runs SET has_artifacts=0 WHERE run_id=?")
+          .bind(1, run_id).run();
+      break;
+    default:
+      throw sql::Error("invalid run record category");
+  }
 }
 
 // Delete exactly the finished runs selected by the person, in the primary

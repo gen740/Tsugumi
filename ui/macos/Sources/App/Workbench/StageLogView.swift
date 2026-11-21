@@ -96,7 +96,8 @@ struct StageLogView: View {
     guard let inv = shownInvocation else { return nil }
     return LogStreamReader.Source(runId: runId, card: card, invocation: inv, stream: shownStream.0,
                            live: session.runActive && runId == session.currentRunId &&
-                             (shownStream.0 == .standardOutput || shownStream.0 == .standardError))
+                             (shownStream.0 == .standardOutput || shownStream.0 == .standardError),
+                           recordingRevision: session.recordingRevision)
   }
 
   var body: some View {

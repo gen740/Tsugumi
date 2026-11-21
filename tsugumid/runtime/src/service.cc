@@ -604,6 +604,8 @@ std::vector<std::string> Service::capabilities() {
                                    "ProjectCacheUsage",
                                    "RunScratchDelete",
                                    "RunHistoryDelete",
+                                   "RunCategoryDelete",
+                                   "RunFileReferences",
                                    "OperationGet",
                                    "ProjectFileList",
                                    "ProjectFileStat",
@@ -820,6 +822,10 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::cache_usage);
     case P::RunScratchDeleteRequest:
       return on_lane(m, std::move(req), &Service::scratch_delete);
+    case P::RunCategoryDeleteRequest:
+      return on_lane(m, std::move(req), &Service::history_category_delete);
+    case P::RunFileReferencesRequest:
+      return on_lane(r, std::move(req), &Service::history_file_references);
     case P::RunHistoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
@@ -938,6 +944,10 @@ std::string Service::receipt_reply(uint64_t request_id,
     case R::ReceiptValue::RunScratchDeleteResult:
       type = R::ReplyPayload::RunScratchDeleteResult;
       tname = "Tsugumi.RPC.RunScratchDeleteResult";
+      break;
+    case R::ReceiptValue::RunCategoryDeleteResult:
+      type = R::ReplyPayload::RunCategoryDeleteResult;
+      tname = "Tsugumi.RPC.RunCategoryDeleteResult";
       break;
     case R::ReceiptValue::RunHistoryDeleteResult:
       type = R::ReplyPayload::RunHistoryDeleteResult;
@@ -1987,6 +1997,84 @@ void Service::scratch_delete(RequestIn& req) {
     store_failure_receipt(op_id, "scratch_delete", digest, failure);
     throw Failed(failure);
   }
+}
+
+void Service::history_category_delete(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_RunCategoryDeleteRequest();
+  const auto op_id = r->op_id()->str();
+  const auto run_id = r->run_id()->str();
+  const auto category = r->category();
+  constexpr auto kind = "history_category_delete";
+  const auto digest = request_digest(project_request(req));
+  if (replay_or_join(req, op_id, kind, digest)) return;
+  try {
+    if (!crypto::is_run_id(run_id))
+      throw Failed(FailureKind::invalid_request, "invalid run id");
+    if (category != R::RunRecordCategory::Logs &&
+        category != R::RunRecordCategory::Values &&
+        category != R::RunRecordCategory::Files)
+      throw Failed(FailureKind::invalid_request, "invalid run record category");
+    if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
+      throw Failed(FailureKind::busy,
+                   "history cannot be deleted while a run or external results are pending");
+    const auto run = history_->read([&](sql::Db& db) {
+      return History::run(db, run_id);
+    });
+    if (!run) throw Failed(FailureKind::not_found, "unknown run");
+    if (!run->status.terminal())
+      throw Failed(FailureKind::busy, "the run has not finished");
+    if (category == R::RunRecordCategory::Files) {
+      const auto runs = store_->state_dir() / "runs";
+      const auto dir = runs / run_id;
+      // Unlink owned files first. A partial filesystem failure leaves the
+      // indexes in place, and a new operation can retry the same removal.
+      if (stdfs::is_symlink(runs) || stdfs::is_symlink(dir))
+        throw Failed(FailureKind::invalid_path, "run history is a symbolic link");
+      for (const auto* name : {"values", "artifacts"})
+        stdfs::remove_all(dir / name);
+    }
+    FBB b;
+    const auto result = R::CreateRunCategoryDeleteResult(
+        b, b.CreateString(run_id), category);
+    const auto receipt = finish_receipt(
+        b, op_id, R::ReceiptValue::RunCategoryDeleteResult, result.Union());
+    history_->write_sync([&](sql::Db& db) {
+      History::delete_category(db, run_id, category);
+      History::put_receipt(db, op_id, kind, digest, receipt);
+    });
+    Note note;
+    note.build = std::make_shared<const Note::Build>([run_id, category](FBB& b) {
+      return std::pair(R::NotificationPayload::RunCategoryDeleteResult,
+                       R::CreateRunCategoryDeleteResult(
+                           b, b.CreateString(run_id), category).Union());
+    });
+    server_->broadcast(std::move(note));
+    reply(req, receipt_reply(req.request_id, receipt, false));
+    finish_op(op_id, receipt);
+  } catch (const Failed& error) {
+    store_failure_receipt(op_id, kind, digest, error.failure);
+    throw;
+  } catch (const std::exception& error) {
+    auto failure = FailureData::make(FailureKind::persistence_failed, error.what());
+    store_failure_receipt(op_id, kind, digest, failure);
+    throw Failed(failure);
+  }
+}
+
+void Service::history_file_references(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_RunFileReferencesRequest();
+  const auto id = r->run_id()->str();
+  if (!crypto::is_run_id(id))
+    throw Failed(FailureKind::invalid_request, "invalid run id");
+  const auto refs = history_->read([&](sql::Db& db) {
+    if (!History::run(db, id))
+      throw Failed(FailureKind::not_found, "unknown run");
+    return History::file_referencing_runs(db, id);
+  });
+  FBB b;
+  auto result = R::CreateRunFileReferences(b, b.CreateVectorOfStrings(refs));
+  reply(req, wire::reply(b, req.request_id,
+                        R::ReplyPayload::RunFileReferences, result.Union()));
 }
 
 void Service::history_delete(RequestIn& req) {

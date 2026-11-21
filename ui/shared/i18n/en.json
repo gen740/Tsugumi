@@ -1,4 +1,10 @@
 {
+  "記録を削除…": "Delete Records\u2026",
+  "標準出力と標準エラー": "Stdout and Stderr",
+  "ファイルと成果物": "Files and Artifacts",
+  "実行 {0} の「{1}」を削除しますか？": {"text": "Delete {1} from run {0}?", "mac": ["@", "@"]},
+  "参照している実行: {0}。削除後、それらの参照は削除済みと表示されます。": {"text": "Referencing runs: {0}. Their references will be marked as deleted.", "mac": ["@"]},
+  "参照先のファイルは削除されました。": "The referenced file was deleted.",
   "標準出力と標準エラーを記録": "Record stdout and stderr",
   "記録指定のある表示を記録": "Record displays marked for recording",
   "入出力の値を記録": "Record input and output values",

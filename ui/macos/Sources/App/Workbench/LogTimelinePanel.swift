@@ -108,7 +108,8 @@ struct RunLogView: View {
   private var source: LogStreamReader.Source {
     LogStreamReader.Source(runId: runId, card: card, invocation: card == nil ? nil : (invocation ?? resolved), stream: stream,
                            live: session.runActive && runId == session.currentRunId &&
-                             (stream == .standardOutput || stream == .standardError))
+                             (stream == .standardOutput || stream == .standardError),
+                           recordingRevision: session.recordingRevision)
   }
 
   var body: some View {

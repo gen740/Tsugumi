@@ -87,10 +87,10 @@ struct MemberList {
 };
 
 struct SavedInputJson {
-  t::Int64<"kind"> kind;
-  t::String<"schema"> schema;
-  t::String<"root_type"> root_type;
-  t::String<"data"> data_b64;
+  Opt<"kind", v::Int64> kind;
+  Opt<"schema", v::String> schema;
+  Opt<"root_type", v::String> root_type;
+  Opt<"data", v::String> data_b64;
   Opt<"recorded_path", v::String> recorded_path;
 };
 

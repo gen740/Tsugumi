@@ -737,6 +737,7 @@ void Service::run_record(RequestIn& req) {
                              : b.CreateString(m.file_content_hash);
         flatbuffers::Offset<flatbuffers::String> file_path;
         bool file_missing = false;
+        bool file_deleted = false;
         if (m.kind != PortKind::FlatBuffer) {
           file_missing = true;
           auto type = std::make_shared<types::Type>();
@@ -758,7 +759,15 @@ void Service::run_record(RequestIn& req) {
                 file_missing = error || (m.kind == PortKind::File
                                              ? !stdfs::is_regular_file(status)
                                              : !stdfs::is_directory(status));
-                if (!file_missing) file_path = b.CreateString(content.string());
+                if (!file_missing) {
+                  file_path = b.CreateString(content.string());
+                } else {
+                  const auto owner = rel.begin()->string();
+                  if (owner != run_id && crypto::is_run_id(owner))
+                    file_deleted = history_->read([&](sql::Db& db) {
+                      return !History::owns_recorded_file(db, owner, *recorded);
+                    });
+                }
               }
             }
           }
@@ -775,6 +784,7 @@ void Service::run_record(RequestIn& req) {
         if (!file_hash.IsNull()) nb.add_file_content_hash(file_hash);
         if (!file_path.IsNull()) nb.add_file_path(file_path);
         nb.add_file_missing(file_missing);
+        nb.add_file_deleted(file_deleted);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);
