@@ -258,7 +258,7 @@ function PlotView({ plot }: { plot: Extract<Output, { type: 'plot' }> }) {
   )
 }
 
-/** A Card's result, in the classes of ui/web/src/ui/display.tsx. */
+/** A recorded result in the demo's Card inspector. */
 function OutputView({ output, base, zoom, large = false }: { output: Output; base: string; zoom: number; large?: boolean }) {
   const size = (v: number) => v * zoom
   switch (output.type) {
