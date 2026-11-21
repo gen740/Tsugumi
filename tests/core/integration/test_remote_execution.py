@@ -408,7 +408,7 @@ import fs from 'node:fs';
 const code = fs.readFileSync(0);
 const module = await import('data:text/javascript;base64,' + code.toString('base64'));
 const root = {};
-await module.initialise(root);
+await module.default(root, { config: '{}', blobs: {} });
 process.stdout.write(JSON.stringify(root.textContent));
 """
     result = subprocess.check_output([node, "--input-type=module", "-e", script], input=remote_source)
