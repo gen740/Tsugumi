@@ -17,6 +17,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 | [util/](util/), [rpc/](rpc/) | Generic filesystem/process/JSON mechanisms and protocol-free transport/TLS |
 | [tsugumid/](tsugumid/) | Project document contracts, runtime, scheduling, history and versions; narrow shared runtime accounting |
 | [hostd/](hostd/) | Human/Agent policy, settings, credentials, document operations and environment adapters |
+| [hostd/cache/](hostd/cache/) | `tsugumi-cached`, the own Nix binary cache server ([design](docs/BinaryCacheServer.md)); its own process because it links Nix |
 | [client/](client/) | Shared C++ RPC client, C interface and WebAssembly bindings |
 | [workerd/](workerd/) | Native Card host `tsugumi-worker`, remote listener/supervisor/Nix runner `tsugumi-workerd`, framing and job support |
 | [sdk/](sdk/) | Card ABI and runtime, language SDKs and code generation, views, [Nix SDK](sdk/nix/default.nix) |

@@ -129,6 +129,9 @@ def consumers(path):
             if asset == "helpers-skill.md":
                 jobs.add("prompt")
         return jobs
+    if path.startswith("hostd/cache/"):
+        # The cache server is its own process, tested by the host suite.
+        return {"host"}
     if path.startswith("hostd/"):
         # Host RPC is consumed by native clients, the broker and the Web edit
         # driver. Guest entry points and the Card SDK run through tsugumid.

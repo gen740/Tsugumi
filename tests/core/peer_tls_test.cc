@@ -1,6 +1,7 @@
-#include "tsugumi/workerd/authorized_keys.hh"
 // Real TLS handshakes over socketpair: no listener or network permission
 // needed.
+#include "tsugumi/rpc/peer_tls.hh"
+
 #include <fcntl.h>
 #include <gtest/gtest.h>
 #include <openssl/ssl.h>
@@ -10,10 +11,12 @@
 #include <unistd.h>
 
 #include <atomic>
+#include <chrono>
+#include <string>
 #include <thread>
+#include <vector>
 
 #include "agent_fixture_server.hh"
-#include "tsugumi/rpc/peer_tls.hh"
 
 namespace tsugumi::test {
 namespace {
@@ -86,7 +89,7 @@ TEST(PeerTLS, AuthorizedKeysAreRequiredAndRemovalRevokesTheNextHandshake) {
   const auto file = directory.path / "authorized_keys";
   Write(file, "# Host key\n\n" + host.public_key() + " # workstation\n");
   peer_tls::Context server(worker, true, [&](std::string_view key) {
-    return workerd::Authorized(file, key);
+    return peer_tls::Authorized(file, key);
   });
   peer_tls::Context client(host, false, [&](std::string_view key) {
     return key == worker.public_key();
@@ -119,6 +122,52 @@ TEST(PeerTLS, IdentitySurvivesRestartAndRejectsUnsafePrivateFiles) {
   std::filesystem::create_symlink(file, directory.path / "symlink.pem");
   EXPECT_THROW(peer_tls::Identity{directory.path / "symlink.pem"},
                std::runtime_error);
+}
+TEST(PeerTLS, ANamedServerCertificateIsTheSameOnEveryStartAndKeepsTheKey) {
+  TemporaryDirectory directory;
+  const auto file = directory.path / "server.pem";
+  const std::vector<std::string> names{"cache.example", "127.0.0.1", "[::1]"};
+  peer_tls::Identity first(file, names);
+  peer_tls::Identity again(file, names);
+  peer_tls::Identity stored(file);
+  // A client keeps trusting the certificate file it was given.
+  EXPECT_EQ(first.certificate_pem(), again.certificate_pem());
+  EXPECT_NE(first.certificate_pem(), stored.certificate_pem());
+  EXPECT_EQ(first.public_key(), stored.public_key());
+  EXPECT_NE(peer_tls::Identity(file, {"other.example"}).certificate_pem(),
+            first.certificate_pem());
+  EXPECT_THROW(peer_tls::Identity(file, {"two names"}), std::runtime_error);
+  // The peer still authenticates by its key; a read returns what arrived.
+  peer_tls::Identity host(directory.path / "host.pem");
+  peer_tls::Context server(first, true, [&](std::string_view key) {
+    return key == host.public_key();
+  });
+  peer_tls::Context client(host, false, [&](std::string_view key) {
+    return key == first.public_key();
+  });
+  int pair[2];
+  ASSERT_EQ(::socketpair(AF_UNIX, SOCK_STREAM, 0, pair), 0);
+  for (int fd : pair) peer_tls::ConfigureSocket(fd, 2);
+  std::string peer, some;
+  std::thread accepting([&] {
+    try {
+      peer_tls::Stream stream(server, pair[0], true);
+      peer = stream.peer_key();
+      some = stream.ReadSome(100);
+    } catch (...) {
+    }
+    ::close(pair[0]);
+  });
+  {
+    peer_tls::Stream stream(client, pair[1], false);
+    stream.Write("abc");
+    std::this_thread::sleep_for(std::chrono::milliseconds(100));
+  }
+  ::shutdown(pair[1], SHUT_RDWR);
+  accepting.join();
+  ::close(pair[1]);
+  EXPECT_EQ(peer, host.public_key());
+  EXPECT_EQ(some, "abc");
 }
 TEST(PeerTLS, MissingClientCertificateAndTLS12AreRejected) {
   TemporaryDirectory directory;

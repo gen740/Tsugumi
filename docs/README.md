@@ -20,6 +20,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [Reports.md](Reports.md) | R Markdown and Quarto report Cards, saved HTML and parameterized rendering |
 | [WebUI.md](WebUI.md) | The browser workbench and the `tsugumi` command on Mac, Linux and Windows through WSL2 |
 | [BinaryCaches.md](BinaryCaches.md) | Attic, Cachix and other signed binary caches, private authentication and VM-wide trust |
+| [BinaryCacheServer.md](BinaryCacheServer.md) | `tsugumi-cached`, Tsugumi's own Nix binary cache: protocol, atomic storage, server-side signing and worker-key authentication |
 | [claude-code.md](claude-code.md) | Having Claude Code make and run Cards through the Claude Code plugin, shown in the Web UI |
 
 ## The ideas

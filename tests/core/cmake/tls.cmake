@@ -1,5 +1,5 @@
 add_executable(tsugumi_peer_tls_tests peer_tls_test.cc agent_fixture_server.cc)
-target_link_libraries(tsugumi_peer_tls_tests PRIVATE tsugumi_peer_tls tsugumi_worker_authorization GTest::gtest_main hosq Threads::Threads)
+target_link_libraries(tsugumi_peer_tls_tests PRIVATE tsugumi_peer_tls GTest::gtest_main hosq Threads::Threads)
 target_compile_options(tsugumi_peer_tls_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 gtest_discover_tests(tsugumi_peer_tls_tests TEST_PREFIX "peer_tls." DISCOVERY_MODE PRE_TEST PROPERTIES TIMEOUT 15)
 if(TSUGUMI_INSTALLED_CORE)
