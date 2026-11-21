@@ -2,6 +2,7 @@ import TsugumiVMTypes
 import CryptoKit
 import Darwin
 import Foundation
+import TsugumiRPC
 
 /// Private adapter transport, used by the signed helper and its byte bridges.
 /// App and Web clients use hostd Host requests.
@@ -102,32 +103,23 @@ public enum VMHostIPC {
     return fd
   }
 
-  public static func write(_ bytes: Data, to fd: Int32) throws {
-    var size = UInt32(bytes.count).littleEndian
-    try withUnsafeBytes(of: &size) { try writeAll(fd, Data($0)) }
-    try writeAll(fd, bytes)
+  /// The largest frame on the helper link, as hostd's side of it
+  /// (hostd/src/vm_process.cc): the Host RPC frame limit, because the helper
+  /// relays Host requests (terminal input) and replies (runtime snapshots)
+  /// that hostd's clients exchange in Host RPC frames.
+  public static let maxFrameBytes = 16 << 20
+
+  public static func write(_ bytes: Data, to fd: Int32, maxSize: Int = maxFrameBytes) throws {
+    do { try RPCFrame.write(bytes, to: fd, maxBytes: UInt32(maxSize)) } catch {
+      throw LauncherError.notReady("VM host frame: \(error)")
+    }
   }
 
-  public static func read(_ fd: Int32, maxSize: Int = Int(UInt32.max)) throws -> Data? {
-    func exact(_ size: Int) throws -> Data? {
-      var result = Data(count: size)
-      return try result.withUnsafeMutableBytes { buffer in
-        var offset = 0
-        while offset < size {
-          let count = Darwin.read(fd, buffer.baseAddress! + offset, size - offset)
-          if count < 0, errno == EINTR { continue }
-          if count == 0, offset == 0 { return nil }
-          guard count > 0 else { throw LauncherError.notReady("VM host stream closed mid-frame") }
-          offset += count
-        }
-        return Data(buffer)
-      }
+  /// The next frame, or nil when the peer closed the stream between frames.
+  public static func read(_ fd: Int32, maxSize: Int = maxFrameBytes) throws -> Data? {
+    do { return try RPCFrame.read(fd, maxBytes: UInt32(maxSize)) } catch {
+      throw LauncherError.notReady("VM host frame: \(error)")
     }
-    guard let prefix = try exact(4) else { return nil }
-    let size = prefix.withUnsafeBytes { UInt32(littleEndian: $0.loadUnaligned(as: UInt32.self)) }
-    guard size > 0, size <= maxSize else { throw LauncherError.notReady("invalid VM frame size") }
-    guard let data = try exact(Int(size)) else { throw LauncherError.notReady("Truncated VM host frame") }
-    return data
   }
 
   /// Transfers ownership of both descriptors until the stream has drained.

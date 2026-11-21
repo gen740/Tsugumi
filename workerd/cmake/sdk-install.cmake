@@ -7,4 +7,5 @@ install(FILES ${TSUGUMI_PROTOCOL_DIR}/worker.fbs ${TSUGUMI_PROTOCOL_DIR}/data.fb
 install(DIRECTORY ${HOSQ_INCLUDE_DIR}/hosq DESTINATION share/tsugumi/sdk/worker/include
   FILES_MATCHING PATTERN "*.h" PATTERN "*.hh")
 
+install(FILES ${PROJECT_SOURCE_DIR}/rpc/include/tsugumi/rpc/frame.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/rpc)
 install(FILES include/tsugumi/workerd/frame.hh include/tsugumi/workerd/display.hh DESTINATION share/tsugumi/sdk/worker/include/tsugumi/workerd)

@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <set>
 
-#include "tsugumi/workerd/frame.hh"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi::workerd {
@@ -26,16 +26,17 @@ auto decode(std::string_view bytes) -> std::unique_ptr<R::MessageT> {
   return message;
 }
 auto length_prefix(uint32_t length) -> std::string {
-  const auto bytes = encode_length(length);
+  const auto bytes = rpc::frame::EncodePrefix(length);
   return {bytes.data(), bytes.size()};
 }
 auto frame_length(std::string_view prefix) -> uint32_t {
-  if (prefix.size() != 4)
+  if (prefix.size() != rpc::frame::kPrefixBytes)
     throw Error(R::ErrorCode::Invalid, "truncated frame prefix");
-  const auto n = decode_length(prefix.data());
-  if (n == 0 || n > kMaxFrame)
-    throw Error(R::ErrorCode::Invalid, "invalid frame length");
-  return n;
+  try {
+    return rpc::frame::DecodePrefix(prefix.data(), kMaxFrame);
+  } catch (const rpc::frame::Error& error) {
+    throw Error(R::ErrorCode::Invalid, error.what());
+  }
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
   R::FailureT error;

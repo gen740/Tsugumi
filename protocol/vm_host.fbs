@@ -1,6 +1,8 @@
 // Private same-user adapter channel: hostd alone drives the signed VM helper.
-// uint32 LE length and one FlatBuffer; independent request connections and a
-// Watch connection for progress, runtime snapshots and terminal bytes.
+// uint32 LE length and one FlatBuffer of at most 16 MiB (the Host RPC frame
+// limit: Host requests and replies pass through); independent request
+// connections and a Watch connection for progress, runtime snapshots and
+// terminal bytes.
 include "host.fbs";
 include "vm_guest.fbs";
 namespace Tsugumi.VMHost;

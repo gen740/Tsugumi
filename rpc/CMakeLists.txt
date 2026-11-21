@@ -1,3 +1,6 @@
+# The length-prefixed frame (header-only; also in the SDK's worker sources).
+add_library(tsugumi_frame INTERFACE)
+target_include_directories(tsugumi_frame INTERFACE ${CMAKE_CURRENT_SOURCE_DIR}/include)
 if(EMSCRIPTEN)
   include(cmake/transport-wasm.cmake)
 else()
