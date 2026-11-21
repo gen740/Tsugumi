@@ -161,7 +161,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   else if (action === 'copy') await s.placeDefinitionCopy('', 'a', [], at)
   else if (action === 'duplicate') await s.duplicate(new Set(['a']), [])
   else if (action === 'convert') await s.makeSubgraph(new Set(['a']), [])
-  else await s.moveSelection([], new Set(['a']), new Set(), new Set(), 100, 0)
+  else await s.moveSelection([], new Set(['a']), new Set(), 100, 0)
   assert.equal(requests.length, 1, action)
   const types = { create: H.ProjectOperationBody.ProjectCreateCard, import: H.ProjectOperationBody.ProjectImport,
     copy: H.ProjectOperationBody.ProjectCopy, duplicate: H.ProjectOperationBody.ProjectCopy,
@@ -267,11 +267,11 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   await s.replaceDocuments(0n, [['tsugumi.json', parse('{"name":"raw"}')]])
   assert.equal(requests[2].bodyType, H.ProjectOperationBody.ProjectReplaceDocuments)
   assert.equal((requests[2].body as H.ProjectReplaceDocumentsT).expectedRev, 0n)
-  s.deleteSelection(new Set(['a']), new Set(['note']), new Set(['frame']), [])
+  s.deleteSelection(new Set(['a']), new Set(['note']), [])
   await s.save()
   assert.equal(requests[3].bodyType, H.ProjectOperationBody.ProjectSelection)
   const selection = requests[3].body as H.ProjectSelectionT
-  assert.deepEqual(selection.cards, ['a']); assert.deepEqual(selection.notes, ['note']); assert.deepEqual(selection.frames, ['frame'])
+  assert.deepEqual(selection.cards, ['a']); assert.deepEqual(selection.notes, ['note'])
   assert.equal(selection.action, H.ProjectSelectionAction.Delete)
   await s.reloadExternal()
   assert.equal(requests[4].bodyType, H.ProjectOperationBody.ProjectReload)

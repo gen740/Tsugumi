@@ -9,8 +9,7 @@ struct InvalidDisplayTests {
       .scalar(.nan, "value"),
       .table(columns: [], rows: []), .table(columns: ["one"], rows: [["one", "two"]]),
       .image(mediaType: "image/png", data: Data([1,2,3]), alt: ""),
-      .points(x: [0], y: [], z: [0], colors: []),
-      .module(name: "/nix/store/00000000000000000000000000000000-view", json: "{", blobs: [:])
+      .points(x: [0], y: [], z: [0], colors: [])
     ]
     for value in values {
       let display = DisplaySnapshot(runId: "run", invocation: 1, revision: 0, value: value)

@@ -72,8 +72,7 @@ auto with_bars(const Scene& scene, std::vector<Card>& cards,
   }
 }
 auto orders(bool vertical, std::vector<Card> cards,
-            const std::vector<Wire>& wires, const std::vector<Box>& frames)
-    -> std::vector<PortOrder> {
+            const std::vector<Wire>& wires) -> std::vector<PortOrder> {
   const auto original = cards;
   auto score = [&](std::vector<Card>& cs) {
     std::vector<WireEnds> ends;
@@ -88,8 +87,6 @@ auto orders(bool vertical, std::vector<Card> cards,
     }
     std::vector<Rect> obstacles;
     for (const auto& c : cs) obstacles.push_back({c.x, c.y, c.width, c.height});
-    for (const auto& f : frames)
-      obstacles.push_back({f.x, f.y, f.width, f.height});
     return crossing_pairs(route_wires(vertical, obstacles, ends), ends);
   };
   int best = score(cards), trials = 0;
@@ -188,8 +185,7 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
       c.reorderable = c.reorderable && neighbors.contains(c.id);
   }
   Proposal out;
-  out.port_orders =
-      orders(scene.top_to_bottom, std::move(cards), wires, scene.frames);
+  out.port_orders = orders(scene.top_to_bottom, std::move(cards), wires);
   return out;
 }
 auto arrange(const Scene& scene) -> Proposal {
@@ -197,7 +193,6 @@ auto arrange(const Scene& scene) -> Proposal {
   auto placed = place(scene);
   auto cards = scene.cards;
   auto wires = scene.wires;
-  auto frames = scene.frames;
   for (auto& c : cards) {
     const auto p = std::find_if(placed.cards.begin(), placed.cards.end(),
                                 [&](const Place& p) { return p.id == c.id; });
@@ -209,15 +204,7 @@ auto arrange(const Scene& scene) -> Proposal {
     }
   }
   with_bars(scene, cards, wires, false);
-  std::erase_if(frames, [&](Box& f) {
-    const auto p = std::find_if(placed.frames.begin(), placed.frames.end(),
-                                [&](const Place& p) { return p.id == f.id; });
-    if (p == placed.frames.end()) return true;
-    f.x = p->x;
-    f.y = p->y;
-    return false;
-  });
-  auto reordered = orders(scene.top_to_bottom, std::move(cards), wires, frames);
+  auto reordered = orders(scene.top_to_bottom, std::move(cards), wires);
   if (!reordered.empty()) {
     auto input = scene;
     for (const auto& o : reordered) {

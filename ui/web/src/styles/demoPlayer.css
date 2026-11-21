@@ -33,13 +33,10 @@
 .tp-compact .cv-card-body { cursor: inherit; }
 .tp-root .cv-param-row { pointer-events: none; }
 .tp-root .cv-wires { z-index: 0; }
-.tp-root .cv-card, .tp-root .tp-frame, .tp-root .tp-note { z-index: 1; }
+.tp-root .cv-card, .tp-root .tp-note { z-index: 1; }
 .tp-root .display-image { image-rendering: auto; }
 .tp-root .display-table td, .tp-root .display-table th { padding: 0; }
-.tp-frame { animation: tp-appear 0.25s ease-out; }
-@keyframes tp-appear { from { opacity: 0; } to { opacity: 1; } }
 @media (prefers-reduced-motion: reduce) {
-  .tp-frame { animation: none; }
   .tp-root .cv-wire-moving { animation: none; }
 }
 

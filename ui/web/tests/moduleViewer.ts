@@ -3,23 +3,22 @@ import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
 import { moduleSource, registerModuleClient } from '../src/model/moduleSources'
-import { moduleThumbnailKey } from '../src/model/moduleThumbnails'
 
-// Exercise the real lifecycle runtime with a DOM stand-in and a real ES module.
-const script = fs.readFileSync(path.join(process.argv[2], 'ui/shared/modules/viewer.js'), 'utf8')
-// The page itself forbids nested frames from loading a URL, wherever it is hosted (the Mac app too).
-assert.match(fs.readFileSync(path.join(process.argv[2], 'ui/shared/modules/viewer.html'), 'utf8'), /Content-Security-Policy" content="frame-src 'none'"/)
-const runtime = script.slice(script.indexOf('function runtime()'), script.indexOf('frame.srcdoc ='))
+const shared = path.join(process.argv[2], 'ui/shared/modules')
+const script = fs.readFileSync(path.join(shared, 'viewer.js'), 'utf8')
+assert.match(fs.readFileSync(path.join(shared, 'viewer.html'), 'utf8'), /Content-Security-Policy" content="frame-src 'none'"/)
+assert.match(script, /frame.sandbox = 'allow-scripts'/)
+assert.match(script, /connect-src 'none'/)
+
+const runtime = script.slice(script.indexOf('function runtime()'), script.indexOf('let current'))
 const messages: any[] = [], calls: any[] = []
-const listeners = new Map<string, (event: any) => any>()
-const rootListeners = new Map<string, (event: any) => any>()
-const root = { style: {}, replaceChildren() {}, addEventListener: (name: string, fn: any) => rootListeners.set(name, fn), calls, textContent: '' }
+const listeners = new Map<string, (event: any) => void>()
+const root = new EventTarget()
+const element = Object.assign(root, { style: {}, calls })
 const parent = { postMessage: (message: any) => messages.push(message) }
 const context = vm.createContext({
-  document: { createElement: () => root, body: { append() {} } }, parent,
-  innerWidth: 400, innerHeight: 300, devicePixelRatio: 2,
-  addEventListener: (name: string, fn: any) => listeners.set(name, fn),
-  ResizeObserver: class { observe() {} }, setTimeout, requestAnimationFrame: (fn: () => void) => queueMicrotask(fn),
+  document: { createElement: () => element, body: { append() {} }, documentElement: { style: {} } }, parent, CustomEvent,
+  addEventListener: (name: string, fn: (event: unknown) => void) => listeners.set(name, fn),
   Blob: class { constructor(public parts: string[]) {} },
   URL: { createObjectURL: (blob: { parts: string[] }) => 'data:text/javascript;base64,' + Buffer.from(blob.parts.join('')).toString('base64'), revokeObjectURL() {} },
 })
@@ -28,32 +27,22 @@ const start = vm.compileFunction(runtime + '; runtime()', [], {
 })
 start()
 assert.equal(messages[0].tsugumi, 'inner-ready')
-const code = `let root;
-export function initialise(element, data, size) { root = element; root.calls.push(['init', data.blobs.points[1], size.width]); }
-export function update(data) { root.calls.push(['update', data.config.count]); }
-export function resize(size) { root.calls.push(['resize', size.visible]); }
-export function dispose() { root.calls.push(['dispose']); }
-export function snapshot() { return 'data:image/png;base64,test'; }`
-const send = (requestId: number, extra = {}) => listeners.get('message')!({ source: parent, data: {
-  tsugumi: 'render', name: 'immutable-view', code, json: '{"count":2}', blobs: { points: new Uint8Array([0, 255]) }, requestId, ...extra,
+const code = `export default function mount(root, data) {
+  root.calls.push(['mount', data.config, data.blobs.points[1]]);
+  root.addEventListener('tsugumi:data', event => root.calls.push(['update', event.detail.config, event.detail.blobs.points[1]]));
+}`
+const send = (config: string, byte: number, source = parent) => listeners.get('message')!({ source, data: {
+  tsugumi: 'render', code, data: { config, blobs: { points: new Uint8Array([0, byte]) } },
 } })
-await send(1)
-assert.deepEqual(calls[0], ['init', 255, 400])
-await send(2, { snapshot: true })
-assert.deepEqual(calls[1], ['update', 2])
-assert.equal(messages.at(-1).image, 'data:image/png;base64,test')
-await listeners.get('message')!({ source: parent, data: { tsugumi: 'visibility', visible: false } })
-assert.deepEqual(calls.at(-1), ['resize', false])
-await send(3, { name: 'another-view', code: code + '\n// another identity' })
-assert.ok(calls.some(call => call[0] === 'dispose'))
-rootListeners.get('tsugumi-view-error')!({ detail: 'GPU device lost' })
-assert.equal(messages.at(-1).state, 'error')
-assert.equal(root.textContent, 'GPU device lost')
-assert.equal(calls.at(-1)[0], 'dispose')
-listeners.get('pagehide')!({})
-assert.equal(calls.at(-1)[0], 'dispose')
+send(' { "count":2 } ', 255)
+send('{"count":3}', 254)
+send('{"count":10}', 1, { postMessage() {} })
+send('{"count":4}', 253)
+for (let i = 0; i < 10 && calls.length < 3; i++) await new Promise(resolve => setImmediate(resolve))
+assert.deepEqual(calls, [['mount', ' { "count":2 } ', 255], ['update', '{"count":3}', 254], ['update', '{"count":4}', 253]])
+assert.equal(messages.at(-1).state, 'ok')
 
-// The actual RPC loading path pages bytes, coalesces consumers and retries failures.
+// ModuleRead sends self-contained source in pages and coalesces consumers.
 let reads = 0
 const client = { async call(_: unknown, request: { offset: bigint }) {
   ++reads
@@ -63,9 +52,4 @@ const client = { async call(_: unknown, request: { offset: bigint }) {
 registerModuleClient(client as never)
 const [a, b] = await Promise.all([moduleSource('test-identity'), moduleSource('test-identity')])
 assert.equal(a, 'A\0B'); assert.equal(a, b); assert.equal(reads, 2)
-const keyA = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 255]) })
-const keyB = await moduleThumbnailKey('view', '{}', 100, 100, { points: new Uint8Array([0, 254]) })
-assert.notEqual(keyA, keyB)
-assert.match(script, /frame.sandbox = 'allow-scripts'/)
-assert.match(script, /connect-src 'none'/)
-console.log('module views: ES lifecycle, blobs, visibility, snapshots, RPC paging and cache passed')
+console.log('module views: default mount, opaque config, binary updates, and RPC paging passed')

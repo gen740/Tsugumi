@@ -45,7 +45,7 @@ struct ResolvedCard {
   var nixReferences: [CardNixReference] = []
 }
 
-/// Decode a retained display without changing the live canvas.
+/// Decode the ABI 8 wire values used by both live and retained displays.
 func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
   let value: DisplayValue
   switch d.value?.type {
@@ -189,6 +189,12 @@ enum DisplayValue {
   case module(name: String, json: String, blobs: [String: Data] = [:])
 }
 
+struct DisplayModule: Equatable {
+  let name: String
+  let config: String
+  var blobs: [String: Data] = [:]
+}
+
 extension DisplayValue {
   var displayable: Bool {
     switch self {
@@ -207,9 +213,34 @@ extension DisplayValue {
     case .module(let name, let json, let blobs):
       let pattern = #"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$"#
       return name.range(of: pattern, options: .regularExpression) != nil && json.utf8.count <= 1 << 20 &&
-        (try? JSONSerialization.jsonObject(with: Data(json.utf8), options: [.fragmentsAllowed])) != nil &&
         blobs.count <= 64 && blobs.keys.allSatisfy { $0 != "." && $0 != ".." && $0.range(of: #"^[a-zA-Z0-9_.-]{1,128}$"#, options: .regularExpression) != nil } &&
         blobs.values.reduce(0) { $0 + $1.count } <= 8 << 20
+    }
+  }
+}
+
+extension DisplayValue {
+  var module: DisplayModule? {
+    func builtin(_ name: String, _ config: [String: Any], blobs: [String: Data] = [:]) -> DisplayModule? {
+      guard let json = try? JSONSerialization.data(withJSONObject: config, options: .sortedKeys) else { return nil }
+      return DisplayModule(name: "tsugumi:" + name, config: String(decoding: json, as: UTF8.self), blobs: blobs)
+    }
+    switch self {
+    case .unavailable: return nil
+    case .text(let text): return builtin("text", ["text": text])
+    case .markdown(let text): return builtin("markdown", ["text": text])
+    case .scalar(let value, let label): return builtin("scalar", ["value": value, "label": label])
+    case .table(let columns, let rows): return builtin("table", ["columns": columns, "rows": rows])
+    case .image(let type, let data, let alt):
+      return builtin("image", ["mediaType": type, "alt": alt], blobs: ["image": data])
+    case .points(let x, let y, let z, let colors):
+      return builtin("points", [:], blobs: [
+        "x": x.withUnsafeBytes { Data($0) }, "y": y.withUnsafeBytes { Data($0) },
+        "z": z.withUnsafeBytes { Data($0) }, "colors": colors.withUnsafeBytes { Data($0) },
+      ])
+    case .module(let name, let json, let blobs):
+      let sdkDefault = ["line-chart", "plotly", "vega-lite"].first { name.hasSuffix("-tsugumi-view-" + $0) }
+      return DisplayModule(name: sdkDefault.map { "tsugumi:" + $0 } ?? name, config: json, blobs: blobs)
     }
   }
 }
@@ -227,9 +258,7 @@ struct DisplaySnapshot {
   /// Preserve the result's content even when it cannot be rendered.
   let content: DisplayValue
   let value: DisplayValue
-  /// What the Card's result row says of it. Worked out once, here: the canvas
-  /// asks at every move, and a figure's title is found by parsing its JSON.
-  let summary: String
+  let module: DisplayModule?
 
   init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
     self.runId = runId
@@ -237,7 +266,7 @@ struct DisplaySnapshot {
     self.revision = revision
     self.content = value
     self.value = value.displayable ? value : .unavailable
-    summary = Self.summary(of: self.value)
+    module = self.value.module
   }
 }
 
@@ -387,15 +416,12 @@ final class ProjectSession {
   @ObservationIgnored var makeRepositoryOnConnect = false
 
   // Runs
-  private var runProvenance: [String: Tsugumi_RPC_RunStatusT] = [:]
-  private var loadingProvenance: Set<String> = []
   private var stopRunId: String?
   private(set) var stopError: String?
   var stopRequested: Bool { stopRunId != nil }
   var canStopRun: Bool { runActive && !stopRequested && runStatus?.state != .cancelling }
   private(set) var runStatus: Tsugumi_RPC_RunStatusT? {
     didSet {
-      if let status = runStatus, let id = status.runId { runProvenance[id] = status }
       if oldValue?.runId != currentRunId || !runActive || runStatus?.state == .cancelling {
         stopError = nil
       }
@@ -404,9 +430,9 @@ final class ProjectSession {
       }
     }
   }
-  func markForRun(_ runId: String) -> String? { runMark(runProvenance[runId]) }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
   private(set) var displays: [CardKey: DisplaySnapshot] = [:]
+  @ObservationIgnored private var displayViewers: [UUID: CardKey] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
   private(set) var batchHistoryRevision = 0
@@ -521,7 +547,6 @@ final class ProjectSession {
   /// The last connection failed before the project could be read (tsugumid was not reached), not while reading it.
   var connectionFailed = false
 
-  var displayGeometries: Tsugumi_Host_DisplayGeometriesT?
 
   private func connect(endpoint: Endpoint? = nil) async {
     guard !closed else { return }
@@ -537,8 +562,6 @@ final class ProjectSession {
       try Task.checkCancellation()
       let c = try await reach(ep)
       if Task.isCancelled || closed { await c.close(); return }
-      displayGeometries = try await CoreHostClient.shared.hostCall(
-        .displaygeometryrequest, Tsugumi_Host_DisplayGeometryRequestT())
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
@@ -810,8 +833,7 @@ final class ProjectSession {
     }
     resolution = r
     diagnostics = all
-    // A result belongs to a Card of the document. A Card that comes back asks for
-    // its own again: displayedCards changed (refreshVisibleDisplays).
+    // A result belongs to a Card of the current document.
     for k in displays.keys where r[k] == nil { displays[k] = nil }
   }
 
@@ -899,9 +921,6 @@ final class ProjectSession {
       reconnect()
       return
     }
-    // The Cards that send displays, before this change (definitions and
-    // resolution are replaced below).
-    let shown = displayedCards
     // What the Agent's save changed, seen against the document before it.
     let presenceBefore = d.origin == "agent" ? presenceSnapshot() : nil
     rev = d.rev ?? rev
@@ -920,8 +939,6 @@ final class ProjectSession {
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
-    // A Draft implemented (or any Card that became code) sends its displays too.
-    if displayedCards != shown { Task { await refreshVisibleDisplays() } }
     project = confirmedProject
     layout = confirmedLayout
   }
@@ -973,20 +990,11 @@ final class ProjectSession {
 
   func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
     let k = key(d.card.path)
+    guard displayViewers.values.contains(k) else { return }
     let rev = d.revision ?? 0
     if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
     if let display = recordedDisplay(d) {
       displays[k] = display
-      // A reconnected canvas may receive a display from an older run.
-      if let client, runProvenance[display.runId] == nil, !loadingProvenance.contains(display.runId) {
-        loadingProvenance.insert(display.runId)
-        Task {
-          defer { loadingProvenance.remove(display.runId) }
-          if let record = try? await client.record(runId: display.runId, card: path(k), invocation: display.invocation) {
-            runProvenance[display.runId] = record.run.status
-          }
-        }
-      }
     }
   }
 
@@ -1266,10 +1274,6 @@ final class ProjectSession {
     }
   }
 
-  /// Cards whose displays the canvas shows: what a Card shows is up to its
-  /// code (the display SDK), so every Card that can run may send displays.
-  var displayedCards: Set<CardKey> { Set(resolution.keys.filter { kind($0) == .code }) }
-
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {
     displays[k] = nil
@@ -1291,9 +1295,22 @@ final class ProjectSession {
     return try await client.resolveNixSource(ref: ref)
   }
 
+  func openDisplayViewer(_ id: UUID, card: CardKey) {
+    let alreadyOpen = displayViewers.values.contains(card)
+    displayViewers[id] = card
+    if !alreadyOpen { Task { await refreshVisibleDisplays() } }
+  }
+
+  func closeDisplayViewer(_ id: UUID) {
+    guard let card = displayViewers.removeValue(forKey: id), !displayViewers.values.contains(card) else { return }
+    displays[card] = nil
+    Task { await refreshVisibleDisplays() }
+  }
+
   func refreshVisibleDisplays() async {
     guard let client, let subscription else { return }
-    try? await client.setVisible(subscription: subscription, cards: displayedCards.sorted().map(path), enabled: true)
+    let cards = Set(displayViewers.values).sorted().map(path)
+    try? await client.setVisible(subscription: subscription, cards: cards, enabled: !cards.isEmpty)
   }
 
   // MARK: - Runs

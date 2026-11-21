@@ -29,15 +29,6 @@ struct StickyNote {
   Opt<"fontSize", Number> font_size;  // text size of the note (default 13)
 };
 
-struct DisplayPanel {
-  Opt<"x", Number> x;
-  Opt<"y", Number> y;
-  Opt<"width", Number> width;
-  Opt<"height", Number> height;
-  Opt<"hidden", v::Bool>
-      hidden;  // frame removed from the canvas; the Card is unchanged
-};
-
 struct GroupPort {
   Opt<"card", v::String> card;
   Opt<"port", v::String> port;
@@ -71,8 +62,6 @@ struct Layout {
   Opt<"boundary", Obj<BoundaryLayout>>
       boundary;  // a Card in Card's own layout: its boundary bars
   Opt<"notes", v::Array<Obj<StickyNote>>> notes;
-  Opt<"displays", v::Mapping<v::String, Obj<DisplayPanel>>>
-      displays;  // card path key -> panel
   Opt<"groups", v::Array<Obj<CardGroup>>> groups;
 };
 

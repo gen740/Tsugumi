@@ -19,7 +19,7 @@ export interface LayoutCard {
   outputs: LayoutPort[]
 }
 export interface LayoutWire { from: string; fromPort: string; to: string; toPort: string }
-/** An output frame (`id` is its Card's) or a note. */
+/** A note. */
 export interface LayoutBox { id: string; x: number; y: number; width: number; height: number }
 export interface LayoutBarEnd { name: string; card: string; port: string }
 /** A bar of a Card in Card; `at` only when it was put somewhere by hand. */
@@ -30,7 +30,6 @@ export interface LayoutScene {
   snap: boolean
   cards: LayoutCard[]
   wires: LayoutWire[]
-  frames: LayoutBox[]
   notes: LayoutBox[]
   inputs?: LayoutBar
   outputs?: LayoutBar

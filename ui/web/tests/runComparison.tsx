@@ -7,7 +7,8 @@ import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { act, create } from 'react-test-renderer'
 import { D, R, cardPath } from '../src/wire/rpc'
 import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
-import { ProjectSession, recordedDisplay } from '../src/model/session'
+import { displayModule, ProjectSession, recordedDisplay } from '../src/model/session'
+import { loadDisplayIndex } from '../src/ui/recordedDisplays'
 import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
 
 const summary = (runId: string, card: string, state = D.CardState.succeeded) => Object.assign(new R.InvocationSummaryT(), {
@@ -207,7 +208,9 @@ assert.equal(sameDisplay(undefined, undefined), true)
 }
 assert.equal(recordedDisplay(a.record!.display)?.value.kind, 'table')
 const markup = renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />)
-for (const text of ['bands', '1650', '1800', table.rows[0][2], changedRows[0][2], 'Photons']) assert.ok(markup.includes(text), text)
+for (const text of ['bands', '1650', '1800', '/modules/viewer.html']) assert.ok(markup.includes(text), text)
+assert.equal(JSON.parse(displayModule(shown(a.record!.display)!.value)!.config).rows[0][2], table.rows[0][2])
+assert.equal(JSON.parse(displayModule(shown(b.record!.display)!.value)!.config).rows[0][2], changedRows[0][2])
 for (const name of ['rgb', 'spectrum']) {
   const image = outputs[name]
   const bytes = [...fs.readFileSync(path.join(playerData, image.src))]
@@ -218,9 +221,33 @@ for (const name of ['rgb', 'spectrum']) {
   assert.ok(sameDisplay(shown(retained), shown(other)), 'identity and frame revision do not change image equality')
   assert.equal(recordedDisplay(retained)?.value.kind, 'image')
   a.record!.display = retained; b.record!.display = other
-  assert.ok(renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />).includes('<img'), name + ': both retained images render')
+  assert.equal(displayModule(shown(retained)!.value)?.name, 'tsugumi:image')
+  assert.equal((renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />).match(/<iframe/g) ?? []).length, 2)
 }
-// Opening a comparison leaves the live canvas alone: the displays the session holds are
+// The ABI 8 adapter orders retained displays by arrival across invocation pages.
+{
+  const results = [1n, 2n, 3n].map((invocation, i) => {
+    const r = record('history', 'bands', '{}')
+    r.record!.summary!.invocation = invocation
+    if (i < 2) r.record!.display = Object.assign(display('history', D.DisplayValue.DisplayTable, tableValue(table.rows)), {
+      invocation, revision: i === 0 ? 7n : 4n,
+    })
+    return r
+  })
+  const index = await loadDisplayIndex({
+    async invocations(_run, _card, cursor) {
+      return Object.assign(new R.InvocationPageT(), {
+        records: (cursor ? results.slice(2) : results.slice(0, 2)).map(r => r.record!.summary!),
+        nextCursor: cursor ? null : 'next',
+      })
+    },
+    async record(_run, _card, invocation) { return results[Number(invocation) - 1] },
+  }, 'history', ['bands'], results[2], new AbortController().signal)
+  assert.deepEqual(index.entries.map(entry => entry.invocation), [2n, 1n])
+  assert.equal(index.latest?.invocation, 1n)
+}
+
+// Opening a comparison leaves the live viewer alone: the displays the session holds are
 // the same objects afterwards, and the only requests are reads of the two selected runs.
 {
   const session = new ProjectSession('/p', 'k', 'p')
@@ -255,7 +282,7 @@ for (const name of ['rgb', 'spectrum']) {
   assert.deepEqual(new Set(requests), new Set(['latestInvocations:left', 'latestInvocations:right', 'record:left:bands', 'record:right:bands']))
   view.unmount()
   assert.equal(session.displays.size, before.size)
-  assert.equal(session.displays.get('bands'), live, 'the canvas keeps its own display object')
+  assert.equal(session.displays.get('bands'), live, 'the live viewer keeps its own display object')
   assert.equal(live.runId, 'current')
 }
 
