@@ -22,11 +22,13 @@
 #include <utility>
 
 #include "tsugumi/rpc/client_transport.hh"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::client {
 namespace {
+namespace frame = rpc::frame;
 
 using Clock = std::chrono::steady_clock;
 
@@ -295,16 +297,12 @@ class NativeTransport final : public Transport {
         const auto available = incoming.size() - consumed;
         const auto* data = incoming.data() + consumed;
         if (!websocket) {
-          if (available < 4) break;
-          const uint32_t size = static_cast<uint32_t>(data[0]) |
-                                static_cast<uint32_t>(data[1]) << 8 |
-                                static_cast<uint32_t>(data[2]) << 16 |
-                                static_cast<uint32_t>(data[3]) << 24;
-          if (!size || size > options.max_frame_bytes)
-            throw std::runtime_error("invalid RPC frame length");
-          if (available - 4 < size) break;
-          Bytes message(data + 4, data + 4 + size);
-          consumed += 4 + size;
+          if (available < frame::kPrefixBytes) break;
+          const auto size = frame::DecodePrefix(data, options.max_frame_bytes);
+          if (available - frame::kPrefixBytes < size) break;
+          const auto* body = data + frame::kPrefixBytes;
+          Bytes message(body, body + size);
+          consumed += frame::kPrefixBytes + size;
           if (events.received) events.received(std::move(message));
           continue;
         }
@@ -421,16 +419,18 @@ class NativeTransport final : public Transport {
   auto Send(Bytes bytes) -> Error override {
     if (!state_->opened || state_->stopping)
       return {ErrorCode::Closed, "transport is not open"};
-    if (bytes.empty() || bytes.size() > state_->options.max_frame_bytes ||
-        bytes.size() > UINT32_MAX)
-      return {ErrorCode::InvalidArgument, "RPC frame exceeds its limit"};
+    try {
+      frame::CheckSize(bytes.size(), state_->options.max_frame_bytes);
+    } catch (const frame::Error& error) {
+      return {ErrorCode::InvalidArgument, error.what()};
+    }
     Bytes framed;
     if (state_->websocket)
       framed = WebSocketFrame(bytes);
     else {
-      const auto size = static_cast<uint32_t>(bytes.size());
-      for (unsigned shift = 0; shift < 32; shift += 8)
-        framed.push_back(static_cast<uint8_t>(size >> shift));
+      const auto prefix =
+          frame::EncodePrefix(static_cast<uint32_t>(bytes.size()));
+      framed.assign(prefix.begin(), prefix.end());
       framed.insert(framed.end(), bytes.begin(), bytes.end());
     }
     std::lock_guard lock(state_->mutex);

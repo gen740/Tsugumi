@@ -19,10 +19,12 @@
 
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/frame.hh"
+#include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/value_wire.hh"
 
@@ -46,8 +48,10 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
                 const std::atomic<bool>* cancel,
                 std::optional<std::chrono::steady_clock::time_point> deadline)
     -> void {
-  uint32_t len = static_cast<uint32_t>(frame.size());
-  std::string buf(reinterpret_cast<const char*>(&len), sizeof len);
+  rpc::frame::CheckSize(frame.size(), workerd::kMaxWorkerFrameBytes);
+  const auto prefix =
+      rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
+  std::string buf(prefix.data(), prefix.size());
   buf += frame;
   size_t offset = 0;
   while (offset < buf.size()) {
@@ -584,18 +588,22 @@ void WorkerProc::send(int fd, const std::string& frame) {
 }
 
 WorkerOutcome WorkerProc::call(
-    const std::string& frame, uint64_t call_id, const std::atomic<bool>* cancel,
+    std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
-    const DisplaySink& display) {
+    const DisplaySink& display, const std::function<void()>& sent) {
   WorkerOutcome outcome;
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
   } catch (const Failed& error) {
+    workerd::clear_secret(frame);
+    if (sent) sent();
     // A partially sent call cannot be resumed or reused.
     terminate();
     outcome.failure = error.failure;
     return outcome;
   }
+  workerd::clear_secret(frame);
+  if (sent) sent();
   std::string rbuf;
   bool cancel_sent = false;
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -654,10 +662,12 @@ WorkerOutcome WorkerProc::call(
       return outcome;
     }
     rbuf.append(buf, static_cast<size_t>(r));
-    while (rbuf.size() >= 4) {
-      uint32_t len;
-      std::memcpy(&len, rbuf.data(), 4);
-      if (len == 0 || len > workerd::kMaxWorkerFrameBytes) {
+    while (rbuf.size() >= rpc::frame::kPrefixBytes) {
+      uint32_t len = 0;
+      try {
+        len = rpc::frame::DecodePrefix(rbuf.data(),
+                                       workerd::kMaxWorkerFrameBytes);
+      } catch (const rpc::frame::Error&) {
         terminate();
         outcome.failure = FailureData::make(FailureKind::worker_failed,
                                             "corrupt frame from worker");

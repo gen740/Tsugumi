@@ -14,11 +14,14 @@
 #include <cstring>
 #include <map>
 #include <mutex>
+#include <optional>
 #include <set>
 #include <thread>
 
 #include "host/binary_caches.hh"
 #include "tsugumi/protocol/trace_codec.hh"
+#include "tsugumi/rpc/frame.hh"
+#include "tsugumi/rpc/transport.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
 
@@ -62,38 +65,31 @@ struct Socket {
     if (fd >= 0) ::close(fd);
   }
 };
-auto Transfer(int fd, char* bytes, size_t size, bool send) -> void {
-  size_t offset = 0;
-  while (offset < size) {
-#ifdef MSG_NOSIGNAL
-    constexpr int flags = MSG_NOSIGNAL;
-#else
-    constexpr int flags = 0;
-#endif
-    const auto n = send ? ::send(fd, bytes + offset, size - offset, flags)
-                        : ::read(fd, bytes + offset, size - offset);
-    if (n < 0 && errno == EINTR) continue;
-    if (n <= 0)
-      throw EnvironmentFailure(
-          "The VM helper connection closed",
-          "Retry the connection. Running processes continue.", "");
-    offset += static_cast<size_t>(n);
-  }
+namespace frame = rpc::frame;
+// The helper relays Host RPC requests (terminal input) and replies (runtime
+// snapshots) that hostd's own clients exchange in Host RPC frames, so its link
+// accepts the same largest frame and nothing a client could not send.
+constexpr size_t kMaxHelperFrameBytes = TransportLimits{}.max_frame_bytes;
+auto HelperFailure(const std::string& why) -> EnvironmentFailure {
+  return EnvironmentFailure("The VM helper connection closed: " + why,
+                            "Retry the connection. Running processes continue.",
+                            "");
 }
 auto Read(trace::Link& link, int fd) -> std::unique_ptr<V::MessageT> {
-  unsigned char prefix[4];
-  Transfer(fd, reinterpret_cast<char*>(prefix), 4, false);
-  const uint32_t size = uint32_t(prefix[0]) | uint32_t(prefix[1]) << 8 |
-                        uint32_t(prefix[2]) << 16 | uint32_t(prefix[3]) << 24;
-  std::string bytes(size, '\0');
-  Transfer(fd, bytes.data(), bytes.size(), false);
-  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
-                                 bytes.size());
+  std::optional<std::string> bytes;
+  try {
+    bytes = frame::Read(fd, kMaxHelperFrameBytes);
+  } catch (const frame::Error& error) {
+    throw HelperFailure(error.what());
+  }
+  if (!bytes) throw HelperFailure("end of stream");
+  flatbuffers::Verifier verifier(
+      reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
   if (!V::VerifyMessageBuffer(verifier))
     throw std::runtime_error("Invalid VM helper message");
-  trace::Observe(link, "VM helper", "hostd", false, bytes,
+  trace::Observe(link, "VM helper", "hostd", false, *bytes,
                  &trace::kFlatBufferCodec);
-  return std::unique_ptr<V::MessageT>(V::GetMessage(bytes.data())->UnPack());
+  return std::unique_ptr<V::MessageT>(V::GetMessage(bytes->data())->UnPack());
 }
 template <class T>
 auto Send(trace::Link& link, int fd, T value) -> void {
@@ -104,15 +100,15 @@ auto Send(trace::Link& link, int fd, T value) -> void {
   message.payload.Set(std::move(request));
   flatbuffers::FlatBufferBuilder builder;
   V::FinishMessageBuffer(builder, V::Message::Pack(builder, &message));
-  const auto size = static_cast<uint32_t>(builder.GetSize());
-  char prefix[4] = {static_cast<char>(size), static_cast<char>(size >> 8),
-                    static_cast<char>(size >> 16),
-                    static_cast<char>(size >> 24)};
-  Transfer(fd, prefix, 4, true);
-  Transfer(fd, reinterpret_cast<char*>(builder.GetBufferPointer()),
-           builder.GetSize(), true);
-  trace::Observe(link, "hostd", "VM helper", true,
-                 {reinterpret_cast<const char*>(builder.GetBufferPointer()), size},
+  const std::string_view bytes(
+      reinterpret_cast<const char*>(builder.GetBufferPointer()),
+      builder.GetSize());
+  try {
+    frame::Write(fd, bytes, kMaxHelperFrameBytes);
+  } catch (const frame::Error& error) {
+    throw HelperFailure(error.what());
+  }
+  trace::Observe(link, "hostd", "VM helper", true, bytes,
                  &trace::kFlatBufferCodec);
 }
 class VMProcess final : public EnvironmentProcess {

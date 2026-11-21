@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <set>
 
-#include "tsugumi/workerd/frame.hh"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/workerd/log_limits.hh"
 
 namespace tsugumi::workerd {
@@ -26,16 +26,17 @@ auto decode(std::string_view bytes) -> std::unique_ptr<R::MessageT> {
   return message;
 }
 auto length_prefix(uint32_t length) -> std::string {
-  const auto bytes = encode_length(length);
+  const auto bytes = rpc::frame::EncodePrefix(length);
   return {bytes.data(), bytes.size()};
 }
 auto frame_length(std::string_view prefix) -> uint32_t {
-  if (prefix.size() != 4)
+  if (prefix.size() != rpc::frame::kPrefixBytes)
     throw Error(R::ErrorCode::Invalid, "truncated frame prefix");
-  const auto n = decode_length(prefix.data());
-  if (n == 0 || n > kMaxFrame)
-    throw Error(R::ErrorCode::Invalid, "invalid frame length");
-  return n;
+  try {
+    return rpc::frame::DecodePrefix(prefix.data(), kMaxFrame);
+  } catch (const rpc::frame::Error& error) {
+    throw Error(R::ErrorCode::Invalid, error.what());
+  }
 }
 auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
   R::FailureT error;
@@ -51,6 +52,26 @@ auto validate_log_limit(const R::JobSpecT& spec) -> void {
   if (spec.log_limit_bytes == 0 ||
       spec.log_limit_bytes > kInvocationLogLimitBytes)
     throw Error(R::ErrorCode::Invalid, "invalid invocation log limit");
+}
+auto validate_secret_names(const R::JobSpecT& spec) -> void {
+  if (spec.secrets.size() > 256)
+    throw Error(R::ErrorCode::Invalid, "too many Card secret names");
+  std::set<std::string_view> seen;
+  for (const auto& name : spec.secrets) {
+    const bool valid =
+        !name.empty() && name.size() <= 64 && name[0] >= 'a' &&
+        name[0] <= 'z' && std::ranges::all_of(name, [](char c) {
+          return (c >= 'a' && c <= 'z') || (c >= '0' && c <= '9') || c == '_';
+        });
+    if (!valid || !seen.insert(name).second)
+      throw Error(R::ErrorCode::Invalid, "invalid Card secret name");
+  }
+}
+auto clear_secret(std::string& value) -> void {
+  volatile char* bytes = value.data();
+  for (size_t i = 0; i < value.size(); ++i) bytes[i] = 0;
+  value.clear();
+  value.shrink_to_fit();
 }
 auto terminal(R::JobState state) -> bool {
   return state == R::JobState::Succeeded || state == R::JobState::Failed ||

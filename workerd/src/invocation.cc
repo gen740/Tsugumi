@@ -2,9 +2,11 @@
 // Realises and runs one accepted invocation inside its supervised namespace.
 #include <fcntl.h>
 #include <flatbuffers/reflection.h>
+#include <poll.h>
 #include <unistd.h>
 
 #include <algorithm>
+#include <chrono>
 #include <fstream>
 #include <iostream>
 #include <set>
@@ -30,6 +32,80 @@ namespace W = Tsugumi::Worker;
 namespace stdfs = std::filesystem;
 
 constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
+// How long a built invocation waits for its Card secrets from the core.
+constexpr auto kSecretWait = std::chrono::minutes(5);
+
+using Secrets = std::vector<std::pair<std::string, std::string>>;
+
+// Reads the job's Card secrets from the listener's pipe once the environment
+// is built and nothing but the Card's process remains to start. The values
+// stay in memory; the marker file only tells the core that the job waits.
+auto receive_secrets(const stdfs::path& directory,
+                     const workerd::R::JobSpecT& job) -> Secrets {
+  const auto marker = directory / workerd::kSecretsWanted;
+  fs::write_atomic(marker, "", 0600);
+  std::string frame;
+  bool closed = false;
+  const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
+  while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
+    const auto left = std::chrono::duration_cast<std::chrono::milliseconds>(
+        deadline - std::chrono::steady_clock::now());
+    if (left.count() <= 0) break;
+    pollfd ready{workerd::kSecretChannelFd, POLLIN, 0};
+    const int polled = ::poll(&ready, 1, static_cast<int>(left.count()));
+    if (polled < 0 && errno == EINTR) continue;
+    if (polled <= 0) break;
+    char buffer[4096];
+    const auto n = ::read(workerd::kSecretChannelFd, buffer, sizeof buffer);
+    if (n < 0 && errno == EINTR) continue;
+    if (n <= 0)
+      closed = true;
+    else
+      frame.append(buffer, static_cast<size_t>(n));
+  }
+  ::close(workerd::kSecretChannelFd);
+  std::error_code ec;
+  stdfs::remove(marker, ec);
+  if (frame.empty()) {
+    if (closed)
+      throw Failed(FailureKind::worker_failed,
+                   "the remote worker restarted before the Card started; "
+                   "Card secrets are kept only in memory, so they were lost. "
+                   "Run the Card again");
+    throw Failed(FailureKind::worker_failed,
+                 "the Card's secrets did not arrive within 5 minutes. Run the "
+                 "Card again");
+  }
+  Secrets secrets;
+  try {
+    if (!closed || frame.size() < 4 ||
+        workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
+            frame.size() - 4)
+      throw std::runtime_error("truncated");
+    auto message = workerd::decode(std::string_view(frame).substr(4));
+    auto* reply = message->payload.AsReply();
+    auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
+    if (!body) throw std::runtime_error("unexpected message");
+    for (auto& secret : body->secrets)
+      secrets.emplace_back(std::move(secret->name), std::move(secret->value));
+  } catch (const std::exception&) {
+    workerd::clear_secret(frame);
+    for (auto& secret : secrets) workerd::clear_secret(secret.second);
+    throw Failed(FailureKind::worker_failed,
+                 "the Card's secrets arrived incomplete. Run the Card again");
+  }
+  workerd::clear_secret(frame);
+  std::vector<std::string> wanted = job.secrets, given;
+  for (const auto& secret : secrets) given.push_back(secret.first);
+  std::ranges::sort(wanted);
+  std::ranges::sort(given);
+  if (wanted != given) {
+    for (auto& secret : secrets) workerd::clear_secret(secret.second);
+    throw Failed(FailureKind::worker_failed,
+                 "the Card's secrets do not match the names it declares");
+  }
+  return secrets;
+}
 
 auto read(const stdfs::path& path, uint64_t limit) -> std::string {
   if (stdfs::file_size(path) > limit)
@@ -88,7 +164,8 @@ auto run_worker(const W::WorkerCall& call,
                 const stdfs::path& store, const WorkerStoreResult& env,
                 const WorkerProc::LogSink& log,
                 const WorkerProc::DisplaySink& display,
-                const fs::TransferProgress& progress) -> workerd::InvocationResult {
+                const fs::TransferProgress& progress, Secrets secrets)
+    -> workerd::InvocationResult {
   schema::CardManifest manifest;
   if (schema::decode(env.manifest, manifest))
     throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
@@ -166,6 +243,13 @@ auto run_worker(const W::WorkerCall& call,
   for (const auto* v : *call.environment())
     if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
       request.environment.emplace_back(v->name()->str(), v->value()->str());
+  // Each Card secret is an environment variable of the same name in the
+  // Card's process only; this process drops its copy once the call is sent.
+  for (auto& secret : secrets) request.environment.push_back(std::move(secret));
+  request.on_call_sent = [&environment = request.environment] {
+    for (auto& variable : environment) workerd::clear_secret(variable.second);
+    environment.clear();
+  };
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
@@ -189,6 +273,10 @@ namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
+  // Nothing this process starts may inherit the Card secret pipe.
+  if (!job->secrets.empty() &&
+      ::fcntl(kSecretChannelFd, F_SETFD, FD_CLOEXEC) != 0)
+    throw std::runtime_error("the job's Card secret channel is missing");
   const auto& derivation = job->derivation;
   const auto& output = job->output;
   const std::set<std::string> accepted(job->input_blobs.begin(),
@@ -259,12 +347,14 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
+    auto secrets = job->secrets.empty() ? Secrets{}
+                                        : receive_secrets(directory, *job);
     outcome = run_worker(
         *call, invocation, input, directory, store, environment, log,
         [&](const DisplayData& data) {
           display = wire::standalone_display(data);
         },
-        progress);
+        progress, std::move(secrets));
     if (!display.empty()) {
       const auto* module =
           flatbuffers::GetRoot<Tsugumi::Data::Display>(display.data())

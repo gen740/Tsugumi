@@ -209,6 +209,8 @@ struct LogPage: Sendable {
   }
 }
 
+// What to read next and what to keep is this view's state: each UI manages its
+// log window itself rather than hostd.
 struct LogWindow {
   enum Kind { case tail, earlier, later, append, status }
   struct Read {

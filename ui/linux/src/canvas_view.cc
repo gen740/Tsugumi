@@ -146,6 +146,8 @@ auto DrawScene(cairo_t* cr, int width, int height, const Scene& scene,
   cairo_translate(cr, fit.dx, fit.dy);
   cairo_scale(cr, fit.scale, fit.scale);
 
+  // A plain curve for now: drawn routes are each UI's own work (hostd's
+  // route_wires is for Untangle, which edits layout.json).
   // Wires under the Cards: from the downstream edge to the upstream one.
   cairo_set_line_width(cr, 2);
   SetColor(cr, colors.text, 0.45);

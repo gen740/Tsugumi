@@ -25,6 +25,7 @@
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
+#include <fcntl.h>
 #include <flatbuffers/idl.h>
 #include <flatbuffers/reflection.h>
 #include <poll.h>
@@ -40,6 +41,7 @@
 #include <chrono>
 #include <cmath>
 #include <cstdio>
+#include <cstdlib>
 #include <cstring>
 #include <fstream>
 #include <map>
@@ -52,6 +54,7 @@
 
 #include "tsugumi/message_json.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/sdk/abi.h"
 #include "tsugumi/util/flatbuffer_schema.hh"
 #include "tsugumi/util/json.hh"
@@ -73,50 +76,27 @@ std::mutex g_write_mu;
 std::atomic<bool> g_cancel{false};
 std::atomic<pid_t> g_child{0};
 
-bool read_full(int fd, void* p, size_t n) {
-  auto* c = static_cast<char*>(p);
-  while (n > 0) {
-    ssize_t r = ::read(fd, c, n);
-    if (r == 0) return false;
-    if (r < 0) {
-      if (errno == EINTR) continue;
-      return false;
-    }
-    c += r;
-    n -= static_cast<size_t>(r);
-  }
-  return true;
-}
+namespace frame = tsugumi::rpc::frame;
 
-bool write_full(int fd, const void* p, size_t n) {
-  const auto* c = static_cast<const char*>(p);
-  while (n > 0) {
-    ssize_t w = ::write(fd, c, n);
-    if (w < 0) {
-      if (errno == EINTR) continue;
-      return false;
-    }
-    c += w;
-    n -= static_cast<size_t>(w);
-  }
-  return true;
-}
-
+// A bad or truncated frame ends the worker as a closed stream does.
 std::optional<std::string> read_frame(int fd) {
-  std::array<char, 4> prefix{};
-  if (!read_full(fd, prefix.data(), prefix.size())) return std::nullopt;
-  const auto len = tsugumi::workerd::decode_length(prefix.data());
-  if (len == 0 || len > kMaxFrame) return std::nullopt;
-  std::string buf(len, '\0');
-  if (!read_full(fd, buf.data(), len)) return std::nullopt;
-  return buf;
+  try {
+    return frame::Read(fd, kMaxFrame);
+  } catch (const frame::Error&) {
+    return std::nullopt;
+  }
 }
 
+// The core notices a broken connection on its side.
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
   std::lock_guard<std::mutex> l(g_write_mu);
-  const auto prefix = tsugumi::workerd::encode_length(b.GetSize());
-  write_full(kData, prefix.data(), prefix.size());
-  write_full(kData, b.GetBufferPointer(), b.GetSize());
+  try {
+    frame::Write(kData,
+                 {reinterpret_cast<const char*>(b.GetBufferPointer()),
+                  b.GetSize()},
+                 kMaxFrame);
+  } catch (const frame::Error&) {
+  }
 }
 
 std::string get_env(const std::vector<std::string>& env,
@@ -561,6 +541,62 @@ int run_shell(const std::string& bash, const std::vector<std::string>& args,
   return status;
 }
 
+// The pipe preRun's environment comes back through. A reader thread drains
+// it while preRun runs, so a large environment never blocks the shell; once
+// the step has ended, what it wrote is read and the pipe closed, even if a
+// detached process still holds the write end.
+class EnvDump {
+ public:
+  EnvDump() {
+    int ends[2];
+    if (::pipe(ends) != 0) return;
+    reader_ = ends[0];
+    writer_ = ends[1];
+    ::fcntl(reader_, F_SETFD, FD_CLOEXEC);
+    ::fcntl(reader_, F_SETFL, O_NONBLOCK);
+    thread_ = std::thread([this] {
+      for (;;) {
+        pollfd ready{reader_, POLLIN, 0};
+        ::poll(&ready, 1, 20);
+        if (drain() || done_.load()) break;
+      }
+      drain();
+    });
+  }
+  EnvDump(const EnvDump&) = delete;
+  auto operator=(const EnvDump&) -> EnvDump& = delete;
+  ~EnvDump() { finish(); }
+  auto writer() const -> int { return writer_; }
+  auto finish() -> std::string {
+    if (writer_ >= 0) ::close(writer_);
+    writer_ = -1;
+    done_ = true;
+    if (thread_.joinable()) thread_.join();
+    if (reader_ >= 0) ::close(reader_);
+    reader_ = -1;
+    return std::move(data_);
+  }
+
+ private:
+  // Reads what is available; true at end of file.
+  auto drain() -> bool {
+    char buffer[65536];
+    for (;;) {
+      const auto n = ::read(reader_, buffer, sizeof buffer);
+      if (n > 0) {
+        data_.append(buffer, static_cast<size_t>(n));
+        continue;
+      }
+      if (n < 0 && errno == EINTR) continue;
+      return n == 0;
+    }
+  }
+  int reader_ = -1, writer_ = -1;
+  std::atomic<bool> done_{false};
+  std::string data_;
+  std::thread thread_;
+};
+
 std::vector<std::string> parse_env_dump(const std::string& dump) {
   std::vector<std::string> out;
   size_t s = 0;
@@ -569,7 +605,7 @@ std::vector<std::string> parse_env_dump(const std::string& dump) {
     if (e == std::string::npos) e = dump.size();
     std::string kv = dump.substr(s, e - s);
     if (kv.find('=') != std::string::npos &&
-        !kv.starts_with("TSUGUMI_ENV_DUMP=") && !kv.starts_with("BASH_") &&
+        !kv.starts_with("TSUGUMI_ENV_DUMP_FD=") && !kv.starts_with("BASH_") &&
         !kv.starts_with("SHLVL=") && !kv.starts_with("_="))
       out.push_back(kv);
     s = e + 1;
@@ -1153,26 +1189,27 @@ void execute(const Options& opt, Call& call,
                    : "signal " + std::to_string(WTERMSIG(status))));
   };
   if (!opt.pre.empty() && may_start("preRun")) {
-    std::string dump = tmp + "/pre-env";
+    // The environment comes back through a pipe, never a file: it holds the
+    // call's Card secrets.
+    EnvDump dump;
     auto pre_env = env;
-    set_env(pre_env, "TSUGUMI_ENV_DUMP", dump);
+    set_env(pre_env, "TSUGUMI_ENV_DUMP_FD", std::to_string(dump.writer()));
     // Sourced, so that its exports and `cd` can be read back afterwards.
     int st = run_shell(
         opt.bash,
         {"-c",
-         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP\"",
+         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP_FD\"",
          opt.pre},
         pre_env, cwd, call, &timed_out);
+    const auto dumped = dump.finish();
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preRun", st);
     } else {
-      auto next = parse_env_dump(read_text(dump));
+      auto next = parse_env_dump(dumped);
       if (!next.empty()) env = next;
       // A `cd` in preRun carries over (bash keeps PWD current).
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
-    // The dump holds the call's environment, Card secrets included.
-    ::unlink(dump.c_str());
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
     apply_env(body_env(call_env, env));
@@ -1304,13 +1341,20 @@ void control_loop() {
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
   if (argc == 3 && std::string(argv[1]) == "--dump-env") {
-    // Used after preRun to carry its environment into the next steps.
+    // Used after preRun to carry its environment into the next steps,
+    // written to the worker's pipe.
     std::string out;
     for (char** e = environ; *e; ++e) {
       out += *e;
       out.push_back('\0');
     }
-    write_text(argv[2], out);
+    const int fd = std::atoi(argv[2]);
+    for (size_t written = 0; written < out.size();) {
+      const auto n = ::write(fd, out.data() + written, out.size() - written);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) return 1;
+      written += static_cast<size_t>(n);
+    }
     return 0;
   }
   Options opt;

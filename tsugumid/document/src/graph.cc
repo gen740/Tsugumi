@@ -427,10 +427,6 @@ class Builder {
         n.diags.push_back(diag(n.path, "invalid_setting",
                                "a Card with secrets cannot reuse its worker "
                                "(reuseWorker)"));
-      if (!s.secrets.empty() && remote)
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "secrets are delivered only to the local "
-                               "execution service for now"));
     }
     if (const auto* resources = schema::get(d.execution_resources)) {
       const auto* cpu = schema::get(resources->cpu_millis);

@@ -249,6 +249,8 @@ enum EnvironmentOverlay {
     }
   }
 
+  // Words for hostd's stage names are presentation: each UI keeps its own text
+  // rather than hostd sending it.
   /// The step in words; the internal name stays in the details line.
   static func stageText(_ raw: String) -> String {
     switch EnvironmentStage(rawValue: raw) {
@@ -433,6 +435,8 @@ struct EnvironmentProblemView: View {
 /// Run entry points shared by the canvas control, menus and shortcuts.
 @MainActor
 enum RunActions {
+  // RunRequest always names a Card; finding the root trigger is a UI convenience,
+  // so each UI does it itself rather than hostd.
   /// The whole document runs from its root trigger, whichever scope is shown.
   static func runAll(_ s: ProjectSession, scope: [String]) {
     let trigger = s.cards(in: []).first { c in

@@ -240,7 +240,7 @@ class Daemon {
       entry = std::make_shared<Journal>(config_.root / "projects" / scope);
     return entry;
   }
-  auto handle(const R::RequestT& q) -> R::MessageT {
+  auto handle(R::RequestT& q) -> R::MessageT {
     if (q.body.type == R::RequestBody::NONE ||
         q.body.type == R::RequestBody::CatalogRequest)
       throw Error(R::ErrorCode::Invalid, "invalid remote request");
@@ -287,6 +287,7 @@ class Daemon {
                                     bytes.size());
         const auto spec = parse_spec(data);
         validate_log_limit(*spec);
+        validate_secret_names(*spec);
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
@@ -307,6 +308,9 @@ class Daemon {
         status =
             log_slice(query.log_offset, query.log_limit)(std::move(status));
         if (status.state == R::JobState::Running) {
+          std::error_code ec;
+          status.secrets_wanted = stdfs::exists(
+              journal->job_path(q.job_id) / "work" / kSecretsWanted, ec);
           const auto bytes =
               fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
           remote::TransferJson progress;
@@ -333,6 +337,10 @@ class Daemon {
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
         return reply(R::AckT{});
+      case R::RequestBody::JobSecretsRequest:
+        deliver_secrets(*journal, q.job_id, q.core_life_id,
+                        *q.body.AsJobSecretsRequest());
+        return reply(R::AckT{});
       default:
         throw Error(R::ErrorCode::Invalid, "invalid request body");
     }
@@ -342,7 +350,9 @@ class Daemon {
   auto serve_stream(peer_tls::Stream& stream) -> void {
     try {
       auto n = frame_length(stream.Read(4));
-      auto m = decode(stream.Read(n));
+      auto bytes = stream.Read(n);
+      auto m = decode(bytes);
+      clear_secret(bytes);
       auto* q = m->payload.AsRequest();
       if (!q) throw Error(R::ErrorCode::Invalid, "expected a request");
       auto response = encode(handle(*q));
@@ -378,6 +388,8 @@ class Daemon {
             ++active;
             continue;
           }
+          // No supervisor runs the job, so no invocation reads its channel.
+          close_channel(*p, job);
           if (state.state == R::JobState::Running ||
               state.state == R::JobState::Cancelling) {
             remove_cgroup(cgroup_path(config_.cgroup, *p, job));
@@ -420,16 +432,104 @@ class Daemon {
       if (!p->claim(job, 0, 0, {})) continue;
       if (spawn(*p, job, lock.value))
         ++active;
-      else
+      else {
+        close_channel(*p, job);
         p->finish(job, R::JobState::Failed, {}, "supervisor launch failed");
+      }
     }
   }
 
  private:
+  static auto channel_key(const Journal& journal, const std::string& job)
+      -> std::string {
+    return journal.root().string() + '\n' + job;
+  }
+  auto close_channel(const Journal& journal, const std::string& job) -> void {
+    std::lock_guard guard(channel_mutex_);
+    channels_.erase(channel_key(journal, job));
+  }
+  // Writes a running job's Card secrets into the pipe its invocation reads,
+  // once, and closes it. Only this listener life holds the pipe: after a
+  // restart the invocation reads end of file and fails, and nothing resends.
+  auto deliver_secrets(const Journal& journal, const std::string& job,
+                       const std::string& core, R::JobSecretsRequestT& body)
+      -> void {
+    const auto state = journal.status(job, core);
+    if (state.fingerprint != body.fingerprint)
+      throw Error(R::ErrorCode::Rejected,
+                  "Card secrets were sent for a different job");
+    std::error_code ec;
+    if (state.state != R::JobState::Running ||
+        !stdfs::exists(journal.job_path(job) / "work" / kSecretsWanted, ec))
+      throw Error(R::ErrorCode::Rejected,
+                  "the job is not waiting for its Card secrets");
+    const auto spec = parse_spec(journal.spec(job));
+    std::vector<std::string> wanted = spec->secrets, given;
+    for (const auto& secret : body.secrets) given.push_back(secret->name);
+    std::ranges::sort(wanted);
+    std::ranges::sort(given);
+    if (wanted != given)
+      throw Error(R::ErrorCode::Rejected,
+                  "Card secrets do not match the names the job declares");
+    std::shared_ptr<Fd> channel;
+    {
+      std::lock_guard guard(channel_mutex_);
+      const auto found = channels_.find(channel_key(journal, job));
+      if (found != channels_.end()) {
+        channel = std::move(found->second);
+        channels_.erase(found);
+      }
+    }
+    if (!channel)
+      throw Error(R::ErrorCode::Rejected,
+                  "the remote worker restarted after the job started, so its "
+                  "Card secrets can no longer reach it");
+    R::CardSecretsT secrets;
+    secrets.secrets = std::move(body.secrets);
+    auto bytes = encode(reply(std::move(secrets)));
+    auto frame = length_prefix(static_cast<uint32_t>(bytes.size())) + bytes;
+    clear_secret(bytes);
+    size_t written = 0;
+    while (written < frame.size()) {
+      pollfd ready{channel->value, POLLOUT, 0};
+      if (::poll(&ready, 1, 10000) <= 0) break;
+      const auto n = ::write(channel->value, frame.data() + written,
+                             frame.size() - written);
+      if (n < 0 && errno == EINTR) continue;
+      if (n <= 0) break;
+      written += static_cast<size_t>(n);
+    }
+    const bool complete = written == frame.size();
+    clear_secret(frame);
+    if (!complete)
+      throw Error(R::ErrorCode::Rejected,
+                  "the job's invocation no longer reads its Card secrets");
+  }
   auto spawn(Journal& p, const std::string& job, int lock) -> bool {
+    // A job with Card secrets gets a pipe whose write end only this listener
+    // holds; its invocation reads the values from it just before the Card's
+    // process starts.
+    std::shared_ptr<Fd> channel;
+    Fd channel_reader;
+    try {
+      if (!parse_spec(p.spec(job))->secrets.empty()) {
+        int ends[2];
+        if (::pipe2(ends, O_CLOEXEC) != 0) return false;
+        channel = std::make_shared<Fd>(ends[1]);
+        // Above the descriptors the supervisor's file actions assign.
+        channel_reader.value = ::fcntl(ends[0], F_DUPFD_CLOEXEC, 10);
+        ::close(ends[0]);
+        if (channel_reader.value < 0) return false;
+      }
+    } catch (const std::exception&) {
+      return false;
+    }
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
+    if (channel)
+      posix_spawn_file_actions_adddup2(&actions, channel_reader.value,
+                                       kSecretChannelFd);
     posix_spawn_file_actions_addopen(&actions, 0, "/dev/null", O_RDONLY, 0);
     posix_spawn_file_actions_addopen(
         &actions, 1, (p.job_path(job) / "supervisor.log").c_str(),
@@ -453,6 +553,10 @@ class Daemon {
         ::posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
+    if (rc == 0 && channel) {
+      std::lock_guard guard(channel_mutex_);
+      channels_[channel_key(p, job)] = std::move(channel);
+    }
     return rc == 0;
   }
   Config config_;
@@ -460,6 +564,9 @@ class Daemon {
   std::atomic<uint32_t> active_jobs_{0};
   std::mutex project_mutex_;
   std::map<std::string, std::shared_ptr<Journal>> projects_;
+  std::mutex channel_mutex_;
+  // Write ends of the Card secret pipes of running jobs, by journal and job.
+  std::map<std::string, std::shared_ptr<Fd>> channels_;
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
@@ -499,6 +606,10 @@ auto supervise(const std::string& self, const stdfs::path& root,
       throw std::runtime_error("cancelled");
     const auto bytes = journal.spec(job);
     const auto spec = parse_spec(bytes);
+    // The listener's pipe for the job's Card secrets; the supervisor only
+    // passes it on to the invocation and never reads it.
+    if (!spec->secrets.empty() && ::fcntl(kSecretChannelFd, F_GETFD) < 0)
+      throw std::runtime_error("the job's Card secret channel is missing");
     fs::write_atomic(work / "spec.fb", bytes, 0600);
     if (spec->cpu_millis) {
       if (cgroup_root.empty())
@@ -528,6 +639,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
                "--invoke", work.c_str(), blobs.c_str(), store.c_str(), nullptr);
       ::_exit(127);
     }
+    if (!spec->secrets.empty()) ::close(kSecretChannelFd);
     int status = 0;
     for (;;) {
       const auto current = journal.status(job);

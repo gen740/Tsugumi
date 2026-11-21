@@ -554,6 +554,8 @@ export class ProjectSession extends Observable {
     return batch
   }
 
+  // The state the Canvas shows is presentation: each UI derives it from run
+  // notifications (execution-list batches) rather than asking hostd.
   canvasCardState(card: CardKey): D.CardState | undefined {
     const batch = this.executionBatch(card)
     if (batch?.executionList) {
@@ -2071,6 +2073,8 @@ export class ProjectSession extends Observable {
       obj([['x', real(Math.round(p.x * 10) / 10)], ['y', real(Math.round(p.y * 10) / 10)]]))]).catch(e => this.cardEditFailed(e))
   }
 
+  // Inferring a missing flow from Card places is presentation of layout.json:
+  // each UI does it itself rather than asking hostd.
   /** The direction this project's Cards are laid out in (layout.json "flow");
    *  without one, read from where the wired Cards sit, else the app's default. */
   get flow(): FlowDirection {
@@ -2412,6 +2416,7 @@ export class ProjectSession extends Observable {
     return { items, workerReused: st.workerReused }
   }
 
+  // Presentation: each UI combines the inner Cards' states itself, not hostd.
   /** State of a Card in Card from the Cards inside it. */
   compositeState(k: CardKey): D.CardState | undefined {
     const inner = [...new Set([...this.cardStates.keys(), ...this.runBatches.keys()])]
@@ -2519,6 +2524,8 @@ export class ProjectSession extends Observable {
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
   }
 
+  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // presentation: each UI works them out itself rather than asking hostd.
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
     if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
     const saved = arr(get(this.layoutOf(path(k).slice(0, -1)), 'cards', this.layoutKey(k), output ? 'outputOrder' : 'inputOrder')) ?? []

@@ -160,6 +160,8 @@ export const snapToGrid = (v: number, grid: number) => Math.floor(v / grid + 0.5
 const gridLengthNear = (length: number, grid: number) => 2 * grid * Math.floor(length / (2 * grid) + 0.5)
 const gridLengthAtLeast = (length: number, grid: number) => 2 * grid * Math.ceil(length / (2 * grid))
 
+// Presentation from the document and layout.json: each UI computes the shape
+// itself rather than asking hostd (port-grid-contract.json keeps them alike).
 /** Size, outline and port positions of a Card (world units, relative to its
  *  top-left corner). Shared by drawing, wires, the selection and hit-tests.
  *
@@ -583,6 +585,8 @@ const WIRE = {
 export type WireEnds = { a: Pt; b: Pt }
 export type WireRoute = { d: string; pts: Pt[]; curved: boolean }
 
+// Drawn routes are each UI's own work. hostd's route_wires is for Untangle,
+// which edits layout.json, not for drawing.
 /** Routes wires in world units around the Cards. A wire going along the flow
  *  whose curve touches no Card stays that curve. Any other wire takes the
  *  cheapest path on a grid of lines beside the Cards: by length, bends and

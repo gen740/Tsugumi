@@ -46,7 +46,11 @@ struct Invocation {
   InvocationParameters params;
   std::string path;
   std::string worker_binary;
+  // Card secrets included: the worker sets these in the Card's process.
   std::vector<std::pair<std::string, std::string>> environment;
+  // Runs once the call reached the worker, so the caller can drop the Card
+  // secrets it put in `environment` before the Card's process ends.
+  std::function<void()> on_call_sent;
   std::filesystem::path output_directory;
   std::optional<std::pair<uid_t, gid_t>> output_owner;
   OutputDelivery delivery = OutputDelivery::local_paths;

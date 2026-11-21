@@ -109,6 +109,8 @@ auto BuildScene(std::string_view project_json, std::string_view layout_json,
                 const std::vector<Definition>& definitions) -> Scene {
   Scene scene;
   const auto layout = ObjectOrEmpty(layout_json);
+  // Without "flow" the other UIs infer it from Card places (presentation, not
+  // hostd's); this one uses topToBottom, as CompleteLayout does.
   scene.top_to_bottom =
       json::Text(layout, "flow", "topToBottom") != "leftToRight";
   const auto places = ObjectOrEmpty(json::Get(layout, "cards", "{}"));

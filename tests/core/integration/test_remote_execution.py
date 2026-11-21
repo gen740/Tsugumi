@@ -167,7 +167,8 @@ def remote_broker(project, tmp_path, monkeypatch, remote_daemon):
 
         ready = {"endpoint": host.ready["execution_broker"],
                  "capability": authorize(project, "control"),
-                 "copyCapability": authorize(copy, "copy-control")}
+                 "copyCapability": authorize(copy, "copy-control"),
+                 "host": host}
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", ready["endpoint"])
         monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE", ready["capability"])
         yield ready
@@ -584,3 +585,169 @@ def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory
     run_id, status = run_and_wait(client, "deadline")
     assert status.state == RunState.failed, log(client, run_id, "deadline", 2)
     assert status.failure.kind == FailureKind.timeout
+
+
+# Card secrets on a remote worker: hostd keeps the value, the core hands it to
+# the worker for one running job only, and the worker gives it to the Card's
+# process without writing it anywhere.
+SENTINEL = "remote-card-secret-sentinel-5e81c0b7d4"
+SECRET_PROJECT = "a2b3c4"
+USES_SECRET = (
+    'case "$database_password" in ' + SENTINEL.rsplit("-", 1)[0] + '-*) ;; *) exit 3 ;; esac; '
+    f'test "${{#database_password}}" = {len(SENTINEL)} || exit 5; '
+    'test "$FROM_PRE" = ready || exit 4; '
+    'echo remote-card-ran; '
+    'printf \'{"out":{"value":%d}}\' "${#database_password}" > "$TSUGUMI_OUTPUT"'
+)
+
+
+@pytest.fixture
+def secret_project(project):
+    """The hostd project id the broker binds this project's Card secrets to."""
+    (project / ".tsugumi").mkdir(exist_ok=True)
+    (project / ".tsugumi/project-id").write_text(SECRET_PROJECT)
+    return SECRET_PROJECT
+
+
+def uses_secret():
+    from harness.real_cards import bash
+    # preRun's environment, the secret included, comes back to the worker.
+    return bash(USES_SECRET, pre="export FROM_PRE=ready", secrets=["database_password"],
+                recordIO=True, executionService="remote-test", timeoutSeconds=600)
+
+
+def files_containing(root, needle, skip=lambda path: False):
+    found = []
+    for directory, _, names in os.walk(root):
+        for name in names:
+            f = Path(directory) / name
+            if skip(f) or f.is_symlink() or not f.is_file():
+                continue
+            if needle in f.read_bytes():
+                found.append(str(f))
+    return found
+
+
+def secret_leaks(tmp_path, core, host, derivations=()):
+    """Files outside hostd's secret store that hold the value: the worker's
+    journal, scratch, blobs and logs, the project, the core's and hostd's own
+    files, and the derivation on both sides."""
+    needle = SENTINEL.encode()
+    worker_store = tmp_path / "daemon-state/store"
+
+    def skip(path):
+        # hostd's store holds the value by design; the worker's Nix store is
+        # checked through the run's derivation.
+        return path.name.startswith("host.sqlite") or worker_store in path.parents
+
+    leaks = files_containing(tmp_path, needle, skip) + files_containing(core.directory, needle)
+    if needle in host.log_path.read_bytes():
+        leaks.append(str(host.log_path))
+    for derivation in derivations:
+        for copy in (Path(derivation), worker_store / Path(derivation).relative_to("/")):
+            if copy.is_file() and needle in copy.read_bytes():
+                leaks.append(str(copy))
+    return leaks
+
+
+def test_remote_card_receives_its_secret_and_no_file_keeps_it(secret_project, project, core_factory,
+                                                              remote_broker, remote_daemon, tmp_path):
+    if remote_daemon[2] is None:
+        pytest.skip("requires a disposable worker whose state folder the test can read")
+    from harness.real_cards import log
+    host = remote_broker["host"]
+    host.call("CardSecretSetRequest", projectId=secret_project, name="database_password", value=SENTINEL)
+    write(project, {"use": uses_secret()}, [card("use", "use")], [])
+    core = core_factory()
+    client = core.connect()
+    run_id, status = run_and_wait(client, "use")
+    assert status.state == RunState.succeeded, log(client, run_id, "use", 2)
+    summary = client.call("RunRecordRequest", runId=run_id, card=path("use")).record.summary
+    assert summary.executionState == RemoteExecutionState.succeeded
+    assert text(summary.executionService) == "remote-test"
+    assert [text(name) for name in summary.secrets] == ["database_password"]
+    assert log(client, run_id, "use", LogStream.standard_output) == "remote-card-ran\n"
+    derivations = [text(e.derivation) for e in client.call("RunEnvironmentsRequest", runId=run_id).environments]
+    assert derivations
+    core.stop()
+    assert not secret_leaks(tmp_path, core, host, derivations)
+
+
+def test_missing_remote_secret_fails_before_anything_moves(secret_project, project, core_factory, remote_broker):
+    write(project, {"use": uses_secret()}, [card("use", "use")], [])
+    client = core_factory().connect()
+    run_id, status = run_and_wait(client, "use")
+    assert status.state == RunState.failed
+    invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
+    assert invocation.failure.kind == FailureKind.not_found
+    assert "database_password" in text(invocation.failure.diagnostic)
+    assert not text(invocation.executionJobId), "nothing was submitted"
+
+
+@pytest.fixture
+def held_secret_delivery(remote_broker, monkeypatch):
+    """Forwards the core's broker frames, holding its JobSecretsRequest until
+    the test releases it."""
+    upstream = remote_broker["endpoint"].removeprefix("unix:")
+    arrived, release = threading.Event(), threading.Event()
+
+    class Forward(socketserver.BaseRequestHandler):
+        def handle(self):
+            with self.request.makefile("rb") as downstream, socket.socket(socket.AF_UNIX) as connection:
+                header = R.exact(downstream, 4)
+                size, = struct.unpack("<I", header)
+                payload = R.exact(downstream, size)
+                request = R.MessageT.InitFromPackedBuf(payload).payload.request
+                if request.bodyType == R.RequestBody.JobSecretsRequest:
+                    arrived.set()
+                    release.wait(timeout=600)
+                control = request.bodyType == R.RequestBody.CancelRequest
+                connection.connect(upstream + ".c" if control else upstream)
+                connection.sendall(header + payload)
+                with connection.makefile("rb") as response:
+                    header = R.exact(response, 4)
+                    size, = struct.unpack("<I", header)
+                    self.request.sendall(header + R.exact(response, size))
+
+    with tempfile.TemporaryDirectory(prefix="hs-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
+        address = str(Path(sockets) / "broker")
+        with socketserver.ThreadingUnixStreamServer(address, Forward) as server:
+            server.daemon_threads = True
+            os.symlink(address, address + ".c")
+            monkeypatch.setenv("TSUGUMI_EXECUTION_BROKER", "unix:" + address)
+            thread = threading.Thread(target=server.serve_forever)
+            thread.start()
+            try:
+                yield arrived, release
+            finally:
+                release.set()
+                server.shutdown()
+                thread.join()
+
+
+def test_remote_worker_restart_before_the_card_starts_fails_the_job(secret_project, project, core_factory,
+                                                                   remote_broker, held_secret_delivery,
+                                                                   remote_daemon, tmp_path):
+    """The values live only in the listener's memory: after a restart the job
+    fails, saying why, and nothing sends them again."""
+    if remote_daemon[2] is None:
+        pytest.skip("requires a disposable worker whose listener can be restarted")
+    from harness.real_cards import log
+    arrived, release = held_secret_delivery
+    host = remote_broker["host"]
+    host.call("CardSecretSetRequest", projectId=secret_project, name="database_password", value=SENTINEL)
+    write(project, {"use": uses_secret()}, [card("use", "use")], [])
+    core = core_factory()
+    client = core.connect()
+    run_id = start_run(client, "use")
+    # The job is built and waits for its secrets; the core is sending them.
+    assert arrived.wait(timeout=RUN_LIST_TIMEOUT_SECONDS)
+    remote_daemon[2]()
+    release.set()
+    assert wait_run(client, run_id).state == RunState.failed
+    invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
+    assert "restarted before the Card started" in text(invocation.failure.diagnostic), \
+        text(invocation.failure.diagnostic)
+    assert "remote-card-ran" not in log(client, run_id, "use", LogStream.standard_output)
+    core.stop()
+    assert not secret_leaks(tmp_path, core, host)

@@ -4,6 +4,8 @@ import { L } from '../i18n'
 import { hostCall } from './host'
 import { s } from './rpc'
 
+// Words for hostd's stage names are presentation: each UI keeps its own text
+// rather than hostd sending it.
 const STAGES: Record<string, string> = {
   'installing the VM image': 'VM イメージを展開しています',
   'creating the Nix store disk': 'Nix store の保存領域を作っています',

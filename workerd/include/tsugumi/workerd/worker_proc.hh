@@ -99,11 +99,12 @@ class WorkerProc {
 
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
+  // Once the frame is sent it is cleared, and `sent` runs: the call's Card
+  // secrets then live only in the worker's process.
   WorkerOutcome call(
-      const std::string& frame, uint64_t call_id,
-      const std::atomic<bool>* cancel,
+      std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
-      const DisplaySink& display);
+      const DisplaySink& display, const std::function<void()>& sent = {});
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }

@@ -75,6 +75,7 @@ case "$suite" in
     ;;
   core)
     (export TSUGUMI_RPC_TRACE=1; run "$bin/tsugumi_rpc_trace_tests")
+    run "$bin/tsugumi_rpc_frame_tests"
     run "$bin/tsugumi_rpc_cli_tests"
     gtest tsugumi_remote_result_tests 'ShellTest.*' 'RunScratch.*'
     if $full; then run "$bin/tsugumi_worker_condition_tests"; fi

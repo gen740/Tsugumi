@@ -3,8 +3,8 @@
 // LayoutCompleteRequest), and the wires between them.
 //
 // A Card's size, shape and port positions are not here: the Web UI and the
-// Mac app work them out themselves (CardGeometry), and this UI waits for
-// hostd to give them. Until then every Card is drawn as a box of one size.
+// Mac app work them out themselves (CardGeometry): presentation from the
+// document is each UI's, not hostd's. For now every Card is one box here.
 #pragma once
 
 #include <string>
@@ -65,7 +65,8 @@ struct Scene {
   // The box a Card is drawn in (one size for every Card, see above).
   [[nodiscard]] static auto CardBox(const SceneCard& card) -> Box;
   // Where a wire leaves its Card and reaches the next one: the middle of the
-  // downstream and upstream edges, in the direction the Cards run.
+  // downstream and upstream edges, in the direction the Cards run. Shown
+  // ports and their order are each UI's to compute; this one has none yet.
   [[nodiscard]] auto WireEnds(const SceneWire& wire) const
       -> std::pair<Point, Point>;
   // Everything drawn; an empty box for an empty Workflow.
