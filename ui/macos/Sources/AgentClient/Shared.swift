@@ -1102,7 +1102,6 @@ enum Shared {
         "validate_layout": "layout_validate"
       },
       "templates": {
-        "list": "template_list",
         "copy": "template_copy",
         "add": "template_add",
         "import": "template_import"

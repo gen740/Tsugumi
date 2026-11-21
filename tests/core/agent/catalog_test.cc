@@ -93,7 +93,7 @@ TEST(AgentCatalog, TemplateToolsUseTheExpectedApprovalAndRolePolicy) {
   EXPECT_FALSE(catalog.Allows("template_copy", ModelRole::ScopedHelper));
   EXPECT_EQ(catalog.FamilyTool("templates", "copy", ModelRole::Main),
             "template_copy");
-  EXPECT_EQ(catalog.FamilySpecs("templates", ModelRole::Guide).size(), 1u);
+  EXPECT_TRUE(catalog.FamilySpecs("templates", ModelRole::Guide).empty());
   for (const auto* name :
        {"template_list", "template_copy", "template_add", "template_import"}) {
     const auto* tool = catalog.Find(name);
