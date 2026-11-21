@@ -576,7 +576,7 @@ def test_a_copy_of_a_read_only_demo_can_be_edited(tmp_path):
     demo = root / "demos" / "ja" / "d" / "definitions" / "c"
     demo.mkdir(parents=True)
     (root / "VERSION").write_text("0.0.0\n")
-    (demo / "_card.json").write_text("{}")
+    (demo / "_card.json").write_text('{"type": "code"}')
     (root / "demos" / "ja" / "d" / ".tsugumi").mkdir()
     (root / "demos" / "ja" / "d" / ".tsugumi" / "history").write_text("private")
     (root / "demos" / "ja" / "d" / "tsugumi.json").write_text('{"name": "D"}')

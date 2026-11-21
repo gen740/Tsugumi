@@ -19,7 +19,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
   const auto& graph = *doc->resolution;
   bool all = true;
   for (const auto& node : graph.nodes) {
-    if (node.kind != Template::Code || node.is_virtual) continue;
+    if (node.kind != CardType::Code || node.is_virtual) continue;
     const auto card = path_key(node.path);
     BuildRequest request;
     request.node = &node;

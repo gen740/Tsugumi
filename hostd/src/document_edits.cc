@@ -106,7 +106,8 @@ auto MakeSubgraph(const std::string& project,
   DocumentSubgraph result;
   result.project_json = json::Encode(outer);
   result.external_json = json::Encode(inner);
-  result.card_json = json::Encode(json::Members{{"external", json::Quote(id)}});
+  result.card_json = json::Encode(json::Members{
+      {"type", json::Quote("subgraph")}, {"external", json::Quote(id)}});
   return result;
 }
 auto CopyDocuments(const std::string& state,
@@ -219,7 +220,7 @@ auto ConnectDocuments(const std::string& state, const std::string& from_card,
   const auto is_draft = [&](const std::string& id) {
     const auto definition = json::Object(json::Get(definitions, id, "{}"));
     return json::Text(json::Object(json::Get(definition, "card", "{}")),
-                      "template") == "draft";
+                      "type") == "draft";
   };
   // Draft gestures attach to the Card itself and never declare ports.
   const auto endpoint_port = [](bool draft, const std::string& port) {

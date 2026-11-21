@@ -137,7 +137,7 @@ void Service::sdk_prepare(RequestIn& req) {
     if (!node)
       throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                    {{"card", path_key(card)}});
-    if (node->kind != Template::Code && node->kind != Template::Input)
+    if (node->kind != CardType::Code && node->kind != CardType::Input)
       throw Failed(FailureKind::invalid_request,
                    "SDKs are generated for code and input Cards only");
     auto job = nix_->prepare_sdk(op_id, *node, doc->rev);

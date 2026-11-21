@@ -6,19 +6,19 @@ namespace {
 TEST_F(AgentProjectFixture,
        MissingSavedInputsNamesTheWorkflowTriggerAndKeepsSingleCardRuns) {
   const auto root = directory.path / "project";
-  Write(root / "definitions/load/_card.json", R"({"template":"trigger"})");
+  Write(root / "definitions/load/_card.json", R"({"type":"trigger"})");
   Write(
       root / "definitions/source/_card.json",
-      R"({"template":"input","params":[{"name":"value","type":"double","data":1}]})");
+      R"({"type":"input","params":[{"name":"value","type":"double","data":1}]})");
   Write(root / "definitions/source/_outputs.fbs",
         "table Value { value:double; } table Outputs { out:Value (required); } "
         "root_type Outputs;");
-  Write(root / "definitions/knn/_card.json", R"({"template":"collect"})");
-  Write(root / "definitions/nested/_card.json", R"({"external":"nested"})");
+  Write(root / "definitions/knn/_card.json", R"({"type":"collect"})");
+  Write(root / "definitions/nested/_card.json", R"({"type":"subgraph","external":"nested"})");
   Write(root / "externals/nested/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner_load"}],"connections":[]}})");
   Write(root / "externals/nested/definitions/inner_load/_card.json",
-        R"({"template":"trigger"})");
+        R"({"type":"trigger"})");
   StartProject(
       false,
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"load"},{"id":"source"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
@@ -64,7 +64,7 @@ class AgentRunWaitFixture : public AgentProjectFixture {
     const auto saved = Tool(conversation, "project_save",
                             "{\"base_rev\":" + Quote(rev) + R"(,"changes":[
       {"value_type":"SetProject","value":{"json":"{\"name\":\"wait\",\"pkgsPath\":\"tsugumi:default\",\"canvas\":{\"cards\":[{\"id\":\"work\"}],\"connections\":[]}}"}},
-      {"value_type":"PutDefinition","value":{"id":"work","card_json":"{\"language\":\"bash\"}","meta_json":"{\"description\":\"Wait fixture\",\"context\":\"Run completion\"}"}},
+      {"value_type":"PutDefinition","value":{"id":"work","card_json":"{\"type\":\"code\",\"language\":\"bash\"}","meta_json":"{\"description\":\"Wait fixture\",\"context\":\"Run completion\"}"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/_outputs.fbs","bytes":"table Outputs {} root_type Outputs;"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/default.nix","bytes":"{}"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/mock-build.json","bytes":"{\"gate\":\"run-wait\",\"error\":\"fixture completion\"}"}}

@@ -161,6 +161,10 @@ auto Document::valid_version_path(const std::string& rel) -> bool {
 
 namespace {
 
+constexpr const char* kCardTypeList =
+    "one of code, draft, trigger, input, branch, fork, merge, collect, "
+    "subgraph";
+
 [[noreturn]] void invalid(const std::string& message,
                           std::map<std::string, std::string> args = {}) {
   throw DocumentError("invalid_document", message, std::move(args));
@@ -299,7 +303,21 @@ schema::CardDefinition parse_card_json(const std::string& id,
                                        const std::string& text) {
   const auto rel = "definitions/" + id + "/_card.json";
   auto card = decode_doc<schema::CardDefinition>(rel, text);
-  if (const auto* external = schema::get(card.external)) {
+  const auto* type_name = schema::get(card.type);
+  if (!type_name)
+    invalid(rel + ": \"type\" is required (" + kCardTypeList + ")",
+            {{"path", rel}});
+  const auto type = parse_card_type(*type_name);
+  if (!type)
+    invalid(rel + ": unknown type \"" + *type_name + "\" (" + kCardTypeList +
+                ")",
+            {{"path", rel}});
+  const auto* external = schema::get(card.external);
+  if ((*type == CardType::Subgraph) != (external != nullptr))
+    invalid(rel + (external ? ": \"external\" needs \"type\": \"subgraph\""
+                            : ": a subgraph needs \"external\""),
+            {{"path", rel}});
+  if (external) {
     if (!valid_id(*external))
       invalid(rel + ": \"external\" must name a folder of externals/",
               {{"path", rel}});
@@ -307,7 +325,7 @@ schema::CardDefinition parse_card_json(const std::string& id,
         decode_doc<schema::v::Mapping<schema::v::String, schema::Json>>(rel,
                                                                         text);
     for (const auto& [field, value] : members.value())
-      if (field != "external" && field != "displayMode")
+      if (field != "type" && field != "external" && field != "displayMode")
         invalid(rel + ": execution field " + field + " on a Card in Card",
                 {{"path", rel}});
   }
@@ -335,7 +353,7 @@ void check_structure(const Document& doc) {
           "invalid_document",
           "card " + id + " has no definition (definitions/" + id + "/)",
           {{"card", id}, {"definition", id}});
-    if (template_of(&it->second) == Template::Trigger) ++triggers;
+    if (card_type_of(it->second) == CardType::Trigger) ++triggers;
   }
   if (triggers > 1)
     throw DocumentError("invalid_document",

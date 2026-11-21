@@ -155,8 +155,9 @@ auto ProjectView::Update() -> void {
     if (*state != '\0') status = L("実行: {0}", {L(state)});
   }
   gtk_label_set_text(GTK_LABEL(status_), status.c_str());
-  gtk_widget_set_sensitive(run_,
-                           !canvas_.selected().empty() && !session->running());
+  const auto* selected = session->scene().Find(canvas_.selected());
+  gtk_widget_set_sensitive(
+      run_, selected && !selected->definition_error && !session->running());
   gtk_widget_set_sensitive(stop_, session->running());
   if (shown_run_ != session->run_id() || !session->running()) {
     shown_run_ = session->run_id();
@@ -172,8 +173,9 @@ auto ProjectView::HomeClicked(GtkButton* /*button*/, gpointer self) -> void {
 
 auto ProjectView::RunClicked(GtkButton* /*button*/, gpointer self) -> void {
   auto* view = static_cast<ProjectView*>(self);
-  if (view->session_ && !view->canvas_.selected().empty())
-    view->session_->Run(view->canvas_.selected());
+  if (!view->session_) return;
+  const auto* card = view->session_->scene().Find(view->canvas_.selected());
+  if (card && !card->definition_error) view->session_->Run(card->id);
 }
 
 auto ProjectView::StopClicked(GtkButton* /*button*/, gpointer self) -> void {

@@ -5,7 +5,7 @@ import sys
 
 ROOT = Path(__file__).resolve().parents[3]
 FILES = {
-    '_card.json': json.dumps({'language': 'csharp', 'inputs': [{'name': 'in'}],
+    '_card.json': json.dumps({'type': 'code', 'language': 'csharp', 'inputs': [{'name': 'in'}],
                              'params': [{'name': 'message', 'type': 'string', 'data': 'Hello from C#'}]}, indent=2) + '''
 ''',
     '_outputs.fbs': '''namespace card;

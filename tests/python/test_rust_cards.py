@@ -30,7 +30,7 @@ def write_project(root, cards, connections):
 
 def rust(source, **card):
     template = ROOT / 'sdk/rust/template'
-    return {'card': {'language': 'rust', **card}, 'nix': NIX, 'src': {
+    return {'card': {'type': 'code', 'language': 'rust', **card}, 'nix': NIX, 'src': {
         'Cargo.toml': (template / 'Cargo.toml').read_text(),
         'src/lib.rs': source,
     }}
@@ -88,7 +88,7 @@ fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>) -> Resul
 tsugumi::export!(run, with_run);''', inputs=[{'name': 'number'}, {'name': 'optional', 'optional': True}], params=[{'name': 'offset', 'type': 'uint64', 'data': 7}])
     process['outputs'] = NUMBER
     write_project(root, {
-        'make': {'card': {'language': 'python'}, 'outputs': NUMBER.replace('out:Number (required);', 'out:Number (required); other:Number (required);'),
+        'make': {'card': {'type': 'code', 'language': 'python'}, 'outputs': NUMBER.replace('out:Number (required);', 'out:Number (required); other:Number (required);'),
                  'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in {run = inputs.tsugumi.pythonCard {inherit sdk; src=./src;};}',
                  'src': {'main.py': '''import tsugumi
 import outputs.out.t.Number as N
@@ -104,7 +104,7 @@ def main(inputs):
  return {"out": out, "other": tsugumi.message(b, N.End(b))}
 '''}},
         'rust': process,
-        'check': {'card': {'language': 'cpp', 'inputs': [{'name': 'number'}]},
+        'check': {'card': {'type': 'code', 'language': 'cpp', 'inputs': [{'name': 'number'}]},
                   'nix': '{ pkgs, inputs, params }: let sdk=inputs.tsugumi.sdk {languages=["cpp"];}; in {run=inputs.tsugumi.cppCard {inherit sdk;src=./src;};}',
                   'src': {'card.cc': '''#include <card.hh>
 #include <stdexcept>
@@ -231,7 +231,7 @@ fn run(inputs: Inputs<'_>, report: &Report<'_>, run: &tsugumi::Run<'_>)->Result<
 }
 tsugumi::export!(run, with_run);''', inputs=[{'name':'file'},{'name':'directory'}], retainArtifact=True, artifactOutput='report')
     card['outputs']='attribute "tsugumi"; namespace t; table Path{value:string;} table Outputs{report:Path(required,tsugumi:"file");} root_type Outputs;'
-    write_project(root,{'make':{'card':{'language':'bash'},'nix':make,'outputs':schema},'rust':card},[('make',p,'rust',p) for p in ('file','directory')])
+    write_project(root,{'make':{'card':{'type':'code','language':'bash'},'nix':make,'outputs':schema},'rust':card},[('make',p,'rust',p) for p in ('file','directory')])
     c=connect()
     run_id=succeeded(c)
     art=next(a for a in c.call('ArtifactListRequest',runId=run_id).artifacts if text(a.output)=='report')

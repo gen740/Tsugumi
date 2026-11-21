@@ -7,7 +7,7 @@ namespace json = ::tsugumi::json;
 TEST_F(AgentProjectFixture,
        AgentSavePolicyIsAppliedByTheHostAndItsReceiptSurvivesRestart) {
   Write(directory.path / "project/definitions/plan/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(
       directory.path / "project/definitions/plan/_meta.json",
       R"({"description":"Plan","content":"Keep these words","comments":[{"id":"c1","text":"Ask","author":"user"}]})");
@@ -33,7 +33,7 @@ TEST_F(AgentProjectFixture,
                            {"value", json::Encode(value)}})})}});
   };
   json::Members value{{"id", json::Quote("plan")},
-                      {"card_json", json::Quote(R"({"template":"sink"})")},
+                      {"card_json", json::Quote(R"({"type":"code"})")},
                       {"keep_meta", "true"}};
   const auto refused =
       Tool(conversation, "project_save", save(value), "refused");
@@ -96,13 +96,13 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
   Write(nested / "tsugumi.json",
         R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");
   const auto definition = nested / "definitions/child/_card.json";
-  const std::string accepted = R"({"template":"draft"})";
+  const std::string accepted = R"({"type":"draft"})";
   Write(definition, accepted);
   StartProject();
   const auto conversation = Conversation("read-confirmed-document");
   Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
-  Write(definition, R"({"template":"draft","network":true})");
+  Write(definition, R"({"type":"draft","network":true})");
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   const auto reply =
       Tool(conversation, "project_file_read",
@@ -116,12 +116,12 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
 TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
   const auto root = directory.path / "project";
   const auto link = root / "definitions/group/_card.json";
-  Write(link, R"({"external":"private"})");
+  Write(link, R"({"type":"subgraph","external":"private"})");
   for (const auto* name : {"private", "public"}) {
     const auto folder = root / "externals" / name;
     Write(folder / "tsugumi.json",
           R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"leaf"}],"connections":[]}})");
-    Write(folder / "definitions/leaf/_card.json", R"({"template":"trigger"})");
+    Write(folder / "definitions/leaf/_card.json", R"({"type":"trigger"})");
   }
   StartProject(
       false,
@@ -132,7 +132,7 @@ TEST_F(AgentProjectFixture, ExclusionsUseAcceptedAndRecordedDefinitionPaths) {
     Grant(conversation, access);
   const auto revision = JsonString(
       JsonString(Inspect(conversation).View(), "/text"), "/value/rev");
-  Write(link, R"({"external":"public"})");
+  Write(link, R"({"type":"subgraph","external":"public"})");
   const auto request =
       "{\"base_rev\":" + Quote(revision) +
       R"(,"card":{"segments":["group","leaf"]},"propagate":false})";
@@ -273,17 +273,17 @@ TEST_F(AgentProjectFixture, StaleWholeDocumentSaveRefusesAndKeepsInput) {
 TEST_F(AgentProjectFixture,
        HelperRechecksAliasesAddedWhilePermissionIsPending) {
   Write(directory.path / "project/definitions/outer/_card.json",
-        R"({"external":"storage"})");
+        R"({"type":"subgraph","external":"storage"})");
   Write(directory.path / "project/definitions/writer/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/alias/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(
       directory.path / "project/externals/storage/tsugumi.json",
       R"({"name":"Nested","canvas":{"cards":[{"id":"child"}],"connections":[]}})");
   Write(
       directory.path / "project/externals/storage/definitions/child/_card.json",
-      R"({"template":"draft"})");
+      R"({"type":"draft"})");
   const auto source = directory.path /
                       "project/externals/storage/definitions/child/src/main.py";
   Write(source, "original\n");
@@ -380,7 +380,7 @@ TEST_F(AgentProjectFixture,
           {"base_rev", json::Get(snapshot, "rev")},
           {"changes",
            json::Encode(std::vector<std::string>{
-               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}","meta_json":"{\"description\":\"Shared container\"}"}})"})}}),
       "add-alias");
   EXPECT_FALSE(JsonBool(alias.View(), "/isError")) << alias.View();
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,
@@ -416,7 +416,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_TRUE(scope_denied) << history.View();
   EXPECT_EQ(Read(source), "original\n");
   EXPECT_EQ(Read(directory.path / "project/definitions/writer/_card.json"),
-            R"({"template":"draft"})");
+            R"({"type":"draft"})");
 }
 }  // namespace
 }  // namespace tsugumi::test
@@ -429,8 +429,8 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
   const std::string document =
       R"({"name":"Nested","pkgsPath":"tsugumi:default","boundary":{"inputs":{},"outputs":{}},"canvas":{"cards":[{"id":"upstream"},{"id":"secret"}],"connections":[]}})";
   Write(nested / "tsugumi.json", document);
-  Write(nested / "definitions/upstream/_card.json", R"({"template":"draft"})");
-  Write(nested / "definitions/secret/_card.json", R"({"template":"draft"})");
+  Write(nested / "definitions/upstream/_card.json", R"({"type":"draft"})");
+  Write(nested / "definitions/secret/_card.json", R"({"type":"draft"})");
   StartProject();
   const auto conversation = Conversation("nested-creator");
   Grant(conversation);
@@ -450,7 +450,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
                    {"value_type", json::Quote("SetProject")},
                    {"value",
                     json::Encode(json::Members{{"json", json::Quote(root)}})}}),
-               R"({"value_type":"PutDefinition","value":{"id":"outer","card_json":"{\"external\":\"storage\"}"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"outer","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}"}})"})}}),
       "seed");
   ASSERT_FALSE(JsonBool(seeded.View(), "/isError")) << seeded.View();
   const auto snapshot = json::Object(
@@ -500,7 +500,7 @@ TEST_F(AgentProjectFixture, NestedScopedCreatorSavesGraphWithoutWritingLayout) {
            json::Encode(json::Members{
                {"file_path", json::Quote("externals/storage/definitions/" + id +
                                          "/_card.json")},
-               {"put", json::Quote(R"({"template":"draft"})")},
+               {"put", json::Quote(R"({"type":"draft"})")},
                {"expect_missing", "true"}})})}});
   model.Queue(AnthropicTool("save", "project_edit", args));
   model.Queue(AnthropicText("Saved."));
@@ -540,13 +540,13 @@ TEST_P(ScopedSourceOperation, SourceEditsLeaveLayoutsUntouched) {
                              std::string{"externals/unrelated/"}}) {
     for (const auto* id : {"a", "b"})
       Write(root / prefix / "definitions" / id / "_card.json",
-            R"({"template":"draft"})");
+            R"({"type":"draft"})");
     if (!prefix.empty()) {
       Write(root / prefix / "tsugumi.json", graph);
       Write(root / prefix / "layout.json", "{}");
     }
   }
-  Write(root / "definitions/outer/_card.json", R"({"external":"assigned"})");
+  Write(root / "definitions/outer/_card.json", R"({"type":"subgraph","external":"assigned"})");
   StartProject(
       false,
       R"({"name":"Scoped","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"outer"}],"connections":[]}})");

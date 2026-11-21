@@ -113,9 +113,9 @@ export class CardEditorModel extends Observable {
   }
 
   get implementation() {
-    const template = str(get(this.definition, 'template'))
-    if (template === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
-    return template ?? str(get(this.definition, 'language')) ?? 'draft'
+    const kind = definitionKind(this.definition)
+    if (kind === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
+    return kind === 'code' ? str(get(this.definition, 'language')) ?? kind : kind
   }
 
   implementAs(value: string) {
@@ -131,9 +131,8 @@ export class CardEditorModel extends Observable {
           this.presetOutputs = outputs
         }
       }
-    } else if (value === 'draft') this.definition = obj([['template', 'draft']])
-    else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['language', value]])
-    else this.definition = obj([['template', value]])
+    } else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['type', 'code'], ['language', value]])
+    else this.definition = obj([['type', value]])
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
@@ -471,7 +470,7 @@ function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'source', 'ports', 'log', 'dependencies', 'executions', 'artifacts', 'notes']
     case 'input': return ['general', 'source', 'ports', 'log', 'executions', 'artifacts', 'notes']
-    case 'draft': return ['general', 'notes']
+    case 'draft': case 'invalid': return ['general', 'notes']
     case 'subgraph': return ['general', 'ports', 'executions', 'notes']
     default: return ['general', 'ports', 'log', 'executions', 'artifacts', 'notes']
   }
@@ -754,7 +753,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
         </Section>
       )}
-      {kind !== 'subgraph' && kind !== 'draft' && (
+      {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
           {kind === 'code' && (
             <Row label="trigger" help={L('allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。')}>
@@ -1052,7 +1051,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
-      {model.kind !== 'subgraph' && model.kind !== 'draft' && (
+      {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
         <Section title={L('記録と成果物')}>
           <Row label={L('入出力を記録')}>
             <Toggle checked={bool(get(def, 'recordIO')) ?? false} onChange={(v) => model.setSetting('recordIO', v ? true : undefined)} />

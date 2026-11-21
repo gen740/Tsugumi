@@ -205,7 +205,7 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let (start, log, draft) = ("start", "log", "plan")
-  let s = try offlineSession(dir, cards: [(start, #"{"template":"trigger"}"#), (log, #"{"language":"python"}"#), (draft, #"{"template":"draft"}"#)])
+  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code","language":"python"}"#), (draft, #"{"type":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -217,7 +217,7 @@ import TsugumiTestSupport
   // Once the Card is implemented, endpoint styling becomes solid.
   let implemented = Tsugumi_RPC_DocumentDeltaT()
   implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
-  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"language":"python"}"#
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code","language":"python"}"#
   implemented.definitionsUpsert = [definition]
   s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
@@ -230,6 +230,66 @@ import TsugumiTestSupport
   #expect(off > 0)
   let dots = WireLayer.dash.reduce(0, +) / off
   #expect(abs(dots - dots.rounded()) < 1e-9, "a whole number of dots per period")
+}
+
+/// A Card whose _card.json has no type, an unknown one, or one that does not
+/// match `external` is a definition error, not a Draft: drawn as a failure with
+/// the core's diagnostic, no ports and no run. The web checks the same
+/// (ui/web/tests/definitionErrors.tsx).
+@MainActor @Test func cardsWithoutAKnownTypeAreDefinitionErrors() async throws {
+  let dir = testTemporaryDirectory.appendingPathComponent("definition-errors-\(UUID().uuidString.prefix(8))")
+  defer { try? FileManager.default.removeItem(at: dir) }
+  try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+  let s = try offlineSession(dir, cards: [
+    ("old", #"{"language":"python","inputs":[{"name":"in"}]}"#),
+    ("future", #"{"type":"something new","inputs":[{"name":"in"}]}"#),
+    ("loose", #"{"type":"code","external":"lib"}"#),
+    ("plan", #"{"type":"draft"}"#),
+    ("step", #"{"type":"code","language":"python"}"#),
+  ])
+  #expect(s.kind("old") == .invalid)
+  #expect(s.kind("future") == .invalid)
+  #expect(s.kind("loose") == .invalid)
+  #expect(s.kind("plan") == .draft, "a Draft stays a Draft")
+  #expect(s.kind("step") == .code)
+  #expect(definitionKind(nil) == .invalid, "a Card without a definition")
+  #expect(definitionKind(try JSONValue.parse(#"{"type":"subgraph","external":"lib"}"#)) == .subgraph)
+  #expect(definitionKind(try JSONValue.parse(#"{"type":"subgraph"}"#)) == .invalid)
+  #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
+
+  // The core's diagnostic (file and message) is what the Card says.
+  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph)"#
+  let delta = Tsugumi_RPC_DocumentDeltaT()
+  delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
+  delta.resolution = ["old", "future", "loose", "plan", "step"].map { id in
+    let r = Tsugumi_RPC_ResolvedCardT(); r.card = cardPath([id])
+    let out = Tsugumi_Data_PortT(); out.name = "out"; r.outputs = [out]
+    if id == "old" {
+      let d = Tsugumi_Data_DiagnosticT()
+      d.severity = .error; d.code = "invalid_document"; d.message = missing; d.card = cardPath([id]); d.path = "definitions/old/_card.json"
+      r.diagnostics = [d]
+    }
+    return r
+  }
+  s.applyDelta(delta)
+  for id in ["old", "future"] {
+    let d = s.nodeData(id)
+    #expect(d.kind == .invalid && d.inputs.isEmpty && d.outputs.isEmpty, "\(id): no ports, declared or resolved")
+    let g = CardGeometry(d, flow: .topToBottom)
+    #expect(g.inputs.isEmpty && g.outputs.isEmpty && !g.draft && !g.stages)
+    #expect(g.newPortPoint(output: false) == nil, "nothing to draw a wire from")
+    #expect(d.idleText == String(localized: "定義エラー"))
+  }
+  let old = s.nodeData("old")
+  #expect(old.summary == missing && old.errors == [missing])
+  #expect(CardGeometry(old, flow: .topToBottom).summary, "the diagnostic has its row")
+  #expect(s.nodeData("future").summary == String(localized: "Card の定義を読めません"), "without a diagnostic yet")
+
+  // A version from before `type` (or one this build cannot read) has no kind.
+  #expect(CardKind.named("") == .invalid && CardKind.named("something new") == .invalid && CardKind.named("merge") == .merge)
+  let map = VersionMiniMapLayout([.init(id: "old", x: 0, y: 0, kind: CardKind.named("")), .init(id: "step", x: 300, y: 0)],
+                                 flow: .leftToRight, width: 284, height: 132)
+  #expect(map.cards["old"]?.invalid == true && map.cards["step"]?.invalid == false)
 }
 
 @Test func aDraftOffersCardAttachmentsAndOpensWhileWritten() {
@@ -663,7 +723,7 @@ private final class CountingRuler: LineNumberRuler {
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
   snapshot.definitions = ["plan", "next"].map { id in
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"template":"draft"}"#
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"type":"draft"}"#
     return definition
   }
   session.prepareLayout = { _, layout, _ in layout }

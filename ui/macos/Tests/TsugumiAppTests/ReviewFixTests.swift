@@ -178,7 +178,7 @@ extension SyncTests {
       let snapshot = try await agent.inspect()
       let meta = JSONValue.object([("name", .string(name)), ("content", .string(content))])
       _ = try await agent.save(baseRev: snapshot.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-        Change.putDefinition(id: "a", cardJSON: #"{"template":"draft"}"#, metaJSON: meta.serialized()),
+        Change.putDefinition(id: "a", cardJSON: #"{"type":"draft"}"#, metaJSON: meta.serialized()),
       ])
       try await waitForModel { !(session.rev <= (snapshot.rev ?? 0)) }
       #expect(session.rev > (snapshot.rev ?? 0))

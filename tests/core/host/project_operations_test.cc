@@ -321,19 +321,19 @@ class TransformationProject {
        R"({"name":"test","canvas":{"cards":[{"id":"a"},{"id":"sub"}],"connections":[]}})"},
       {"layout.json",
        R"({"cards":{"a":{"x":10,"y":20,"inputOrder":["q","p"]},"sub":{"x":200,"y":20}}})"},
-      {"definitions/a/_card.json", R"({"template":"draft"})"},
+      {"definitions/a/_card.json", R"({"type":"draft"})"},
       {"definitions/a/_meta.json", R"({"name":"source"})"},
       {"definitions/a/data.bin", std::string("\0\xff\x80\n", 4)},
-      {"definitions/sub/_card.json", R"({"external":"inner"})"},
+      {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"name":"inner","canvas":{"cards":[{"id":"b"}],"connections":[]}})"},
       {"externals/inner/layout.json", R"({"cards":{"b":{"x":1,"y":2}}})"},
-      {"externals/inner/definitions/b/_card.json", R"({"external":"deep"})"},
+      {"externals/inner/definitions/b/_card.json", R"({"type":"subgraph","external":"deep"})"},
       {"externals/inner/externals/deep/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
       {"externals/inner/externals/deep/layout.json", "{}"},
       {"externals/inner/externals/deep/definitions/c/_card.json",
-       R"({"template":"draft"})"},
+       R"({"type":"draft"})"},
       {"externals/inner/externals/deep/definitions/c/raw.bin",
        std::string("\xff\0\x81", 3)}};
   int saves = 0;
@@ -553,7 +553,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
 }
 TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
   TransformationProject project;
-  project.files["definitions/spare/_card.json"] = R"({"external":"inner"})";
+  project.files["definitions/spare/_card.json"] = R"({"type":"subgraph","external":"inner"})";
   const auto inner = project.files.at("externals/inner/tsugumi.json");
   H::ProjectSelectionT remove_card;
   remove_card.action = H::ProjectSelectionAction::Delete;
@@ -563,7 +563,7 @@ TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
   EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
   project.Apply(restore_card);
   EXPECT_EQ(project.files.at("definitions/sub/_card.json"),
-            R"({"external":"inner"})");
+            R"({"type":"subgraph","external":"inner"})");
 
   H::ProjectSelectionT remove_definition;
   remove_definition.action = H::ProjectSelectionAction::DeleteDefinitions;
@@ -753,10 +753,10 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
        R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
       {"layout.json",
        R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
-      {"definitions/a/_card.json", R"({"language":"python"})"},
-      {"definitions/b/_card.json", R"({"language":"python"})"},
+      {"definitions/a/_card.json", R"({"type":"code","language":"python"})"},
+      {"definitions/b/_card.json", R"({"type":"code","language":"python"})"},
       {"definitions/d/_card.json",
-       R"({"language":"python","inputs":[{"name":"p"},{"name":"q"}]})"}};
+       R"({"type":"code","language":"python","inputs":[{"name":"p"},{"name":"q"}]})"}};
   H::LayoutSceneT scene;
   scene.flow = "topToBottom";
   for (const auto& id : {"a", "b", "d"}) {
@@ -879,15 +879,15 @@ TEST(ProjectOperationCutover,
      FormAndSourceEditAreAtomicAndUndoKeepsOtherFields) {
   TransformationProject project;
   project.files["definitions/a/_card.json"] =
-      R"({"template":"draft","symbol":"base","concurrent":true})";
+      R"({"type":"draft","symbol":"base","concurrent":true})";
   H::ProjectEditsT body;
   H::ProjectJSONEditT form;
   form.file_path = "definitions/a/_card.json";
   form.old_value = std::make_unique<H::ProjectValueT>();
   form.old_value->present = true;
-  form.old_value->json = R"({"template":"draft","symbol":"base"})";
+  form.old_value->json = R"({"type":"draft","symbol":"base"})";
   form.new_value = std::make_unique<H::ProjectValueT>(*form.old_value);
-  form.new_value->json = R"({"template":"draft","symbol":"mine"})";
+  form.new_value->json = R"({"type":"draft","symbol":"mine"})";
   auto entry = std::make_unique<H::ProjectEditT>();
   entry->value.Set(form);
   body.edits.push_back(std::move(entry));
@@ -907,7 +907,7 @@ TEST(ProjectOperationCutover,
       json::Get(json::Object(project.files.at(form.file_path)), "concurrent"),
       "true");
   project.files[form.file_path] =
-      R"({"template":"draft","symbol":"mine","concurrent":false})";
+      R"({"type":"draft","symbol":"mine","concurrent":false})";
   project.Apply(undo);
   EXPECT_EQ(
       json::Text(json::Object(project.files.at(form.file_path)), "symbol"),
@@ -916,7 +916,7 @@ TEST(ProjectOperationCutover,
       json::Get(json::Object(project.files.at(form.file_path)), "concurrent"),
       "false");
   EXPECT_FALSE(project.files.contains(put.file_path));
-  project.files[form.file_path] = R"({"template":"draft","symbol":"other"})";
+  project.files[form.file_path] = R"({"type":"draft","symbol":"other"})";
   project.ExpectConflict(body, "value_conflict");
   EXPECT_FALSE(project.files.contains(put.file_path));
 }
@@ -978,7 +978,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   unplaced.action = H::ProjectSelectionAction::DeleteDefinitions;
   unplaced.cards = {"a"};
   project.ExpectConflict(unplaced, "value_conflict");
-  project.files["definitions/unplaced/_card.json"] = R"({"template":"draft"})";
+  project.files["definitions/unplaced/_card.json"] = R"({"type":"draft"})";
   H::ProjectSelectionT place;
   place.action = H::ProjectSelectionAction::Place;
   place.cards = {"unplaced"};

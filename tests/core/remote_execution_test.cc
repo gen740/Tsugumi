@@ -36,7 +36,7 @@ TEST(RemoteExecutionCapabilities,
 TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
   Node node;
   node.path = {"work"};
-  node.kind = Template::Code;
+  node.kind = CardType::Code;
   node.settings.execution_service = "auto";
   auto compiled = worker_condition::compile({"simple", "x >= 10"});
   node.settings.worker_condition = std::move(

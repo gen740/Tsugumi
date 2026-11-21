@@ -99,7 +99,7 @@ export function miniMapLayout(cards: MiniMapCard[], flow: FlowDirection, width: 
     cards: placed.map(({ c, g }) => {
       const x = ox + (c.x - left) * k, y = PAD + (c.y - top) * k, o = g.outlineRect
       return {
-        id: c.id, x, y, w: g.size.width * k, h: g.size.height * k, shape: g.shape, draft: g.draft,
+        id: c.id, x, y, w: g.size.width * k, h: g.size.height * k, shape: g.shape, draft: g.draft, invalid: c.kind === 'invalid',
         outline: g.outline({ x: x + o.x * k, y: y + o.y * k, width: o.width * k, height: o.height * k }, k),
       }
     }),
@@ -126,7 +126,7 @@ function MiniMap({ canvas, changed }: { canvas: H.VersionCanvasT; changed: strin
       {map.cards.map((c) => (
         <g key={c.id}>
           <path d={c.outline} className="ground" />
-          <path d={c.outline} className={touched.has(c.id) ? 'changed' : ''} strokeDasharray={c.draft ? '3 2' : undefined} />
+          <path d={c.outline} className={[touched.has(c.id) && 'changed', c.invalid && 'invalid'].filter(Boolean).join(' ')} strokeDasharray={c.draft ? '3 2' : undefined} />
           {map.named && (c.shape === 'card' || c.shape === 'start') && <text x={c.x + c.w / 2} y={c.y + c.h / 2 + 3} textAnchor="middle">{c.id.length * 5 > c.w ? `${c.id.slice(0, Math.max(1, Math.floor(c.w / 5) - 1))}…` : c.id}</text>}
         </g>
       ))}

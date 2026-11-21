@@ -69,7 +69,10 @@ auto Widgets() -> void {
   const auto scene = ui::BuildScene(
       kProject,
       R"({"cards": {"start": {"x": 0, "y": 0}, "square": {"x": 0, "y": 200}}})",
-      {{"start", "{}", R"({"name": "Start"})"}});
+      {{"start", R"({"type": "trigger"})", R"({"name": "Start"})", ""}});
+  // "square" has no definition: it is drawn as a definition error.
+  Check(scene.Find("square") && scene.Find("square")->definition_error,
+        "a Card without a definition is a definition error");
   ui::CanvasView canvas;
   canvas.Show(&scene, [](const std::string& card) {
     return card == "start" ? D::CardState::succeeded : D::CardState::running;

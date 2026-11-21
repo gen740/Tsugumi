@@ -24,7 +24,7 @@ function session() {
   s.refreshDerivedLayout = () => {}; s.refreshVisibleDisplays = async () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 0n,
     projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
-    definitions: [new R.DefinitionT('a', '{"template":"input","params":[{"name":"value","type":"int","data":1}]}', '{"content":"before"}')],
+    definitions: [new R.DefinitionT('a', '{"type":"input","params":[{"name":"value","type":"int","data":1}]}', '{"content":"before"}')],
   }))
   return s
 }
@@ -43,7 +43,7 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   edit.begin('1', s.rev)
   edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   const changed = Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [new R.DefinitionT('a', '{"template":"input","params":[{"name":"value","type":"int","data":2}]}', '{"content":"before"}')] })
+    definitionsUpsert: [new R.DefinitionT('a', '{"type":"input","params":[{"name":"value","type":"int","data":2}]}', '{"content":"before"}')] })
   s.applyDelta(changed)
   const guards: number[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
@@ -65,7 +65,7 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   await draft.startDraftEdit('a')
   draft.inlineDraft.content = 'mine'
   draft.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [new R.DefinitionT('a', '{"template":"draft"}', '{"content":"agent","description":"unrelated"}')] }))
+    definitionsUpsert: [new R.DefinitionT('a', '{"type":"draft"}', '{"content":"agent","description":"unrelated"}')] }))
   const bases: string[] = []
   draft.operateProject = async (request: H.ProjectOperateRequestT) => {
     const json = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectJSONEditT
@@ -87,8 +87,8 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
 for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
-  const card = (value: number) => `{"template":"input","params":[{"name":"value","type":"int","data":${value}}]}`
-  s.confirmedDefinitions.set('sub', parse('{"external":"sub"}'))
+  const card = (value: number) => `{"type":"input","params":[{"name":"value","type":"int","data":${value}}]}`
+  s.confirmedDefinitions.set('sub', parse('{"type":"subgraph","external":"sub"}'))
   s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
   const source = (file: string, documentJson: string) =>
     Object.assign(new R.SourceInfoT(), { path: prefix + file, documentJson })
@@ -167,7 +167,7 @@ for (const draft of [false, true]) {
   edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   if (draft) { await s.startDraftEdit('a'); s.inlineDraft.content = 'mine' }
   const fields = (n: number) => ({ definitionsUpsert: [new R.DefinitionT('a',
-    `{"template":"input","params":[{"name":"value","type":"int","data":${n}}]}`,
+    `{"type":"input","params":[{"name":"value","type":"int","data":${n}}]}`,
     JSON.stringify({ content: String(n), description: 'unrelated' }))] })
   const publish = (n: number) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(n) }))
   publish(2)
@@ -252,7 +252,7 @@ for (const source of [false, true]) {
     else editor.setSetting('symbol', 'mine')
     const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
       baseRev: s.rev, rev: s.rev + 1n, origin: 'agent',
-      definitionsUpsert: [new R.DefinitionT('a', serialize(obj([['template', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
+      definitionsUpsert: [new R.DefinitionT('a', serialize(obj([['type', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
       sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: text, sizeBytes: 1n })],
     }))
     publish('agent')
@@ -289,9 +289,9 @@ for (const third of [false, true]) {
     const body = request.body as H.ProjectReplaceDocumentsT
     revisions.push(body.expectedRev)
     if (body.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
-    return saved(s, request, inverse('raw'), { definitionsUpsert: [new R.DefinitionT('a', '{"template":"draft"}', '{"content":"mine"}')] })
+    return saved(s, request, inverse('raw'), { definitionsUpsert: [new R.DefinitionT('a', '{"type":"draft"}', '{"content":"mine"}')] })
   }
-  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"template":"draft"}')], ['definitions/a/_meta.json', parse('{"content":"mine"}')]], overwrite)
+  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"type":"draft"}')], ['definitions/a/_meta.json', parse('{"content":"mine"}')]], overwrite)
   assert.equal(await save(false), false)
   assert.equal(edit.conflictRev, 1n)
   assert.equal(edit.error, undefined)

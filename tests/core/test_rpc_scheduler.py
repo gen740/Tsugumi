@@ -35,14 +35,14 @@ root_type Outputs;
 """
 
 BASE_DEFS = {
-    "trigger": {"template": "trigger"},
-    "msg": {"template": "input", "params": [{"name": "text", "type": "string", "data": "hello"}], "_outputs": MSG_FBS},
-    "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG_FBS},
-    "branch": {"template": "branch"},
-    "fork": {"template": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
-    "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
+    "trigger": {"type": "trigger"},
+    "msg": {"type": "input", "params": [{"name": "text", "type": "string", "data": "hello"}], "_outputs": MSG_FBS},
+    "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG_FBS},
+    "branch": {"type": "branch"},
+    "fork": {"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
+    "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
     "sink": dict(SINK, maxRuns=4, recordIO=True),
-    "relay": {"template": "merge", "inputs": [{"name": "in"}]},
+    "relay": {"type": "merge", "inputs": [{"name": "in"}]},
 }
 
 
@@ -147,7 +147,7 @@ def test_fork_sends_the_value_on_every_output(env, tmp_path):
 
 def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
     """A saved Boolean Input selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, condition={"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG_FBS}),
+    write(project, dict(BASE_DEFS, condition={"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG_FBS}),
           [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
            card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
           [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),
@@ -171,7 +171,7 @@ def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_f
 
 def test_max_runs_is_enforced(env):
     """A card stops the run when another invocation would exceed maxRuns."""
-    defs = dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 1})
+    defs = dict(BASE_DEFS, merge={"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 1})
     c = env([card("src", "msg"), card("join", "merge"), card("out", "sink")],
             [conn("src", "msg", "join", "a"), conn("src", "msg", "join", "b"), conn("join", "out", "out", "in")], defs)
     run_id, st = run_and_wait(c, "src")
@@ -320,7 +320,7 @@ def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env, tmp_
 def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
     """Draft cards block their dependents while implemented branches still run."""
     defs = dict(BASE_DEFS)
-    defs["plan"] = {"template": "draft", "inputs": [{"name": "data"}]}
+    defs["plan"] = {"type": "draft", "inputs": [{"name": "data"}]}
     c = env([card("start", "trigger"), card("src", "msg"), card("out", "sink"), card("plan", "plan"),
              card("after", "sink")],
             [conn("start", "out", "src", "start"), conn("src", "msg", "out", "in"),
@@ -360,7 +360,7 @@ def test_merges_nested_several_levels_deep(env, tmp_path):
         conns.append(conn(*prev, f"m{i}", "a"))
         prev = (f"m{i}", "out")
     conns.append(conn(prev[0], prev[1], "out", "in"))
-    c = env(cards, conns, defs=dict(BASE_DEFS, merge={"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))
+    c = env(cards, conns, defs=dict(BASE_DEFS, merge={"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]}))
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     out = inputs(c, tmp_path / "decode", run_id, "out")[0]

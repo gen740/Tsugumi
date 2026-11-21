@@ -53,8 +53,8 @@ auto SceneTest() -> void {
   const std::string layout =
       R"({"flow": "leftToRight", "cards": {"start": {"x": 10, "y": -20.5}, "square": {"x": 400, "y": 0}}})";
   const std::vector<ui::Definition> definitions = {
-      {"start", R"({"template": "trigger"})", R"({"name": "Start"})"},
-      {"square", R"({"language": "python"})", ""},
+      {"start", R"({"type": "trigger"})", R"({"name": "Start"})", ""},
+      {"square", R"({"type": "code", "language": "python"})", "", ""},
   };
   const auto scene = ui::BuildScene(project, layout, definitions);
   CHECK(!scene.top_to_bottom);
@@ -74,11 +74,40 @@ auto SceneTest() -> void {
   CHECK(ui::ProjectTitle("{}", "folder") == "folder");
   CHECK(ui::BuildScene("not json", "", {}).cards.empty());
   CHECK(ui::BuildScene(project, "{}", {}).top_to_bottom);
+  CHECK(!scene.cards[0].definition_error && !scene.cards[1].definition_error);
+  CHECK(scene.cards[2].definition_error);  // "gone" has no definition
 
   // definitions_json carries each _card.json as text.
   CHECK(
       ui::CompletionDefinitions(definitions) ==
-      R"({"square":"{\"language\": \"python\"}","start":"{\"template\": \"trigger\"}"})");
+      R"({"square":"{\"type\": \"code\", \"language\": \"python\"}","start":"{\"type\": \"trigger\"}"})");
+}
+
+// A Card without a known type is a definition error, not a Draft: drawn with
+// the core's diagnostic and never run. The Web UI and the Mac app check the
+// same (ui/web/tests/definitionErrors.tsx, UILogicTests).
+auto DefinitionErrorTest() -> void {
+  CHECK(ui::StatesKnownType(R"({"type": "draft"})"));
+  CHECK(ui::StatesKnownType(R"({"type": "subgraph", "external": "lib"})"));
+  CHECK(!ui::StatesKnownType(R"({"language": "python"})"));
+  CHECK(!ui::StatesKnownType(R"({"type": "something new"})"));
+  CHECK(!ui::StatesKnownType(R"({"type": "code", "external": "lib"})"));
+  CHECK(!ui::StatesKnownType(R"({"type": "subgraph"})"));
+  CHECK(!ui::StatesKnownType("not json"));
+
+  const std::string project =
+      R"({"canvas": {"cards": [{"id": "old"}, {"id": "future"}, {"id": "plan"}], "connections": []}})";
+  const std::string missing =
+      R"(definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph))";
+  const auto scene =
+      ui::BuildScene(project, "{}",
+                     {{"old", R"({"language": "python"})", "", missing},
+                      {"future", R"({"type": "something new"})", "", ""},
+                      {"plan", R"({"type": "draft"})", "", ""}});
+  CHECK(scene.cards[0].definition_error &&
+        scene.cards[0].diagnostic == missing);
+  CHECK(scene.cards[1].definition_error && scene.cards[1].diagnostic.empty());
+  CHECK(!scene.cards[2].definition_error);  // a Draft stays a Draft
 }
 
 auto LogWindowTest() -> void {
@@ -132,6 +161,7 @@ auto LogWindowTest() -> void {
 auto main() -> int {
   StringsTest();
   SceneTest();
+  DefinitionErrorTest();
   LogWindowTest();
   if (failures != 0) return EXIT_FAILURE;
   std::puts("tsugumi_linux_ui_tests: passed");

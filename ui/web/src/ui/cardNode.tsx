@@ -37,6 +37,7 @@ export function runText(d: CardNodeData): string | undefined {
 /** Plain status for a Card that did not run in this run. */
 export function idleText(d: CardNodeData): string {
   if (d.kind === 'draft') return L('未実装（Draft）')
+  if (d.kind === 'invalid') return L('定義エラー')
   if (d.state !== undefined && d.state !== D.CardState.not_started) return cardState(d.state).label
   return L('未実行（0 回）')
 }
@@ -94,7 +95,9 @@ export function CardNodeView(p: CardNodeProps) {
   const selected = !!p.selected
   const draft = data.kind === 'draft'
   const fill = isRouting(data) ? 'var(--window-bg)' : 'var(--control-bg)'
-  const border = selected ? 'var(--accent)' : data.state !== undefined && data.state !== D.CardState.not_started
+  // A Card whose definition cannot be read is drawn as a failure.
+  const border = selected ? 'var(--accent)' : data.kind === 'invalid' ? fade(cardState(D.CardState.failed).color, 0.7)
+    : data.state !== undefined && data.state !== D.CardState.not_started
     ? fade(cardState(data.state).color, 0.7) : fade('secondary', draft ? 0.7 : 0.4)
   const w = s(g.size.width), h = s(g.size.height)
   const parts = [`Card ${data.title}`, KIND_LABEL[data.kind], runText(data) ?? idleText(data)]
@@ -245,7 +248,8 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
             </div>
           ))}
           {g.summary && data.summary && (
-            <div className="cv-summary secondary" style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px` }}>{data.summary}</div>
+            <div className={`cv-summary${data.kind === 'invalid' ? '' : ' secondary'}`} title={data.kind === 'invalid' ? data.summary : undefined}
+              style={{ fontSize: font(10), height: s(CardGeometry.summaryRow), padding: `0 ${s(10)}px`, color: data.kind === 'invalid' ? colorVar(cardState(D.CardState.failed).color) : undefined }}>{data.summary}</div>
           )}
           {flow === 'leftToRight' && <div style={{ height: s(g.portBand) }} />}
           {data.params.map((param) => (

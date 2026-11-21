@@ -104,7 +104,7 @@ TEST(CardIdentity,
     EXPECT_EQ(store.allocate_card_id("Already_Chosen", ""), "already_chosen");
     EXPECT_EQ(store.allocate_card_id("already_chosen", ""), "already_chosen-2");
     fs::write_atomic(root / "definitions/occupied/_card.json",
-                     R"({"template":"draft"})");
+                     R"({"type":"draft"})");
     EXPECT_EQ(store.allocate_card_id("occupied", ""), "occupied-2");
   }
   Store store({root, ""});

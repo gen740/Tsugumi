@@ -22,12 +22,12 @@ DEFINITION = Path(__file__).resolve().parents[2] / "demos/en/marimo/definitions/
 def display_graph(project, schema, source_script=None, *, payload=None, display_format="text", markdown_field="value"):
     graph = Project(project)
     if payload is None:
-        graph.card("source", {"language": "bash"}, outputs=schema, sources={
+        graph.card("source", {"type": "code", "language": "bash"}, outputs=schema, sources={
             "default.nix": "{ pkgs, inputs, params }: { run = " + nix_string(source_script) + "; }",
         })
     else:
         # A binary producer lets non-finite values bypass Bash output JSON parsing.
-        graph.card("source", {"language": "python", "params": [
+        graph.card("source", {"type": "code", "language": "python", "params": [
             {"name": "payload", "type": "string", "data": payload.hex()},
         ]}, outputs=schema, sources={
             "default.nix": PYTHON_NIX % "",

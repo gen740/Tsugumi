@@ -67,13 +67,13 @@ TEST(InputTypes, PlainWireDefaultLanguageFileAndNoSource) {
       R"([{"id":"src"},{"id":"dest"},{"id":"file"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"dest","port":"data"}},
           {"from":{"card":"file","port":"out"},"to":{"card":"dest","port":"file"}}])",
-      {{"definitions/src/_card.json", "{}"},
+      {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/file/_card.json", R"({"template":"input"})"},
+       {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
         R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"file"); } root_type Outputs;)"},
        {"definitions/dest/_card.json",
-        R"({"language":"python","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
+        R"({"type":"code","language":"python","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
   const auto result = Present(*graph, {"dest"});
   ASSERT_EQ(result.inputs.size(), 3u);
   EXPECT_EQ(result.language, "python");
@@ -100,9 +100,9 @@ TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
       R"([{"id":"src"},{"id":"draft"},{"id":"other"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}},
           {"from":{"card":"other","port":"out"},"to":{"card":"draft","port":""}}])",
-      {{"definitions/src/_card.json", "{}"},
+      {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/other/_card.json", R"({"template":"trigger"})"}});
+       {"definitions/other/_card.json", R"({"type":"trigger"})"}});
   const auto ends = input_types(*graph, {"draft"});
   ASSERT_EQ(ends.size(), 2u);
   CardPath sources;
@@ -122,18 +122,18 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
       R"([{"id":"src"},{"id":"container"},{"id":"dest"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"container","port":"in"}},
           {"from":{"card":"container","port":"out"},"to":{"card":"dest","port":"data"}}])",
-      {{"definitions/src/_card.json", "{}"},
+      {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/dest/_card.json", R"({"inputs":[{"name":"data"}]})"},
-       {"definitions/container/_card.json", R"({"external":"outer"})"},
+       {"definitions/dest/_card.json", R"({"type":"code","inputs":[{"name":"data"}]})"},
+       {"definitions/container/_card.json", R"({"type":"subgraph","external":"outer"})"},
        {"externals/outer/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"in"}},"outputs":{"out":{"card":"inner","port":"out"}}}})"},
        {"externals/outer/definitions/inner/_card.json",
-        R"({"external":"nested"})"},
+        R"({"type":"subgraph","external":"nested"})"},
        {"externals/outer/externals/nested/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out"}}}})"},
        {"externals/outer/externals/nested/definitions/leaf/_card.json",
-        R"({"inputs":[{"name":"in"}]})"},
+        R"({"type":"code","inputs":[{"name":"in"}]})"},
        {"externals/outer/externals/nested/definitions/leaf/_outputs.fbs",
         kSchema}});
   const auto ends = input_types(*graph, {"dest"});
@@ -158,13 +158,13 @@ TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
           {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}},
           {"from":{"card":"merge","port":"out"},"to":{"card":"branch","port":"value"}},
           {"from":{"card":"condition","port":"value"},"to":{"card":"branch","port":"condition"}}])",
-      {{"definitions/src/_card.json", "{}"},
+      {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/collect/_card.json", R"({"template":"collect"})"},
+       {"definitions/collect/_card.json", R"({"type":"collect"})"},
        {"definitions/merge/_card.json",
-        R"({"template":"merge","inputs":[{"name":"items"}]})"},
-       {"definitions/branch/_card.json", R"({"template":"branch"})"},
-       {"definitions/condition/_card.json", R"({"template":"input"})"},
+        R"({"type":"merge","inputs":[{"name":"items"}]})"},
+       {"definitions/branch/_card.json", R"({"type":"branch"})"},
+       {"definitions/condition/_card.json", R"({"type":"input"})"},
        {"definitions/condition/_outputs.fbs",
         "table Condition { value:bool; } table Outputs { value:Condition; } "
         "root_type Outputs;"}});
@@ -187,15 +187,15 @@ TEST(InputTypes, CompatibleProducersUseTheDestinationCodeContract) {
       R"([{"id":"first"},{"id":"second"},{"id":"dest"}])",
       R"([{"from":{"card":"first","port":"out"},"to":{"card":"dest","port":"in"}},
           {"from":{"card":"second","port":"out"},"to":{"card":"dest","port":"in"}}])",
-      {{"definitions/first/_card.json", "{}"},
+      {{"definitions/first/_card.json", R"({"type":"code"})"},
        {"definitions/first/_outputs.fbs",
         "table First { value:int; } table Outputs { out:First; } root_type "
         "Outputs;"},
-       {"definitions/second/_card.json", "{}"},
+       {"definitions/second/_card.json", R"({"type":"code"})"},
        {"definitions/second/_outputs.fbs",
         "table Second { value:int; } table Outputs { out:Second; } root_type "
         "Outputs;"},
-       {"definitions/dest/_card.json", R"({"inputs":[{"name":"in"}]})"}});
+       {"definitions/dest/_card.json", R"({"type":"code","inputs":[{"name":"in"}]})"}});
   const auto ends = input_types(*graph, {"dest"});
   ASSERT_EQ(ends.size(), 2u);
   EXPECT_EQ(ends[0].type, graph->find({"dest"})->input("in"));
@@ -215,7 +215,7 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}}])",
-      {{"definitions/src/_card.json", "{}"},
+      {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs",
         schema.substr(0, schema.find("root_type")) +
             "table Outputs { out:Large; } root_type Outputs;"}});

@@ -866,7 +866,7 @@ export { templateIcon }
 export function cardMenu(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, k: CardKey, onGroup?: () => void): MenuItem[] {
   const kind = session.kind(k)
   const targets = tab.selection.has(k) ? new Set(tab.selection) : new Set([k])
-  const cannotRun = !session.connected || session.runActive
+  const cannotRun = !session.connected || session.runActive || kind === 'invalid'
   const editable = session.isEditable
   return [
     ...(kind === 'subgraph' ? [

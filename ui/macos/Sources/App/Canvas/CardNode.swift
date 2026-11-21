@@ -40,8 +40,8 @@ extension ProjectSession {
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
-    let draft = def == nil || def?["template"]?.string == "draft"
-    if draft { return ([], []) }
+    let draft = definitionKind(def) == .draft
+    if draft || definitionKind(def) == .invalid { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
       return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.rootType, note: note("inputs", "in"))],
@@ -209,10 +209,7 @@ extension ProjectSession {
 
   func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
-    let kind: CardKind
-    if let definition {
-      kind = definition["template"]?.string.flatMap(CardKind.init(rawValue:)) ?? (definition["language"] == nil ? .draft : .code)
-    } else { kind = self.kind(k) }
+    let kind = definition.map(definitionKind) ?? self.kind(k)
     let state = cardStates[k]
     let batch = executionBatch(k)
     let executionList = batch?.executionList == true
@@ -225,12 +222,14 @@ extension ProjectSession {
     var summary = m?["description"]?.string
     // What a Draft shows on its Card is what it says it will do.
     if kind == .draft, let content = m?["content"]?.string, !content.isEmpty { summary = content }
+    // A Card whose definition cannot be read says what the core says about it.
+    if kind == .invalid { summary = diags.first(where: \.error)?.message ?? String(localized: "Card の定義を読めません") }
     if summary?.isEmpty ?? true { summary = nil }
     let editing = kind == .draft && inlineDraft?.card == k
     let display = (displays[k] != nil || displayFrame(k) != nil) && displayFrame(k)?["hidden"]?.bool != true
     return CardNodeData(
       title: title, kind: kind,
-      symbol: (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
+      symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
       params: inlineParams(k, definition: definition),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? displays[k].map { (executionList ? "#\($0.invocation) · " : "") + $0.summary } ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),

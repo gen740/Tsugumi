@@ -59,13 +59,13 @@ function cardFiles(dir) {
   })
 }
 
-const KINDS = new Set(['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft'])
+const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'subgraph'])
 
-/** As definitionKind in ui/web/src/model/session.ts. */
-function kindOf(def) {
-  if (def?.external) return 'subgraph'
-  if (KINDS.has(def?.template)) return def.template
-  return def?.language === undefined ? 'draft' : 'code'
+/** A demo's Card states one of the types (the UIs show anything else as a
+ *  definition error, which no demo has). */
+const kindOf = (def, id) => {
+  if (!KINDS.has(def?.type)) throw new Error(`definitions/${id}/_card.json: missing or unknown type ${JSON.stringify(def?.type)}`)
+  return def.type
 }
 
 /** As paramText in ui/web/src/model/session.ts. */
@@ -77,7 +77,7 @@ function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
   const def = readJson(path.join(dir, '_card.json'), {})
   const meta = readJson(path.join(dir, '_meta.json'), {})
-  const kind = kindOf(def)
+  const kind = kindOf(def, id)
   const note = (list, name) => (meta[list] ?? []).find((x) => x.name === name)?.description
   const description = meta.description
   const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(p.data) }))

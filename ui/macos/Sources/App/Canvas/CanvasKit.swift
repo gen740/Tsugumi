@@ -286,6 +286,7 @@ struct CardNodeData: Equatable {
   /// Plain status for a Card that did not run in this run.
   var idleText: String {
     if isDraft { return String(localized: "未実装（Draft）") }
+    if kind == .invalid { return String(localized: "定義エラー") }
     if let state, state != .notStarted { return state.label }
     return String(localized: "未実行（0 回）")
   }
@@ -362,8 +363,10 @@ struct CardGeometry {
   let grid: CGFloat?
 
   init(_ d: CardNodeData, flow: FlowDirection) {
-    inputs = d.isDraft ? [] : d.inputs.map(\.name)
-    outputs = d.isDraft ? [] : d.outputs.map(\.name)
+    // A Draft and a Card whose definition cannot be read have no ports.
+    let portless = d.isDraft || d.kind == .invalid
+    inputs = portless ? [] : d.inputs.map(\.name)
+    outputs = portless ? [] : d.outputs.map(\.name)
     collapsed = d.collapsed
     draft = d.isDraft
     draftEditing = d.isDraft && d.draftEditing
@@ -1092,7 +1095,8 @@ struct CardNodeView: View {
       if !g.collapsed {
         if g.draft { draftBody(g) }
         if g.summary, let summary = data.summary {
-          Text(summary).font(font(10)).foregroundStyle(.secondary).lineLimit(1).truncationMode(.tail)
+          Text(summary).font(font(10)).foregroundStyle(data.kind == .invalid ? AnyShapeStyle(Tsugumi_Data_CardState.failed.color) : AnyShapeStyle(.secondary))
+            .lineLimit(1).truncationMode(.tail).help(data.kind == .invalid ? summary : "")
             .padding(.horizontal, s(10)).frame(height: s(CardGeometry.summaryRow), alignment: .top)
         }
         if flow == .leftToRight { Color.clear.frame(height: s(g.portBand)) }
@@ -1391,6 +1395,8 @@ struct CardNodeView: View {
 
   private var borderColor: Color {
     if selected { return .accentColor }
+    // A Card whose definition cannot be read is drawn as a failure.
+    if data.kind == .invalid { return Tsugumi_Data_CardState.failed.color.opacity(0.7) }
     if let s = data.state, s != .notStarted { return s.color.opacity(0.7) }
     return .secondary.opacity(data.isDraft ? 0.7 : 0.4)
   }

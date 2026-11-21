@@ -835,14 +835,11 @@ auto PrepareProjectEdits(
         Document::is_card_meta_file(path.substr(0, path.size() - 10) +
                                     "_meta.json") &&
         content && originals.at(path) &&
-        json::Text(json::Object(*originals.at(path), path), "template") ==
-            "draft")
+        json::Text(json::Object(*originals.at(path), path), "type") == "draft")
       implemented.push_back(path);
   for (const auto& path : implemented) {
     const auto definition = json::Object(*files.at(path), path);
-    const auto kind = json::Text(definition, "template");
-    if (definition.contains("external") || (!kind.empty() && kind != "none"))
-      continue;
+    if (json::Text(definition, "type") != "code") continue;
     const auto inputs =
         json::Array(json::Get(definition, "inputs", "[]"), path + ".inputs");
     if (inputs.size() != 1) continue;

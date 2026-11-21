@@ -1424,7 +1424,7 @@ final class ProjectSession {
 
   /// The Card's settings (its _card.json).
   func cardDefinition(_ k: CardKey) -> JSONValue? {
-    guard let d = cardDefinitionDraft(k), d.card["external"] == nil else { return nil }
+    guard let d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return nil }
     return d.card
   }
 
@@ -1466,7 +1466,7 @@ final class ProjectSession {
 
   /// Changes a Card's _card.json in the draft.
   func updateCard(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
-    guard var d = cardDefinitionDraft(k), d.card["external"] == nil else { return }
+    guard var d = cardDefinitionDraft(k), definitionKind(d.card) != .subgraph else { return }
     fn(&d.card)
     setCardDefinition(k, d)
   }

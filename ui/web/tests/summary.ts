@@ -54,7 +54,7 @@ const session = () => {
 {
   // Saving the summary preserves the external reference in _card.json.
   const s = session()
-  s.confirmedDefinitions.set('nested', parse('{"external":"nested"}'))
+  s.confirmedDefinitions.set('nested', parse('{"type":"subgraph","external":"nested"}'))
   s.project = parse('{"name":"t","canvas":{"cards":[{"id":"nested"}],"connections":[]}}')
   const editor = new CardEditorModel(s, 'nested')
   editor.meta = parse('{"description":"the imported graph"}')

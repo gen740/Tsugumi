@@ -9,7 +9,7 @@
     "definitions": [
       {
         "id": "initial",
-        "card_json": "{\"template\": \"input\", \"params\": [{\"name\": \"value\", \"type\": \"uint64\", \"data\": 43}]}"
+        "card_json": "{\"type\": \"input\", \"params\": [{\"name\": \"value\", \"type\": \"uint64\", \"data\": 43}]}"
       }
     ],
     "sources": [

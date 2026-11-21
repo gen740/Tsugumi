@@ -68,8 +68,8 @@ auto Card(std::string_view raw) -> std::string {
   }
   return path;
 }
-auto HasExternal(const std::string& card) -> bool {
-  return !card.empty() && json::Object(card).contains("external");
+auto IsSubgraph(const std::string& card) -> bool {
+  return !card.empty() && json::Text(json::Object(card), "type") == "subgraph";
 }
 auto ValidCard(const std::string& card) -> bool {
   if (!fs::valid_relative_path(card)) return false;
@@ -219,7 +219,7 @@ auto HelperScope::File(const std::string& path, bool writing,
       continue;
     }
     if (path == root || path.starts_with(root + '/')) {
-      if (writing && path == root + "/_card.json" && HasExternal(read(path)))
+      if (writing && path == root + "/_card.json" && IsSubgraph(read(path)))
         Deny("replacing a container definition");
       return;
     }
@@ -654,8 +654,8 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
         const auto id = json::Text(value, "id");
         Require(id, true);
         const auto old_card = read(Root(id, read, true) + "/_card.json");
-        if (HasExternal(old_card)) Deny("replacing a container definition");
-        if (HasExternal(json::Text(value, "card_json")))
+        if (IsSubgraph(old_card)) Deny("replacing a container definition");
+        if (IsSubgraph(json::Text(value, "card_json")))
           Deny("changing a container link");
       } else if (type == "PutSource" || type == "PatchSource" ||
                  type == "RemoveSource") {
@@ -671,7 +671,7 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
                   ? host::DecodeSourceBytes(json::Get(value, "bytes"))
                   : patches.Project(read(path),
                                     json::Array(json::Get(value, "patches")));
-          if (HasExternal(card)) Deny("changing a container link");
+          if (IsSubgraph(card)) Deny("changing a container link");
         }
       } else {
         Deny(

@@ -41,7 +41,7 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
             f'echo tampered >> {project_file} 2>/dev/null || true\n'
             'printf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT)
         root = tmp_path / "p"
-        write(root, {"start": {"template": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
+        write(root, {"start": {"type": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
               [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
         d = core_factory(project_root=root)
         c = d.connect()

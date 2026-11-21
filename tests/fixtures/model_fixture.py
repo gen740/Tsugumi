@@ -291,9 +291,9 @@ def cache_marked(body):
 
 
 def trigger_of(inspect_value):
-    """The Card whose own definition is the trigger template."""
+    """The Card whose own definition is a trigger."""
     for d in inspect_value.get("definitions", []):
-        if d.get("card_json") and json.loads(d["card_json"]).get("template") == "trigger":
+        if d.get("card_json") and json.loads(d["card_json"]).get("type") == "trigger":
             return d["id"]
     return "start"
 
@@ -315,8 +315,7 @@ def last_draft_task(messages):
 
 def implement(definition, meta):
     """A bash Card that fulfils a Draft: its planned outputs carry a short text."""
-    card = {k: v for k, v in definition.items() if k != "template"}
-    card["language"] = "bash"
+    card = {**definition, "type": "code", "language": "bash"}
     outs = [o["name"] for o in (meta or {}).get("outputs", [])] or ["out"]
     fbs = "namespace generated;\ntable Text { value:string; }\ntable Outputs { " + \
         " ".join(f"{o}:Text;" for o in outs) + " }\nroot_type Outputs;\n"
@@ -416,7 +415,7 @@ def decide_comments(messages, text, start):
                 "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(meta)}})
         for cid in added:
             changes.append({"value_type": "PutDefinition", "value": {"id": cid, "card_json": json.dumps(
-                {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"}]})}})
+                {"type": "input", "params": [{"name": "text", "type": "string", "data": "x"}]})}})
             changes.append({"value_type": "PutSource", "value": {
                 "path": f"definitions/{cid}/_outputs.fbs",
                 "bytes": "namespace added;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n"}})

@@ -7,6 +7,7 @@
 #include <map>
 #include <optional>
 #include <string>
+#include <string_view>
 #include <tuple>
 #include <vector>
 
@@ -17,7 +18,7 @@
 
 namespace tsugumi {
 
-enum class Template {
+enum class CardType {
   Code,
   Trigger,
   Input,
@@ -28,9 +29,11 @@ enum class Template {
   Subgraph,
   Draft
 };
-const char* template_name(Template t);
-// What a definition is; no definition at all is a Draft.
-Template template_of(const DefinitionDoc* def);
+// The _card.json "type" value of each kind.
+const char* card_type_name(CardType t);
+std::optional<CardType> parse_card_type(std::string_view name);
+// The type a parsed definition states (parse_card_json has checked it).
+CardType card_type_of(const DefinitionDoc& def);
 // A Fork's output names: its declared outputs, or a and b without any.
 std::vector<std::string> fork_outputs(const DefinitionDoc& def);
 
@@ -124,7 +127,7 @@ struct CardNixReference {
 
 struct Node {
   CardPath path;
-  Template kind = Template::Code;
+  CardType kind = CardType::Code;
   // The Card's definition folder, project relative ("definitions/<id>/", or
   // "externals/<p>/definitions/<id>/" inside a Card in Card).
   std::string def_dir;

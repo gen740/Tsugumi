@@ -67,7 +67,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   // Implement the Draft and rebind its wire ends: the wires are solid again.
   await s.applyMutation((x) => {
     x.updateCard(draft, (c) => {
-      c.set('template', undefined)
+      c.set('type', 'code')
       c.set('language', 'python')
       c.set('inputs', parse('[{"name":"in"}]'))
     })

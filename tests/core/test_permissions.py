@@ -60,7 +60,7 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
 def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     """External edits cannot bypass approval, including nested Cards and UI reloads."""
     root = tmp_path / "project"
-    definition = {"language": "bash", "executionService": "local", "_outputs": "table Outputs {} root_type Outputs;",
+    definition = {"type": "code", "language": "bash", "executionService": "local", "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }'}
     work = card("work", "code")
     cards = [card_in_card("inner", [work], [], {"inputs": {}, "outputs": {}})]

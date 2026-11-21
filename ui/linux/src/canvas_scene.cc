@@ -1,6 +1,7 @@
 #include "canvas_scene.hh"
 
 #include <algorithm>
+#include <array>
 #include <limits>
 #include <map>
 #include <ranges>
@@ -86,6 +87,16 @@ auto Scene::CardAt(double x, double y) const -> const SceneCard* {
   return nullptr;
 }
 
+auto StatesKnownType(std::string_view card_json) -> bool {
+  static constexpr std::array<std::string_view, 9> kTypes = {
+      "code", "draft", "trigger", "input",   "branch",
+      "fork", "merge", "collect", "subgraph"};
+  const auto card = ObjectOrEmpty(card_json);
+  const auto type = json::Text(card, "type");
+  if (std::ranges::find(kTypes, type) == kTypes.end()) return false;
+  return (type == "subgraph") == card.contains("external");
+}
+
 auto CompletionDefinitions(const std::vector<Definition>& definitions)
     -> std::string {
   json::Members out;
@@ -104,7 +115,9 @@ auto BuildScene(std::string_view project_json, std::string_view layout_json,
       json::Text(layout, "flow", "topToBottom") != "leftToRight";
   const auto places = ObjectOrEmpty(json::Get(layout, "cards", "{}"));
   std::map<std::string, std::string, std::less<>> names;
+  std::map<std::string, const Definition*, std::less<>> by_id;
   for (const auto& definition : definitions) {
+    by_id[definition.id] = &definition;
     const auto name = json::Text(ObjectOrEmpty(definition.meta_json), "name");
     if (!name.empty()) names[definition.id] = name;
   }
@@ -119,6 +132,13 @@ auto BuildScene(std::string_view project_json, std::string_view layout_json,
     const auto place = ObjectOrEmpty(json::Get(places, card.id, "{}"));
     card.x = Number(json::Get(place, "x"), 0);
     card.y = Number(json::Get(place, "y"), 0);
+    const auto definition = by_id.find(card.id);
+    if (definition == by_id.end()) {
+      card.definition_error = true;
+    } else {
+      card.definition_error = !StatesKnownType(definition->second->card_json);
+      card.diagnostic = definition->second->diagnostic;
+    }
     scene.cards.push_back(std::move(card));
   }
   for (const auto& raw : ArrayOrEmpty(json::Get(canvas, "connections", "[]"))) {

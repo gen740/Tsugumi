@@ -92,7 +92,7 @@ def workspace(out):
 
 def python_card(operation, *, service=None, resident=False, run_list=False):
     expression = f"builtins.genList (_: {PYTHON_RUN}) 100" if run_list else PYTHON_RUN
-    result = {"language": "python", "sandbox": True,
+    result = {"type": "code", "language": "python", "sandbox": True,
               "reuseWorker": resident, "recordIO": False,
               "_outputs": FILE if operation in ("file-1gib", "file-sparse-1gib", "source") else
               DIRECTORY if operation == "directory-10000" else VALUE,
@@ -253,8 +253,8 @@ def stage_project(root, scenario):
         shutil.copytree(ROOT / "demos/en/collatz", root)
         return root
     if scenario == "builtin-chain":
-        definitions = {"trigger": {"template": "trigger"}, "sink": SINK,
-                       "input": {"template": "input", "params": [{"name": "value", "type": "uint64", "data": 1}],
+        definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
+                       "input": {"type": "input", "params": [{"name": "value", "type": "uint64", "data": 1}],
                                  "_outputs": "table Value { value:ulong; } "
                                              "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]
@@ -277,10 +277,10 @@ def stage_project(root, scenario):
                  if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
                  and node.targets[0].id in ("RICH", "PY_MAKE", "CPP_CHECK")}
     from harness.real_cards import bash
-    definitions = {"trigger": {"template": "trigger"},
+    definitions = {"trigger": {"type": "trigger"},
                    "make": {**python_card("value-fresh"), "_outputs": constants["RICH"].format(ns="a") +
                             'attribute "tsugumi"; table Doc { value:string; } table Outputs { rich:Rich (required); doc:Doc (required, tsugumi:"file"); } root_type Outputs;'},
-                   "check": {"language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}],
+                   "check": {"type": "code", "language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}],
                              "_outputs": constants["RICH"].format(ns="b") + 'table Outputs { checked:Rich (required); } root_type Outputs;',
                              "_nix": '{ pkgs, inputs, params }: { run = inputs.tsugumi.cppCard { sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; src = ./src; }; }'},
                    "shell": bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}

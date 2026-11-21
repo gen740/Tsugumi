@@ -23,12 +23,12 @@ function node(dir: string, id: string): CardNodeData {
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
   const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false, title: id }
-  if (def?.external) {
+  if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: Object.keys(b.inputs ?? {}).map((name) => ({ name })), outputs: Object.keys(b.outputs ?? {}).map((name) => ({ name })) }
   }
   const declared = named(def?.inputs)
-  switch (def?.template) {
+  switch (def?.type) {
     case 'trigger': return { ...blank, kind: 'trigger', inputs: [], outputs: [{ name: 'out' }] }
     case 'input': {
       const params = (def.params ?? []).filter((p: { type: string }) => ['int64', 'uint64', 'double', 'bool', 'string'].includes(p.type)).map((p: { name: string; type: string }) => ({ ...p, value: '' }))
@@ -37,14 +37,13 @@ function node(dir: string, id: string): CardNodeData {
     case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
-    case 'draft': case undefined: break
-    default: throw new Error(`template ${def.template}`)
+    case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
+    case 'draft': {
+      const untitled = /^draft(-[0-9]+)?$/.test(id)
+      return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: [], outputs: [] }
+    }
+    default: throw new Error(`type ${def?.type}`)
   }
-  if (def?.language === undefined) {
-    const untitled = /^draft(-[0-9]+)?$/.test(id)
-    return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: [], outputs: [] }
-  }
-  return { ...blank, kind: 'code', inputs: declared, outputs: typed }
 }
 
 /** One scope as `Scene` in model/canvas.ts lays it out, before any run. With a

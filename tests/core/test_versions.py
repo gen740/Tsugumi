@@ -110,7 +110,7 @@ def test_checkout_rejects_removed_definition_format_before_committing(tmp_path, 
     definition = root / "definitions/src/_card.json"
     definition.unlink()
     legacy_link = definition.with_name("_link.json")
-    legacy_link.write_text('{"external":"old"}')
+    legacy_link.write_text('{"type":"subgraph","external":"old"}')
     git(root, "add", "-A")
     git(root, "-c", "user.name=Test", "-c", "user.email=test@example.test", "commit", "-m", "legacy")
     legacy = git(root, "rev-parse", "HEAD").strip()
@@ -272,7 +272,7 @@ def test_the_casa_demo_carries_its_trials(tmp_path, core_factory):
     rev = c.call("ProjectInspectRequest").rev
     c.call("VersionCheckoutRequest", baseRev=rev, opId=new_id(), origin="test", commit=text(plan.id))
     snap = c.call("ProjectInspectRequest")
-    drafts = {text(d.id) for d in snap.definitions if json.loads(text(d.cardJson)).get("template") == "draft"}
+    drafts = {text(d.id) for d in snap.definitions if json.loads(text(d.cardJson)).get("type") == "draft"}
     assert drafts == {"load", "bands", "rgb"}
     for card in snap.resolution:
         if text(card.card.segments[0]) in drafts:
@@ -313,9 +313,9 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     root = tmp_path / "p"
     independent = [f"more{i}" for i in range(7)]
     write(root,
-          defs={"trigger": {"template": "trigger"},
-                "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
-                "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
+          defs={"trigger": {"type": "trigger"},
+                "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
+                "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
           conns=[conn("src", "msg", "both", "a"), conn("src", "msg", "both", "b"), conn("both", "out", "sink", "in")])
@@ -381,7 +381,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     builtin_project(root, extra_cards=[card("wide", "merge"), card("b", "branch"), card("m", "merge"), card("f", "fork")],
                     extra_conns=[conn("src", "msg", "m", "a")])
     wide = root / "definitions" / "wide" / "_card.json"
-    wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
+    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]}))
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     first = text(c.call("VersionInitRequest", opId=new_id(), origin="test").commit)
@@ -394,7 +394,7 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     (root / "layout.json").write_text(raw_layout)
     assert text(c.call("VersionCanvasRequest", commit=commit_all(root)).layoutJson) == raw_layout
     # An older version keeps what its Cards were.
-    wide.write_text(json.dumps({"template": "merge", "inputs": [{"name": "a"}]}))
+    wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}]}))
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
     assert (text(now["wide"].kind), now["wide"].fan) == ("merge", 1)
     then = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=first).cards}

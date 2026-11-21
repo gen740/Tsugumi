@@ -50,14 +50,14 @@ TEST_F(VersionNote,
   Put("tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
   Put("definitions/a/_card.json",
-      R"({"language":"python","params":[{"name":"secret","data":"FIRST"}]})");
-  Put("definitions/b/_card.json", "{}");
+      R"({"type":"code","language":"python","params":[{"name":"secret","data":"FIRST"}]})");
+  Put("definitions/b/_card.json", R"({"type":"code"})");
   Put("definitions/a/src/main.py", std::string(15000, '#') + "\n");
   Versions versions(root);
   const auto first = versions.init();
   ExpectChanges(versions.note(first).record_json, {"a", "b"}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"language":"python","params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
+      R"({"type":"code","language":"python","params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
   const auto params = versions.commit_all("Parameters");
   const auto neutral = versions.note(params).record_json;
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
@@ -65,15 +65,15 @@ TEST_F(VersionNote,
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
   Put("definitions/a/_card.json",
       "{ \"params\": [ { \"data\": \"PRIVATE_SENTINEL\", \"name\": \"secret\" "
-      "} ], \"language\": \"python\" "
+      "} ], \"language\": \"python\", \"type\": \"code\" "
       "}");
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).record_json, {}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"language":"python","network":true,"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
+      R"({"type":"code","language":"python","network":true,"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
   Put("definitions/a/src/main.py",
       "# CHANGED_SOURCE_SENTINEL\n" + std::string(15000, '#'));
-  Put("definitions/c/_card.json", "{}");
+  Put("definitions/c/_card.json", R"({"type":"code"})");
   std::filesystem::remove_all(root / "definitions/b");
   Put("tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}}]}})");
@@ -102,7 +102,7 @@ TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
       R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]}})");
   Put("externals/inner/tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
-  Put("externals/inner/definitions/a/_card.json", "{}");
+  Put("externals/inner/definitions/a/_card.json", R"({"type":"code"})");
   Versions versions(root);
   versions.init();
   Put("externals/inner/definitions/a/src/main.py", "print('private')");
@@ -181,7 +181,7 @@ TEST(VersionText, PublicFactsSeparatePersistenceFromPresentation) {
 TEST_F(VersionNote,
      RecordsFirstParentChangesAndUsesCardIdsAcrossExternalDirectoryAliases) {
   Put("tsugumi.json", "{}");
-  Put("definitions/outer-id/_card.json", R"({"external":"library"})");
+  Put("definitions/outer-id/_card.json", R"({"type":"subgraph","external":"library"})");
   const auto meta = "externals/library/definitions/inner-id/_meta.json";
   Put(meta, R"({"future":1,"comments":[{"id":"c1","text":"Ask","author":"user"}]})");
   Versions versions(root);

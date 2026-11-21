@@ -11,7 +11,7 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, Tsugumi::Service::Access::Write);
   const auto root = directory.path / "project";
   const std::string create =
-      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"template\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
+      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/src/main.py","put":"original"}]})";
   const auto first = Tool(conversation, "project_edit", create, "create");
   ASSERT_TRUE(first.Code().empty());
   ASSERT_FALSE(JsonBool(first.View(), "/isError")) << first.View();
@@ -70,11 +70,11 @@ TEST_F(AgentProjectFixture,
        CardReferenceDraftEditPreservesIntentAndRebindsWires) {
   namespace json = ::tsugumi::json;
   const auto root = directory.path / "project";
-  Write(root / "definitions/start/_card.json", R"({"template":"trigger"})");
-  Write(root / "definitions/plan/_card.json", R"({"template":"draft"})");
+  Write(root / "definitions/start/_card.json", R"({"type":"trigger"})");
+  Write(root / "definitions/plan/_card.json", R"({"type":"draft"})");
   Write(root / "definitions/plan/_meta.json",
         R"({"description":"Make a greeting","content":"Return hello."})");
-  Write(root / "definitions/next/_card.json", R"({"template":"draft"})");
+  Write(root / "definitions/next/_card.json", R"({"type":"draft"})");
   StartProject(
       false,
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
@@ -103,7 +103,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
   EXPECT_EQ(Read(root / "tsugumi.json"), before);
   EXPECT_EQ(Read(root / "definitions/plan/_card.json"),
-            R"({"template":"draft"})");
+            R"({"type":"draft"})");
   EXPECT_FALSE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
 
   const auto reply = Tool(conversation, "project_edit", args, "implement");
@@ -170,7 +170,7 @@ TEST_F(AgentProjectFixture,
   Grant(conversation, Tsugumi::Service::Access::Write);
   const auto created = Tool(
       conversation, "project_edit",
-      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"template\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/file.txt","put":"old text","expect_missing":true}]})",
+      R"({"edits":[{"file_path":"definitions/data/_card.json","put":"{\"type\":\"draft\"}","expect_missing":true},{"file_path":"definitions/data/file.txt","put":"old text","expect_missing":true}]})",
       "create");
   ASSERT_TRUE(created.Code().empty()) << created.View();
   ASSERT_FALSE(JsonBool(created.View(), "/isError")) << created.View();
@@ -253,9 +253,9 @@ TEST_F(AgentProjectFixture, OperationIdReplaysOnceAndRejectsAnotherPayload) {
 TEST_F(AgentProjectFixture,
        ConnectLayoutAndSubgraphSaveTheirCompleteFootprints) {
   Write(directory.path / "project/definitions/a/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/b/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   const std::string meta =
       "{\n  \"description\": \"Keep my words\", \"comments\": "
       "[{\"id\":\"c1\",\"text\":\"Question\",\"author\":\"user\"}]\n}\n";
@@ -307,12 +307,12 @@ TEST_F(AgentProjectFixture,
        SubgraphKeepsAnExternalStillUsedByAnUnselectedAlias) {
   for (const auto* id : {"mine", "alias"})
     Write(directory.path / "project/definitions" / id / "_card.json",
-          R"({"external":"shared"})");
+          R"({"type":"subgraph","external":"shared"})");
   const auto child = directory.path / "project/externals/shared";
   Write(
       child / "tsugumi.json",
       R"({"name":"Shared","canvas":{"cards":[{"id":"child"}],"connections":[]}})");
-  Write(child / "definitions/child/_card.json", R"({"template":"draft"})");
+  Write(child / "definitions/child/_card.json", R"({"type":"draft"})");
   Write(child / "definitions/child/data.bin", std::string("\0\xff", 2));
   StartProject(
       false,
@@ -332,7 +332,7 @@ TEST_F(AgentProjectFixture,
 }
 TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
   Write(directory.path / "project/definitions/a/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject(
       false,
       R"({"name":"Permissions","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");

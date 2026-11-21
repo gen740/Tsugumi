@@ -1,5 +1,5 @@
 {
-  "template": "input",
+  "type": "input",
   "inputs": [
     {
       "name": "start"

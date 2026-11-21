@@ -117,10 +117,10 @@ def test_demo_and_duplicate_are_writable_and_drop_run_state(host, tmp_path):
     for p in source.rglob("*"):
         p.chmod(0o555 if p.is_dir() else 0o444)
     source.chmod(0o555)
-    demo = call("HostDemoListRequest", {"language": "ja"})[0]
+    demo = call("HostDemoListRequest", {"type": "code", "language": "ja"})[0]
     assert demo["id"] == "sample" and demo["description"] == "" and demo.get("tags", []) == []
     assert "field" not in demo
-    assert call("HostDemoListRequest", {"language": "fr"})["code"] == "invalid_language"
+    assert call("HostDemoListRequest", {"type": "code", "language": "fr"})["code"] == "invalid_language"
     assert call("HostDemoCopyRequest", {"parent": str(tmp_path), "id": "missing"})["code"] == "demo_not_found"
     for method, fields in (
         ("HostDemoCopyRequest", {"id": "sample"}),

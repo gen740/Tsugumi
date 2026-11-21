@@ -39,7 +39,7 @@ def stdout_of_network_card(core_factory, tmp_path, script: str, python: str | No
             f'run = "PYTHON=${{pkgs.python3}}/bin/python3 PROBE=${{pkgs.writeText "probe.py" {nix_string(python)}}}\\n" + ',
             1)
     root = tmp_path / "p"
-    write(root, {"start": {"template": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
+    write(root, {"start": {"type": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
           [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
     d = core_factory(project_root=root)
     c = d.connect()

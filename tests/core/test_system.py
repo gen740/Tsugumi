@@ -103,7 +103,7 @@ def registered_remote(monkeypatch, resource_limits):
 def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, valid):
     """The catalog describes services; live capabilities are checked during prepare."""
-    definition = {"language": "bash", "_outputs": MSG_FBS,
+    definition = {"type": "code", "language": "bash", "_outputs": MSG_FBS,
                   "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
@@ -141,9 +141,9 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
 
 
 @pytest.mark.parametrize("definition", [
-    {"language": "bash", "executionService": "unavailable", "_outputs": MSG_FBS,
+    {"type": "code", "language": "bash", "executionService": "unavailable", "_outputs": MSG_FBS,
      "_nix": '{ pkgs, inputs, params }: { run = "true"; }'},
-    {"template": "trigger", "executionService": "local"},
+    {"type": "trigger", "executionService": "local"},
 ], ids=["unknown-service", "built-in-card"])
 def test_invalid_execution_service_selection_prevents_the_run(project, core_factory, definition):
     """An invalid selection is reported before a run can start."""
@@ -159,8 +159,8 @@ def test_invalid_execution_service_selection_prevents_the_run(project, core_fact
 def test_which_systems_and_cards(tmp_path):
     """Supported target systems are accepted for each Card language."""
     root = tmp_path / "p"
-    defs = {"py": {"language": "python"}, "cc": {"language": "cpp"}, "sh": {"language": "bash"},
-            "r": {"language": "r"}}
+    defs = {"py": {"type": "code", "language": "python"}, "cc": {"type": "code", "language": "cpp"}, "sh": {"type": "code", "language": "bash"},
+            "r": {"type": "code", "language": "r"}}
     cards = [card("unknown", "sh", system="riscv64-linux"), card("py", "py", system=FOREIGN),
              card("cc", "cc", system=FOREIGN), card("sh", "sh", system=FOREIGN), card("r", "r", system=FOREIGN)]
     cards.append(card("native", "py", system=NATIVE))
@@ -180,8 +180,8 @@ def test_which_systems_and_cards(tmp_path):
 def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
     """A foreign-system run stops when the local service cannot run that system."""
     root = tmp_path / "p"
-    defs = {"trigger": {"template": "trigger"},
-            "sh": {"language": "bash", "inputs": [{"name": "in"}],
+    defs = {"trigger": {"type": "trigger"},
+            "sh": {"type": "code", "language": "bash", "inputs": [{"name": "in"}],
                    "_outputs": MSG_FBS,
                    "_nix": '{ pkgs, inputs, params }:\n{ run = "uname -m"; }\n'}}
     write(root, defs, [card("start", "trigger"), card("x", "sh", system=FOREIGN)], [conn("start", "out", "x", "in")])

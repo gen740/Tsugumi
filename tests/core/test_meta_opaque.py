@@ -21,12 +21,12 @@ def test_direct_rpc_does_not_stamp_comments_or_enforce_draft_intent(tmp_path, co
     (root / "definitions/plan/_meta.json").write_text('{"description":"Original","content":"Plan"}')
     client = core_factory(project_root=root).connect()
     meta = '{"future":true,"name":false,"description":[],"comments":[{"text":"Ask","author":"user"}]}'
-    save(client, [change("PutDefinition", id="plan", cardJson='{"template":"sink"}', metaJson=meta)])
+    save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', metaJson=meta)])
     result = next(d for d in client.call("ProjectInspectRequest").definitions if text(d.id) == "plan")
     assert text(result.metaJson) == meta
     for invalid in ('[]', 'null', '{'):
         with pytest.raises(RpcFailure):
-            save(client, [change("PutDefinition", id="plan", cardJson='{"template":"sink"}', metaJson=invalid)])
+            save(client, [change("PutDefinition", id="plan", cardJson='{"type":"code"}', metaJson=invalid)])
 
 
 def test_presentation_saves_while_busy_keep_execution_revision_and_run_source_hash(core_factory, project, tmp_path):

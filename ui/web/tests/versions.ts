@@ -96,8 +96,10 @@ for (const [i, a] of loop.cards.entries()) for (const b of loop.cards.slice(i + 
 // Only a Card or the start has a name inside it; a folded Card is its header.
 const folded = miniMapLayout([card('a', 0, 0, 'code', 0, true)], flow, 284, 132).cards[0]
 assert.equal(folded.h, CardGeometry.header * 0.3)
-// The kinds as the daemon names them.
-assert.equal(cardKindNamed('something new'), 'code')
+// The kinds as the daemon names them; an unreadable definition is a definition error.
+assert.equal(cardKindNamed('merge'), 'merge')
+assert.equal(cardKindNamed(''), 'invalid')
+assert.equal(cardKindNamed('something new'), 'invalid')
 
 // The UI asks only for the change record. No client-side diff, model or note write.
 const { ProjectSession } = await import('../src/model/session')

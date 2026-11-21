@@ -8,7 +8,7 @@ const HelperScope::Reader kRead = [](const std::string& path) -> std::string {
   if (path == "tsugumi.json")
     return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
   if (path == "definitions/outer/_card.json")
-    return R"({"external":"storage"})";
+    return R"({"type":"subgraph","external":"storage"})";
   return "";
 };
 TEST(HelperScope, FailureKeepsInScopeDiagnosticAndTypedFields) {
@@ -82,7 +82,7 @@ TEST(HelperScope, FailureKeepsNestedCardAndFileNamesWithinReadScope) {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}]}})";
     if (path == "definitions/outer/_card.json")
-      return R"({"external":"storage"})";
+      return R"({"type":"subgraph","external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"child"},{"id":"SECRET"}]}})";
     return "";
@@ -134,7 +134,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
   EXPECT_NO_THROW(scope.Check(
       "project_save",
       json::Object(
-          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"writer","card_json":"{}"}}]})"),
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"writer","card_json":"{\"type\":\"code\"}"}}]})"),
       kRead));
   EXPECT_THROW(
       scope.Check(
@@ -305,7 +305,7 @@ TEST(HelperScope, SharedNestedDefinitionsRequireEveryAliasInTheScope) {
       return R"({"canvas":{"cards":[{"id":"outer"},{"id":"alias"}]}})";
     if (path == "definitions/outer/_card.json" ||
         path == "definitions/alias/_card.json")
-      return R"({"external":"storage"})";
+      return R"({"type":"subgraph","external":"storage"})";
     return "";
   };
   const auto args = json::Object(
@@ -541,7 +541,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
     if (path == "tsugumi.json")
       return R"({"canvas":{"cards":[{"id":"outer"}],"connections":[]}})";
     if (path == "definitions/outer/_card.json")
-      return R"({"external":"storage"})";
+      return R"({"type":"subgraph","external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
       return R"({"boundary":{"inputs":{"visible":{"card":"draft","port":""},"hidden":{"card":"secret","port":"in"}},"outputs":{}},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
     return "";
@@ -576,7 +576,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
   const HelperScope::Reader changed =
       [&](const std::string& path) -> std::string {
     return path == "definitions/outer/_card.json"
-               ? R"({"external":"elsewhere"})"
+               ? R"({"type":"subgraph","external":"elsewhere"})"
                : read(path);
   };
   EXPECT_THROW(scope.CheckBindings(read, changed), std::runtime_error);

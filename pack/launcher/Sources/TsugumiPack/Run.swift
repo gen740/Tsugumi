@@ -150,7 +150,7 @@ struct AppRun {
                          share: share, network: false, cpus: cpus, memoryGiB: memoryGiB, consoleLog: console)
     boot.scratch = scratch
     // The first result is the first Code Card's: built-in Cards supply and route values.
-    let code = Set((manifest["cards"] as? [[String: Any]] ?? []).filter { $0["template"] as? String == "code" }
+    let code = Set((manifest["cards"] as? [[String: Any]] ?? []).filter { $0["type"] as? String == "code" }
       .compactMap { $0["id"] as? String })
     var firstResult: TimeInterval?
     try boot.run { line in

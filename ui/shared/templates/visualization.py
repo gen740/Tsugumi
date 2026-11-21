@@ -62,7 +62,7 @@ def main_source(library):
 
 def templates():
     card = {
-        "language": "python", "inputs": [{"name": "data"}], "recordIO": True,
+        "type": "code", "language": "python", "inputs": [{"name": "data"}], "recordIO": True,
         "retainArtifact": True, "artifactOutput": "figure",
         "params": [{"name": n, "type": t, "data": v} for n, t, v in PARAMS],
     }

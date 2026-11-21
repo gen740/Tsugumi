@@ -5,13 +5,13 @@ import TsugumiRPC
 extension ProjectSession {
   struct PresenceSnapshot {
     let existing: Set<String>
-    let templates: [String: String]
+    let types: [String: String]
     let connections: [PresenceEvents.Connection]
   }
 
   func presenceSnapshot() -> PresenceSnapshot {
     PresenceSnapshot(existing: Set(confirmedDefinitions.keys),
-                     templates: confirmedDefinitions.compactMapValues { $0["template"]?.string },
+                     types: confirmedDefinitions.compactMapValues { $0["type"]?.string },
                      connections: topConnections(confirmedProject))
   }
 
@@ -21,7 +21,7 @@ extension ProjectSession {
     let across = flow == .leftToRight
     let w = PresenceEvents.written(
       upserted: d.definitionsUpsert.compactMap { $0?.id }, touchedSources: sources, existedBefore: before.existing,
-      templateBefore: before.templates, templateAfter: confirmedDefinitions.compactMapValues { $0["template"]?.string },
+      typeBefore: before.types, typeAfter: confirmedDefinitions.compactMapValues { $0["type"]?.string },
       cards: cards, connectionsBefore: before.connections, connectionsAfter: topConnections(confirmedProject),
       order: { id in let p = self.position(id); return Double(across ? p.x : p.y) })
     presence.name = { [weak self] k in self?.nodeData(k).title ?? k }

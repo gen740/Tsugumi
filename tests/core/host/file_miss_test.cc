@@ -10,7 +10,7 @@ auto Snapshot(const std::string& kind) -> json::Members {
           {"definitions",
            json::Encode(std::vector<std::string>{json::Encode(json::Members{
                {"id", "\"share\""},
-               {"card_json", json::Quote("{\"template\":\"" + kind + "\"}")},
+               {"card_json", json::Quote("{\"type\":\"" + kind + "\"}")},
                {"meta_json", "\"{}\""}})})}};
 }
 TEST(FileMiss, BuiltinSchemasDescribeTheCardFilesAndResolvedTypeTool) {
@@ -50,16 +50,21 @@ TEST(FileMiss, LargeFoldersHaveABoundedListAndTotal) {
   EXPECT_EQ(DescribeFileMiss("elsewhere/missing", snapshot, {}), "");
 }
 TEST(FileMiss, CodeSchemaMissDoesNotClaimCodeHasNoSchemas) {
-  for (const auto* kind : {"code", "none", ""}) {
-    const auto diagnostic =
-        DescribeFileMiss("definitions/share/_outputs.fbs", Snapshot(kind), {});
-    EXPECT_FALSE(diagnostic.empty());
-  }
-  EXPECT_FALSE(DescribeFileMiss(
-                   "definitions/share/missing",
-                   {{"definitions", R"([{"id":"share","card_json":"{}"}])"}},
-                   {})
-                   .empty());
+  EXPECT_FALSE(
+      DescribeFileMiss("definitions/share/_outputs.fbs", Snapshot("code"), {})
+          .empty());
+  EXPECT_FALSE(
+      DescribeFileMiss(
+          "definitions/share/missing",
+          {{"definitions",
+            R"([{"id":"share","card_json":"{\"type\":\"code\"}"}])"}},
+          {})
+          .empty());
+  // Without a type the Card is not described as any kind.
+  EXPECT_EQ(DescribeFileMiss(
+                "definitions/share/missing",
+                {{"definitions", R"([{"id":"share","card_json":"{}"}])"}}, {}),
+            "");
 }
 TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
   const std::string root = "externals/one/externals/two/definitions/share/";
@@ -78,7 +83,7 @@ TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
         EXPECT_EQ(method, "project_file_read");
         EXPECT_EQ(json::Text(args, "path"), root + "_card.json");
         EXPECT_EQ(json::Text(args, "at_rev"), "7");
-        return {{"bytes", json::Quote(R"({"template":"collect"})")}};
+        return {{"bytes", json::Quote(R"({"type":"collect"})")}};
       });
   EXPECT_EQ(reads, 1);
   EXPECT_FALSE(diagnostic.empty());

@@ -44,7 +44,7 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
     """Labels from the execution plan are recorded on every member, and an unlabeled entry keeps only its index."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("work", {"language": "bash", "sandbox": False, "recordIO": True}, outputs=NUMBER,
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True}, outputs=NUMBER,
                manifest={"runs": [implementation(1), implementation(2), implementation(3)]},
                plan={"labels": ["threshold 10", "", "threshold 14"]})
     graph.save(client)
@@ -67,7 +67,7 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
 ])
 def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, project, labels, message):
     client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
                                   manifest={"runs": [implementation(1), implementation(2)]},
                                   plan={"labels": labels})
     graph.save(client)
@@ -83,13 +83,13 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     """Each swept value is one member; the last param varies fastest and arriving batches stay the outer axis."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("starts", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("starts", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
                manifest={"runs": [implementation(7), implementation(8)]})
-    graph.card("values", {"template": "input", "recordIO": True, "params": [
+    graph.card("values", {"type": "input", "recordIO": True, "params": [
         {"name": "left", "type": "uint64", "sweep": [1, 2]},
         {"name": "right", "type": "uint64", "sweep": [10, 20, 30]},
     ]}, outputs=PAIR)
-    graph.card("collect", {"template": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("starts", "out", "values", "start").connect("values", "out", "collect", "in")
     graph.save(client)
 
@@ -113,15 +113,15 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
     """sweep: [x] keeps an explicit one-member batch; data holding a list stays one ordinary value."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("one", {"template": "input", "recordIO": True,
+    graph.card("one", {"type": "input", "recordIO": True,
                        "params": [{"name": "value", "type": "uint64", "sweep": [5]}]}, outputs=NUMBER)
-    graph.card("vector", {"template": "input", "recordIO": True,
+    graph.card("vector", {"type": "input", "recordIO": True,
                           "params": [{"name": "items", "type": "uint64[]", "data": [1, 2, 3]}]}, outputs=VECTOR)
-    graph.card("lists", {"template": "input", "recordIO": True,
+    graph.card("lists", {"type": "input", "recordIO": True,
                          "params": [{"name": "items", "type": "uint64[]", "sweep": [[1, 2], [], [3]]}]},
                outputs=VECTOR)
     for name in ("one", "vector", "lists"):
-        graph.card(f"collect-{name}", {"template": "collect", "recordIO": True})
+        graph.card(f"collect-{name}", {"type": "collect", "recordIO": True})
         graph.connect(name, "out", f"collect-{name}", "in")
     graph.save(client)
 
@@ -146,9 +146,9 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
 def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("values", {"template": "input", "params": [{"name": "value", "type": "uint64", "sweep": []}]},
+    graph.card("values", {"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": []}]},
                outputs=NUMBER)
-    graph.card("collect", {"template": "collect", "recordIO": True})
+    graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("values", "out", "collect", "in").save(client)
 
     run_id = run(client, "values", propagate=True)
@@ -162,9 +162,9 @@ def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
 def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, project):
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("starts", {"language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("starts", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
                manifest={"runs": [implementation(n) for n in range(2)]})
-    graph.card("values", {"template": "input", "params": [
+    graph.card("values", {"type": "input", "params": [
         {"name": "value", "type": "uint64", "sweep": list(range(200))}]}, outputs=NUMBER)
     graph.connect("starts", "out", "values", "start").save(client)
 
@@ -177,14 +177,14 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
 
 
 @pytest.mark.parametrize("definition,message", [
-    ({"template": "input", "params": [{"name": "value", "type": "uint64", "data": 1, "sweep": [1]}]},
+    ({"type": "input", "params": [{"name": "value", "type": "uint64", "data": 1, "sweep": [1]}]},
      "not both"),
-    ({"template": "input", "params": [{"name": "value", "type": "uint64", "sweep": [1, -2]}]},
+    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [1, -2]}]},
      "sweep[1]: expected uint64"),
-    ({"template": "input", "params": [{"name": "left", "type": "uint64", "sweep": list(range(17))},
+    ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": list(range(17))},
                                       {"name": "right", "type": "uint64", "sweep": list(range(16))}]},
      "at most 256"),
-    ({"language": "bash", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
+    ({"type": "code", "language": "bash", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
       "_nix": "{ pkgs, inputs, params }: { run = \"true\"; }"},
      "sweep is for Input Cards"),
 ])

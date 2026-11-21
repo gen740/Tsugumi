@@ -107,7 +107,7 @@ TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
 }
 TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
   Write(directory.path / "project/definitions/share/_card.json",
-        R"({"template":"collect"})");
+        R"({"type":"collect"})");
   Write(directory.path / "project/definitions/share/_meta.json", "{}");
   StartProject();
   const auto conversation = Conversation("missing-schema");
@@ -137,7 +137,7 @@ TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
 TEST_P(CancelledCopy, StopOrDisconnectCancelsThePublicCopyBeforeItCommits) {
   namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   project_fault = "transfer_gate";
   StartProject();
   const auto conversation = Conversation("cancel-copy");
@@ -214,7 +214,7 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
   if (::geteuid() == 0)
     GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/edit/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   project_fault = "transfer_gate";
   StartProject(true);
   const auto conversation = Conversation("cancel-shell-import");
@@ -253,7 +253,7 @@ TEST_F(AgentProjectFixture, StopDuringSuccessfulShellImportDiscardsTheSources) {
 TEST_F(AgentProjectFixture,
        CopyRefusesAnAttachedRootReplacedAfterItsReadGrant) {
   Write(directory.path / "project/definitions/data/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject();
   const auto conversation = Conversation("replaced-root");
   Grant(conversation);
@@ -299,7 +299,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, LargeReadsReachTheModelAsContiguousJsonPages) {
   const auto source = directory.path / "project/definitions/data/src/large.txt";
   Write(directory.path / "project/definitions/data/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(source, std::string(300000, '"'));
   StartProject();
   const auto conversation = Conversation("model-read-page");
@@ -352,7 +352,7 @@ TEST_F(AgentProjectFixture,
   if (::geteuid() == 0)
     GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/own/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject(true);
   const auto conversation = Conversation("private-helper-shell");
   for (auto access :
@@ -392,7 +392,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, HelpersCannotCopyParentOrSiblingScratch) {
   namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject();
   const auto conversation = Conversation("private-helper-scratch");
   Grant(conversation);
@@ -443,7 +443,7 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
     GTEST_SKIP() << "Shell commands require an unprivileged project user";
   namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject(true);
   const auto conversation = Conversation("nested-private-scratch");
   for (auto access :
@@ -569,9 +569,9 @@ TEST_F(NestedFileFixture, NestedScratchIsPrivateToEachHelperAtEveryDepth) {
 TEST_F(NestedFileFixture, NestedCopyUsesItsOwnScratchAndCannotWidenCardSets) {
   namespace json = ::tsugumi::json;
   Write(directory.path / "project/definitions/own/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/other/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/other/private.txt",
         "UNASSIGNED_CARD");
   StartProject();
@@ -696,7 +696,7 @@ TEST_F(AgentProjectFixture,
 TEST_F(AgentProjectFixture, CopyMovesFilesThroughASaveWithoutContentInResults) {
   namespace json = tsugumi::json;
   Write(directory.path / "project/definitions/data/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   StartProject();
   const auto conversation = Conversation("copy-large");
   Grant(conversation);
@@ -804,7 +804,7 @@ TEST_F(AgentProjectFixture,
   if (::geteuid() == 0)
     GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/edit/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/edit/src/data.txt", "before\n");
   StartProject(true);
   const auto conversation = Conversation("shell-edit");
@@ -840,7 +840,7 @@ TEST_F(AgentProjectFixture,
               "after\n")
         << failed.View();
     EXPECT_EQ(Read(directory.path / "project/definitions/edit/_card.json"),
-              R"({"template":"draft"})");
+              R"({"type":"draft"})");
   }
   const auto large = Tool(
       conversation, "project_shell",
@@ -859,7 +859,7 @@ TEST_F(AgentProjectFixture,
   if (::geteuid() == 0)
     GTEST_SKIP() << "Shell commands require an unprivileged project user";
   Write(directory.path / "project/definitions/edit/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/edit/src/data.txt", "original");
   StartProject(true);
   const auto conversation = Conversation("shell-atomic");
@@ -987,14 +987,14 @@ class NestedHelperFiles : public NestedFileFixture {
 
 auto NestedHelperFiles::CheckFileScope(bool shell) -> void {
   Write(directory.path / "project/definitions/own/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/own/src/note.txt", "original");
   Write(directory.path / "project/definitions/other/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/other/src/note.txt",
         "other-original");
   Write(directory.path / "project/definitions/writer/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/writer/src/private.txt",
         "WRITE_ONLY_SENTINEL");
   StartProject(shell);
@@ -1545,7 +1545,7 @@ TEST_F(AgentProjectFixture,
   // Exercise generic context fitting with a large inspect result: bounded
   // model-facing file pages intentionally no longer fill this much context.
   Write(directory.path / "project/definitions/long/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/long/_meta.json",
         R"({"description":)" + Quote(std::string(50000, 'x')) + "}");
   StartProject();
@@ -1647,7 +1647,7 @@ TEST_F(AgentProjectFixture,
   model.Queue(AnthropicText("The helper finished."));
   Configure(model, "fixture", 100000);
   Write(directory.path / "project/definitions/a/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   const auto one = "FIRST_HELPER_RECORD " + std::string(48000, 'a');
   const auto two = "SECOND_HELPER_RECORD " + std::string(48000, 'b');
   Write(directory.path / "project/definitions/a/src/one.txt", one);
@@ -2328,8 +2328,8 @@ TEST_F(AgentProjectFixture,
            "\"card_json\":" +
            Quote(body) + ",\"keep_meta\":true}}]}";
   };
-  const auto network = save(R"({"template":"draft","network":true})");
-  const auto sandbox = save(R"({"template":"draft","sandbox":false})");
+  const auto network = save(R"({"type":"draft","network":true})");
+  const auto sandbox = save(R"({"type":"draft","sandbox":false})");
   const auto a = Tool(conversation, "project_save", network, "save-a");
   const auto b = Tool(conversation, "project_save", sandbox, "save-b");
   const auto independent =
@@ -2411,7 +2411,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
       R"({"name":"External edit","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"work"}],"connections":[]}})");
   const auto definition =
       directory.path / "project/definitions/work/_card.json";
-  Write(definition, R"({"template":"draft","network":true})");
+  Write(definition, R"({"type":"draft","network":true})");
   const auto pending =
       Tool(conversation, "project_reload", arguments, "reload-a");
   ASSERT_EQ(pending.Code(), "grant_required");
@@ -2425,7 +2425,7 @@ TEST_F(AgentProjectFixture, ReloadApprovalCannotWidenADifferentPermissionSet) {
                    })
                   .Code()
                   .empty());
-  Write(definition, R"({"template":"draft","sandbox":false})");
+  Write(definition, R"({"type":"draft","sandbox":false})");
   const auto result =
       Tool(conversation, "project_reload", arguments, "reload-a");
   // The same arguments now require different permissions. Like other changed
@@ -2688,27 +2688,27 @@ TEST_F(AgentProjectFixture, UnlistedProjectToolsCannotBeCalledExternally) {
 TEST_F(AgentProjectFixture,
        HelperScopesGuardInspectionFilesSavesRunsRecordsAndLogs) {
   Write(directory.path / "project/definitions/allowed/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/allowed/_meta.json",
         R"({"description":"VISIBLE_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/secret/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/writer/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(directory.path / "project/definitions/secret/_meta.json",
         R"({"description":"HIDDEN_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/outer/_card.json",
-        R"({"external":"different-directory"})");
+        R"({"type":"subgraph","external":"different-directory"})");
   Write(directory.path / "project/externals/different-directory/tsugumi.json",
         R"({"name":"Nested","canvas":{"cards":[],"connections":[]}})");
   Write(
       directory.path /
           "project/externals/different-directory/definitions/child/_card.json",
-      R"({"template":"draft"})");
+      R"({"type":"draft"})");
   Write(
       directory.path /
           "project/externals/different-directory/definitions/other/_card.json",
-      R"({"template":"draft"})");
+      R"({"type":"draft"})");
   StartProject();
   const auto conversation = Conversation("helper-card-scope");
   Grant(conversation);
@@ -2810,7 +2810,7 @@ TEST_F(AgentProjectFixture, HelperOwnsTheCardItReservesFromEmptySets) {
       "save-own", "project_save",
       "{\"base_rev\":" + Quote(rev) +
           ",\"changes\":[{\"value_type\":\"PutDefinition\",\"value\":{\"id\":" +
-          Quote(id) + ",\"card_json\":" + Quote(R"({"template":"draft"})") +
+          Quote(id) + ",\"card_json\":" + Quote(R"({"type":"draft"})") +
           "}},{\"value_type\":\"PutSource\",\"value\":{\"path\":" +
           Quote(path) + ",\"bytes\":[111,119,110]}}]}"));
   model.Queue(AnthropicTool("read-own", "project_file_read",

@@ -71,7 +71,7 @@ int tsugumi_main(const tsugumi_call* c) {
 }
 '''
     make = {
-        "language": "cpp", "recordIO": True, "_outputs": FILE_FBS,
+        "type": "code", "language": "cpp", "recordIO": True, "_outputs": FILE_FBS,
         "_nix": '''{ pkgs, inputs, params }: {
   run = pkgs.runCommandCC "sparse-output" {} ''
     mkdir -p $out/lib

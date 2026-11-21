@@ -18,9 +18,9 @@ def test_wired_drafts_can_be_saved_written_and_renamed(client, daemon):
         ],
     }
     cards = {
-        "p": {"template": "draft"},
-        "q": {"template": "draft"},
-        "r": {"template": "draft"},
+        "p": {"type": "draft"},
+        "q": {"type": "draft"},
+        "r": {"type": "draft"},
     }
     meta = {
         "p": {"name": "p", "description": "", "content": ""},

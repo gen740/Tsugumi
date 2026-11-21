@@ -17,19 +17,19 @@ def saved_file_subgraph(project, core_factory):
     write(
         project,
         defs={
-            "start": {"template": "trigger"},
+            "start": {"type": "trigger"},
             "source": {
-                "template": "input",
+                "type": "input",
                 "params": [{"name": "value", "type": "string", "data": "report.txt"}],
                 "_outputs": FILE_FBS,
             },
             "flag": {
-                "template": "input",
+                "type": "input",
                 "params": [{"name": "value", "type": "bool", "data": True}],
                 "_outputs": FLAG_FBS,
             },
             "forward": {
-                "template": "branch",
+                "type": "branch",
                 "recordIO": True,
                 "retainArtifact": True,
                 "artifactOutput": "a",

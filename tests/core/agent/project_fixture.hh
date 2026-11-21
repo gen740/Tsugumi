@@ -115,7 +115,7 @@ class AgentProjectFixture : public AgentFixture {
         "\x00\x05\x00\x01\xff\x89\x99\x3d\x1d\x00\x00\x00\x00\x49\x45\x4e\x44"
         "\xae\x42\x60\x82";
     Write(directory.path / "project/definitions/picture/_card.json",
-          R"({"template":"draft"})");
+          R"({"type":"draft"})");
     Write(directory.path / "project/definitions/picture/src/pixel.png",
           std::string_view(pixel, sizeof(pixel) - 1 - (complete ? 0 : 8)));
     StartProject();

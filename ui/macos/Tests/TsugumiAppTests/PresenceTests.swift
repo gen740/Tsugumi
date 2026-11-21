@@ -47,8 +47,8 @@ import SwiftUI
   let x = ["start": 0.0, "load": 200, "bands": 500]
   let w = PresenceEvents.written(
     upserted: ["bands", "load"], touchedSources: ["load"], existedBefore: ["start", "load", "bands"],
-    templateBefore: ["start": "trigger", "load": "draft", "bands": "draft"],
-    templateAfter: ["start": "trigger", "bands": "draft"],
+    typeBefore: ["start": "trigger", "load": "draft", "bands": "draft"],
+    typeAfter: ["start": "trigger", "bands": "draft"],
     cards: ["start", "load", "bands"], connectionsBefore: wiring, connectionsAfter: wiring, order: { x[$0] ?? 0 })
   // load: a Draft that became code (written out); bands: still a Draft (only touched).
   #expect(w.cards.map(\.0) == ["load", "bands"])
@@ -59,7 +59,7 @@ import SwiftUI
   // A wire the save adds is threaded too; Cards in Card and unknown ids are left out.
   let added = C(from: "bands", fromPort: "images", to: "rgb", toPort: "input")
   let w2 = PresenceEvents.written(
-    upserted: ["rgb", "inner"], touchedSources: [], existedBefore: ["rgb"], templateBefore: [:], templateAfter: [:],
+    upserted: ["rgb", "inner"], touchedSources: [], existedBefore: ["rgb"], typeBefore: [:], typeAfter: [:],
     cards: ["bands", "rgb"], connectionsBefore: wiring, connectionsAfter: wiring + [added], order: { _ in 0 })
   #expect(w2.cards.map(\.0) == ["rgb"] && w2.cards.map(\.reveal) == [false])
   #expect(w2.wires == [added])

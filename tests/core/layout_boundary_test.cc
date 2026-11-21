@@ -36,7 +36,7 @@ TEST(LayoutBoundary, DeletingACardDoesNotInterpretOrRewriteLayout) {
       root / "tsugumi.json",
       R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   fs::write_atomic(root / "definitions/a/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   const std::string layout = R"({ "cards": {"a": "opaque"}, "extension": 1 })";
   fs::write_atomic(root / "layout.json", layout);
   Store store({root, ""});

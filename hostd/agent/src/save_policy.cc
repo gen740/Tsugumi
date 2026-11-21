@@ -119,11 +119,11 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
   // A Draft's intent is Agent policy, checked before core permission approvals.
   for (const auto& [path, text] : before) {
     if (!path.ends_with("/_card.json") ||
-        json::Text(Object(text), "template") != "draft")
+        json::Text(Object(text), "type") != "draft")
       continue;
     const bool implemented =
         after.contains(path) &&
-        json::Text(Object(after.at(path)), "template") != "draft";
+        json::Text(Object(after.at(path)), "type") != "draft";
     if (!implemented) continue;
     auto meta_path = path.substr(0, path.size() - 10) + "_meta.json";
     auto old_meta =

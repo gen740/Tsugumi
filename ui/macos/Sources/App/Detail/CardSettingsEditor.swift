@@ -47,9 +47,7 @@ final class CardEditorModel {
   /// The Card's definition folder name (its id).
   var definitionId: String? { path(cardKey).last }
   var kind: CardKind {
-    if session.kind(cardKey) == .subgraph { return .subgraph }
-    if let t = definition?["template"]?.string, let k = CardKind(rawValue: t) { return k }
-    return definition?["language"] == nil ? .draft : .code
+    session.kind(cardKey) == .subgraph ? .subgraph : definitionKind(definition)
   }
   var exists: Bool { session.instance(cardKey) != nil }
   private var prefix: String { session.definitionDir(cardKey) ?? "" }
@@ -88,11 +86,11 @@ final class CardEditorModel {
   }
 
   var implementation: String {
-    let template = definition?["template"]?.string
-    if template == "input", definition?["params"]?.array?.first?["type"]?.string == "bool" {
+    let kind = definitionKind(definition)
+    if kind == .input, definition?["params"]?.array?.first?["type"]?.string == "bool" {
       return DefinitionTemplate.booleanInput.rawValue
     }
-    return template ?? definition?["language"]?.string ?? "draft"
+    return kind == .code ? definition?["language"]?.string ?? kind.rawValue : kind.rawValue
   }
 
   func implementAs(_ value: String) {
@@ -115,8 +113,8 @@ final class CardEditorModel {
         message = error.localizedDescription
       }
     } else if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
-      definition = .object([("language", .string(value))])
-    } else { definition = .object([("template", .string(value))]) }
+      definition = .object([("type", .string("code")), ("language", .string(value))])
+    } else { definition = .object([("type", .string(value))]) }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
     if value == "fork" { definition?["outputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
   }
@@ -453,7 +451,7 @@ struct CardSettingsEditor: View {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
     case .input: return [.general, .source, .ports, .log, .executions, .artifacts, .notes]
-    case .draft: return [.general, .notes]
+    case .draft, .invalid: return [.general, .notes]
     case .subgraph: return [.general, .ports, .executions, .notes]
     default: return [.general, .ports, .log, .executions, .artifacts, .notes]
     }
@@ -660,7 +658,7 @@ private struct GeneralCategory: View {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }
       }
-      if model.kind != .subgraph && model.kind != .draft {
+      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("実行") {
           if model.kind == .code {
             Picker("trigger", selection: string("trigger", fallback: "allInputs")) {
@@ -1079,7 +1077,7 @@ private struct PortsCategory: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       if model.kind == .fork && model.definition != nil { ForkOutputsSection(model: model) } else { OutputPortsSection(model: model) }
-      if model.kind != .subgraph && model.kind != .draft {
+      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("記録と成果物") {
           toggle("recordIO", label: "入出力を記録")
           toggle("retainArtifact", label: "成果物を保持")

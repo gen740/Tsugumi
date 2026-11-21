@@ -17,7 +17,7 @@ TEST(SourceTransfer, StreamsFixedChunksAndDiscardsAnInterruptedImport) {
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   fs::write_atomic(root / "definitions/data/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   std::string bytes(128 * 1024 + 1, 'x');
   bytes.back() = 'z';
   fs::write_atomic(root / "input.csv", bytes);

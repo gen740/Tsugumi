@@ -42,7 +42,7 @@ def test_resident_definition_change_records_fresh_state(core_factory, tmp_path):
                           'printf \'{"out":{"value":%s}}\' "$n" > "$TSUGUMI_OUTPUT"; '
                           'printf \'{"text":"%s"}\' "$n" > "$TSUGUMI_REPORT"', reuseWorker=True)
         # Save both the definition and its Nix source through the public RPC.
-        graph.card("resident", {"language": "bash", "reuseWorker": True},
+        graph.card("resident", {"type": "code", "language": "bash", "reuseWorker": True},
                    outputs=definition["_outputs"], sources={"default.nix": definition["_nix"]})
         graph.save(c)
         run_id, st = run_and_wait(c, "resident")
@@ -176,7 +176,7 @@ int tsugumi_main(const tsugumi_call* c) {
 }
 '''
     definition = {
-        "language": "cpp", "inputs": [{"name": "data"}], "reuseWorker": True,
+        "type": "code", "language": "cpp", "inputs": [{"name": "data"}], "reuseWorker": True,
         "recordIO": True, "_outputs": NUM,
         "_nix": '''{ pkgs, inputs, params }: {
   run = pkgs.runCommandCC "stopped-resident" {} ''
@@ -189,7 +189,7 @@ int tsugumi_main(const tsugumi_call* c) {
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
     # The second frame must exceed a Unix socket's send buffer, on both hosts.
-    payload = {"template": "input", "params": [{"name": "value", "type": "string", "data": "x" * (4 << 20)}],
+    payload = {"type": "input", "params": [{"name": "value", "type": "string", "data": "x" * (4 << 20)}],
                "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;'}
     root = tmp_path / "p"
     write(root, {"payload": payload, "resident": definition},

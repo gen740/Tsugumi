@@ -412,7 +412,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
 def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
     """A target-system evaluation error is visible before any upload or submission."""
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"language": "bash", "sandbox": True, "executionService": "cluster"},
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": True, "executionService": "cluster"},
                           outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)

@@ -17,7 +17,7 @@ namespace json = ::tsugumi::json;
 class AgentSavePolicy : public ::testing::Test {
  protected:
   comments::Files files{
-      {"definitions/plan/_card.json", R"({"template":"draft"})"},
+      {"definitions/plan/_card.json", R"({"type":"draft"})"},
       {"definitions/plan/_meta.json",
        R"({"description":"Counts words","content":"Split and count.","comments":[{"id":"c1","text":"Use a log scale","author":"user"},{"id":"c2","text":"Name the axis","author":"user"}]})"}};
   auto Base() -> SaveBase {
@@ -31,7 +31,7 @@ class AgentSavePolicy : public ::testing::Test {
             files};
   }
   auto Put(const std::string& meta,
-           const std::string& body = R"({"template":"sink"})",
+           const std::string& body = R"({"type":"code"})",
            const std::string& id = "plan") -> std::string {
     return json::Encode(json::Members{
         {"value_type", json::Quote("PutDefinition")},
@@ -63,7 +63,7 @@ class AgentSavePolicy : public ::testing::Test {
   }
   auto Implement(const json::Members& extra = {}) -> std::string {
     json::Members value{{"id", json::Quote("plan")},
-                        {"card_json", json::Quote(R"({"template":"sink"})")},
+                        {"card_json", json::Quote(R"({"type":"code"})")},
                         {"keep_meta", "true"}};
     for (const auto& [k, v] : extra) value[k] = v;
     return json::Encode(
@@ -71,7 +71,7 @@ class AgentSavePolicy : public ::testing::Test {
                       {"value", json::Encode(value)}});
   }
   auto Sink() -> void {
-    files["definitions/plan/_card.json"] = R"({"template":"sink"})";
+    files["definitions/plan/_card.json"] = R"({"type":"code"})";
   }
 };
 TEST_F(AgentSavePolicy, ImplementingADescribedDraftRequiresContext) {
@@ -98,7 +98,7 @@ TEST_F(AgentSavePolicy, DraftIntentIsKeptAndOnlyEmptyFieldsAreFilled) {
 }
 TEST_F(AgentSavePolicy, ImplementingDraftAsCardInCardAlsoKeepsItsIntent) {
   json::Members link{{"id", json::Quote("plan")},
-                     {"card_json", json::Quote(R"({"external":"library"})")},
+                     {"card_json", json::Quote(R"({"type":"subgraph","external":"library"})")},
                      {"keep_meta", "true"}};
   auto change = [&] {
     return json::Encode(
@@ -136,7 +136,7 @@ TEST_F(AgentSavePolicy,
 }
 TEST_F(AgentSavePolicy,
        DraftThatStaysDraftAndOrdinaryCardsNeedNoIntentCompletion) {
-  EXPECT_NO_THROW(Prepare({Put("{}", R"({"template":"draft"})")}));
+  EXPECT_NO_THROW(Prepare({Put("{}", R"({"type":"draft"})")}));
   Sink();
   EXPECT_NO_THROW(Prepare({Put("{}")}));
 }
@@ -144,7 +144,7 @@ TEST_F(AgentSavePolicy, ResolutionRecordsWhoDidItAndTheChangedCardIds) {
   Sink();
   auto saved = Prepare({Put(
       R"({"comments":[{"id":"c1","text":"Use a log scale","author":"agent","resolved":true,"resolution":"Log y","stateBy":"user","cards":["fake"]},{"id":"c2","text":"Name the axis","author":"user"}]})",
-      R"({"template":"sink","maxRuns":2})")});
+      R"({"type":"code","maxRuns":2})")});
   auto comments = Comments(saved);
   ASSERT_EQ(comments.size(), 2u);
   EXPECT_EQ(json::Text(comments[0], "author"), "user");
@@ -189,7 +189,7 @@ TEST_F(AgentSavePolicy, ReopeningClearsResolutionCardsAndMovingKeepsIdentity) {
   EXPECT_EQ(json::Text(Comments(saved)[0], "stateBy"), "agent");
   EXPECT_FALSE(Comments(saved)[0].contains("cards"));
   saved = Prepare({Put("{}"), Put(files.at("definitions/plan/_meta.json"),
-                                  R"({"template":"sink"})", "split")});
+                                  R"({"type":"code"})", "split")});
   EXPECT_TRUE(json::Array(saved.comments).empty());
 }
 TEST_F(AgentSavePolicy,
@@ -215,7 +215,7 @@ TEST_F(AgentSavePolicy, PresentationFieldsDoNotDisableCommentStamping) {
 TEST_F(AgentSavePolicy, NestedMetadataPatchesAreStampedAndDraftIntentChecked) {
   files.clear();
   const std::string path = "externals/outer/definitions/plan/";
-  files[path + "_card.json"] = R"({"template":"draft"})";
+  files[path + "_card.json"] = R"({"type":"draft"})";
   files[path + "_meta.json"] = R"({"content":"Plan","description":"Summary"})";
   auto source = [&](const std::string& file, const std::string& bytes) {
     return json::Encode(json::Members{
@@ -226,10 +226,10 @@ TEST_F(AgentSavePolicy, NestedMetadataPatchesAreStampedAndDraftIntentChecked) {
                        json::Quote(crypto::sha256_hex(files.at(path + file)))},
                       {"bytes", json::Quote(bytes)}})}});
   };
-  EXPECT_THROW(Prepare({source("_card.json", R"({"template":"sink"})")}),
+  EXPECT_THROW(Prepare({source("_card.json", R"({"type":"code"})")}),
                std::runtime_error);
   EXPECT_NO_THROW(Prepare(
-      {source("_card.json", R"({"template":"sink"})"),
+      {source("_card.json", R"({"type":"code"})"),
        source(
            "_meta.json",
            R"({"content":"Plan","description":"Summary","context":"Why"})")}));
