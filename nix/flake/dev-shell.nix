@@ -43,6 +43,10 @@
           MACOSX_DEPLOYMENT_TARGET = "26.0";
         }
         // core.devEnv
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          TSUGUMI_TEMPLATE_GIT_SOURCE = pkgs.git.src;
+          TSUGUMI_TEMPLATE_GIT_SOURCE_URL = builtins.head pkgs.git.src.urls;
+        }
       );
     };
 }

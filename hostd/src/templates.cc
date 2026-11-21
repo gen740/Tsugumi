@@ -2,6 +2,10 @@
 
 #include <unistd.h>
 
+#ifdef __APPLE__
+#include <mach-o/dyld.h>
+#endif
+
 #include <algorithm>
 #include <atomic>
 #include <chrono>
@@ -83,6 +87,21 @@ auto GitTemplate(const H::TemplateGitT& source, std::stop_token stop)
     throw Failure("invalid_path",
                   "Choose a repository-relative template folder");
 
+  std::string executable = TSUGUMI_TEMPLATE_GIT;
+  f::path bundled_git;
+#ifdef __APPLE__
+  if (executable == "@bundle/git") {
+    uint32_t size = 0;
+    _NSGetExecutablePath(nullptr, &size);
+    std::string path(size, '\0');
+    if (_NSGetExecutablePath(path.data(), &size) != 0)
+      throw Failure("unavailable", "Cannot locate host executable");
+    bundled_git =
+        (f::canonical(f::path(path.c_str())).parent_path() / "../Resources/git")
+            .lexically_normal();
+    executable = (bundled_git / "git").string();
+  }
+#endif
   Scratch scratch(f::temp_directory_path());
   std::atomic<bool> cancel{stop.stop_requested()};
   std::stop_callback cancelled(stop, [&] { cancel.store(true); });
@@ -90,19 +109,19 @@ auto GitTemplate(const H::TemplateGitT& source, std::stop_token stop)
       std::chrono::steady_clock::now() + std::chrono::minutes(2);
   auto git = [&](std::vector<std::string> args) {
     proc::Spec spec;
-    spec.argv = {TSUGUMI_TEMPLATE_GIT,
-                 "--literal-pathspecs",
-                 "-c",
-                 "core.hooksPath=/dev/null",
-                 "-c",
-                 "http.followRedirects=false",
-                 "-c",
-                 "credential.helper="};
+    spec.argv = {executable, "--literal-pathspecs",
+                 "-c",       "core.hooksPath=/dev/null",
+                 "-c",       "http.followRedirects=false",
+                 "-c",       "credential.helper="};
     spec.argv.insert(spec.argv.end(), args.begin(), args.end());
     spec.cwd = scratch.path.string();
     spec.env = {"PATH=/usr/bin:/bin",    "HOME=" + spec.cwd,
                 "GIT_CONFIG_NOSYSTEM=1", "GIT_CONFIG_GLOBAL=/dev/null",
                 "GIT_TERMINAL_PROMPT=0", "GIT_ALLOW_PROTOCOL=https"};
+    if (!bundled_git.empty()) {
+      spec.env.emplace_back("GIT_EXEC_PATH=" + bundled_git.string());
+      spec.env.emplace_back("GIT_SSL_CAINFO=/etc/ssl/cert.pem");
+    }
     if (const auto* cert = std::getenv("SSL_CERT_FILE"))
       spec.env.emplace_back(std::string("SSL_CERT_FILE=") + cert);
     std::string diagnostic;
