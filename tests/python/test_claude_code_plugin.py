@@ -382,6 +382,9 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
     mcp, root = plugin
     mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})
     write_project(root / "proj")
+    template = root / "proj/templates/entry/start"
+    template.mkdir(parents=True)
+    (template / "_card.json").write_text('{"type":"trigger"}')
     text, error = mcp.call("tsugumi_open", {"folder": "missing"})
     assert error and "create: true" in text
     assert not (root / "missing").exists()
@@ -404,6 +407,16 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         text, error = mcp.call("project_save", save)
         assert not error, text
         assert json.loads((root / "proj" / "tsugumi.json").read_text())["name"] == "renamed by Claude Code"
+
+        text, error = mcp.call("template_list", {})
+        assert not error, text
+        assert json.loads(text)["value"]["entries"] == [{"name": "entry", "store": "project"}]
+        text, error = mcp.call("tools", {
+            "family": "templates", "action": "copy", "arguments": {"store": "project", "name": "entry"},
+        })
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert json.loads((root / "proj/definitions/start/_card.json").read_text()) == {"type": "trigger"}
     finally:
         user.close()
     # A second open reuses the host and repeats no rules; create: true makes a new project.
