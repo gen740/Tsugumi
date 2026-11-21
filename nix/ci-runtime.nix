@@ -73,6 +73,7 @@ runCommand "tsugumi-ci-runtime"
       ${lib.optionalString stdenv.hostPlatform.isLinux "--set TSUGUMI_REMOTE_TEST_RAW_WORKER ${core}/bin/tsugumi-workerd"} \
       --set TSUGUMI_WORKER ${core}/bin/tsugumi-worker \
       --set TSUGUMI_WORKERD ${core}/bin/tsugumi-workerd \
+      --set TSUGUMI_CACHED ${core}/bin/tsugumi-cached \
       --set TSUGUMI_RPC_CLIENT ${core}/bin/tsugumi-rpc \
       --set TSUGUMI_CLI ${core}/bin/tsugumi \
       --set TSUGUMI_SDK_DIR ${core}/share/tsugumi/sdk \

@@ -1,6 +1,6 @@
 set(TSUGUMI_TEST_SUPPORT_DIR "" CACHE PATH "Install reusable core test build inputs")
 if(TSUGUMI_TEST_SUPPORT_DIR)
-  install(TARGETS tsugumi_trace_store tsugumi_trace_codec tsugumi_rpc_schema tsugumi_launch_paths tsugumi_worker_authorization tsugumi_runtime_support tsugumi_nix_store tsugumi_transport tsugumi_worker_values tsugumi_util tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_sdk_describe tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
+  install(TARGETS tsugumi_trace_store tsugumi_trace_codec tsugumi_rpc_schema tsugumi_launch_paths tsugumi_runtime_support tsugumi_nix_store tsugumi_transport tsugumi_worker_values tsugumi_util tsugumi_core tsugumi_document tsugumi_nix_eval tsugumi_host_core tsugumi_sdk_describe tsugumi_json tsugumi_workerd_support tsugumi_worker_protocol tsugumi_peer_tls
     ARCHIVE DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/lib)
   install(FILES ${PROJECT_SOURCE_DIR}/sdk/describe/input.hh DESTINATION ${TSUGUMI_TEST_SUPPORT_DIR}/include/tsugumi-sdk-describe)
   foreach(owner util protocol rpc rpc/tls tsugumid tsugumid/document tsugumid/runtime_support workerd workerd/nix)
