@@ -68,6 +68,7 @@ table Capabilities {
   // Zero means no advertised contract; writers explicitly send contract 12.
   worker_contract:uint;
   active_jobs:uint;
+  requires_filesystem:bool = true; requires_pid:bool = true;
 }
 // The host decides availability and supplies its reason; the core only carries it.
 table Target { id:string (required); available:bool; capabilities:Capabilities (required); grade:ulong; unavailable_reason:string; }

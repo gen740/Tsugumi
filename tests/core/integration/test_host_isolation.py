@@ -56,3 +56,44 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
         assert not escape.exists(), log
         assert secret.read_text() == "of this host", log
         assert "tampered" not in project_file.read_text(), log
+
+
+def test_linux_switches_and_named_grants(core_factory, tmp_path):
+    import os
+    import sys
+    import pytest
+
+    if sys.platform != "linux":
+        pytest.skip("Linux namespaces")
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "data").write_text("readable")
+    outside = tmp_path / "outside"
+    outside.write_text("outside")
+    original_pid = os.readlink("/proc/self/ns/pid")
+    original_ipc = os.readlink("/proc/self/ns/ipc")
+    scripts = {
+        "disabled": bash(
+            f'test "$UID" = {os.getuid()} && '
+            f'test "$(readlink /proc/self/ns/pid)" = "{original_pid}" && '
+            f'test "$(readlink /proc/self/ns/ipc)" = "{original_ipc}" && '
+            f'test -f "{outside}" && '
+            """printf '{"out":{"value":"open"}}' > "$TSUGUMI_OUTPUT" """,
+            outputs=TXT, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False}),
+        "enabled": bash(
+            'test "$UID" = 65534 && '
+            f'test "$(readlink /proc/self/ns/pid)" != "{original_pid}" && '
+            f'test "$(readlink /proc/self/ns/ipc)" != "{original_ipc}" && '
+            f'test ! -f "{outside}" && '
+            'test "$(cat "$TSUGUMI_GRANT_SAMPLE_DATA/data")" = readable && '
+            'if echo modified >> "$TSUGUMI_GRANT_SAMPLE_DATA/data"; then exit 1; fi; '
+            """printf '{"out":{"value":"isolated"}}' > "$TSUGUMI_OUTPUT" """,
+            outputs=TXT, grants={"hostPaths": [{"name": "sample-data", "path": str(shared)}]}),
+    }
+    root = tmp_path / "p"
+    write(root, scripts, [card(name, name) for name in scripts], [])
+    client = core_factory(project_root=root).connect()
+    for name in scripts:
+        run_id, status = run_and_wait(client, name)
+        assert status.state == RunState.succeeded, log_of(client, run_id, name, 2)
+    assert (shared / "data").read_text() == "readable"

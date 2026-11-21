@@ -42,6 +42,10 @@ struct WorkerSpawn {
   std::string store_path = "/nix/store";
   WorkerProgram program;
   std::string path;
+  std::vector<std::string> closure;
+  // Remote supervision knows this leaf and cleans it on interruption.
+  std::filesystem::path cgroup;
+  bool shared_vm = false;
   std::shared_ptr<WorkerSecrets> secrets;
   // The worker's own folder: work/, tmp/, out/, home/, inputs/, and
   // scripts/ for preRun / a bash run / postRun. Created with the worker
@@ -65,6 +69,7 @@ struct WorkerSpawn {
     std::string source;
     std::string target;
     bool write = false;
+    std::string name;
   };
   std::vector<Bind> binds;
   std::optional<uid_t> uid;
@@ -79,6 +84,10 @@ struct WorkerOutcome {
 // Whether a Card worker runs as its own uid on the host (folders it writes are
 // then handed to that uid when tsugumid is root): not under bubblewrap, whose
 // user namespace maps the Card's uid to tsugumid's own.
+auto worker_has_bwrap() -> bool;
+auto worker_limits_available() -> bool;
+auto worker_gui_available() -> bool;
+auto remove_card_cgroup(const std::filesystem::path& path) -> void;
 bool worker_uid_on_host();
 
 class WorkerProc {
@@ -98,6 +107,7 @@ class WorkerProc {
     std::string scratch;
     uint64_t call_id = 0;
     uint64_t lease = 0;
+    bool read_only_inputs = false;
     std::function<void()> clear;
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
@@ -130,6 +140,7 @@ class WorkerProc {
   std::string inputs_dir() const { return scratch_ + "/inputs"; }
   // Empties work/, tmp/ and the invocation input/output staging areas.
   void clear_scratch();
+  auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
@@ -145,6 +156,8 @@ class WorkerProc {
   int err_fd_ = -1;
   bool alive_ = false;
   std::string scratch_;
+  std::filesystem::path cgroup_;
+  bool read_only_inputs_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;

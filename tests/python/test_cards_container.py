@@ -180,10 +180,11 @@ def test_isolation(env):
              "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
     open_fs = ("set +e; fail=0; "
                "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
+               "[ ! -e /proc/1/root/control/server.ready ] || { echo 'control visible through proc'; fail=1; }; "
                "(read -r x < /control/server.ready) 2>/dev/null && { echo 'token readable'; fail=1; }; "
-               "[ \"$UID\" = 65534 ] || { echo \"uid $UID\"; fail=1; }; "
+               "[ \"$UID\" != 65534 ] || { echo \"uid $UID\"; fail=1; }; "
                "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
-    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox={"filesystem": False})}
+    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False})}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
     run_id, st = run_and_wait(c, "start")
     detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])

@@ -161,8 +161,8 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
 auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
                 const remote::InvocationJson& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
-                const stdfs::path& store, const WorkerStoreResult& env,
-                const WorkerProc::LogSink& log,
+                const stdfs::path& store, const stdfs::path& group,
+                const WorkerStoreResult& env, const WorkerProc::LogSink& log,
                 const WorkerProc::DisplaySink& display,
                 const fs::TransferProgress& progress, Secrets secrets)
     -> workerd::InvocationResult {
@@ -191,6 +191,8 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
     spawn.secrets = std::make_shared<WorkerSecrets>();
     spawn.secrets->values = std::move(secrets);
   }
+  spawn.closure = env.closure;
+  spawn.cgroup = group;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
   spawn.program.package = *run->package;
@@ -207,8 +209,7 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
                    job.identity,
                    {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
   spawn.network = job.network;
-  spawn.uid = 65534;
-  spawn.gid = 65534;
+  if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
   spawn.ro_paths = {input.string()};
   CardPath card;
   for (const auto* name : *call.card()->segments()) card.push_back(name->str());
@@ -239,6 +240,7 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
                        type(port->schema_bfbs(), port->root_type())});
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
+  spawn.secrets.reset();
   workerd::Invocation request;
   request.run_id = call.run_id()->str();
   request.card = card;
@@ -272,7 +274,7 @@ auto run_worker(const W::WorkerCall& call, const R::JobSpecT& job,
 
 namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void {
+            const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&
@@ -351,7 +353,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(
-        *call, *job, invocation, input, directory, store, environment, log,
+        *call, *job, invocation, input, directory, store, group, environment,
+        log,
         [&](const DisplayData& data) {
           display = wire::standalone_display(data);
         },

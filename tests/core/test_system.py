@@ -92,8 +92,8 @@ def registered_remote(monkeypatch, resource_limits):
     (False, {"executionService": "cluster"}, True),
     (False, {"executionService": "cluster", "grants": {"gui": True}}, False),
     (False, {"executionService": "cluster", "sandbox": {"filesystem": False}}, False),
-    (False, {"executionService": "cluster", "sandbox": {"pid": False, "ipc": False,
-                                                        "identity": False}}, True),
+    (False, {"executionService": "cluster", "sandbox": {"pid": False}}, False),
+    (False, {"executionService": "cluster", "sandbox": {"ipc": False, "identity": False}}, True),
     (False, {"executionService": "cluster", "grants": {"hostPaths": []}}, True),
     (False, {"executionService": "cluster", "grants": {"hostPaths": [{"path": "/data", "name": "data"}]}},
      False),
@@ -103,7 +103,7 @@ def registered_remote(monkeypatch, resource_limits):
       "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
     (True, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
     (False, {"executionService": "cluster", "sandbox": {"limits": {"cpu": 0.5, "memoryMiB": 256}}}, True),
-], ids=["unlimited", "gui", "no-filesystem", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
+], ids=["unlimited", "gui", "no-filesystem", "no-pid", "isolation-switches", "empty-host-folders", "nonempty-host-folders", "local-resources", "wrong-system", "remote-native", "unsupported-limits"])
 def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, valid):
     """The catalog describes services; live capabilities are checked during prepare."""
@@ -137,6 +137,10 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
     service = services[0]
     assert text(service.nativeSystem) == NATIVE
     assert not service.resourceLimits
+    guarantee = service.sandbox
+    assert guarantee.filesystem == (1 if sys.platform == "darwin" else 2)
+    assert guarantee.network == (1 if sys.platform == "darwin" else 2)
+    assert guarantee.pid == (0 if sys.platform == "darwin" else 2)
     assert service.maxJobs is None
     expected = {NATIVE}
     if sys.platform == "linux" and emulator_registered(FOREIGN):

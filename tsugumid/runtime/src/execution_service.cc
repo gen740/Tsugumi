@@ -4,6 +4,7 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <mutex>
 
 #include "history.hh"
 #include "run_scratch.hh"
@@ -11,6 +12,7 @@
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -49,6 +51,14 @@ auto LocalExecutionService::prepare(const Node& node,
                                     const std::filesystem::path& /*directory*/,
                                     BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
+  if (node.settings.sandbox.limits.limited() && !worker_limits_available())
+    throw Failed(FailureKind::unsupported,
+                 "sandbox.limits requires a delegated cgroup v2 subtree");
+  if (node.settings.grants.gui &&
+      (!service_.options().gcroots_dir.empty() || !worker_gui_available()))
+    throw Failed(FailureKind::unsupported,
+                 "grants.gui requires a native Linux worker with an available "
+                 "GUI socket");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native, node.settings.system.empty()
                                           ? native_system()
@@ -91,7 +101,9 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Cards run as nobody: switched to by root (container), or mapped in
   // bubblewrap's user namespace when tsugumid is not root (shared VM).
   std::optional<uid_t> uid;
-  if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
+  if (node.settings.sandbox.identity &&
+      (::geteuid() == 0 || worker_has_bwrap()))
+    uid = kCardUid;
   WorkerSpawn sp;
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
@@ -106,6 +118,23 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.program = {build.package, build.bash, build.pre_run, build.post_run,
                 build.views};
   sp.sandbox = node.settings.sandbox;
+  sp.shared_vm = !service_.options().gcroots_dir.empty();
+  sp.closure = build.environment.paths;
+#ifdef __linux__
+  if (sp.sandbox.filesystem && sp.worker_binary.starts_with("/nix/store/")) {
+    const auto end =
+        sp.worker_binary.find('/', std::string_view("/nix/store/").size());
+    const auto root = sp.worker_binary.substr(0, end);
+    if (std::ranges::find(sp.closure, root) == sp.closure.end()) {
+      std::lock_guard lock(closure_mutex_);
+      auto found = worker_closures_.find(root);
+      if (found == worker_closures_.end())
+        found = worker_closures_.emplace(root, NixStore::closure(root)).first;
+      sp.closure.insert(sp.closure.end(), found->second.begin(),
+                        found->second.end());
+    }
+  }
+#endif
   sp.uid = uid;
   sp.gid = uid;
   // Project data roots are used by the core to stage inputs, never mounted.
@@ -119,9 +148,9 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     if (e == "/run/rosetta/rosetta" && std::filesystem::is_socket(socket))
       sp.ro_paths.push_back(socket);
   }
-  if (!service_.options().control_dir.empty())
+  if (sp.shared_vm && !service_.options().control_dir.empty())
     sp.hidden_paths.push_back(service_.options().control_dir.string());
-  sp.hidden_paths.push_back(state_dir.string());
+  if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
   sp.network = node.settings.grants.network;
   sp.gui = node.settings.grants.gui;
   const std::string card_key = path_key(node.path);
@@ -137,7 +166,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
                        ") is not available here: it is missing on this Mac, or "
                        "the project must be opened again to share it",
                    {{"path", f.path}});
-    sp.binds.push_back({source, "/host/" + f.name, f.write});
+    sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
   // The resident worker of this Card, if it runs the same build under the same
@@ -173,14 +202,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.outputs = node.outputs;
   invocation.prepare_params = [&] {
     const auto ptype = NixRunner::params_type(node);
-    return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,
-                                         NixRunner::params_buffer(node),
-                                         build.bash || node.settings.language == "r"
-                                             ? std::optional(NixRunner::params_json(node, false))
-                                             : std::nullopt};
+    return workerd::InvocationParameters{
+        ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node),
+        build.bash || node.settings.language == "r"
+            ? std::optional(NixRunner::params_json(node, false))
+            : std::nullopt};
   };
   invocation.output_directory = request.directory / "out";
-  if (::geteuid() == 0 && worker_uid_on_host())
+  if (uid && ::geteuid() == 0 && worker_uid_on_host())
     invocation.output_owner = std::make_pair(kCardUid, kCardUid);
   invocation.cancel = &request.cancel;
   if (node.settings.timeout_seconds)

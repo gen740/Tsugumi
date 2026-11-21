@@ -79,6 +79,7 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
                                   {},
                                   0,
                                   1,
+                                  false,
                                   [] {},
                                   [](bool) {},
                                   [&] {

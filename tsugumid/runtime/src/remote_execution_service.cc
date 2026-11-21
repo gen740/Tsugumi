@@ -350,11 +350,13 @@ auto RemoteExecutionService::prepare(const Node& node,
                                      BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
   const auto& settings = node.settings;
-  if (!settings.sandbox.filesystem || settings.reuse_worker ||
-      settings.grants.gui || !settings.grants.host_paths.empty())
-    throw Failed(FailureKind::unsupported,
-                 "remote workers require filesystem isolation and do not "
-                 "support worker reuse, GUI or host path grants");
+  if (!settings.sandbox.filesystem || !settings.sandbox.pid ||
+      settings.reuse_worker || settings.grants.gui ||
+      !settings.grants.host_paths.empty())
+    throw Failed(
+        FailureKind::unsupported,
+        "remote workers require filesystem and PID isolation and do not "
+        "support worker reuse, GUI or host path grants");
   const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");

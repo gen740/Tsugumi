@@ -19,6 +19,7 @@ struct Spec {
   std::vector<std::string>
       env;  // "K=V"; the parent environment is never inherited
   std::string cwd;
+  std::string cgroup_procs;  // Linux: join before exec if supplied
   // Extra descriptors mapped into the child: {child_fd, parent_fd}.
   std::vector<std::pair<int, int>> fds;
   int stdout_fd = -1;  // parent fd to dup onto 1 (-1: /dev/null)

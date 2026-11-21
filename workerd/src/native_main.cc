@@ -5,7 +5,8 @@
 // as the invocation's logs.
 //
 // Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: lib/main.so; Card code loads inside its first invocation) or a bash script
+// package (--package: lib/main.so; Card code loads inside its first invocation)
+// or a bash script
 // (--run). preRun / postRun (--pre / --post) are bash and get no Card inputs;
 // the environment and working directory produced by preRun carry over. An
 // earlier failure is never cleared by a later step's success. One deadline
@@ -56,7 +57,6 @@
 #include "tsugumi/util/json.hh"
 #include "tsugumi/workerd/display.hh"
 #include "tsugumi/workerd/frame.hh"
-#include "tsugumi/workerd/protocol.hh"
 
 extern char** environ;
 
@@ -88,10 +88,10 @@ std::optional<std::string> read_frame(int fd) {
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
   std::lock_guard<std::mutex> l(g_write_mu);
   try {
-    frame::Write(kData,
-                 {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                  b.GetSize()},
-                 kMaxFrame);
+    frame::Write(
+        kData,
+        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+        kMaxFrame);
   } catch (const frame::Error&) {
   }
 }
@@ -138,9 +138,9 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 struct Options {
   std::string bash;
   std::string package;  // contains lib/main.so
-  std::string pre;   // a file with bash text
-  std::string run;   // a file with bash text (a bash body)
-  std::string post;  // a file with bash text
+  std::string pre;      // a file with bash text
+  std::string run;      // a file with bash text (a bash body)
+  std::string post;     // a file with bash text
 };
 
 struct Call {
@@ -832,6 +832,7 @@ class StepDirectory {
     if (::fchdir(previous_) != 0) ::_exit(126);
     ::close(previous_);
   }
+
  private:
   int previous_ = -1;
 };
@@ -898,8 +899,6 @@ auto invoke(tsugumi_call& call, tsugumi_phase phase, const char* name) -> bool {
   }
   return !g_call->failure;
 }
-
-
 
 // Inputs of a bash body: JSON files and File / Directory paths.
 void bash_inputs(const W::WorkerCall* m, const std::string& tmp,
@@ -1133,8 +1132,9 @@ void execute(const Options& opt, Call& call,
           flatbuffers::Verify(schema, *root, bytes->data(), bytes->size()))
         continue;
     }
-    record_failure(D::FailureKind::type_mismatch,
-                   "input " + input->name()->str() + " does not match its type");
+    record_failure(
+        D::FailureKind::type_mismatch,
+        "input " + input->name()->str() + " does not match its type");
     return;
   }
   std::string work = m->working_directory()->str();
@@ -1189,12 +1189,12 @@ void execute(const Options& opt, Call& call,
     auto pre_env = env;
     set_env(pre_env, "TSUGUMI_ENV_DUMP_FD", std::to_string(dump.writer()));
     // Sourced, so that its exports and `cd` can be read back afterwards.
-    int st = run_shell(
-        opt.bash,
-        {"-c",
-         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP_FD\"",
-         opt.pre},
-        pre_env, cwd, call, &timed_out);
+    int st = run_shell(opt.bash,
+                       {"-c",
+                        ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env "
+                        "\"$TSUGUMI_ENV_DUMP_FD\"",
+                        opt.pre},
+                       pre_env, cwd, call, &timed_out);
     auto dumped = dump.finish();
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preRun", st);
@@ -1217,13 +1217,16 @@ void execute(const Options& opt, Call& call,
                      "cannot enter working directory " + cwd);
     if (!call.failure) {
       auto c = make_call(call, work, tmp, out_dir);
-      if (!g_card_loaded && g_load_error.empty() && may_start("source loading")) {
+      if (!g_card_loaded && g_load_error.empty() &&
+          may_start("source loading")) {
         open_package(opt.package + "/lib/main.so");
         if (g_main) {
           if (!invoke(c, TSUGUMI_PREPARE, "language runtime initialization"))
-            g_load_error = "cannot initialize the language runtime (see stderr)";
+            g_load_error =
+                "cannot initialize the language runtime (see stderr)";
           pre_overrides.reapply();
-          if (g_load_error.empty() && !invoke(c, TSUGUMI_LOAD, "Card source loading"))
+          if (g_load_error.empty() &&
+              !invoke(c, TSUGUMI_LOAD, "Card source loading"))
             g_load_error = "Card source loading failed (see stderr)";
           g_card_loaded = true;
           std::fflush(stdout);
@@ -1233,7 +1236,8 @@ void execute(const Options& opt, Call& call,
       pre_overrides.reapply();
       if (!g_load_error.empty())
         record_failure(D::FailureKind::worker_failed, g_load_error);
-      if (!call.failure && may_start("run-start hook") && call.run_id != g_last_run)
+      if (!call.failure && may_start("run-start hook") &&
+          call.run_id != g_last_run)
         invoke(c, TSUGUMI_RUN_START, "onRunStart");
       g_last_run = call.run_id;
       if (!call.failure && may_start("main")) {
@@ -1330,6 +1334,11 @@ void control_loop() {
 
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
+  ::signal(
+      SIGTERM, +[](int number) {
+        if (const pid_t child = g_child.load()) ::kill(-child, SIGKILL);
+        ::_exit(128 + number);
+      });
   if (argc == 3 && std::string(argv[1]) == "--dump-env") {
     // Used after preRun to carry its environment into the next steps,
     // written to the worker's pipe.

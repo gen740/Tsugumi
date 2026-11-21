@@ -304,7 +304,7 @@ def deadline_spec(peer, job, budget_ms):
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
     invocation = peer.upload(job, json.dumps({
         "call_sha256": call_digest, "archive_sha256": archive_digest,
-        "files": [], "directories": [], "network": False, "implementation_index": 1,
+        "files": [], "directories": [], "implementation_index": 1,
     }).encode())
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,

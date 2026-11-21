@@ -44,6 +44,10 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       spec.argv = {binary_.string(), "--local", "3", scratch_.string()};
       spec.fds = {{3, pair[1]}};
       spec.stderr_fd = STDERR_FILENO;
+      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                               "TSUGUMI_CARD_CGROUP_ROOT"})
+        if (const auto* value = std::getenv(name))
+          spec.env.push_back(std::string(name) + "=" + value);
       if (trace::LaunchEnabled())
         spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
       try {
@@ -96,6 +100,8 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->worker_binary = spawn.worker_binary;
   target->bash = spawn.bash;
   target->path = spawn.path;
+  target->closure = spawn.closure;
+  target->shared_vm = spawn.shared_vm;
   if (spawn.secrets) {
     for (const auto& [name, value] : spawn.secrets->values) {
       auto entry = std::make_unique<Tsugumi::Worker::EnvVarT>();
@@ -128,6 +134,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     value->source = bind.source;
     value->target = bind.target;
     value->write = bind.write;
+    value->name = bind.name;
     target->binds.push_back(std::move(value));
   }
   LocalPacket reply;
@@ -141,6 +148,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       message.scratch,
       message.call_id,
       message.lease,
+      message.read_only_inputs,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },
       [this, id = message.lease](bool force) {
         command(L::Action::Terminate, id, force);

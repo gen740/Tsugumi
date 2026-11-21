@@ -491,11 +491,11 @@ class Builder {
         s.grants.host_paths.push_back({*path, *name, w && *w});
       }
     }
-    if (remote && (!s.sandbox.filesystem || s.reuse_worker || s.grants.gui ||
-                   !s.grants.host_paths.empty()))
+    if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
+                   s.grants.gui || !s.grants.host_paths.empty()))
       n.diags.push_back(
           diag(n.path, "invalid_setting",
-               "external execution requires filesystem isolation "
+               "external execution requires filesystem and PID isolation "
                "and does not support reuseWorker, GUI or host path grants"));
     read_params(n, def);
   }

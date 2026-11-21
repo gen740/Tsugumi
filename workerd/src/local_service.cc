@@ -31,6 +31,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.worker_binary = source.worker_binary;
           spawn.bash = source.bash;
           spawn.path = source.path;
+          spawn.closure = source.closure;
+          spawn.shared_vm = source.shared_vm;
           if (!source.secrets.empty()) {
             spawn.secrets = std::make_shared<WorkerSecrets>();
             for (auto& entry : source.secrets)
@@ -58,11 +60,13 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           if (source.uid) spawn.uid = *source.uid;
           if (source.gid) spawn.gid = *source.gid;
           for (const auto& bind : source.binds)
-            spawn.binds.push_back({bind->source, bind->target, bind->write});
+            spawn.binds.push_back(
+                {bind->source, bind->target, bind->write, bind->name});
           auto lease =
               pool.acquire(request.card, request.key, spawn, request.reuse);
           reply.lease = ++sequence;
           reply.reused = lease.reused;
+          reply.read_only_inputs = lease.worker->read_only_inputs();
           reply.replaced = lease.replaced;
           reply.scratch = std::filesystem::path(lease.worker->work_dir())
                               .parent_path()

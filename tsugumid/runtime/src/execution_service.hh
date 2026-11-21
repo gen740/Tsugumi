@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -120,6 +122,10 @@ class LocalExecutionService final : public ExecutionService {
  private:
   Service& service_;
   workerd::LocalWorkers workers_;
+#ifdef __linux__
+  std::mutex closure_mutex_;
+  std::map<std::string, std::vector<std::string>> worker_closures_;
+#endif
 };
 
 }  // namespace tsugumi

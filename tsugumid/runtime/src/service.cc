@@ -376,9 +376,59 @@ class SelectedExecution final : public PreparedExecution {
 }  // namespace
 
 namespace {
+auto unsupported_local_option(const Settings& settings,
+                              const RemoteTarget& target) -> std::string {
+#ifdef __linux__
+  if (settings.sandbox.filesystem && !target.namespace_isolation)
+    return "sandbox.filesystem requires a Linux worker with bubblewrap";
+#endif
+  if (settings.sandbox.limits.limited() && !target.resource_limits)
+    return "sandbox.limits requires a delegated cgroup v2 subtree";
+  if (settings.grants.gui && !target.gui)
+    return "grants.gui requires a native Linux worker with an available GUI "
+           "socket";
+  return {};
+}
+
+auto effective_local_options(const Settings& settings,
+                             const RemoteTarget& target) -> std::string {
+  std::vector<std::string_view> notes;
+  if (!settings.sandbox.filesystem) {
+    notes.push_back(
+        "host paths and GUI endpoints can be visible with filesystem isolation "
+        "off");
+#ifndef __APPLE__
+    if (!settings.grants.network)
+      notes.push_back(
+          "network isolation does not hide filesystem Unix sockets");
+#endif
+  }
+#ifdef __APPLE__
+  (void)target;
+  if (settings.sandbox.filesystem)
+    notes.push_back("Seatbelt filesystem isolation is partial");
+  if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
+  if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
+  if (settings.sandbox.identity)
+    notes.push_back("identity isolation unavailable");
+  if (settings.grants.network && settings.sandbox.filesystem)
+    notes.push_back("Seatbelt still restricts access to the local host");
+#else
+  if (!target.namespace_isolation && !settings.grants.network)
+    notes.push_back("network isolation unavailable");
+#endif
+  std::string message;
+  for (const auto note : notes) {
+    if (!message.empty()) message += ", ";
+    message += note;
+  }
+  return message;
+}
+
 auto supports_remote_options(const Settings& settings) -> bool {
-  return settings.sandbox.filesystem && !settings.reuse_worker &&
-         !settings.grants.gui && settings.grants.host_paths.empty();
+  return settings.sandbox.filesystem && settings.sandbox.pid &&
+         !settings.reuse_worker && !settings.grants.gui &&
+         settings.grants.host_paths.empty();
 }
 }  // namespace
 
@@ -405,11 +455,12 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           {target.id, target.grade,
            target.available &&
                (!capacity || worker_slots_[target.id] < capacity),
-           target.id == kLocalExecutionService ||
-               (supports_remote_options(node.settings) &&
-                (node.settings.execution_service != "auto" ||
-                 !node.settings.sandbox.limits.limited() ||
-                 target.resource_limits))});
+           target.id == kLocalExecutionService
+               ? unsupported_local_option(node.settings, target).empty()
+               : (supports_remote_options(node.settings) &&
+                  (node.settings.execution_service != "auto" ||
+                   !node.settings.sandbox.limits.limited() ||
+                   target.resource_limits))});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
@@ -511,6 +562,14 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
 
 auto Service::remote_targets(std::stop_token stop) const
     -> std::vector<RemoteTarget> {
+  const auto fill_local = [this](RemoteTarget& local) {
+    local.available = true;
+    local.native_system = native_system();
+    local.systems = NixRunner::execution_systems();
+    local.resource_limits = worker_limits_available();
+    local.namespace_isolation = worker_has_bwrap();
+    local.gui = opts_.gcroots_dir.empty() && worker_gui_available();
+  };
   try {
     auto targets = remote_jobs_.catalog(stop);
     auto local =
@@ -521,16 +580,12 @@ auto Service::remote_targets(std::stop_token stop) const
       targets.insert(targets.begin(), std::move(target));
       local = targets.begin();
     }
-    local->available = true;
-    local->native_system = native_system();
-    local->systems = NixRunner::execution_systems();
+    fill_local(*local);
     return targets;
   } catch (const std::exception&) {
     RemoteTarget local;
     local.id = kLocalExecutionService;
-    local.available = true;
-    local.native_system = native_system();
-    local.systems = NixRunner::execution_systems();
+    fill_local(local);
     return {std::move(local)};
   }
 }
@@ -552,26 +607,49 @@ auto Service::execution_diagnostic(const Node& node,
                      ? "execution service " + target.id + " is not available"
                      : target.unavailable_reason);
   };
+  const auto local_diagnostic =
+      [&](const RemoteTarget& target) -> std::optional<Diag> {
+    if (auto message = unsupported_local_option(settings, target);
+        !message.empty())
+      return error(std::move(message));
+    if (auto message = effective_local_options(settings, target);
+        !message.empty())
+      return Diag{false,
+                  "sandbox_effective_settings",
+                  std::move(message),
+                  node.path,
+                  {},
+                  {}};
+    return std::nullopt;
+  };
   if (settings.execution_service == "auto") {
     const RemoteTarget* blocked = nullptr;
+    const RemoteTarget* local = nullptr;
+    bool other = false;
     for (const auto& target : targets) {
       if (settings.worker_condition &&
           !settings.worker_condition->matches(target.grade))
         continue;
-      if (target.id != kLocalExecutionService &&
-          (!supports_remote_options(settings) ||
-           (settings.sandbox.limits.limited() && !target.resource_limits)))
+      if (target.id == kLocalExecutionService) {
+        local = &target;
         continue;
-      if (target.available) return std::nullopt;
+      }
+      if (!supports_remote_options(settings) ||
+          (settings.sandbox.limits.limited() && !target.resource_limits))
+        continue;
+      if (target.available) other = true;
       if (!blocked) blocked = &target;
     }
+    if (other) return std::nullopt;
+    if (local && local->available) return local_diagnostic(*local);
     if (blocked) return unavailable(*blocked);
-    return Diag{true,
-                "invalid_setting",
-                "no registered worker satisfies workerCondition",
-                node.path,
-                {},
-                {}};
+    return Diag{
+        true,
+        "invalid_setting",
+        "no registered worker supports the Card settings and workerCondition",
+        node.path,
+        {},
+        {}};
   }
   const auto target =
       std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
@@ -581,6 +659,7 @@ auto Service::execution_diagnostic(const Node& node,
     return error("execution service " + settings.execution_service +
                  " is not available");
   if (!target->available) return unavailable(*target);
+  if (target->id == kLocalExecutionService) return local_diagnostic(*target);
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
   // or checking resources.
@@ -1192,16 +1271,34 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   auto pj = b.CreateString(doc.project_json);
   auto lj = b.CreateString(doc.layout_json);
   std::vector<flatbuffers::Offset<R::ExecutionService>> services;
-  for (const auto& target : targets)
+  for (const auto& target : targets) {
+    const bool remote = target.id != kLocalExecutionService;
+    using Guarantee = R::IsolationGuarantee;
+    const auto namespaces = remote || target.namespace_isolation
+                                ? Guarantee::enforced
+                                : Guarantee::unavailable;
+    auto filesystem = namespaces;
+    auto network = namespaces;
+    bool host_paths = !remote && target.namespace_isolation;
+#ifdef __APPLE__
+    if (!remote) {
+      network = filesystem = Guarantee::partial;
+      host_paths = true;
+    }
+#endif
+    const auto sandbox = R::CreateSandboxCapabilities(
+        b, filesystem, namespaces, namespaces, namespaces, network, target.gui,
+        host_paths, remote, remote);
     services.push_back(R::CreateExecutionService(
         b, b.CreateString(target.id), b.CreateString(target.native_system),
         b.CreateVectorOfStrings(target.systems),
-        target.id == "local" ? R::ExecutionServiceKind::local
-                             : R::ExecutionServiceKind::remote_daemon,
+        remote ? R::ExecutionServiceKind::remote_daemon
+               : R::ExecutionServiceKind::local,
         target.available, target.resource_limits,
         target.max_jobs ? flatbuffers::Optional(target.max_jobs)
                         : flatbuffers::nullopt,
-        target.grade));
+        target.grade, sandbox));
+  }
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::String> view;
   flatbuffers::Offset<flatbuffers::String> vid;

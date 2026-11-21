@@ -41,11 +41,12 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/invocation.hh"
+#include "tsugumi/workerd/worker_proc.hh"
 
 extern char** environ;
 namespace tsugumi::workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void;
+            const stdfs::path& store, const stdfs::path& group) -> void;
 auto jobs_main(stdfs::path root, std::span<char*> args) -> int;
 namespace {
 using namespace std::chrono_literals;
@@ -123,24 +124,6 @@ auto cgroup_path(const stdfs::path& root, const Journal& journal,
   return root /
          ("tsugumi-" +
           crypto::sha256_hex(journal.root().string() + job).substr(0, 32));
-}
-auto remove_cgroup(const stdfs::path& path) -> void {
-  if (path.empty() || !stdfs::exists(path)) return;
-  try {
-    cgroup_write(path / "cgroup.kill", "1");
-  } catch (const std::exception&) {
-  }
-  std::error_code ec;
-  stdfs::remove(path, ec);
-}
-auto make_cgroup(const stdfs::path& path, const R::JobSpecT& spec) -> void {
-  remove_cgroup(path);
-  if (!stdfs::create_directory(path))
-    throw std::runtime_error("cannot create private job cgroup");
-  const auto quota = std::to_string(spec.cpu_millis * 1000) + " 1000000";
-  if (spec.cpu_millis) cgroup_write(path / "cpu.max", quota);
-  if (spec.memory_bytes)
-    cgroup_write(path / "memory.max", std::to_string(spec.memory_bytes));
 }
 auto supervisor_lock(const Journal& journal, const std::string& job) -> int {
   return ::open(journal.supervisor_lock_path(job).c_str(),
@@ -292,6 +275,9 @@ class Daemon {
         if (spec->system != system_)
           throw Error(R::ErrorCode::Rejected,
                       "job system is not supported by this worker");
+        if (!spec->pid)
+          throw Error(R::ErrorCode::Rejected,
+                      "remote execution requires PID isolation");
         if (!spec->filesystem)
           throw Error(R::ErrorCode::Rejected,
                       "remote execution requires filesystem isolation");
@@ -396,12 +382,12 @@ class Daemon {
           close_channel(*p, job);
           if (state.state == R::JobState::Running ||
               state.state == R::JobState::Cancelling) {
-            remove_cgroup(cgroup_path(config_.cgroup, *p, job));
+            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
             p->finish(job, R::JobState::Interrupted, {},
                       "execution supervisor ended without recording a result");
           }
           if (terminal(state.state)) {
-            remove_cgroup(cgroup_path(config_.cgroup, *p, job));
+            remove_card_cgroup(cgroup_path(config_.cgroup, *p, job));
           }
           p->clean_released(job);
           if (p->status(job).state == R::JobState::Queued)
@@ -615,11 +601,6 @@ auto supervise(const std::string& self, const stdfs::path& root,
     if (!spec->secrets.empty() && ::fcntl(kSecretChannelFd, F_GETFD) < 0)
       throw std::runtime_error("the job's Card secret channel is missing");
     fs::write_atomic(work / "spec.fb", bytes, 0600);
-    if (spec->cpu_millis || spec->memory_bytes) {
-      if (cgroup_root.empty())
-        throw std::runtime_error("resource limits require a delegated cgroup");
-      make_cgroup(group, *spec);
-    }
     Fd adapter(::open((work / "adapter.log").c_str(),
                       O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC, 0600));
     if (adapter.value < 0) throw std::runtime_error("cannot open adapter log");
@@ -632,15 +613,11 @@ auto supervise(const std::string& self, const stdfs::path& root,
         ::_exit(126);
       ::dup2(adapter.value, 1);
       ::dup2(adapter.value, 2);
-      if (spec->cpu_millis || spec->memory_bytes) {
-        int fd = ::open((group / "cgroup.procs").c_str(), O_WRONLY);
-        if (fd < 0 || ::write(fd, "0", 1) != 1) ::_exit(126);
-        ::close(fd);
-      }
       const auto blobs = directory / "blobs";
       ::execlp("unshare", "unshare", "--map-current-user", "--pid", "--fork",
                "--kill-child=SIGKILL", "--mount-proc", "--", self.c_str(),
-               "--invoke", work.c_str(), blobs.c_str(), store.c_str(), nullptr);
+               "--invoke", work.c_str(), blobs.c_str(), store.c_str(),
+               group.c_str(), nullptr);
       ::_exit(127);
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
@@ -676,7 +653,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {
     }
   }
-  remove_cgroup(group);
+  remove_card_cgroup(group);
   // Keep partial outputs and logs as well as imported blobs until release.
   // Stopping a supervisor frees its execution slot without deleting run data.
   journal.finish(job, outcome, result, diagnostic);
@@ -826,8 +803,8 @@ auto remote_workerd_main(int argc, char** argv) -> int {
   try {
     if (argc == 2 && std::string_view(argv[1]) == "--check-namespace")
       return ::getpid() == 1 ? 0 : 1;
-    if (argc == 5 && std::string_view(argv[1]) == "--invoke") {
-      invoke(argv[2], argv[3], argv[4]);
+    if (argc == 6 && std::string_view(argv[1]) == "--invoke") {
+      invoke(argv[2], argv[3], argv[4], argv[5]);
       return 0;
     }
     if (argc >= 2 && std::string_view(argv[1]) == "jobs")

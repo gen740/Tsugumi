@@ -8,6 +8,7 @@
 #include <string_view>
 
 #include "tsugumi/protocol/remote_worker_generated.h"
+#include "tsugumi/workerd/frame.hh"
 
 namespace tsugumi::workerd {
 namespace R = Tsugumi::RemoteWorker;
@@ -46,8 +47,6 @@ auto validate_log_limit(const R::JobSpecT& spec) -> void;
 // unique and at most 256.
 auto validate_secret_names(const R::JobSpecT& spec) -> void;
 // Overwrites and releases a buffer that held a Card secret value.
-auto wipe_secret(std::span<char> value) -> void;
-auto clear_secret(std::string& value) -> void;
 // The job's Card secrets travel from the listener to its invocation through
 // this inherited pipe descriptor, as one frame holding a CardSecrets reply.
 inline constexpr int kSecretChannelFd = 6;
