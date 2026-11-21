@@ -420,7 +420,7 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
 
         source = root / "local-template"
         (source / "start").mkdir(parents=True)
-        (source / "start/_card.json").write_text('{"type":"trigger"}')
+        (source / "start/_card.json").write_text('{"type":"draft","network":true}')
         add = {"family": "templates", "action": "add", "arguments": {
             "store": "project", "name": "added-via-mcp", "path": str(source),
         }}
@@ -431,6 +431,17 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         assert not error, text
         assert json.loads(text)["reply"] == "SaveResult"
         assert added.is_file()
+
+        guarded_copy = {"family": "templates", "action": "copy", "arguments": {
+            "store": "project", "name": "added-via-mcp",
+        }}
+        copied = root / "proj/definitions/start-2/_card.json"
+        allow_pending_access(mcp, "tools", guarded_copy, user)
+        assert not copied.exists()
+        text, error = mcp.call("tools", guarded_copy)
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert json.loads(copied.read_text()) == {"type": "draft", "network": True}
     finally:
         user.close()
     # A second open reuses the host and repeats no rules; create: true makes a new project.

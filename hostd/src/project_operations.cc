@@ -583,12 +583,18 @@ auto Prepare(
     double next_x = positions.empty() ? 0 : right - offset_x + 250;
     std::map<std::string, std::string> copied_ids;
     for (const auto& old : contents.cards) {
-      const auto result =
-          Value(call("card_id", {{"stem", json::Quote(CardStem(old))},
-                                 {"project_path", json::Quote(prefix)}}));
-      const auto id = json::Text(result, "id");
-      if (!valid_id(id))
-        throw Failure("unavailable", "No Card id was allocated");
+      auto allocate = [&] {
+        const auto result =
+            Value(call("card_id", {{"stem", json::Quote(CardStem(old))},
+                                   {"project_path", json::Quote(prefix)}}));
+        const auto id = json::Text(result, "id");
+        if (!valid_id(id))
+          throw Failure("unavailable", "No Card id was allocated");
+        return id;
+      };
+      const auto id = context.reserve_template_id
+                          ? context.reserve_template_id(old, allocate)
+                          : allocate();
       copied_ids.emplace(old, id);
       const auto to = prefix + "definitions/" + id + '/';
       empty(to);

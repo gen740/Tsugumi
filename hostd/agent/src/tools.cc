@@ -120,6 +120,29 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
   const auto& project = operation.project_id;
   auto resolved_context = context;
   resolved_context.host_templates = dependencies.host_templates;
+  if (context.origin == "agent" && operation.body.AsProjectTemplateCopy()) {
+    resolved_context.reserve_template_id = [&](const auto& source,
+                                               const auto& allocate) {
+      // Approval names the destination Card. Remember the core's
+      // reservation across retries of the same operation.
+      const auto scope =
+          "template-copy:" +
+          crypto::sha256_hex(project + '\n' + operation.op_id + '\n' + source);
+      {
+        std::lock_guard lock(mutex);
+        auto reserved = db.prepare("SELECT id FROM identifiers WHERE scope=?");
+        reserved.bind(1, scope);
+        if (reserved.step()) return reserved.text(0);
+      }
+      const auto id = allocate();
+      std::lock_guard lock(mutex);
+      db.prepare("INSERT INTO identifiers VALUES(?,?)")
+          .bind(1, scope)
+          .bind(2, id)
+          .run();
+      return id;
+    };
+  }
   if (context.origin == "ui")
     resolved_context.read_template_source = [&](const auto& source) {
       return host::ReadTemplateSource(source, stop);

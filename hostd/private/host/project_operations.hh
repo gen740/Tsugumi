@@ -37,6 +37,9 @@ struct OperationContext {
   std::filesystem::path host_templates = {};
   std::function<DocumentTemplate(const Tsugumi::Host::TemplateAddT&)>
       read_template_source = {};
+  std::function<std::string(const std::string&,
+                            const std::function<std::string()>&)>
+      reserve_template_id = {};
 };
 class ProjectOperations {
  public:
