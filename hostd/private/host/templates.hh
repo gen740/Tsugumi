@@ -26,7 +26,9 @@ auto BuiltinCard(Tsugumi::Host::BuiltinCard kind, const std::string& id)
 auto TemplateName(const std::string& name) -> bool;
 auto CheckTemplate(TemplateFiles files) -> DocumentTemplate;
 auto ReadTemplateSource(const Tsugumi::Host::TemplateAddT& request,
-                        std::stop_token stop) -> DocumentTemplate;
+                        std::stop_token stop,
+                        const TemplatePathCheck& check = {})
+    -> DocumentTemplate;
 auto ReadHostTemplate(const std::filesystem::path& store,
                       const std::string& name, const TemplatePathCheck& check)
     -> DocumentTemplate;

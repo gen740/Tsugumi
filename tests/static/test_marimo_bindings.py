@@ -36,7 +36,7 @@ def scaffold(tmp_path, monkeypatch):
     card = json.loads((tmp_path / '_card.json').read_text())
     params = {p['name']: p['data'].encode() if p['type'] == 'string' else p['data']
               for p in card['params']}
-    inputs = SimpleNamespace(data=SimpleNamespace(value=7.0), params=SimpleNamespace(**params))
+    inputs = SimpleNamespace(data=SimpleNamespace(source=7.0), params=SimpleNamespace(**params))
     contract = SimpleNamespace(
         ports=lambda: card['inputs'],
         input_object=lambda inputs, name: getattr(inputs, name),

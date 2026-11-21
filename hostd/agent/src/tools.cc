@@ -120,11 +120,10 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
   const auto& project = operation.project_id;
   auto resolved_context = context;
   resolved_context.host_templates = dependencies.host_templates;
-  resolved_context.read_template_source = [&](const auto& source) {
-    if (context.origin != "ui")
-      throw Failure("invalid_request", "Adding a template requires approval");
-    return host::ReadTemplateSource(source, stop);
-  };
+  if (context.origin == "ui")
+    resolved_context.read_template_source = [&](const auto& source) {
+      return host::ReadTemplateSource(source, stop);
+    };
   resolved_context.demo = [&](const auto& name) {
     const auto folder = demo_references.Project(name);
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
@@ -191,8 +190,9 @@ auto Tools::ListTemplates(const std::string& project, bool agent,
 }
 
 auto Tools::AddHostTemplate(const H::TemplateAddT& request,
-                            std::stop_token stop) -> void {
-  const auto contents = host::ReadTemplateSource(request, stop);
+                            std::stop_token stop,
+                            const host::TemplatePathCheck& check) -> void {
+  const auto contents = host::ReadTemplateSource(request, stop, check);
   std::lock_guard saving(save_mutex);
   host::AddHostTemplate(dependencies.host_templates, request.name, contents);
 }
@@ -1056,8 +1056,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
       call.name == "run_environment_paths") {
     if (!args.contains("limit")) args["limit"] = "8";
   }
-  if (call.name == "document_template")
-    throw Failure("invalid_request", "Choose a Card template from a store");
   if (call.name == "demo_list" || call.name == "demo_read") {
     const auto policy = Exclusions(project, stop);
     return {call.name == "demo_list"
@@ -1372,8 +1370,23 @@ auto Tools::ExecuteTool(const std::string& conversation,
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
   std::vector<std::string> file_resources;
-  if (call.name == "project_edit" || call.name == "project_connect" ||
-      call.name == "project_make_subgraph" || call.name == "project_layout") {
+  if (call.name == "template_list") {
+    const auto items = ListTemplates(project, true, stop);
+    std::vector<std::string> entries;
+    for (const auto& item : items.entries)
+      entries.push_back(json::Encode(json::Members{
+          {"name", json::Quote(item->name)},
+          {"store",
+           json::Quote(item->store == H::TemplateStore::Project ? "project"
+                                                                : "host")}}));
+    result = json::Encode(json::Members{
+        {"reply", json::Quote("TemplateList")},
+        {"value",
+         json::Encode(json::Members{{"entries", json::Encode(entries)}})}});
+  } else if (call.name == "project_edit" || call.name == "project_connect" ||
+             call.name == "project_make_subgraph" ||
+             call.name == "project_layout" || call.name == "template_copy" ||
+             call.name == "template_add" || call.name == "template_import") {
     result = EditProjectTool(conversation, project, call, args, op_id, boundary,
                              interrupted, stop);
   } else if (interrupted && spec->mutating) {
@@ -1509,7 +1522,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       } else if (call.name == "project_edit" ||
                  call.name == "project_connect" ||
                  call.name == "project_make_subgraph" ||
-                 call.name == "project_layout") {
+                 call.name == "project_layout" ||
+                 call.name == "template_copy") {
         result = EditProjectTool(conversation, project, call, args, op_id,
                                  boundary, false, stop);
       } else {
@@ -1855,6 +1869,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
       if (call.name == "project_shell" || call.name == "project_copy" ||
+          call.name == "template_add" || call.name == "template_import" ||
           call.name == "run_status" || call.name == "run") {
         if (file_calls.contains(shell_key))
           throw Failure("busy", "This tool call is already running");

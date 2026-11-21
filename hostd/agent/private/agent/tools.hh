@@ -64,7 +64,8 @@ struct Tools {
   auto ListTemplates(const std::string& project, bool agent, std::stop_token stop)
       -> Tsugumi::Host::TemplateListT;
   auto AddHostTemplate(const Tsugumi::Host::TemplateAddT& request,
-                       std::stop_token stop) -> void;
+                       std::stop_token stop,
+                       const host::TemplatePathCheck& check = {}) -> void;
   auto Specs(bool guide = false) -> std::vector<ToolSpec>;
   auto PrepareLayoutSave(const std::string& project, const std::string& args,
                          std::stop_token stop) -> std::string;

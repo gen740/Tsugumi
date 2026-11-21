@@ -242,8 +242,8 @@ auto CheckTemplate(TemplateFiles files) -> DocumentTemplate {
   return {std::move(files), {cards.begin(), cards.end()}};
 }
 
-auto ReadTemplateSource(const H::TemplateAddT& request, std::stop_token stop)
-    -> DocumentTemplate {
+auto ReadTemplateSource(const H::TemplateAddT& request, std::stop_token stop,
+                        const TemplatePathCheck& check) -> DocumentTemplate {
   if (!TemplateName(request.name))
     throw Failure("invalid_request", "Choose a valid template name");
   if (const auto* folder = request.source.AsTemplateFolder()) {
@@ -252,8 +252,10 @@ auto ReadTemplateSource(const H::TemplateAddT& request, std::stop_token stop)
       throw Failure("invalid_path", "Choose an absolute host folder path");
     // Canonicalize the parent (including system aliases such as /tmp on macOS).
     const auto normalized = path.lexically_normal();
-    return CheckTemplate(
-        Read(f::canonical(normalized.parent_path()), normalized.filename()));
+    if (check) check(normalized.string());
+    const auto parent = f::canonical(normalized.parent_path());
+    if (check) check((parent / normalized.filename()).string());
+    return CheckTemplate(Read(parent, normalized.filename(), check));
   }
   if (const auto* git = request.source.AsTemplateGit())
     return CheckTemplate(GitTemplate(*git, stop));

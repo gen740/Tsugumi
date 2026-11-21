@@ -138,6 +138,69 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   EXPECT_EQ(Read(disk / "tsugumi.json"), document);
 }
 
+TEST_F(AgentProjectFixture,
+       AgentTemplateWritesNeedApprovalAndRespectExclusions) {
+  const auto folder = directory.path / "picked-template";
+  Write(folder / "start/_card.json", R"({"type":"trigger"})");
+  Write(directory.path / "project/templates/private/start/_card.json",
+        R"({"type":"trigger"})");
+  StartProject(
+      false,
+      R"({"agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
+  const auto conversation = Conversation("agent-templates");
+  Grant(conversation);
+  Grant(conversation, Tsugumi::Service::Access::Write);
+
+  const auto arguments = tsugumi::json::Encode(
+      tsugumi::json::Members{{"store", Quote("project")},
+                             {"name", Quote("chosen")},
+                             {"path", Quote(folder.string())}});
+  const auto pending = Tool(conversation, "template_add", arguments, "add");
+  ASSERT_EQ(pending.Code(), "grant_required") << pending.View();
+  EXPECT_FALSE(
+      std::filesystem::exists(directory.path / "project/templates/chosen"));
+
+  const auto unapproved = Tool(
+      conversation, "project_edit",
+      R"({"edits":[{"file_path":"templates/other/start/_card.json","expect_missing":true,"put":"{}"}]})");
+  EXPECT_EQ(JsonString(JsonString(unapproved.View(), "/text"), "/value/kind"),
+            "permission_denied")
+      << unapproved.View();
+
+  const auto permit =
+      Call(*human, A::RequestPayload::AccessResolveRequest, [&](Builder& b) {
+        return A::CreateAccessResolveRequest(
+                   b, b.CreateString(pending.RequestId()), true)
+            .Union();
+      });
+  ASSERT_TRUE(permit.Code().empty());
+  const auto added = Tool(conversation, "template_add", arguments, "add");
+  ASSERT_TRUE(added.Code().empty()) << added.View();
+  EXPECT_EQ(JsonString(JsonString(added.View(), "/text"), "/reply"),
+            "SaveResult")
+      << added.View();
+  EXPECT_EQ(Read(directory.path / "project/templates/chosen/start/_card.json"),
+            R"({"type":"trigger"})");
+
+  const auto listed = Tool(conversation, "template_list", "{}");
+  ASSERT_TRUE(listed.Code().empty()) << listed.View();
+  const auto listing = JsonString(listed.View(), "/text");
+  EXPECT_EQ(JsonString(listing, "/value/entries/0/store"), "project");
+  EXPECT_EQ(JsonString(listing, "/value/entries/0/name"), "chosen");
+  EXPECT_EQ(listing.find("private"), std::string::npos);
+  const auto copied = Tool(
+      conversation, "tools",
+      R"({"family":"templates","action":"copy","arguments":{"store":"project","name":"chosen"}})");
+  EXPECT_EQ(JsonString(JsonString(copied.View(), "/text"), "/reply"),
+            "SaveResult")
+      << copied.View();
+  const auto hidden = Tool(conversation, "template_copy",
+                           R"({"store":"project","name":"private"})");
+  EXPECT_EQ(JsonString(JsonString(hidden.View(), "/text"), "/value/kind"),
+            "not_found")
+      << hidden.View();
+}
+
 TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
   StartProject();
   const auto first = Conversation("settings-first");

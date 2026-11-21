@@ -23,7 +23,8 @@ class AgentExclude {
                     bool recorded = false) const -> void;
   auto CheckContent(const std::string& raw) const -> void;
   auto CheckSave(const ::tsugumi::json::Members& plan, const SaveBase& base,
-                 const SourcePatches& patches = {}) const -> void;
+                 const SourcePatches& patches = {},
+                 bool allow_template_writes = false) const -> void;
   auto Filter(const std::string& raw, const std::string& prefix = "",
               bool recorded = false) const -> std::string;
   auto ProjectText(const std::string& raw, const std::string& prefix = "") const

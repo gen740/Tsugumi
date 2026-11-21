@@ -1,5 +1,7 @@
 # Writing Cards
 
+Stored templates are listed by template_list. Copy one with tools family templates action copy, supplying the exact store and name. For custom Cards, use project_edit to create definitions, schemas, sources and wiring together.
+
 Read with demo_read reference/cards.md. Paths below are repository files; demo_read takes them without demos/
 (en/report/definitions/generate/default.nix).
 
@@ -250,33 +252,8 @@ and its sources in src/. Choose the SDK in default.nix. Use input_types to read 
           low = inputs.params.low                    # param "low"
           report.text(f"Input: {path}; lower bound: {low}")
           return {"images": {"value": run.output_directory}}
-  The whole SDK (Inputs, Report and Run; generated from their source):
-    inputs.<port>, inputs.params.<field> (read-only generated objects)
-    return {port: generated_object_or_bytes}
-    inputs.params
-    inputs.has_input(port: str)
-    inputs.input_bytes(port: str)
-    inputs.input(port: str, cls: Any)
-    report.text(text: str)
-    report.markdown(text: str)
-    report.scalar(value: float, label: str)
-    report.line_chart(series: Iterable[dict])
-    report.table(columns: list, rows: Iterable[Iterable])
-    report.image(data: bytes, media_type: str='image/png', alt: str='')
-    report.points(x, y, z, colors=None)
-    report.figure(*figures, wait: Optional[float]=None)
-    report.module(module: str, config, blobs=None)
-    report.log(message: str)
-    run.run_id
-    run.card
-    run.invocation
-    run.working_directory
-    run.temporary_directory
-    run.output_directory
-    run.cancelled()
-    run.remaining_ms()
-    tsugumi.builder(size=1024)
-    tsugumi.message(value, root=None)
+  Read the chosen SDK's API documentation and generated types in the Card's build environment before using them.
+  For Python examples, see the Python section of docs/CardGuide.md and the complete demo sources.
   raise tsugumi.Failure("output_invalid", "why") to fail with a reason; report.log writes a log line.
   Return one output mapping. Call Report methods to show updates during the invocation.
   Use report.figure(fig) for Matplotlib, Plotly and Altair. report.figure() renders open Matplotlib figures
@@ -284,8 +261,7 @@ and its sources in src/. Choose the SDK in default.nix. Use input_types to read 
   Plotly/Altair interactive plots carry at most 1 MiB of JSON, data inline.
   HOME, XDG_CONFIG_HOME and XDG_CACHE_HOME are writable folders of the worker (libraries such as astropy and
   matplotlib need nothing more).
-* marimo: use the shared marimo notebook starting point (ui/shared/templates/marimo.py; demo_read
-  en/marimo/definitions/notebook/src/main.py and src/notebook.py). It is an ordinary Python Card with
+* marimo: read the notebook demo (demo_read en/marimo/definitions/notebook/src/main.py and src/notebook.py). It is an ordinary Python Card with
   ps.marimo in pythonCard packages and reuseWorker: false. Keep the notebook in src/notebook.py;
   the bindings JSON maps notebook variables to inputs.<port>.<field> or param.<field>, e.g.
   {"source":"inputs.data.source","factor":"param.factor"}. Supply every variable of an overridden cell.
