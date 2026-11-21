@@ -1,6 +1,7 @@
 #include "history.hh"
 
 #include <fcntl.h>
+#include <flatbuffers/reflection.h>
 #include <unistd.h>
 
 #include <algorithm>
