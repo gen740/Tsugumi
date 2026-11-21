@@ -4,7 +4,6 @@ import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
-import { bool, get } from '../../shared/json'
 import { describeValue } from '../wire/flatjson'
 import { D, R, s, segs, sOpt } from '../wire/rpc'
 import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
@@ -396,13 +395,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       </Empty>
     )
   }
-  if (!runs.length) {
-    const retains = bool(session.cardSetting(cardKey, 'retainArtifact')) ?? bool(get(session.project, 'retainArtifact')) ?? false
-    return (
-      <Empty title={L('保持された成果物はありません')} icon="shippingbox"
-        description={retains ? L('成果物を保持する設定です。実行すると、ここに残ります。') : L('この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。')} />
-    )
-  }
+  if (!runs.length) return <Empty title={L('保持された成果物はありません')} icon="shippingbox" />
 
   const q = search.toLowerCase()
   const mark = runMark(runs.find(r => s(r.status?.runId) === runId))

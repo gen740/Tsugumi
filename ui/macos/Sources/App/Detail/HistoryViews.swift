@@ -558,10 +558,7 @@ struct CardArtifactsView: View {
           Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
-        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool ?? session.project["retainArtifact"]?.bool ?? false
-        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox",
-                               description: Text(retains ? "成果物を保持する設定です。実行すると、ここに残ります。"
-                                                         : "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。"))
+        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox")
       } else {
         content
       }

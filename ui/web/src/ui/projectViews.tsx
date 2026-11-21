@@ -333,8 +333,12 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
     if (changedLogLimit) after.set('logLimitBytes', num(Number(logLimit)))
     if (!await revisionEdit.apply(session, x => x.appendEdits([x.jsonEdit('tsugumi.json', before, after)]))) return
     setSelectedProject(after)
-    setRecording(current => Object.fromEntries(recordingKeys.map(k =>
-      [k, current[k] === recording[k] ? projectRecording(after)[k] : current[k]])) as typeof recordingDefaults)
+    const saved = projectRecording(after)
+    setRecording(current => {
+      const next = { ...current }
+      for (const k of recordingKeys) if (current[k] === recording[k]) next[k] = saved[k]
+      return next
+    })
     setLogLimit(current => current === logLimit ? projectLogLimit(after) : current)
     setPkgs(current => current === pkgs ? str(get(after, 'pkgsPath')) ?? '' : current)
     setVersionPaths(current => current === versionPaths ? paths.join('\n') : current)
@@ -383,7 +387,8 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
         </Form>
       </div>
-      <RevisionEditNotice edit={revisionEdit} text={() => `name: ${name}\npkgsPath: ${pkgs}\nversionPaths:\n${versionPaths}\nagentExclude:\n${agentExclude}`}
+      <RevisionEditNotice edit={revisionEdit} text={() => [`name: ${name}`, `pkgsPath: ${pkgs}`, `versionPaths:\n${versionPaths}`, `agentExclude:\n${agentExclude}`,
+        ...recordingKeys.map(k => `${k}: ${recording[k]}`), `logLimitBytes: ${logLimit}`].join('\n')}
         overwrite={() => void save(true)} reload={load} />
       <div className="detail-foot">
         {message && <span className="callout secondary selectable">{message}</span>}

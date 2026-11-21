@@ -356,8 +356,11 @@ private struct GeneralProjectSettings: View {
         NixSourceSettings(session: session)
       }
       .formStyle(.grouped)
-      RevisionEditNotice(edit: revisionEdit, text: { "name: \(name)\npkgsPath: \(pkgs)\nversionPaths:\n\(versionPaths)\nagentExclude:\n\(agentExclude)" },
-                         overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
+      RevisionEditNotice(edit: revisionEdit, text: {
+        (["name: \(name)", "pkgsPath: \(pkgs)", "versionPaths:\n\(versionPaths)", "agentExclude:\n\(agentExclude)"] +
+          recording.sorted(by: { $0.key < $1.key }).map { "\($0.key): \($0.value)" } +
+          ["logLimitBytes: \(logLimit)"]).joined(separator: "\n")
+      }, overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
         .padding(.horizontal, 12)
       HStack {
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
