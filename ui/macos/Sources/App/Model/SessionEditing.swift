@@ -166,7 +166,7 @@ extension ProjectSession {
     let body = Tsugumi_Host_ProjectSelectionT()
     body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/")); body.action = action
     body.cards = cards.map { layoutKey($0) }.sorted(); body.notes = notes.sorted()
-    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y; body.scene = layoutScene(scope)
+    body.connectionsJson = connections.map { JSONValue.array($0).serialized() }; body.x = point.x; body.y = point.y
     _ = enqueueOperation(.projectselection, body: body)
   }
 

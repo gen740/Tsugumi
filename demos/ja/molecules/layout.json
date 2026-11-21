@@ -41,37 +41,5 @@
       "width": 620,
       "height": 500
     }
-  ],
-  "displays": {
-    "properties": {
-      "x": 460,
-      "y": 200,
-      "width": 700,
-      "height": 540
-    },
-    "lipinski": {
-      "x": 1380,
-      "y": 200,
-      "width": 620,
-      "height": 540
-    },
-    "chemspace": {
-      "x": 2040,
-      "y": 200,
-      "width": 640,
-      "height": 460
-    },
-    "similarity": {
-      "x": 1380,
-      "y": 980,
-      "width": 640,
-      "height": 540
-    },
-    "structures": {
-      "x": 1380,
-      "y": 1800,
-      "width": 880,
-      "height": 510
-    }
-  }
+  ]
 }

@@ -41,43 +41,5 @@
       "width": 760,
       "height": 520
     }
-  ],
-  "displays": {
-    "penguins": {
-      "x": 460,
-      "y": 130,
-      "width": 300,
-      "height": 170
-    },
-    "correlate": {
-      "x": 1020,
-      "y": -70,
-      "width": 560,
-      "height": 230
-    },
-    "figure": {
-      "x": 1600,
-      "y": -70,
-      "width": 620,
-      "height": 440
-    },
-    "survey": {
-      "x": 1020,
-      "y": 390,
-      "width": 620,
-      "height": 440
-    },
-    "admissions": {
-      "x": 460,
-      "y": 1030,
-      "width": 680,
-      "height": 330
-    },
-    "applications": {
-      "x": 1200,
-      "y": 1030,
-      "width": 620,
-      "height": 440
-    }
-  }
+  ]
 }

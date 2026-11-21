@@ -41,37 +41,5 @@
       "width": 660,
       "height": 560
     }
-  ],
-  "displays": {
-    "trajectories": {
-      "x": 1380,
-      "y": -620,
-      "width": 700,
-      "height": 380
-    },
-    "stationary": {
-      "x": 1380,
-      "y": -216,
-      "width": 700,
-      "height": 360
-    },
-    "scaling": {
-      "x": 1380,
-      "y": 168,
-      "width": 790,
-      "height": 370
-    },
-    "binding": {
-      "x": 1380,
-      "y": 562,
-      "width": 700,
-      "height": 360
-    },
-    "check": {
-      "x": 800,
-      "y": 960,
-      "width": 760,
-      "height": 500
-    }
-  }
+  ]
 }

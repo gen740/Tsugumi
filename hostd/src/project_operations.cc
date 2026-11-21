@@ -211,16 +211,15 @@ auto Prepare(
     graph["cards"] = json::Encode(cards);
     root["canvas"] = json::Encode(graph);
     put(prefix + "tsugumi.json", json::Encode(root));
-    for (const auto& field : {"displays", "boundaries"}) {
-      auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                                 prefix + "layout.json");
-      if (!layout.contains(field)) continue;
-      auto entries =
-          json::Object(layout.at(field), prefix + "layout.json." + field);
+    auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
+                               prefix + "layout.json");
+    if (layout.contains("boundaries")) {
+      auto entries = json::Object(layout.at("boundaries"),
+                                  prefix + "layout.json.boundaries");
       std::erase_if(entries, [&](const auto& entry) {
         return entry.first == id || entry.first.starts_with(id + '/');
       });
-      layout[field] = json::Encode(entries);
+      layout["boundaries"] = json::Encode(entries);
       put(prefix + "layout.json", json::Encode(layout));
     }
     if (!automatic) write_position(id, std::to_string(x), std::to_string(y));
@@ -378,7 +377,7 @@ auto Prepare(
             root["boundary"] = json::Encode(boundary);
           auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
                                      prefix + "layout.json");
-          for (const auto& field : {"cards", "displays", "boundaries"}) {
+          for (const auto& field : {"cards", "boundaries"}) {
             if (!layout.contains(field)) continue;
             auto values =
                 json::Object(layout.at(field), prefix + "layout.json." + field);
@@ -403,28 +402,6 @@ auto Prepare(
             });
             layout["notes"] = json::Encode(notes);
           }
-          auto displays = json::Object(json::Get(layout, "displays", "{}"),
-                                       prefix + "layout.json.displays");
-          for (const auto& id : selection->frames) {
-            if (ids.contains(id)) continue;
-            auto frame = json::Object(json::Get(displays, id, "{}"),
-                                      prefix + "layout.json.displays." + id);
-            if (selection->scene) {
-              for (const auto& box : selection->scene->frames) {
-                if (!box || box->id != id) continue;
-                for (const auto& [field, value] : {std::pair{"x", box->x},
-                                                   {"y", box->y},
-                                                   {"width", box->width},
-                                                   {"height", box->height}})
-                  if (!frame.contains(field))
-                    frame[field] = std::to_string(value);
-              }
-            }
-            frame["hidden"] = "true";
-            displays[id] = json::Encode(frame);
-          }
-          if (!selection->frames.empty())
-            layout["displays"] = json::Encode(displays);
           if (layout.contains("groups")) {
             auto groups =
                 json::Array(layout.at("groups"), prefix + "layout.json.groups");
@@ -665,7 +642,7 @@ auto Prepare(
       return std::find(subgraph->cards.begin(), subgraph->cards.end(), id) !=
              subgraph->cards.end();
     };
-    for (const auto& field : {"cards", "displays", "boundaries"}) {
+    for (const auto& field : {"cards", "boundaries"}) {
       auto entries = json::Object(json::Get(outer_layout, field, "{}"),
                                   prefix + "layout.json." + field);
       std::erase_if(entries, [&](const auto& entry) {

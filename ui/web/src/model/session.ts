@@ -1669,7 +1669,7 @@ export class ProjectSession extends Observable {
 
   /** Places a definition folder no Card uses as its Card (the same name). */
   placeDefinition(id: string, at: { x: number; y: number }): CardKey {
-    this.selectOperation(H.ProjectSelectionAction.Place, [], [key([id])], [], [], undefined, at)
+    this.selectOperation(H.ProjectSelectionAction.Place, [], [key([id])], [], undefined, at)
     return key([id])
   }
 
@@ -1677,8 +1677,8 @@ export class ProjectSession extends Observable {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
     void this.operate(H.ProjectOperationBody.ProjectSelection, new H.ProjectSelectionT(prefix.replace(/\/$/, ''), action,
-      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(), [],
-      connections ? serialize(connections) : null, at.x, at.y, sceneRequest(this.layoutScene(scope)))).catch(e => this.cardEditFailed(e))
+      [...cards].map(k => this.layoutKey(k)).sort(), [...notes].sort(),
+      connections ? serialize(connections) : null, at.x, at.y)).catch(e => this.cardEditFailed(e))
   }
 
   deleteSelection(cards: Set<CardKey>, notes: Set<string>, scope: string[]) {
@@ -1880,7 +1880,7 @@ export class ProjectSession extends Observable {
   }
 
   removeConnections(list: J[], scope: string[]) {
-    if (list.length) this.selectOperation(H.ProjectSelectionAction.RemoveConnections, scope, [], [], [], list)
+    if (list.length) this.selectOperation(H.ProjectSelectionAction.RemoveConnections, scope, [], [], list)
   }
 
   disconnect(k: CardKey, inputs: boolean, scope: string[]) {
@@ -2105,7 +2105,7 @@ export class ProjectSession extends Observable {
         at: this.boundaryPosition(scope, side),
       }
     }
-    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, frames: [], notes, inputs: bar('inputs'), outputs: bar('outputs') }
+    return { flow: this.flow, grid: prefs.gridSize, snap: prefs.showGrid, cards, wires, notes, inputs: bar('inputs'), outputs: bar('outputs') }
   }
 
 
@@ -2464,7 +2464,7 @@ export class ProjectSession extends Observable {
     if (prefix === undefined) return
     const local = (keys: Set<CardKey>) => [...keys].map(k => this.layoutKey(k)).sort()
     try {
-      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), [], dx, dy, snap, sceneRequest(this.layoutScene(scope))))
+      await this.operate(H.ProjectOperationBody.ProjectMove, new H.ProjectMoveT(prefix.replace(/\/$/, ''), local(cards), [...notes].sort(), dx, dy, snap, sceneRequest(this.layoutScene(scope))))
     } catch (e) { this.cardEditFailed(e) }
   }
 

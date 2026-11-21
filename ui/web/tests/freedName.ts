@@ -1,9 +1,9 @@
 import { cardIds } from './cardIds'
 // A name a Card has had can be taken again: the new Card (the next Draft)
-// starts without that Card's result and frame.
+// starts without that Card's result.
 import assert from 'node:assert/strict'
 import type { ProjectSession as Session } from '../src/model/session'
-import { parse, num } from '../shared/json'
+import { parse } from '../shared/json'
 
 // The session's module reads the page when it loads, and listens to the server.
 const page = globalThis as Record<string, unknown>
@@ -19,15 +19,7 @@ const session = (cards: string[]) => {
   s.layout = parse('{}')
   return s
 }
-const framed = async (s: Session, k: string) => {
-  s.updateDisplayFrame(k, (d) => {
-    d.set('x', num(700))
-    d.set('y', num(700))
-    d.set('width', num(300))
-    d.set('height', num(200))
-  })
-  await s.save()
-  assert.equal(s.saveError, undefined)
+const rememberResult = (s: Session, k: string) => {
   s.displays.set(k, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'old' } })
   s.cardStates.set(k, { state: 2, invocation: 1n, stages: [], cached: false, workerReused: false, sent: new Set(), sentInRun: new Set() })
 }
@@ -44,23 +36,23 @@ const clean = (s: Session, k: string) => {
   // A Card goes (a delete, a rename, the Agent's save): its result goes with it.
   const s = session(['b', 'other'])
   resolved(s, ['b', 'other'])
-  await framed(s, 'b')
-  await framed(s, 'other')
+  rememberResult(s, 'b')
+  rememberResult(s, 'other')
   resolved(s, ['other'])
   assert.equal(s.displays.has('b'), false)
   assert.equal(s.displays.has('other'), true, 'the other Cards keep theirs')
 }
 
 {
-  // A frame left under the name (a Card in Card's layout, a file written by hand). The next Draft takes the name.
+  // A deleted Card leaves its name available to the next Draft.
   const s = session(['renamed'])
   resolved(s, ['b'])
-  await framed(s, 'b')
+  rememberResult(s, 'b')
   resolved(s, ['renamed'])
   const k = await s.addCard('draft', [], { x: 0, y: 0 }, 'b')
   assert.equal(k, 'b')
   clean(s, k)
-  // Undo removes the new Card. Orphan frames are normalized by the host.
+  // Undo removes the new Card.
   await s.undo()
   assert.equal(s.instance('b'), undefined, s.saveError)
 }
@@ -69,7 +61,7 @@ const clean = (s: Session, k: string) => {
   // Before the core has answered: the result is still here when the Card comes.
   const s = session([])
   resolved(s, ['draft'])
-  await framed(s, 'draft')
+  rememberResult(s, 'draft')
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
@@ -80,7 +72,7 @@ const clean = (s: Session, k: string) => {
   // A Draft under a name free of all that is left alone, and so is what others have.
   const s = session(['a'])
   resolved(s, ['a'])
-  await framed(s, 'a')
+  rememberResult(s, 'a')
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
@@ -91,18 +83,18 @@ const clean = (s: Session, k: string) => {
   // Copies of Cards start clean too.
   const s = session([])
   const a = await s.addCard('python', [], { x: 0, y: 0 }, 'a')
-  await framed(s, 'a-2')
+  rememberResult(s, 'a-2')
   const made = await s.duplicate(new Set([a]), [])
   assert.deepEqual([...made], ['a-2'])
   clean(s, 'a-2')
 }
 {
-  // Put where another Card is, as E does: it goes to a free place, without the old frame.
+  // Put where another Card is, as E does: it goes to a free place.
   const s = session([])
   const here = { x: 4000, y: 4000 }
   const occupied = await s.addCard('draft', [], here, 'occupied')
   resolved(s, ['b', 'occupied'])
-  await framed(s, 'b')
+  rememberResult(s, 'b')
   const k = await s.addCard('draft', [], here, 'b', true)
   assert.equal(k, 'b')
   clean(s, k)

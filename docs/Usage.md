@@ -126,7 +126,7 @@ An interrupted conversation stays interrupted when opened, refreshed, reconnecte
 
 ### Canvas presentation
 
-Card, output-frame and note positions change when you move them, choose **Arrange**,
+Card and note positions change when you move them, choose **Arrange**,
 or ask the Agent to change the layout. Showing the Agent's saves or run outputs
 never rearranges the canvas. A new Card is placed when it is created.
 

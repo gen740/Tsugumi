@@ -191,7 +191,7 @@ auto AgentExclude::Filter(const std::string& raw, const std::string& prefix,
       value = j::Quote(ProjectText(j::String(value), prefix));
     else if (key == "layout_json") {
       auto layout = j::Object(j::String(value));
-      for (const auto* field : {"cards", "displays", "boundaries"})
+      for (const auto* field : {"cards", "boundaries"})
         if (layout.contains(field)) {
           auto entries = j::Object(layout.at(field));
           std::erase_if(entries, [&](const auto& entry) {
