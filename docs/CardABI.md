@@ -42,7 +42,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 - An output file is a regular file, not a link, under the Card's working directory.
   - Paths under `TMPDIR` and granted paths are not accepted.
   - A Directory output is a directory under the working directory that contains only regular files.
-- **Forward** is allowed. When a Card returns an input path unchanged, the path is accepted, the original stored path is recorded, and nothing is copied. A symlink that resolves to an input is rejected.
+- **Forward** is allowed. When a Card returns an input path unchanged, the path is accepted, the original stored path is recorded, and nothing is copied. Forwarded input paths are excluded from the snapshot copy below, so only newly created outputs are copied. A symlink that resolves to an input is rejected.
 
 **Today.**
 
@@ -55,18 +55,22 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 - If the result is a failure, its outputs are discarded.
 - A missing required output fails with `output_invalid`.
-- Output data become stored run data at the moment `tsugumid` accepts them.
+- Output data become stored run data at the moment `tsugumid` accepts them, and part of the run's record. How long they are kept follows the existing rule ([Philosophy](Philosophy.md#a-laboratory-notebook-and-who-decides-what-is-kept)):
+  - the last run is kept by default;
+  - older runs are kept only when a person keeps them explicitly;
+  - only a person deletes.
 - The collection order is part of the contract:
   1. The result is received.
-  2. The worker copies every output out as a snapshot. A reflink is allowed; a rename or a hardlink is not.
+  2. The worker copies every newly created output out as a snapshot. A reflink is allowed; a rename or a hardlink is not.
   3. Only then may the worker clear scratch, send the next call, or be destroyed.
-- A Card thread that is still writing when the result is collected gets a snapshot of that moment. The SDK documentation tells authors to finish writing before they return.
+- A snapshot is a copy of each file, taken at collection time. There is no atomic guarantee across a directory: a Card thread that is still writing gets whatever each file holds when it is copied. The SDK documentation requires the Card to finish writing before it returns.
 - Each call has budgets for its total output bytes and for its number of entries.
 - Remote workers follow the same rules.
+- Clearing scratch after a call no longer clears the working directory (`work/`).
 
 **Today.**
 
-- `WorkerProc::clear_scratch` empties the work, temporary, output and input folders after each call (`workerd/src/worker_proc.cc`). Under this contract it must stop clearing the working directory (`work/`).
+- `WorkerProc::clear_scratch` empties the work, temporary, output and input folders after each call (`workerd/src/worker_proc.cc`).
 - The result frame is limited to 16 MiB ([Building results](CardGuide.md#building-results)). There is no budget for entry count.
 
 ## Effects and their lifetimes
@@ -78,11 +82,11 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
   - **`cancelled`**;
   - **`remaining_ms`**.
 - Cancellation state is process-global, not thread-local.
-- `tsugumid` wraps each display with the Card's and the run's identity; the worker does not. `WorkerCall` drops `run_id` and `invocation`.
+- `tsugumid` wraps each display with the Card's and the run's identity; the worker does not. `WorkerCall` drops `run_id`, `invocation` and the Card's identity: the worker needs none of them.
 - Lifetimes:
-  - The display callback stays valid for the life of the process.
-  - `host` and the other effects are valid only during the call.
-  - Outside a call, `cancelled` is true and `remaining_ms` is 0.
+  - The `display` callback stays valid for the life of the process.
+  - `host` and the ABI callbacks `cancelled` and `remaining_ms` may be called only during a call.
+  - Outside a call, the SDK globals `cancelled()` and `remaining_ms()` return true and 0 without calling the host.
 
 **Today.**
 

@@ -75,11 +75,14 @@ What an SDK might otherwise have described lives elsewhere:
 - The core manages the list: it stores, lists and copies templates, and imports them from git.
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
 - Scaffolding a new Card is the Agent's job.
+- These are removed:
+  - the fixed language lists;
+  - `ui/shared/templates`.
 
-**Today.** These are to be removed:
+**Today.**
 
-- the fixed language lists, such as `language` in `_card.json` ([Code Card settings](CardGuide.md#code-card-settings));
-- [ui/shared/templates](../ui/shared/templates/), which holds one scaffold per language.
+- `language` in `_card.json` is a fixed list ([Code Card settings](CardGuide.md#code-card-settings)).
+- [ui/shared/templates](../ui/shared/templates/) holds one scaffold per language.
 
 ## Displays in the UI
 
@@ -89,9 +92,9 @@ What an SDK might otherwise have described lives elsewhere:
 - The native renderers are removed: `ui/web/src/ui/display.tsx`, `DisplayContent` and `PointCloudView` in the Mac app's `CanvasItems.swift`, and `TablePage`.
 - The module contract:
   - The host hands the module one root element plus the data, and the module draws freely.
-  - The only convention is a DOM event on the root element when new data arrive. The module listens for it if it wants.
+  - The only convention is an update event when new data arrive: a `CustomEvent` named `tsugumi:data`, dispatched on the root element, whose `detail` is `{config, blobs}`. The module listens for it if it wants.
   - Resizing is the module's own business, for example with `ResizeObserver`.
-  - The host disposes of a module by dropping its iframe.
+  - The host disposes of a module by disposing of the module's isolated context. Whether that context is an iframe is part of the host-architecture proposal under [Open](#open).
   - The `initialise` / `update` / `resize` / `dispose` / `snapshot` function contract goes.
 - There is no output frame on the Canvas and no display summary on the Card's face. These are removed:
   - `OutputFrameView`;

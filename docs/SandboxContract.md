@@ -13,7 +13,7 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 - Each kind of worker implements the contract with its own means: bubblewrap on Linux, and Seatbelt with the environment on native macOS.
 - The environment, `HOME`, `TMPDIR` and the working directory are fixed for the lifetime of the process.
 - The contract states what the worker **provides**. It does not defend against the Card's own code: `main.so` shares the worker's address space.
-- So that nothing about identity is left for the Card to see, the identity wrapping of displays moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id` and `invocation` ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
+- So that nothing about identity is left for the Card to see, the identity wrapping of displays moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id`, `invocation` and the Card's identity ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
 - The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
 
 **Today.**
@@ -48,7 +48,7 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 | Working directory = `HOME` | yes | The process. With `reuseWorker` it carries across invocations and runs of the same Card | Other processes, and runs of other Cards |
 | TMP | yes | The path is fixed for the process; the contents are cleared for each invocation | Other runs |
 
-`/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care.
+Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote workers), `/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care there. On native macOS only `TMPDIR` is guaranteed.
 
 File and Directory outputs are created under the working directory ([Card ABI 9](CardABI.md#file-and-directory-outputs)).
 
@@ -62,7 +62,9 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 
 **Decided.**
 
-- The input value holds an absolute path, which is always read-only.
+- The input value holds an absolute path.
+  - With the `filesystem` option on, the Card's view of the input is read-only.
+  - With `filesystem` off, the input is a copy (below), so the Card can write to that copy. Only the stored original is protected.
 - "Valid for that invocation" is the lifetime of the path. File descriptors that the Card keeps open are not revoked.
 - Inputs are hardlinked; a Directory is hardlinked file by file.
 - Inputs are copied instead of hardlinked:
@@ -109,7 +111,9 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   | `limits` | cgroup v2 CPU and memory limits, on local Linux workers too |
   | host paths | Host paths, read-only or read-write |
   | GUI | The GUI |
-- There is no permission dialog. When a setting is off, the operation fails inside the Card.
+- There is no permission dialog.
+- A grant that is off (network, a host path, the GUI) makes the operation fail inside the Card.
+- An isolation option that is off (`filesystem`, `pid`, `ipc`, `identity`, `limits`) removes that restriction.
 - There is no "declared but not granted" state.
 - Turning every isolation option off means no sandbox; there is no separate no-sandbox mode.
 - The options belong to the worker, and they are part of the contract.
