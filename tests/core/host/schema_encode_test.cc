@@ -33,7 +33,7 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 
 TEST(SchemaDecode, EveryCardStatesAKnownType) {
   for (const auto& [text, message] : {
-           std::pair{R"({"language":"python"})", R"("type" is required)"},
+           std::pair{R"({})", R"("type" is required)"},
            std::pair{R"({"type":"none"})", R"(unknown type "none")"},
            std::pair{R"({"type":"code","external":"inner"})",
                      R"("external" needs "type": "subgraph")"},

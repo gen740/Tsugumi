@@ -139,7 +139,7 @@ in
     from test_cards_container import NUM
     from projects import put
     root = tmp_path / "P"
-    write(root, {"trigger": {"type": "trigger"}, "one": {"type": "code", "language": "cpp", "_outputs": NUM, "_nix": nix}},
+    write(root, {"trigger": {"type": "trigger"}, "one": {"type": "code", "_outputs": NUM, "_nix": nix}},
          [c_("start", "trigger"), c_("one", "one")], [])
     put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
     p = VMEnv(root).start()

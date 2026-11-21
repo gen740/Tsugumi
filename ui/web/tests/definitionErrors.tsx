@@ -33,11 +33,11 @@ inner.apply(Object.assign(new R.ProjectSnapshotT(), {
   rev: 1n, layoutJson: '{}',
   projectJson: '{"name":"t","canvas":{"cards":[{"id":"old"},{"id":"future"},{"id":"loose"},{"id":"plan"},{"id":"step"}],"connections":[]}}',
   definitions: [
-    definition('old', '{"language":"python","inputs":[{"name":"in"}]}'),
+    definition('old', '{"inputs":[{"name":"in"}]}'),
     definition('future', '{"type":"something new","inputs":[{"name":"in"}]}'),
     definition('loose', '{"type":"code","external":"lib"}'),
     definition('plan', '{"type":"draft"}'),
-    definition('step', '{"type":"code","language":"python"}'),
+    definition('step', '{"type":"code"}'),
   ],
   resolution: [resolved('old', [diagnostic('old', missing)]), resolved('future'), resolved('loose'), resolved('plan'), resolved('step')],
 }), true)

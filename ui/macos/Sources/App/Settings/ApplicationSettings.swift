@@ -356,13 +356,9 @@ private struct EditorSettings: View {
 
     """,
     "nix": """
-    # A Python Card with one extra package
+    # A Nix definition with a helper export
     { pkgs, inputs, params }:
     {
-      run = inputs.tsugumi.pythonCard {
-        src = ./src;
-        packages = ps: [ ps.numpy ];
-      };
       exports = { scale = x: x * 2; };
     }
 

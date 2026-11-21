@@ -11,10 +11,7 @@
   nodejs,
   jq,
   nix,
-  clang-tools,
-  ruff,
   nixfmt,
-  shfmt,
   python3,
   ruby,
   openssl,
@@ -62,10 +59,7 @@ runCommand "tsugumi-ci-runtime"
           nodejs
           jq
           nix
-          clang-tools
-          ruff
           nixfmt
-          shfmt
         ]
       } \
       --set TSUGUMID ${core}/bin/tsugumid \

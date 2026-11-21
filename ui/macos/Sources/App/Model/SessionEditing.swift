@@ -63,54 +63,44 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
+  case draft, trigger, input
   case booleanInput = "input_bool"
-  case python, cpp, go, rust, ruby, csharp, input, draft, trigger, branch, fork, merge, collect
-  case report_rmarkdown, report_quarto
-  /// Visualization starting points: ordinary Python Cards, one per plotting library.
-  case matplotlib = "visualization_matplotlib"
-  case plotly = "visualization_plotly"
-  case altair = "visualization_altair"
-
-  case marimo
+  case branch, fork, merge, collect
 
   var id: String { rawValue }
-  var isVisualization: Bool { self == .matplotlib || self == .plotly || self == .altair }
+  var kind: Tsugumi_Host_BuiltinCard {
+    switch self {
+    case .draft: .draft
+    case .trigger: .trigger
+    case .input: .inputvalue
+    case .booleanInput: .booleaninput
+    case .branch: .branch
+    case .fork: .fork
+    case .merge: .merge
+    case .collect: .collect
+    }
+  }
   var label: String {
     switch self {
-    case .matplotlib: return String(localized: "Matplotlib（PNG / SVG / PDF）")
-    case .plotly: return String(localized: "Plotly（対話型 HTML）")
-    case .altair: return String(localized: "Altair（対話型 HTML）")
-    case .draft: return String(localized: "Draft（未実装の計画）")
-    case .marimo: return String(localized: "marimo ノートブック")
-    case .report_rmarkdown: return String(localized: "R Markdown レポート（HTML）")
-    case .report_quarto: return String(localized: "Quarto レポート（HTML）")
-    case .python: return String(localized: "Python の処理")
-    case .ruby: return String(localized: "Ruby の処理")
-    case .cpp: return String(localized: "C++ の処理")
-    case .go: return String(localized: "Go の処理")
-    case .csharp: return String(localized: "C# の処理")
-    case .rust: return String(localized: "Rust の処理")
-    case .input: return String(localized: "入力値")
-    case .booleanInput: return String(localized: "真偽値の入力")
-    case .trigger: return String(localized: "開始")
-    case .branch: return String(localized: "分岐")
-    case .fork: return String(localized: "分配")
-    case .merge: return String(localized: "合流")
-    case .collect: return String(localized: "収集")
+    case .draft: String(localized: "Draft")
+    case .trigger: String(localized: "トリガー")
+    case .input: String(localized: "入力値")
+    case .booleanInput: String(localized: "真偽値の入力")
+    case .branch: String(localized: "分岐")
+    case .fork: String(localized: "分配")
+    case .merge: String(localized: "合流")
+    case .collect: String(localized: "収集")
     }
   }
   var symbol: String {
-    if self == .booleanInput { return CardKind.input.symbol }
-    return isVisualization ? "chart.xyaxis.line" : (CardKind(rawValue: rawValue) ?? (rawValue.hasPrefix("report_") || [.python, .cpp, .go, .rust, .ruby, .csharp, .marimo].contains(self) ? .code : .draft)).symbol
+    (self == .booleanInput ? .input : CardKind(rawValue: rawValue) ?? .draft).symbol
   }
   /// The human name used when creating a Card; the core generates its identifier.
   var baseName: String {
     switch self {
-    case .matplotlib, .plotly, .altair: return "visualization"
-    case .python, .cpp, .go, .rust, .ruby, .csharp: return "card"
-    case .trigger: return "start"
-    case .booleanInput: return "condition"
-    default: return rawValue
+    case .trigger: "start"
+    case .booleanInput: "condition"
+    default: rawValue
     }
   }
 }
@@ -202,18 +192,49 @@ extension ProjectSession {
     return id
   }
 
-  /// The host assembles the template, sources and placement in one operation.
+  /// The host saves the definition and placement together.
   @discardableResult
   func addCard(template t: DefinitionTemplate, in scope: [String], at point: CGPoint, name: String? = nil,
                automaticPlacement: Bool = false) async throws -> CardKey {
     let id = try await newCardId(name ?? t.baseName, in: scope)
     let body = Tsugumi_Host_ProjectCreateCardT()
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    body.id = id; body.template = t.rawValue; body.name = name ?? t.baseName
+    body.id = id; body.kind = t.kind; body.name = name ?? t.baseName
     body.x = point.x; body.y = point.y; body.automaticPlacement = automaticPlacement
     try await operate(.projectcreatecard, body: body)
     forgetResult(key(scope + [id]))
     return key(scope + [id])
+  }
+
+  func listTemplates() async throws -> [Tsugumi_Host_TemplateEntryT] {
+    guard let projectId else { throw RPCError.disconnected }
+    let request = Tsugumi_Host_TemplateListRequestT()
+    request.projectId = projectId
+    let reply: Tsugumi_Host_TemplateListT = try await CoreHostClient.shared.hostCall(.templatelistrequest, request)
+    return reply.entries.compactMap { $0 }
+  }
+
+  func copyTemplate(_ template: Tsugumi_Host_TemplateEntryT, in scope: [String], at point: CGPoint) async throws {
+    guard let prefix = projectPrefix(scope) else {
+      throw RPCFailure(kind: .invalidPath, diagnostic: "Unknown Card scope")
+    }
+    let body = Tsugumi_Host_ProjectTemplateCopyT()
+    body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
+    body.store = template.store
+    body.name = template.name
+    body.x = point.x
+    body.y = point.y
+    try await operate(.projecttemplatecopy, body: body)
+  }
+
+  func addTemplate(_ addition: Tsugumi_Host_TemplateAddT, to store: Tsugumi_Host_TemplateStore) async throws {
+    if store == .project {
+      try await operate(.templateadd, body: addition)
+    } else {
+      let request = Tsugumi_Host_HostTemplateAddRequestT()
+      request.addition = addition
+      let _: Tsugumi_Service_AcknowledgementT = try await CoreHostClient.shared.hostCall(.hosttemplateaddrequest, request)
+    }
   }
 
   @discardableResult

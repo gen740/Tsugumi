@@ -28,34 +28,48 @@ TEST(HostFormat, JsonAndDiagnosticsNeverReadOrWriteAProject) {
   EXPECT_EQ(bad.text, request.text);
   EXPECT_EQ(bad.diagnostics.front()->code, "syntax_error");
   EXPECT_EQ(bad.diagnostics.front()->path, request.path);
-  request.path = "x.fbs";
-  EXPECT_THROW(Format(request), ProjectFailure);
   request.path = "../outside.json";
   EXPECT_THROW(Format(request), ProjectFailure);
 }
-TEST(HostFormat, InvalidPythonKeepsTheInputAndReportsAnOffset) {
+TEST(HostFormat, OtherExtensionsAreUnsupported) {
+  for (const auto* path : {"x.fbs", "x.cc", "x.py", "x.sh", "README"}) {
+    SCOPED_TRACE(path);
+    Tsugumi::Host::FileFormatRequestT request;
+    request.path = path;
+    request.text = "{}";
+    try {
+      Format(request);
+      ADD_FAILURE() << "The extension was accepted";
+    } catch (const ProjectFailure& error) {
+      EXPECT_EQ(error.code, "unsupported");
+    }
+  }
+}
+TEST(HostFormat, InvalidNixKeepsTheInputAndReportsAnOffset) {
   Tsugumi::Host::FileFormatRequestT request;
-  request.path = "x.py";
-  request.text = "def f(:\n  pass\n";
+  request.path = "definitions/test/default.nix";
+  request.text = "{ a = ; }\n";
   Tsugumi::Host::FileFormatResultT bad;
   try {
     bad = Format(request);
   } catch (const ProjectFailure& error) {
     if (error.code == "unsupported")
-      GTEST_SKIP() << "Host formatter paths were not configured";
+      GTEST_SKIP() << "nixfmt was not configured";
     throw;
   }
   ASSERT_FALSE(bad.diagnostics.empty());
   EXPECT_EQ(bad.text, request.text);
-  EXPECT_TRUE(bad.diagnostics.front()->offset.has_value());
+  EXPECT_EQ(bad.diagnostics.front()->offset, 6u);
+  EXPECT_EQ(bad.diagnostics.front()->path, request.path);
+  EXPECT_NE(bad.diagnostics.front()->message.find(request.path),
+            std::string::npos);
   EXPECT_EQ(bad.diagnostics.front()->message.find("tsugumi-format-"),
             std::string::npos);
 }
-TEST(HostFormat, FixedToolsIgnorePathAndUserConfiguration) {
+TEST(HostFormat, NixFormattingUsesThePinnedExecutable) {
   const auto dir = std::filesystem::temp_directory_path() /
                    ("formatter-environment-" + crypto::uuid4());
-  fs::write_atomic(dir / "ruff", "#!/bin/sh\necho WRONG\n", 0700);
-  fs::write_atomic(dir / "ruff.toml", "line-length = 1\n", 0600);
+  fs::write_atomic(dir / "nixfmt", "#!/bin/sh\necho WRONG\n", 0700);
   const auto old_path = std::getenv("PATH")
                             ? std::optional<std::string>(std::getenv("PATH"))
                             : std::nullopt;
@@ -79,30 +93,22 @@ TEST(HostFormat, FixedToolsIgnorePathAndUserConfiguration) {
   } restore{dir, old_path, old_home};
   setenv("PATH", dir.c_str(), 1);
   setenv("HOME", dir.c_str(), 1);
-  for (const auto& [name, text] :
-       std::vector<std::pair<std::string, std::string>>{
-           {"x.py", "x=[1,2]\n"},
-           {"x.cc", "int  main( ){return 0;}"},
-           {"x.nix", "{ a = 1; b = [ 1 2 ]; }"},
-           {"x.sh", "if true;then echo hi;fi\n"}}) {
-    SCOPED_TRACE(name);
-    Tsugumi::Host::FileFormatRequestT request;
-    request.path = name;
-    request.text = text;
-    Tsugumi::Host::FileFormatResultT first;
-    try {
-      first = Format(request);
-    } catch (const ProjectFailure& error) {
-      if (error.code == "unsupported")
-        GTEST_SKIP() << "Host formatter paths were not configured";
-      throw;
-    }
-    EXPECT_TRUE(first.diagnostics.empty());
-    EXPECT_NE(first.text, text);
-    if (name == "x.py") EXPECT_EQ(first.text.find("WRONG"), std::string::npos);
-    request.text = first.text;
-    EXPECT_EQ(Format(request).text, first.text);
+  Tsugumi::Host::FileFormatRequestT request;
+  request.path = "missing/default.nix";
+  request.text = "{ a = 1; b = [ 1 2 ]; }";
+  Tsugumi::Host::FileFormatResultT first;
+  try {
+    first = Format(request);
+  } catch (const ProjectFailure& error) {
+    if (error.code == "unsupported")
+      GTEST_SKIP() << "nixfmt was not configured";
+    throw;
   }
+  EXPECT_TRUE(first.diagnostics.empty());
+  EXPECT_NE(first.text, request.text);
+  EXPECT_EQ(first.text.find("WRONG"), std::string::npos);
+  request.text = first.text;
+  EXPECT_EQ(Format(request).text, first.text);
 }
 }  // namespace
 }  // namespace tsugumi::host

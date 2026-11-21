@@ -24,9 +24,9 @@ When it is done, the Canvas looks like this. Below are the same Cards as on the 
 ## Making it on screen
 
 1. Make a project with "New Project…" on the home screen.
-2. Right-click the Canvas and, from "Add Card", place "Start", "Input value" and "Python step", naming them `start`, `settings` and `multiply`.
+2. Right-click the Canvas and, from "Add Card", place "Trigger", "Input Value" and "Draft", naming them `start`, `settings` and `multiply`.
 3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
-4. Open each Card (the `s` key or "Settings" in the context menu) and make it the same as the files in the next section.
+4. Open each Card (the `s` key or "Settings" in the context menu) and apply the files in the next section. In the Draft’s settings, choose Code as the implementation kind.
 
 A Card's settings look like this. Switch between "Source", "Ports" and "Nix Definition" in the list on the left to edit, and "Apply" puts the change into the Workflow.
 
@@ -97,7 +97,6 @@ Write the names of the input ports in `inputs`. Input types are not written: the
 ```json
 {
   "type": "code",
-  "language": "python",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
 }
@@ -274,14 +273,13 @@ def main(inputs, report):
 
 ### bash
 
-Delete `src/`, set `language` to `bash`, and write a string in `run` of `default.nix`. Inputs are `$JSON_<PORT>` (the path of a JSON file); write the output as JSON to `$TSUGUMI_OUTPUT`.
+Delete `src/` and write a Bash string in `run` of `default.nix`. Inputs are `$JSON_<PORT>` (the path of a JSON file); write the output as JSON to `$TSUGUMI_OUTPUT`.
 
 `definitions/multiply/_card.json` (bash)
 
 ```json
 {
   "type": "code",
-  "language": "bash",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2, "nix": true}]
 }
@@ -326,7 +324,6 @@ The input and output ports become members of `Card::Inputs` and `Card::Output` a
 ```json
 {
   "type": "code",
-  "language": "cpp",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
 }
@@ -370,7 +367,6 @@ An R Card embeds R in the Card's worker. Messages are lists: the worker converts
 ```json
 {
   "type": "code",
-  "language": "r",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
 }
@@ -409,7 +405,6 @@ A Julia Card embeds Julia in the Card's worker. Messages are Dicts, converted in
 ```json
 {
   "type": "code",
-  "language": "julia",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
 }
@@ -450,7 +445,7 @@ against the FlatBuffers schema. The instance can retain state between invocation
 `definitions/multiply/_card.json` (Ruby)
 
 ```json
-{"type":"code","language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
+{"type":"code","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
 ```
 
 `definitions/multiply/default.nix` (Ruby)
@@ -512,7 +507,7 @@ The shell steps are `preRun → run → postRun`. `preRun` and `postRun` receive
 ## Go Cards
 
 
-Use `"language": "go"` and start from the whole
+Start from the whole
 `demos/en/go-pipeline/definitions/scale` folder. The **Go step** menu creates the
 same scaffold. `default.nix` selects its typed SDK:
 
@@ -601,7 +596,7 @@ Choose C# Card for a .NET Card. The [C# guide](CSharp.md) covers typed inputs, o
 ## Rust Cards
 
 
-Use `"language": "rust"`. Start from `demos/en/rust-pipeline/definitions/scale`
+Start from `demos/en/rust-pipeline/definitions/scale`
 for a Card using only the standard library and SDK. The UI's **Rust step**
 creates the same scaffold. `default.nix`:
 
@@ -850,7 +845,7 @@ Definition files:
 
 | File | What it is |
 | --- | --- |
-| `_card.json` | What the Card is (`type`, required) and all settings: `language`, `inputs`, `params`, run settings |
+| `_card.json` | What the Card is (`type`, required) and all settings: `inputs`, `params`, run settings |
 | `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
@@ -923,7 +918,7 @@ The next Card reads it as a path: `inputs.input("events", EventsFile).Value().de
 
 ### Code Card settings
 
-A Code Card has `"type": "code"`. Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
+A Code Card has `"type": "code"`. Choose the SDK in the Card’s `default.nix`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
 
 With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
@@ -1027,7 +1022,7 @@ with whichever member arrived (`inputs.arrival.value.type` says which port). Pyt
 
 ### Ruby API
 
-`_card.json`: `{"type": "code", "language": "ruby", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
+`_card.json`: `{"type": "code", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
 
 ```nix
 { pkgs, inputs, params }:

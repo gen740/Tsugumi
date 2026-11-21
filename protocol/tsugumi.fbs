@@ -489,13 +489,11 @@ table ProjectFileReadRequest {
   limit_bytes:uint32 = null (id: 4);
 }
 
-/// -> InputTypesResult. Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead.
+/// -> InputTypesResult. Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead.
 table InputTypesRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   output_port:string (id: 1);
   at_rev:uint64 = null (id: 2);
-  /// SDK language for host rendering; opaque to the project core.
-  language:string (id: 3);
 }
 
 table InputType {
@@ -507,8 +505,7 @@ table InputType {
 
 table InputTypesResult {
   rev:uint64 = null (id: 0);
-  language:string (id: 1);
-  inputs:[InputType] (id: 2);
+  inputs:[InputType] (id: 1);
 }
 
 /// -> OutputTypesResult. Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text.

@@ -85,6 +85,26 @@ TEST(AgentCatalog, ExposesPublicToolsWithTheExpectedApprovalPolicy) {
   EXPECT_FALSE(history.contains("restrict_to_run_ids"));
 }
 
+TEST(AgentCatalog, TemplateToolsUseTheExpectedApprovalAndRolePolicy) {
+  const Catalog catalog;
+  EXPECT_EQ(catalog.Find("document_template"), nullptr);
+  EXPECT_TRUE(catalog.Allows("template_list", ModelRole::Guide));
+  EXPECT_FALSE(catalog.Allows("template_copy", ModelRole::Guide));
+  EXPECT_FALSE(catalog.Allows("template_copy", ModelRole::ScopedHelper));
+  EXPECT_EQ(catalog.FamilyTool("templates", "copy", ModelRole::Main),
+            "template_copy");
+  EXPECT_TRUE(catalog.FamilySpecs("templates", ModelRole::Guide).empty());
+  for (const auto* name :
+       {"template_list", "template_copy", "template_add", "template_import"}) {
+    const auto* tool = catalog.Find(name);
+    ASSERT_NE(tool, nullptr);
+    const auto guarded = std::string_view(name) == "template_add" ||
+                         std::string_view(name) == "template_import";
+    EXPECT_EQ(tool->approval_required, guarded) << name;
+    EXPECT_EQ(tool->mutating, std::string_view(name) != "template_list");
+  }
+}
+
 TEST(AgentPolicy, SaveAndReloadAlwaysRequestPermissionComparison) {
   for (const auto* name : {"project_save", "project_reload"}) {
     auto arguments =

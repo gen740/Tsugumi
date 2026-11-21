@@ -1,6 +1,5 @@
 import AppKit
 import SwiftUI
-import InputTemplates
 import TsugumiAgentClient
 import TsugumiRPC
 
@@ -90,30 +89,24 @@ final class CardEditorModel {
     if kind == .input, definition?["params"]?.array?.first?["type"]?.string == "bool" {
       return DefinitionTemplate.booleanInput.rawValue
     }
-    return kind == .code ? definition?["language"]?.string ?? kind.rawValue : kind.rawValue
+    return kind.rawValue
   }
 
   func implementAs(_ value: String) {
     if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
-      do {
-        guard let files = try InputTemplates.load()[value],
-              let card = files["_card.json"], let outputs = files["_outputs.fbs"] else {
-          throw CocoaError(.fileReadCorruptFile)
+      let boolean = value == DefinitionTemplate.booleanInput.rawValue
+      let type = boolean ? "bool" : "double"
+      definition = .object([("type", .string("input")), ("params", .array([
+        .object([("name", .string("value")), ("type", .string(type)), ("data", boolean ? .bool(false) : .number("0"))])
+      ]))])
+      if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
+        let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
+        if untouched || (!created.contains(p) && texts[p] == nil) {
+          let schema = "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
+          createFile("_outputs.fbs", text: schema)
+          presetOutputs = schema
         }
-        definition = try JSONValue.parse(card)
-        if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
-          let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
-          if untouched || (!created.contains(p) && texts[p] == nil) {
-            let schema = outputs.replacingOccurrences(of: "@NAMESPACE@", with: "card")
-            createFile("_outputs.fbs", text: schema)
-            presetOutputs = schema
-          }
-        }
-      } catch {
-        message = error.localizedDescription
       }
-    } else if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
-      definition = .object([("type", .string("code")), ("language", .string(value))])
     } else { definition = .object([("type", .string(value))]) }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
     if value == "fork" { definition?["outputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
@@ -645,9 +638,13 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input",
+            ForEach(["draft", "code", "input",
                      DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "fork", "merge", "collect"], id: \.self) { value in
-              Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+              if value == "code" {
+                Text("コード").tag(value)
+              } else {
+                Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+              }
             }
           }
         } header: { Text("Draft を手動で実装") }
@@ -1535,7 +1532,7 @@ private struct SourceCategory: View {
     }
     .onAppear {
       if model.shownFile == nil {
-        if let f = files.first(where: { $0.hasSuffix(".py") || $0.hasSuffix(".cc") || $0.hasSuffix(".rb") || $0.hasSuffix(".cs") || ["rmd", "qmd"].contains(($0 as NSString).pathExtension.lowercased()) }) ?? files.first { model.openFile(f) }
+        if let f = files.first { model.openFile(f) }
       }
     }
     .alert("ファイルを作成", isPresented: $showNew) {
@@ -1627,7 +1624,7 @@ private struct SourceCategory: View {
       else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
       Spacer()
       if let formatMessage { Text(formatMessage).font(.caption).foregroundStyle(.secondary).lineLimit(1) }
-      if !generatedFile {
+      if !generatedFile && canFormat(path) {
         Button("整形") { format(path) }.disabled(formatting || model.loadedText(path) == nil).controlSize(.small)
           .shortcut(.formatSource)
           .help(tip(String(localized: "ソースコードを整形"), .formatSource))
@@ -1714,8 +1711,12 @@ private struct SourceCategory: View {
     }
   }
 
+  private func canFormat(_ path: String) -> Bool {
+    ["json", "nix"].contains((path as NSString).pathExtension)
+  }
+
   private func format(_ p: String) {
-    guard model.session.rpc != nil, let source = model.loadedText(p) else { return }
+    guard !formatting, canFormat(p), model.session.rpc != nil, let source = model.loadedText(p) else { return }
     formatting = true
     Task {
       do {

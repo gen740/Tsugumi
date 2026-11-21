@@ -1,6 +1,6 @@
 # R report Cards
 
-Use **Add Card → Reports (HTML; PDF unsupported)** to create an R Markdown or Quarto report. Connect a typed upstream output to `data`, edit `src/report.Rmd` or `src/report.qmd`, and set the Card's parameters. The bundled **R reports** demo aggregates observations and renders both formats.
+Open the **R reports** demo for working R Markdown and Quarto report Cards. Connect a typed upstream output to `data`, edit `src/report.Rmd` or `src/report.qmd`, and set the Card's parameters. The demo aggregates observations and renders both formats.
 
 ## Inputs and parameters
 

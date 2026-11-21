@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 import assert from 'node:assert/strict'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { parse } from '../shared/json'
@@ -16,7 +16,7 @@ const session = cardIds(new ProjectSession('/p', 'k', 'p'))
 session.project = parse('{"name":"t","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 session.connected = true
-const card = await session.addCard('python', [], { x: 0, y: 0 })
+const card = await addCodeCard(session, { x: 0, y: 0 })
 session.updateCard(card, def => def.set('executionService', 'local'))
 await session.save()
 const show = (nativeSystem: string, systems: string[]) => {

@@ -7,6 +7,7 @@
 #include "host/comments.hh"
 #include "host/layout_saving.hh"
 #include "host/project_edit.hh"
+#include "host/templates.hh"
 
 namespace tsugumi::host {
 struct OperationReply {
@@ -33,6 +34,12 @@ struct OperationContext {
   std::function<void(const std::string&, const SaveBase&)> authorize_file;
   std::function<void(::tsugumi::json::Members&, const SaveBase&)> authorize;
   std::function<std::filesystem::path(const std::string&)> demo = {};
+  std::filesystem::path host_templates = {};
+  std::function<DocumentTemplate(const Tsugumi::Host::TemplateAddT&)>
+      read_template_source = {};
+  std::function<std::string(const std::string&,
+                            const std::function<std::string()>&)>
+      reserve_template_id = {};
 };
 class ProjectOperations {
  public:

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bundle pinned Mach-O formatter tools and relocate their Nix dylib closure."""
+"""Bundle pinned nixfmt and relocate its Mach-O dylib closure."""
 from pathlib import Path
 import shutil
 import subprocess
@@ -37,5 +37,4 @@ def bundle(source, name):
     return target
 
 
-for source, name in zip(sys.argv[2:], ['clang-format', 'ruff', 'nixfmt', 'shfmt'], strict=True):
-    bundle(source, name)
+bundle(sys.argv[2], "nixfmt")

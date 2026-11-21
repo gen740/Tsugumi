@@ -20,7 +20,7 @@ def write_project(root, cards, connections):
     if os.environ.get("TSUGUMI_TEST_HOST_SANDBOX") == "1":
         for definition in root.glob("definitions/*/_card.json"):
             body = json.loads(definition.read_text())
-            if "language" in body:
+            if body.get("type") == "code":
                 body["sandbox"] = True
                 definition.write_text(json.dumps(body))
 
@@ -143,7 +143,7 @@ def test_missing_entry_fails_through_the_card_interface(tmp_path):
     source = """using Tsugumi;
 public sealed class Card : ICard {}
 """
-    write_project(root, {"bad": {"card": {"type": "code", "language": "csharp"}, "nix": NIX, "src": {"Card.cs": source}}}, [])
+    write_project(root, {"bad": {"card": {"type": "code"}, "nix": NIX, "src": {"Card.cs": source}}}, [])
     env, c = open_environment(root, "tsugumi-test-csharp-entry")
     try:
         rid, status = run_and_wait(c, "bad")
@@ -176,7 +176,7 @@ def build_lock(root, lock, hash):
     """Runs one C# Card that uses Json.NET from `lock`, pinned by `hash` (a Nix
     expression, or None to leave it out). Returns the run state, what the Card's
     build log and failure said, and its display text."""
-    write_project(root, {"probe": {"card": {"type": "code", "language": "csharp", "inputs": [{"name": "start"}]},
+    write_project(root, {"probe": {"card": {"type": "code", "inputs": [{"name": "start"}]},
         "nix": nuget_nix(hash) if hash else NIX.replace("inherit sdk;", "inherit sdk; lock = ./packages.lock.json;"),
         "src": {"Card.cs": PROBE}}}, [("start", "out", "probe", "start")])
     put(root / "definitions/probe/packages.lock.json", json.dumps(lock))
@@ -212,13 +212,13 @@ def test_a_lock_without_hash_is_rejected(tmp_path):
 def project(tmp_path):
     root = tmp_path / "csharp"
     write_project(root, {
-        "make": {"card": {"type":"code","language":"cpp", "inputs":[{"name":"start"}]}, "nix":CPP_NIX, "outputs":NUMBERS, "src":{"card.cc":CPP}},
-        "scale": {"card": {"type":"code","language":"csharp", "reuseWorker":True, "inputs":[{"name":"numbers"}], "params":[
+        "make": {"card": {"type":"code","inputs":[{"name":"start"}]}, "nix":CPP_NIX, "outputs":NUMBERS, "src":{"card.cc":CPP}},
+        "scale": {"card": {"type":"code","reuseWorker":True, "inputs":[{"name":"numbers"}], "params":[
             {"name":"factor", "type":"double", "data":2}, {"name":"mode", "type":"string", "data":"ok"}]},
             "nix":nuget_nix(f'"{NUGET_HASH}"'), "outputs":NUMBERS, "src":{"Card.cs":'''#nullable enable
 '''+CSHARP}},
-        "report": {"card": {"type":"code","language":"python", "inputs":[{"name":"numbers"}], "retainArtifact":True, "artifactOutput":"report"}, "nix":PY_NIX, "outputs":REPORT, "src":{"main.py":PYTHON}},
-        "receipt": {"card": {"type":"code","language":"csharp", "inputs":[{"name":"report"}], "retainArtifact":True, "artifactOutput":"receipt"}, "nix":NIX, "outputs":RECEIPT, "src":{"Card.cs":FILE_CARD}},
+        "report": {"card": {"type":"code","inputs":[{"name":"numbers"}], "retainArtifact":True, "artifactOutput":"report"}, "nix":PY_NIX, "outputs":REPORT, "src":{"main.py":PYTHON}},
+        "receipt": {"card": {"type":"code","inputs":[{"name":"report"}], "retainArtifact":True, "artifactOutput":"receipt"}, "nix":NIX, "outputs":RECEIPT, "src":{"Card.cs":FILE_CARD}},
     }, [("start","out","make","start"),("make","numbers","scale","numbers"),("scale","numbers","report","numbers"),("report","report","receipt","report")])
     put(root / "definitions/scale/packages.lock.json", json.dumps(LOCK))
     env, c = open_environment(root, "tsugumi-test-csharp")

@@ -7,8 +7,10 @@ import { arr, get, jeq, parse, serialize, str } from '../shared/json'
 import type { ProjectSession } from '../src/model/session'
 import { hostDocumentReply } from './hostDocument'
 
-export function operationFixture<T extends ProjectSession>(s: T): T {
-  let files = new Map<string, Uint8Array>()
+export function operationFixture<T extends ProjectSession>(s: T, initial: Record<string, string> = {}): T {
+  let files = new Map<string, Uint8Array>(Object.entries(initial).map(
+    ([path, bytes]) => [path, new TextEncoder().encode(bytes)]))
+
   const text = (path: string, value: unknown) => {
     if (value === undefined) return
     // Keep the executor's exact bytes: its inverse operations select file hashes.

@@ -172,15 +172,12 @@ struct WorkbenchSidebar: View {
 /// folder without a Card is placed (carried as prefixed strings).
 enum DefinitionDrag {
   static let prefix = "tsugumi-definition:"
-  static let templatePrefix = "tsugumi-template:"
   /// A definition of an external ("<folder>\n<id>"), copied as a new Card.
   static let externalDefinitionPrefix = "tsugumi-external-definition:"
   /// An external itself, copied as a new Card in Card.
   static let externalPrefix = "tsugumi-external:"
   static func id(_ s: String) -> String? { s.hasPrefix(prefix) ? String(s.dropFirst(prefix.count)) : nil }
-  static func template(_ s: String) -> DefinitionTemplate? {
-    s.hasPrefix(templatePrefix) ? DefinitionTemplate(rawValue: String(s.dropFirst(templatePrefix.count))) : nil
-  }
+
 }
 
 /// One scope in the hierarchy, with its child workflows.

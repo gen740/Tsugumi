@@ -174,8 +174,7 @@ struct Export {
         if p["nix"] as? Bool == true || !["code", "input"].contains(type) { entry["fixed"] = true }
         return entry
       }
-      var entry: [String: Any] = ["id": id, "type": type,
-                                  "language": definition["language"] ?? "", "params": params]
+      var entry: [String: Any] = ["id": id, "type": type, "params": params]
       // An input Card whose output is a File: the recipient may give another file.
       let outputs = (try? String(contentsOf: project.appendingPathComponent("definitions/\(id)/_outputs.fbs"), encoding: .utf8)) ?? ""
       if type == "input",

@@ -983,7 +983,7 @@
   "入力を追加": "Add Input",
   "入力ポート": "Input ports",
   "入力ポートの名前": "Input port name",
-  "入力値": "Input value",
+  "入力値": "Input Value",
   "入力元": "Input sources",
   "入力元 {0}": {"text": "Source of {0}", "mac": ["@"]},
   "入力待ち": "Waiting",
@@ -1837,5 +1837,18 @@
   "Card がその値をどう扱うか（子プロセスへの継承、ログ、出力）は Card の作者の責任です。": "What a Card does with a value (child processes inherit it, logs, outputs) is the Card author's responsibility.",
   "小文字、数字、_ で 64 文字まで（先頭は小文字）。": "Up to 64 lower-case letters, digits and _, starting with a letter.",
   "{0} を保存しました。": {"text": "Saved {0}.", "mac": ["@"]},
-  "渡したシークレット": "Secrets provided"
+  "渡したシークレット": "Secrets provided",
+  "トリガー": "Trigger",
+  "テンプレートから…": "From Template…",
+  "テンプレートを追加…": "Add Template…",
+  "Git からインポート…": "Import from Git…",
+  "ホスト": "Host",
+  "テンプレートがありません": "No templates",
+  "公開 Git リポジトリの HTTPS URL": "Public Git repository HTTPS URL",
+  "Git のブランチ、タグ、コミット": "Git branch, tag, or commit",
+  "テンプレートのサブディレクトリ": "Template subdirectory",
+  "フォルダを選択…": "Choose Folder…",
+  "テンプレートのフォルダを選んでください": "Choose a template folder",
+  "インポート": "Import",
+  "テンプレートから複数の Card と配線をまとめてコピーできるよ": "Copy Cards and their connections together from a template."
 }

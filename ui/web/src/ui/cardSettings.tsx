@@ -3,7 +3,6 @@
 // "Apply". Every Card has its own definition folder, so what is edited here is
 // this Card only (inside a Card in Card: the Card of the external, this
 // project's copy).
-import inputTemplates from '../../../shared/templates/input/Sources/InputTemplates/inputs.json'
 import { ReactNode, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import * as H from '../../shared/gen/tsugumi/host'
 import { api } from '../api'
@@ -115,24 +114,25 @@ export class CardEditorModel extends Observable {
   get implementation() {
     const kind = definitionKind(this.definition)
     if (kind === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
-    return kind === 'code' ? str(get(this.definition, 'language')) ?? kind : kind
+    return kind
   }
 
   implementAs(value: string) {
     if (value === 'input' || value === 'input_bool') {
-      const files = inputTemplates[value]
-      this.definition = parse(files['_card.json'])
+      const type = value === 'input_bool' ? 'bool' : 'double'
+      this.definition = obj([['type', 'input'], ['params', [
+        obj([['name', 'value'], ['type', type], ['data', type === 'bool' ? false : new JNum('0')]]),
+      ]]])
       const p = this.outputsPath
       if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
         const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
         if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
-          const outputs = files['_outputs.fbs'].replaceAll('@NAMESPACE@', 'card')
+          const outputs = `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`
           this.createFile('_outputs.fbs', outputs)
           this.presetOutputs = outputs
         }
       }
-    } else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['type', 'code'], ['language', value]])
-    else this.definition = obj([['type', value]])
+    } else this.definition = obj([['type', value]])
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
@@ -744,8 +744,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
-            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
+          ['draft', 'code', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
       {params.length > 0 && (
@@ -1441,7 +1441,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   useEffect(() => {
     if (shown === undefined) {
-      const f = files.find((x) => x.endsWith('.py') || x.endsWith('.cc') || x.endsWith('.rb') || x.endsWith('.cs') || /\.(rmd|qmd)$/i.test(x)) ?? files[0]
+      const f = files[0]
       if (f) model.openFile(f)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -1484,10 +1484,12 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, session.rev])
 
+  const canFormat = (p: string) => /[^/]\.(json|nix)$/.test(p)
+
   const format = async (p: string) => {
     const rpc = session.rpc
     const source = model.loadedText(p)
-    if (!rpc || source === undefined || formatting) return
+    if (!rpc || !canFormat(p) || source === undefined || formatting) return
     setFormatting(true)
     try {
       const r = await hostCall<H.FileFormatResultT>(H.RequestPayload.FileFormatRequest,
@@ -1545,7 +1547,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
           : model.isEdited(p) ? <span className="caption2" style={{ color: 'var(--orange)' }}>{L('未適用')}</span> : null}
         <span className="spacer" />
         {formatMessage && <span className="caption secondary ellipsis">{formatMessage}</span>}
-        {!generatedFile && (
+        {!generatedFile && canFormat(p) && (
           <Button small disabled={formatting || model.loadedText(p) === undefined} help={L('ソースコードを整形（{0}）', prefs.label('formatSource'))}
             onClick={() => void format(p)}>{L('整形')}</Button>
         )}
@@ -1600,7 +1602,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   const editor = (
     <div key="editor" className="src-pane" onKeyDown={(e) => {
-      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED)) return
+      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED) || !canFormat(shown)) return
       if (prefs.action(e.nativeEvent, false) === 'formatSource') {
         e.preventDefault()
         e.stopPropagation()

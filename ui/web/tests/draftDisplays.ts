@@ -31,7 +31,7 @@ const session = () => {
 {
   const { s, asked, apply } = session()
   assert.equal(s.kind('a'), 'draft')
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code","language":"python"}')] }))
+  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code"}')] }))
   assert.equal(s.kind('a'), 'code')
   assert.deepEqual(asked, [['a']], 'the Draft that became code asks for its displays')
 }
@@ -46,7 +46,7 @@ const session = () => {
 // A Card that stops being one (code back to a Draft) is left out at once as well.
 {
   const { s, asked, apply } = session()
-  s.confirmedDefinitions.set('a', parse('{"type":"code","language":"python"}'))
+  s.confirmedDefinitions.set('a', parse('{"type":"code"}'))
   apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"draft"}')] }))
   assert.deepEqual(asked, [[]])
 }

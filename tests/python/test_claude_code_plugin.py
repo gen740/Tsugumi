@@ -247,7 +247,7 @@ def waiting_plugin(tmp_path):
                                       "canvas": {"cards": [{"id": "work"}], "connections": []}})
     definition = tmp_path / "proj/definitions/work"
     definition.mkdir(parents=True)
-    for name, text in {"_card.json": '{"type":"code","language":"bash"}', "default.nix": "{}",
+    for name, text in {"_card.json": '{"type":"code"}', "default.nix": "{}",
                        "_outputs.fbs": "table Outputs {} root_type Outputs;",
                        "mock-build.json": '{"gate":"web-wait","error":"fixture completion"}'}.items():
         (definition / name).write_text(text)
@@ -382,6 +382,9 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
     mcp, root = plugin
     mcp.request("initialize", {"protocolVersion": "2025-06-18", "capabilities": {}, "clientInfo": {"name": "test", "version": "0"}})
     write_project(root / "proj")
+    template = root / "proj/templates/entry/start"
+    template.mkdir(parents=True)
+    (template / "_card.json").write_text('{"type":"trigger"}')
     text, error = mcp.call("tsugumi_open", {"folder": "missing"})
     assert error and "create: true" in text
     assert not (root / "missing").exists()
@@ -404,6 +407,41 @@ def test_open_runs_core_tools_and_only_the_user_answers_access(plugin):
         text, error = mcp.call("project_save", save)
         assert not error, text
         assert json.loads((root / "proj" / "tsugumi.json").read_text())["name"] == "renamed by Claude Code"
+
+        text, error = mcp.call("template_list", {})
+        assert not error, text
+        assert json.loads(text)["value"]["entries"] == [{"name": "entry", "store": "project"}]
+        text, error = mcp.call("tools", {
+            "family": "templates", "action": "copy", "arguments": {"store": "project", "name": "entry"},
+        })
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert json.loads((root / "proj/definitions/start/_card.json").read_text()) == {"type": "trigger"}
+
+        source = root / "local-template"
+        (source / "start").mkdir(parents=True)
+        (source / "start/_card.json").write_text('{"type":"draft","network":true}')
+        add = {"family": "templates", "action": "add", "arguments": {
+            "store": "project", "name": "added-via-mcp", "path": str(source),
+        }}
+        added = root / "proj/templates/added-via-mcp/start/_card.json"
+        allow_pending_access(mcp, "tools", add, user)
+        assert not added.exists()
+        text, error = mcp.call("tools", add)
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert added.is_file()
+
+        guarded_copy = {"family": "templates", "action": "copy", "arguments": {
+            "store": "project", "name": "added-via-mcp",
+        }}
+        copied = root / "proj/definitions/start-2/_card.json"
+        allow_pending_access(mcp, "tools", guarded_copy, user)
+        assert not copied.exists()
+        text, error = mcp.call("tools", guarded_copy)
+        assert not error, text
+        assert json.loads(text)["reply"] == "SaveResult"
+        assert json.loads(copied.read_text()) == {"type": "draft", "network": True}
     finally:
         user.close()
     # A second open reuses the host and repeats no rules; create: true makes a new project.

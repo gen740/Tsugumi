@@ -1,6 +1,6 @@
 # marimo notebook Cards
 
-Choose **Add Card → marimo notebook** on Mac or Web. The starting point is an ordinary Python Card containing editable `src/notebook.py`, its small `src/main.py` adapter, `default.nix`, and a typed output schema. The implementation uses the pinned `ps.marimo` package through the existing Python SDK. Add notebook dependencies in `default.nix`; no package installation happens when opening a result.
+Open the **marimo notebook → typed result** demo for a complete notebook Card. The starting point is an ordinary Python Card containing editable `src/notebook.py`, its small `src/main.py` adapter, `default.nix`, and a typed output schema. The implementation uses the pinned `ps.marimo` package through the existing Python SDK. Add notebook dependencies in `default.nix`; no package installation happens when opening a result.
 
 ## One committed invocation
 
