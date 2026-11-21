@@ -4,7 +4,7 @@ import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
-import { bool } from '../../shared/json'
+import { bool, get } from '../../shared/json'
 import { describeValue } from '../wire/flatjson'
 import { D, R, s, segs, sOpt } from '../wire/rpc'
 import { Button, download, Empty, Form, HSplit, Row, Section, Segmented, Select, Sheet, Spinner, TextField, Value } from './controls'
@@ -231,7 +231,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
                         {record.orphaned && <Row><span className="secondary">{L('この Card は文書から削除されています。')}</span></Row>}
                       </Section>
                       {/* Not recorded is a setting of this Card, said as such: the section stays, greyed. */}
-                      {rec?.recordIo === false || record.recordingDisabled ? (
+                      {(rec?.recordIo === false || record.recordingDisabled) && !rec?.inputs.length && !rec?.outputs.length ? (
                         <Section title={<span className="history-section-off">{L('入出力（記録していません）')}</span>}>
                           <div className="history-io-off col gap8 pad10">
                             <span className="label secondary"><Icon name="nosign" />{L('この Card は入出力を記録しない設定です。値は残っていません。')}</span>
@@ -367,7 +367,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
     )
   }
   if (!runs.length) {
-    const retains = bool(session.cardSetting(cardKey, 'retainArtifact')) === true
+    const retains = bool(session.cardSetting(cardKey, 'retainArtifact')) ?? bool(get(session.project, 'retainArtifact')) ?? false
     return (
       <Empty title={L('保持された成果物はありません')} icon="shippingbox"
         description={retains ? L('成果物を保持する設定です。実行すると、ここに残ります。') : L('この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。')} />

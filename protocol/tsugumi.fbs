@@ -738,6 +738,8 @@ table LogRangeRequest {
   terminal:bool = false (id: 8);
   /// Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then.
   terminal_since:uint64 = null (id: 9);
+  /// Read stdout or stderr from the active run's transient log.
+  live:bool = false (id: 10);
 }
 
 /// -> Ack. Replaces the subscription's Display targets. enabled = true.
@@ -1273,6 +1275,7 @@ table LogAvailable {
   invocation:uint64 = null (id: 2);
   stream:Tsugumi.Data.LogStream (id: 3);
   end_offset:uint64 = null (id: 4);
+  live:bool = false (id: 5);
 }
 
 union NotificationPayload {

@@ -220,7 +220,7 @@ struct CardExecutionView: View {
     if let r = record {
       Form {
         infoSection(r)
-        if !ioRecorded {
+        if !ioRecorded, r.record?.inputs.isEmpty != false, r.record?.outputs.isEmpty != false {
           Section {
             Label("この Card は入出力を記録しない設定です。値は残っていません。", systemImage: "nosign")
               .foregroundStyle(.secondary)
@@ -497,7 +497,7 @@ struct CardArtifactsView: View {
           Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
-        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool == true
+        let retains = session.cardSetting(cardKey, "retainArtifact")?.bool ?? session.project["retainArtifact"]?.bool ?? false
         ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox",
                                description: Text(retains ? "成果物を保持する設定です。実行すると、ここに残ります。"
                                                          : "この Card は成果物を保持していません（設定 > 入出力 > 成果物を保持）。"))

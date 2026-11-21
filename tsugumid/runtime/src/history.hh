@@ -66,6 +66,7 @@ struct LogEnd {
   std::optional<uint64_t> invocation;
   LogStream stream;
   std::optional<uint64_t> end_offset;
+  bool live = false;
 };
 
 struct LogRead {
@@ -127,13 +128,14 @@ class History {
   static void put_receipt(sql::Db& db, const std::string& op_id,
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);
+  static auto open_live_logs() -> std::unique_ptr<sql::Db>;
   // Appends UTF-8 text to a log stream; returns the new end offsets per scope.
   static std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
                                  LogStream stream, const std::string& text);
   static auto mark_log_truncated(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
-                                 uint64_t limit_bytes) -> void;
+                                 uint64_t limit_bytes, bool build = false) -> void;
   // Run level journal lines (no card).
 
   // --- reads ---

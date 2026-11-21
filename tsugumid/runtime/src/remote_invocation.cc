@@ -59,8 +59,14 @@ auto input_location(const std::vector<stdfs::path>& file_roots,
   throw std::runtime_error("remote file input is outside the run's folders");
 }
 
+auto staged_input_path(size_t index, const stdfs::path& name) -> stdfs::path {
+  return remote::relative_path(
+      (stdfs::path("inputs") / std::to_string(index) / name.filename())
+          .generic_string());
+}
+
 auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
-                 RemoteInvocationResult& result) -> void {
+                 const WorkerProc::LogSink& sink) -> void {
   std::ifstream stream(path, std::ios::binary);
   // The complete result is authoritative: the entries recorded while the job
   // ran must be exactly its prefix, so none is recorded twice or lost.
@@ -79,7 +85,8 @@ auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
     throw std::runtime_error("remote log differs from its recorded part");
   std::string line;
   while (std::getline(stream, line))
-    result.logs.push_back(decode_remote_log_entry(line));
+    if (auto [stream, text] = decode_remote_log_entry(line); sink)
+      sink(stream, text);
 }
 
 }  // namespace
@@ -185,9 +192,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
     const auto source = path_value(input);
     if (!source) throw std::runtime_error("remote file input has no path");
     const auto [root, rel] = input_location(file_roots, *source);
-    const auto destination = remote::relative_path(
-        (stdfs::path("inputs") / std::to_string(i) / rel.filename())
-            .generic_string());
+    const auto destination = staged_input_path(i, rel);
     if (input.kind == PortKind::File) {
       stage_file(root, rel, destination);
     } else {
@@ -261,12 +266,14 @@ auto import_remote_result(
     const std::string& result_digest, const std::string& spec,
     const stdfs::path& directory, const stdfs::path& module_cache,
     const std::vector<types::PortType>& outputs,
+    const std::vector<Value>& inputs,
     const WorkerProc::DisplaySink& display, const RemoteLogPrefix& recorded,
+    const WorkerProc::LogSink& log,
     std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)
     -> RemoteInvocationResult {
-  const auto job = workerd::parse_spec(spec);
+  (void)workerd::parse_spec(spec);
   const auto manifest_bytes = download(client, service, instance, job_id,
                                        result_digest, kMaxManifestBytes, stop);
   flatbuffers::Verifier manifest_verifier(
@@ -327,7 +334,7 @@ auto import_remote_result(
       throw std::runtime_error("invalid remote result member");
     const auto max_size = base == "modules"     ? kModuleSourceLimit
                           : base == "files"     ? kMaxBlobBytes
-                          : rel == "logs.jsonl" ? job->log_limit_bytes
+                          : rel == "logs.jsonl" ? kRemoteLogTransportBytes
                                                 : kMaxWorkerBytes;
     if (*size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
@@ -355,7 +362,6 @@ auto import_remote_result(
   if (!info || schema::decode(*info, environment))
     throw std::runtime_error("invalid remote build environment");
   result.built = *environment.built;
-  result.log_truncated = *environment.log_truncated;
   result.environment.paths = *environment.paths;
   std::optional<DisplayData> decoded_display;
   if (auto blob = fs::read_file(temp / "display.fb"))
@@ -399,6 +405,20 @@ auto import_remote_result(
       const auto relative = path_value(value);
       if (!relative) throw std::runtime_error("missing remote output path");
       const auto rel = remote::relative_path(*relative);
+      if (*rel.begin() == "inputs") {
+        std::optional<std::string> original;
+        for (size_t i = 0; i < inputs.size(); ++i)
+          if (inputs[i].kind == value.kind)
+            if (auto path = path_value(inputs[i]);
+                path && rel == staged_input_path(i, *path)) {
+              original = std::move(path);
+              break;
+            }
+        if (!original)
+          throw std::runtime_error("remote output forwards an unknown input");
+        value = with_path(value, *original);
+        continue;
+      }
       if (*rel.begin() != "out")
         throw std::runtime_error("remote output is outside its output folder");
       returned_paths.emplace_back(rel, value.kind);
@@ -434,7 +454,7 @@ auto import_remote_result(
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }
-  import_logs(temp / "logs.jsonl", recorded, result);
+  import_logs(temp / "logs.jsonl", recorded, log);
   if (display && decoded_display) display(*decoded_display);
   return result;
 }

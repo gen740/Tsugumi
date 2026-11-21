@@ -498,15 +498,20 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     release = tmp_path / "release"
     os.mkfifo(release)
     body = f"""
-        head -c {136 << 20} /dev/zero | tr '\\000' x
+        printf '1234567890'
         read -r release < {shlex.quote(str(release))}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
     Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
+    snap = client.call("ProjectInspectRequest")
+    config = project_json(snap)
+    config["logLimitBytes"] = 7
+    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(config))])
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1)
-    limit = 128 << 20
+    limit = 7
     try:
         stderr = wait_for_log(client, run_id, "work", LogStream.standard_error,
                               lambda log: log.logTruncatedAtBytes is not None)
@@ -515,7 +520,9 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert live.state == CardState.running
         assert live.logTruncatedAtBytes == limit
         stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True)
-        assert 120 << 20 < stdout.sizeBytes <= limit
+        assert stdout.sizeBytes == limit and text(stdout.text) == "1234567"
+        live_stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True, live=True)
+        assert text(live_stdout.text) == "1234567890" and live_stdout.logTruncatedAtBytes is None
     finally:
         if client.call("RunStatusRequest", runId=run_id).state == RunState.running:
             with release.open("w") as gate:

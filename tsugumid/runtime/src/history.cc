@@ -213,12 +213,15 @@ constexpr const char* kRunCols =
     "partial_run, uses_partial_result";
 
 auto log_truncated_at(sql::Db& db, const std::string& run_id,
-                      const CardPath& card, uint64_t invocation)
-    -> std::optional<uint64_t> {
+                      const CardPath& card, uint64_t invocation,
+                      bool build = false) -> std::optional<uint64_t> {
   auto st = db.prepare(
       "SELECT limit_bytes FROM log_truncations WHERE "
       "run_id=? AND card=? AND invocation=?");
-  st.bind(1, run_id).bind(2, key(card)).bind(3, invocation);
+  st.bind(1, run_id)
+      .bind(2, key(card))
+      .bind(3, build ? -static_cast<int64_t>(invocation)
+                     : static_cast<int64_t>(invocation));
   return st.step() ? st.opt_u64(0) : std::nullopt;
 }
 
@@ -544,6 +547,13 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 // log line index.
 constexpr int kHistoryVersion = 16;
 }  // namespace
+
+auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
+  // SQLite owns and removes the temporary database when the run releases it.
+  auto db = std::make_unique<sql::Db>("", false);
+  db->exec(run_tables(""));
+  return db;
+}
 
 History::History(const std::filesystem::path& db_path, std::string fault)
     : path_(db_path), fault_(std::move(fault)) {
@@ -977,18 +987,20 @@ void History::complete_invocation(sql::Db& db,
       .bind(1, s.run_id)
       .bind(2, key(s.card))
       .run();
-  if (r.record_io) {
+  {
     auto put = [&](const Value& v, int side) {
       std::string h = put_schema(db, *v.type);
-      // The File has already been copied into the run's retained values.
-      // The serialized value also holds its run-specific path, so its hash
-      // cannot tell whether two Files have the same content.
       std::optional<std::string> file_content_hash;
-      if (v.kind == PortKind::File) {
-        const auto path = path_value(v);
-        if (!path) throw sql::Error("recorded File has no path");
-        file_content_hash = fs::sha256_file(*path);
+      if (v.kind == PortKind::File && v.recorded_path) {
+        const auto root = path_.parent_path();
+        const auto path = root / *v.recorded_path;
+        std::error_code error;
+        if (fs::resolves_inside(root, path) && std::filesystem::is_regular_file(path, error))
+          file_content_hash = fs::sha256_file(path);
       }
+      const auto stored = v.kind == PortKind::FlatBuffer
+                              ? v
+                              : with_path(v, v.recorded_path.value_or(""));
       auto ins = db.prepare(
           "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
           "side, port, kind, schema_hash, "
@@ -1002,9 +1014,9 @@ void History::complete_invocation(sql::Db& db,
           .bind(6, static_cast<int>(v.kind))
           .bind(7, h)
           .bind(8, v.type->root_type)
-          .bind(9, static_cast<uint64_t>(v.bytes.size()))
-          .bind_blob(10, v.bytes)
-          .bind(11, crypto::sha256_hex(v.bytes))
+          .bind(9, static_cast<uint64_t>(stored.bytes.size()))
+          .bind_blob(10, stored.bytes)
+          .bind(11, crypto::sha256_hex(stored.bytes))
           .bind(12, v.artifact_id)
           .bind(13, file_content_hash)
           .run();
@@ -1030,6 +1042,7 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
       *j.schema = put_schema(db, *v.type);
       *j.root_type = v.type->root_type;
       *j.data_b64 = crypto::base64(v.bytes);
+      *j.recorded_path = v.recorded_path;
       entry.values->push_back(std::move(j));
     }
     list.groups->push_back(std::move(entry));
@@ -1173,13 +1186,14 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
 
 auto History::mark_log_truncated(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
-                                 uint64_t limit_bytes) -> void {
+                                 uint64_t limit_bytes, bool build) -> void {
   db.prepare(
         "INSERT OR IGNORE INTO log_truncations(run_id, card, invocation, "
         "limit_bytes) VALUES(?,?,?,?)")
       .bind(1, run_id)
       .bind(2, key(card))
-      .bind(3, invocation)
+      .bind(3, build ? -static_cast<int64_t>(invocation)
+                     : static_cast<int64_t>(invocation))
       .bind(4, limit_bytes)
       .run();
 }
@@ -1564,6 +1578,7 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
       }
       if (!crypto::base64_decode(*value.data_b64, v.bytes)) return std::nullopt;
       v.type = type->second;
+      v.recorded_path = *value.recorded_path;
       group.values.push_back(std::move(v));
     }
     li.groups.push_back(std::move(group));
@@ -1701,9 +1716,13 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
     if (card && invocation) st.bind(4, *invocation);
   };
   LogRead out;
-  if (card && invocation)
+  if (card && invocation) {
+    const bool build = stream == LogStream::build || stream == LogStream::journal;
     out.log_truncated_at_bytes =
-        log_truncated_at(db, run_id, *card, *invocation);
+        log_truncated_at(db, run_id, *card, *invocation, build);
+    if (!out.log_truncated_at_bytes && stream == LogStream::journal)
+      out.log_truncated_at_bytes = log_truncated_at(db, run_id, *card, *invocation);
+  }
   {
     auto st = db.prepare(std::string("SELECT ") + col +
                          " + length(data) FROM logs WHERE " + where +

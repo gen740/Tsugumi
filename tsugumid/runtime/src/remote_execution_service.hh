@@ -36,11 +36,4 @@ class RemoteExecutionService final : public ExecutionService {
   RemoteJobClient& client_;
 };
 
-// Copies an output of a remote job into the run's artifacts, under an id
-// derived from the job's id.
-auto prepare_remote_artifact(const std::filesystem::path& run_dir,
-                             const std::filesystem::path& out_dir,
-                             const InvocationSummaryData& inv, Value& value)
-    -> ArtifactData;
-
 }  // namespace tsugumi

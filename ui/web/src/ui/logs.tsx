@@ -122,8 +122,13 @@ function RunPanel({ workspace, session, tab }: { workspace: Workspace; session: 
   )
 }
 
+function isLiveStream(session: ProjectSession, runId: string, stream: D.LogStream) {
+  return session.runActive && runId === session.currentRunId &&
+    (stream === D.LogStream.standard_output || stream === D.LogStream.standard_error)
+}
+
 function truncationNotice(limit: bigint) {
-  return L('ログはここで切り詰めました（上限 {0} MiB）', limit / 1_048_576n)
+  return L('ログはここで切り詰めました（上限 {0} バイト）', limit)
 }
 
 /** Writes a whole stream to a file, in pieces. */
@@ -131,7 +136,7 @@ async function exportLog(session: ProjectSession, source: LogSource, size: numbe
   const rpc = session.rpc
   if (!rpc) throw new Error(L('実行環境に接続していません'))
   const file = await readLogFile(size, (offset) =>
-    rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES))
+    rpc.logRange(source.runId, source.card, source.invocation, source.stream, offset, false, LOG_READ_BYTES, null, false, null, source.live))
   download(`${source.runId}-${D.LogStream[source.stream]}.log`, file)
 }
 
@@ -166,7 +171,7 @@ function StreamLogView({ session, runId, card, invocation, stream: shownStream, 
     return () => { alive = false }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [runId, card?.join('/'), invocation])
-  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream }
+  const source: LogSource = { runId, card: card ?? null, invocation: card ? (invocation ?? resolved ?? null) : null, stream, live: isLiveStream(session, runId, stream) }
   const log = useLogStream(session, source, 'terminal')
 
   /** Why nothing is shown, so an empty pane is never ambiguous. */
@@ -259,7 +264,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     ?? (focus !== undefined ? groups.find((g) => g.stages.includes(focus))?.id : undefined) ?? 'execute'
   const current = selected ?? defaultGroup
   const stream = current === 'build' ? D.LogStream.build : current === 'execute' ? executeStream : current === 'save' ? D.LogStream.journal : rawStream
-  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream }
+  const source: LogSource | undefined = shownInvocation === undefined ? undefined : { runId, card, invocation: shownInvocation, stream, live: isLiveStream(session, runId, stream) }
   const log = useLogStream(session, source, current === 'save' ? 'journal' : 'terminal')
 
   // State changes (a stage starts or ends) read the record again; new output
@@ -308,7 +313,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
     <button key={id} type="button" className={`stage-chip${current === id ? ' selected' : ''}`} title={help} aria-pressed={current === id} onClick={() => setSelected(id)}>{content}</button>
   )
   const shownGroup = groups.find((g) => g.id === current)
-  const limit = log.truncatedAt ?? info?.record?.summary?.logTruncatedAtBytes ?? undefined
+  const limit = log.truncatedAt
 
   let body: JSX.Element
   if (infoError && !info && !live) {

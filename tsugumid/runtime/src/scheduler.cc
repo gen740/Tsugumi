@@ -7,6 +7,7 @@
 #include <deque>
 #include <fstream>
 #include <future>
+#include <iterator>
 #include <set>
 #include <stop_token>
 
@@ -116,7 +117,7 @@ Note log_note(const LogEnd& e) {
   n.kind = Note::Kind::Log;
   n.coalesce_key = "log|" + e.run_id + "|" + (e.card ? path_key(*e.card) : "") +
                    "|" + (e.invocation ? std::to_string(*e.invocation) : "") +
-                   "|" + std::to_string(int(e.stream));
+                   "|" + std::to_string(int(e.stream)) + (e.live ? "|live" : "");
   n.approx_bytes = 256;
   n.build = std::make_shared<const Note::Build>([e](FBB& b) {
     auto run = b.CreateString(e.run_id);
@@ -127,6 +128,7 @@ Note log_note(const LogEnd& e) {
     if (e.card) lb.add_card(card);
     if (e.invocation) lb.add_invocation(*e.invocation);
     lb.add_stream(e.stream);
+    lb.add_live(e.live);
     if (e.end_offset) lb.add_end_offset(*e.end_offset);
     return std::make_pair(R::NotificationPayload::LogAvailable,
                           lb.Finish().Union());
@@ -240,6 +242,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   RunStatusData status() {
     std::lock_guard<std::mutex> l(mu_);
     return summary_.status;
+  }
+
+  auto live_log(const std::string& run, const std::function<LogRead(sql::Db&)>& read)
+      -> LogRead {
+    std::lock_guard lock(log_policy_mu_);
+    if (run != run_id_ || !live_logs_) return {};
+    return read(*live_logs_);
   }
 
   RunStatusData request_cancel(bool interrupted) {
@@ -436,12 +445,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         .first->second;
   }
 
-  void mark_card_log_truncated(const CardPath& card, uint64_t inv) {
+  void mark_card_log_truncated(const CardPath& card, uint64_t inv,
+                               uint64_t limit, bool build = false) {
     const auto run = run_id_;
     svc_.history().submit(
-        [run, card, inv](sql::Db& db) {
-          History::mark_log_truncated(db, run, card, inv,
-                                      kInvocationLogLimitBytes);
+        [run, card, inv, limit, build](sql::Db& db) {
+          History::mark_log_truncated(db, run, card, inv, limit, build);
         },
         [self = shared_from_this(), run, card, inv](bool ok) {
           if (!ok) {
@@ -461,6 +470,35 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   void card_log(const CardPath& card, uint64_t inv, LogStream stream,
                 proc::LineChunk received) {
     std::lock_guard<std::mutex> lock(log_policy_mu_);
+    if (stream == LogStream::standard_output ||
+        stream == LogStream::standard_error) {
+      const auto& settings = doc_->resolution->find(card)->settings;
+      const auto limit = settings.record_logs ? settings.log_limit_bytes : 0;
+      auto& captured = captured_log_bytes_[{path_key(card), inv}];
+      for (const auto& text : received.lines) {
+        // This temporary log is available only while the run is active.
+        try {
+          if (!live_logs_) live_logs_ = History::open_live_logs();
+          sql::Transaction transaction(*live_logs_);
+          auto ends = History::append_log(*live_logs_, run_id_, card, inv, stream, text);
+          transaction.commit();
+          for (auto& end : ends) {
+            end.live = true;
+            svc_.server()->broadcast(log_note(end));
+          }
+        } catch (const std::exception& error) {
+          log::warn(std::string("live log: ") + error.what());
+        }
+        if (limit == 0 || captured > limit) continue;
+        // Keep the exact byte prefix, including when a read spans the limit.
+        const auto accepted = std::min<uint64_t>(text.size(), limit - captured);
+        if (accepted)
+          record_card_log(card, inv, stream, text.substr(0, accepted));
+        captured += text.size();
+        if (captured > limit) mark_card_log_truncated(card, inv, limit);
+      }
+      return;
+    }
     auto& budget = log_budget(card, inv);
     if (budget.truncated()) return;
     // The budget still measures each log entry. Store the accepted prefix
@@ -472,7 +510,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     }
     if (!chunk.empty()) record_card_log(card, inv, stream, std::move(chunk));
     if (received.truncated) budget.truncate();
-    if (budget.truncated()) mark_card_log_truncated(card, inv);
+    if (budget.truncated())
+      mark_card_log_truncated(card, inv, kInvocationLogLimitBytes, true);
   }
 
   // ---- setup ----------------------------------------------------------------
@@ -795,8 +834,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   struct Produced {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
-    std::vector<std::pair<LogStream, std::string>> remote_logs;
-    bool remote_log_truncated = false;
     bool detached = false;
     std::optional<InvocationSummaryData> unpublished;
   };
@@ -886,7 +923,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       for (auto& chunk : pending_logs)
         record_card_log(node.path, s.invocation, LogStream::build,
                         std::move(chunk));
-      if (budget.truncated()) mark_card_log_truncated(node.path, s.invocation);
+      if (budget.truncated())
+        mark_card_log_truncated(node.path, s.invocation, kInvocationLogLimitBytes,
+                                true);
       pending_logs.clear();
     };
     const auto trace_phase = [&](const StageTimeData& stage, int64_t end) {
@@ -1386,11 +1425,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     rec.summary = s;
     rec.record_io = node.settings.record_io;
     rec.input_sources = sources;
-    if (rec.record_io) {
-      if (node.kind != CardType::Collect || inputs.size() <= 1)
-        rec.inputs = inputs;
-      rec.outputs = out.outputs;
-    }
     rec.display = w.display;
     if (s.state == CardState::succeeded) {
       // Records, artifacts and saved values are written in the save stage.
@@ -1399,49 +1433,43 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       card_status(s);
       s.state = CardState::succeeded;
     }
-    // Artifacts are copied before the completion becomes visible.
-    std::optional<ArtifactData> remote_artifact;
-    if (!out.failure && node.settings.retain_artifact &&
-        node.settings.artifact_output) {
-      for (auto& v : out.outputs)
-        if (v.name == *node.settings.artifact_output) {
-          try {
-            if (s.execution_job_id.empty())
-              retain_artifact(node, w.invocation, v, w.cancellation->stop);
-            else
-              remote_artifact = prepare_remote_artifact(
-                  run_dir_, invocation_dir(node, w.invocation) / "out", s, v);
-          } catch (const Failed& f) {
-            was_cancel = f.failure.kind == FailureKind::cancelled;
-            s.state = was_cancel ? CardState::cancelled : CardState::failed;
-            s.failure = f.failure;
-            rec.summary = s;
-            out.failure = f.failure;
-          } catch (const std::exception& error) {
-            s.state = CardState::failed;
-            s.failure =
-                FailureData::make(FailureKind::output_invalid, error.what());
-            rec.summary = s;
-            out.failure = s.failure;
+    std::optional<ArtifactData> artifact;
+    if (!out.failure) {
+      const auto base = run_dir_ / "values" / path_key(node.path) /
+                        std::to_string(w.invocation);
+      try {
+        const std::atomic<bool> recording_stop{false};
+        for (auto& value : out.outputs) {
+          if (value.kind == PortKind::FlatBuffer) continue;
+          // Transport still uses the accepted staging path. Only history
+          // and the next rerun snapshot carry the retained file's identity.
+          if (auto source = std::ranges::find_if(inputs, [&](const Value& input) {
+                return input.kind == value.kind &&
+                       path_value(input) == path_value(value);
+              }); source != inputs.end())
+            value.recorded_path = source->recorded_path;
+          if (!node.settings.retain_artifact) continue;
+          if (value.name == node.settings.artifact_output) {
+            artifact = retain_artifact(node, w.invocation, value, recording_stop);
+            if (!value.recorded_path) {
+              auto path = run_dir_ / "artifacts" / artifact->artifact_id;
+              if (value.kind == PortKind::File) path /= artifact->name;
+              value.recorded_path = path.lexically_relative(svc_.store().state_dir()).generic_string();
+            }
+          }
+          if (!value.recorded_path) {
+            const auto kept = svc_.keep_file_value(
+                value, base / "output" / value.name, recording_stop);
+            value.recorded_path = stdfs::path(*path_value(kept))
+                .lexically_relative(svc_.store().state_dir()).generic_string();
           }
         }
-      if (out.failure) {
-        s.outputs_sent.clear();
-        out.outputs.clear();
-      }
-      if (rec.record_io) rec.outputs = out.outputs;
-    }
-    if (rec.record_io) {
-      try {
-        // Keeping requested records completes even when execution was stopped.
-        const std::atomic<bool> recording_stop{false};
-        const auto base = run_dir_ / "values" / path_key(node.path) /
-                          std::to_string(w.invocation);
-        for (auto& v : rec.inputs)
-          v = svc_.keep_file_value(v, base / "input" / v.name, recording_stop);
-        for (auto& v : rec.outputs)
-          v = svc_.keep_file_value(v, base / "output" / v.name, recording_stop);
       } catch (const std::exception& error) {
+        std::error_code ignored;
+        stdfs::remove_all(base, ignored);
+        if (artifact)
+          stdfs::remove_all(run_dir_ / "artifacts" / artifact->artifact_id, ignored);
+        artifact.reset();
         s.state = CardState::failed;
         s.failure = FailureData::make(
             FailureKind::persistence_failed,
@@ -1450,10 +1478,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         out.failure = s.failure;
         out.outputs.clear();
         s.outputs_sent.clear();
-        rec.inputs.clear();
-        rec.outputs.clear();
       }
     }
+    const auto recorded = [&](const Value& value) {
+      return value.kind == PortKind::FlatBuffer ? rec.record_io
+                                                : node.settings.retain_artifact;
+    };
+    if (node.kind != CardType::Collect || inputs.size() <= 1)
+      std::ranges::copy_if(inputs, std::back_inserter(rec.inputs), recorded);
+    std::ranges::copy_if(out.outputs, std::back_inserter(rec.outputs), recorded);
     // The completion is durable before it is announced or its outputs move on.
     // The record holds the save stage as done; a failed write reports it
     // failed.
@@ -1469,37 +1502,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.secrets = done.secrets;
       try {
         History& h = svc_.history();
-        std::map<LogStream, std::vector<LogEnd>> remote_log_ends;
         const bool failed_batch =
             out.failure && w.execution && !detaching_.stop_requested();
         if (failed_batch) {
           w.cancellation->failed.store(true);
           w.cancellation->request_stop();
         }
-        {
-          std::lock_guard<std::mutex> lock(log_policy_mu_);
-          auto& budget = log_budget(s.card, s.invocation);
-          std::erase_if(out.remote_logs, [&](const auto& entry) {
-            return !budget.append(entry.first, entry.second);
-          });
-          if (out.remote_log_truncated) budget.truncate();
-          if (budget.truncated()) {
-            s.log_truncated_at_bytes = kInvocationLogLimitBytes;
-          }
-        }
         h.write_sync([&](sql::Db& db) {
-          if (s.log_truncated_at_bytes)
-            History::mark_log_truncated(db, s.run_id, s.card, s.invocation,
-                                        *s.log_truncated_at_bytes);
-          if (remote_artifact && !out.failure)
-            History::put_artifact(db, *remote_artifact);
-          for (const auto& [stream, text] : out.remote_logs)
-            remote_log_ends[stream] =
-                History::append_log(db, s.run_id, s.card, s.invocation, stream, text);
+          if (artifact) History::put_artifact(db, *artifact);
           h.complete_invocation(db, rec);
         });
-        for (const auto& [_, ends] : remote_log_ends)
-          for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
         // The record holds the save stage as closed just before its commit.
         s.stages = done.stages;
         h.clear_live(s);
@@ -1727,7 +1739,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   auto retain_artifact(const Node& node, uint64_t inv, Value& v,
-                       const std::atomic<bool>& stop) -> void {
+                       const std::atomic<bool>& stop) -> ArtifactData {
     auto src = path_value(v);
     if (!src)
       throw Failed(FailureKind::output_invalid, "artifact output has no path");
@@ -1782,14 +1794,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         for (const auto& child : listing.files) retain_file(rel / child, child);
       }
       check_cancel();
-      svc_.history().write_sync(
-          [&](sql::Db& db) { History::put_artifact(db, a); });
     } catch (...) {
       std::error_code error;
       stdfs::remove_all(destination, error);
       throw;
     }
     v.artifact_id = a.artifact_id;
+    return a;
   }
 
   // ---- builtins
@@ -2005,7 +2016,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            }
            trace_validation();
          },
-         kInvocationLogLimitBytes,
+         node.settings.record_logs ? node.settings.log_limit_bytes : 0,
          [&](std::string_view direction, std::string_view name, uint64_t done,
              uint64_t total) {
            const auto now = now_ms();
@@ -2019,7 +2030,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            s.transfer_total = total;
            card_status(s);
          },
-         [&] { mark_card_log_truncated(node.path, inv); },
          [&](int64_t begin, int64_t end) {
            stage_begin(s, Phase::validate, StageOutcome::running, begin);
            svc_.server()->broadcast(timeline_note(
@@ -2030,8 +2040,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.transfer_name.clear();
     Produced p;
     p.failure = std::move(result.failure);
-    p.remote_logs = std::move(result.logs);
-    p.remote_log_truncated = result.log_truncated;
     if (!p.failure) p.outputs = std::move(result.outputs);
     return p;
   }
@@ -2235,6 +2243,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   std::optional<FailureData> start_failure_;
   std::optional<FailureData> stall_failure_;
   std::mutex log_policy_mu_;
+  std::unique_ptr<sql::Db> live_logs_;
+  std::map<std::pair<std::string, uint64_t>, uint64_t> captured_log_bytes_;
   std::map<std::pair<std::string, uint64_t>, workerd::InvocationLog>
       log_budgets_;
   std::mutex persist_mu_;
@@ -2246,6 +2256,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 Scheduler::Scheduler(Service& svc) : svc_(svc) {}
 
 Scheduler::~Scheduler() { shutdown(); }
+
+auto Scheduler::live_log(const std::string& run_id,
+                         const std::function<LogRead(sql::Db&)>& read) -> LogRead {
+  std::shared_ptr<RunExec> run;
+  {
+    std::lock_guard lock(mu_);
+    run = active_;
+  }
+  return run ? run->live_log(run_id, read) : LogRead{};
+}
 
 void Scheduler::recover_interrupted() {
   auto runs = svc_.history().read([](sql::Db& db) {

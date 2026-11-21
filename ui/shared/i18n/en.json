@@ -845,7 +845,7 @@
   "ログ": "Log",
   "ログのフォルダ": "Log folder",
   "ログの表示切替": "Toggle Log",
-  "ログはここで切り詰めました（上限 {0} MiB）": {"text": "Log truncated here ({0} MiB limit)", "mac": ["llu"]},
+  "ログはここで切り詰めました（上限 {0} バイト）": {"text": "Log truncated here ({0} byte limit)", "mac": ["llu"]},
   "ログをコピー": "Copy log",
   "ログを書き出す…": "Export log…",
   "ログを確認": "Read the log",

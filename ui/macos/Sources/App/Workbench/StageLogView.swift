@@ -94,7 +94,9 @@ struct StageLogView: View {
 
   private var source: LogStreamReader.Source? {
     guard let inv = shownInvocation else { return nil }
-    return LogStreamReader.Source(runId: runId, card: card, invocation: inv, stream: shownStream.0)
+    return LogStreamReader.Source(runId: runId, card: card, invocation: inv, stream: shownStream.0,
+                           live: session.runActive && runId == session.currentRunId &&
+                             (shownStream.0 == .standardOutput || shownStream.0 == .standardError))
   }
 
   var body: some View {
@@ -122,8 +124,8 @@ struct StageLogView: View {
         LogTextView(reader: reader, placeholder: placeholder)
           .frame(maxWidth: .infinity, maxHeight: .infinity)
         // At the end of the shown stream, where the output stops.
-        if let limit = reader.truncatedAt ?? info?.record?.summary.logTruncatedAtBytes {
-          Text("ログはここで切り詰めました（上限 \(limit / 1_048_576) MiB）")
+        if let limit = reader.truncatedAt {
+          Text("ログはここで切り詰めました（上限 \(limit) バイト）")
             .font(.caption.weight(.semibold)).padding(.horizontal, 8).padding(.vertical, 2)
         }
         if let failure, status(groups.first { $0.id == currentGroup }).2 == String(localized: "失敗") {

@@ -221,7 +221,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
 
   auto& history = service_.history();
   ExecutionResult output;
-  LiveRemoteLog live_log(request.log_limit_bytes, request.log);
+  LiveRemoteLog live_log(kRemoteLogTransportBytes, request.log);
   bool secrets_sent = false;
   std::mutex wait_mutex;
   std::condition_variable_any next_status;
@@ -276,10 +276,6 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       } catch (const std::exception&) {
       }
     }
-    if (reply && reply->log_truncated && !s.log_truncated_at_bytes) {
-      s.log_truncated_at_bytes = request.log_limit_bytes;
-      if (request.log_truncated) request.log_truncated();
-    }
     if (s.execution_state != before) request.publish();
     if (reply && reply->state == "succeeded") {
       // A stopped job keeps its workspace until release: collect the rest
@@ -295,8 +291,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
-            service_.store().state_dir() / "modules", node.outputs,
-            request.display, live_log.recorded(), request.stop,
+            service_.store().state_dir() / "modules", node.outputs, request.inputs,
+            request.display, live_log.recorded(), request.log, request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);
@@ -309,8 +305,6 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
-        output.log_truncated = result.log_truncated;
-        output.logs = std::move(result.logs);
         output.outputs = std::move(result.outputs);
         output.failure = std::move(result.failure);
         if (output.failure) s.execution_state = RemoteExecutionState::failed;
@@ -418,56 +412,5 @@ auto RemoteExecutionService::release_completed() -> void {
   }
 }
 
-auto prepare_remote_artifact(const stdfs::path& run_dir,
-                             const stdfs::path& out_dir,
-                             const InvocationSummaryData& inv, Value& value)
-    -> ArtifactData {
-  const auto source = path_value(value);
-  if (!source)
-    throw Failed(FailureKind::output_invalid, "remote artifact has no path");
-  const stdfs::path path(*source);
-  const auto relative = path.lexically_relative(out_dir);
-  if (relative.empty() || *relative.begin() == ".." ||
-      !fs::resolves_inside(out_dir, path))
-    throw Failed(FailureKind::output_invalid,
-                 "remote artifact is outside the output directory");
-  ArtifactData artifact;
-  artifact.artifact_id = inv.run_id + "/" + path_key(inv.card) + "/" +
-                         std::to_string(inv.invocation) + "/" + value.name;
-  artifact.run_id = inv.run_id;
-  artifact.card = inv.card;
-  artifact.invocation = inv.invocation;
-  artifact.output = value.name;
-  artifact.kind = value.kind;
-  artifact.name = path.filename().string();
-  const auto destination = run_dir / "artifacts" / artifact.artifact_id;
-  stdfs::remove_all(destination);
-  stdfs::create_directories(destination);
-  const auto copy = [&](const stdfs::path& from, const std::string& name) {
-    const auto target = destination / remote::relative_path(name);
-    crypto::Sha256 hash;
-    const auto size =
-        fs::copy_beneath(out_dir, from, target,
-                         [&](std::string_view chunk) { hash.update(chunk); });
-    artifact.members.push_back({name, size, hash.finish_hex()});
-  };
-  if (value.kind == PortKind::File)
-    copy(relative, artifact.name);
-  else {
-    const auto list =
-        fs::list_beneath(out_dir, relative == "." ? stdfs::path{} : relative);
-    if (!list.links.empty() || !list.special.empty() ||
-        list.files.size() > 1000)
-      throw Failed(
-          FailureKind::output_invalid,
-          "remote artifact has symlinks, special files or too many files");
-    for (const auto& directory : list.directories)
-      stdfs::create_directories(destination / directory);
-    for (const auto& file : list.files)
-      copy(relative == "." ? stdfs::path(file) : relative / file, file);
-  }
-  value.artifact_id = artifact.artifact_id;
-  return artifact;
-}
 
 }  // namespace tsugumi

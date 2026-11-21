@@ -91,6 +91,7 @@ struct SavedInputJson {
   t::String<"schema"> schema;
   t::String<"root_type"> root_type;
   t::String<"data"> data_b64;
+  Opt<"recorded_path", v::String> recorded_path;
 };
 
 struct SavedInputGroupJson {

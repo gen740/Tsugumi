@@ -49,8 +49,7 @@ auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT> {
       flatbuffers::GetRoot<R::JobSpec>(bytes.data())->UnPack());
 }
 auto validate_log_limit(const R::JobSpecT& spec) -> void {
-  if (spec.log_limit_bytes == 0 ||
-      spec.log_limit_bytes > kInvocationLogLimitBytes)
+  if (spec.log_limit_bytes > kMaxRecordedLogBytes)
     throw Error(R::ErrorCode::Invalid, "invalid invocation log limit");
 }
 auto validate_secret_names(const R::JobSpecT& spec) -> void {
