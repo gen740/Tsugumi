@@ -256,8 +256,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     }
     if (request.detach.stop_requested()) throw ExecutionDetached{};
     // The job has built its environment: its Card secrets go to the worker
-    // for this job only, once. An unconfirmed delivery is never repeated; the
-    // worker fails the job if they did not arrive.
+    // for this job only, once. A refused or unconfirmed delivery is never
+    // repeated: the job then fails on the worker, which reports why (after a
+    // listener restart, its invocation has already lost them).
     if (reply && reply->secrets_wanted && !secrets_sent &&
         !job.cancel_requested) {
       secrets_sent = true;
@@ -271,11 +272,6 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       } catch (const Failed& error) {
         s.execution_state = RemoteExecutionState::failed;
         output.failure = error.failure;
-        return output;
-      } catch (const BrokerRequestRejected& error) {
-        s.execution_state = RemoteExecutionState::failed;
-        output.failure =
-            FailureData::make(FailureKind::worker_failed, error.what());
         return output;
       } catch (const std::exception&) {
       }

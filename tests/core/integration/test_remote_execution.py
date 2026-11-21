@@ -746,7 +746,8 @@ def test_remote_worker_restart_before_the_card_starts_fails_the_job(secret_proje
     release.set()
     assert wait_run(client, run_id).state == RunState.failed
     invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
-    assert "restarted" in text(invocation.failure.diagnostic), text(invocation.failure.diagnostic)
+    assert "restarted before the Card started" in text(invocation.failure.diagnostic), \
+        text(invocation.failure.diagnostic)
     assert "remote-card-ran" not in log(client, run_id, "use", LogStream.standard_output)
     core.stop()
     assert not secret_leaks(tmp_path, core, host)
