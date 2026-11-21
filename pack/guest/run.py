@@ -88,7 +88,7 @@ def apply_request(project, request, inputs):
     for card, name in request.get("files", {}).items():
         path, definition = definition_of(project, card)
         values = [p for p in definition.get("params", []) if p["name"] == "value"]
-        if definition.get("template") != "input" or not values:
+        if definition.get("type") != "input" or not values:
             raise SystemExit(f"{card} is not an input Card with a file")
         # An input Card's file is a source of its own folder: the core copies
         # it into the run from there.
@@ -100,8 +100,8 @@ def apply_request(project, request, inputs):
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
     for card, values in request.get("params", {}).items():
         path, definition = definition_of(project, card)
-        if definition.get("template", "code") not in SETTABLE:
-            raise SystemExit(f"{card} is a {definition['template']} Card: its parameters shape the Workflow")
+        if definition.get("type") not in SETTABLE:
+            raise SystemExit(f"{card} is a {definition.get('type')} Card: its parameters shape the Workflow")
         params = {p["name"]: p for p in definition.get("params", [])}
         for name, value in values.items():
             if name not in params:
@@ -116,7 +116,7 @@ def record_all(project):
     """recordIO on for every Code Card of the copy."""
     for path in (project / "definitions").glob("*/_card.json"):
         definition = json.loads(path.read_text())
-        if "template" not in definition and not definition.get("recordIO"):
+        if definition.get("type") == "code" and not definition.get("recordIO"):
             definition["recordIO"] = True
             path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
 
@@ -132,7 +132,7 @@ def triggers(project):
     found = []
     for card in cards:
         path = project / "definitions" / card["id"] / "_card.json"
-        if path.is_file() and json.loads(path.read_text()).get("template") == "trigger":
+        if path.is_file() and json.loads(path.read_text()).get("type") == "trigger":
             found.append(card["id"])
     return found
 

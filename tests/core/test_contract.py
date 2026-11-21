@@ -374,7 +374,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
     doc["canvas"]["cards"].append({"id": "plan"})
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps({"template": "draft", "inputs": [{"name": "in"}]}),
+        change("PutDefinition", id="plan", cardJson=json.dumps({"type": "draft", "inputs": [{"name": "in"}]}),
                metaJson=json.dumps({"description": "d", "content": "p", "context": "why"})),
         change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
         change("SetProject", json=json.dumps(doc)),
@@ -394,7 +394,7 @@ def test_uint64_max_and_original_spelling_preserved(builtin_client):
     snap = c.open().snapshot
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "b"})
-    raw = '{"template": "input", "params": [{"name": "n", "type": "uint64", "data": 18446744073709551615}]}'
+    raw = '{"type": "input", "params": [{"name": "n", "type": "uint64", "data": 18446744073709551615}]}'
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                  changes=[change("SetProject", json=json.dumps(doc)), change("PutDefinition", id="b", cardJson=raw)])
     assert "18446744073709551615" in text(next(x for x in res.delta.definitionsUpsert if text(x.id) == "b").cardJson)
@@ -502,7 +502,7 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         read -r release < {shlex.quote(str(release))}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1)
@@ -542,7 +542,7 @@ def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, t
         printf '%s' '雪Y'
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
@@ -579,7 +579,7 @@ def test_card_log_ui_page_sizes(project, core_factory):
         printf '%s' {shlex.quote(end)}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     assert wait_run(client, run_id).state == RunState.succeeded
@@ -680,7 +680,7 @@ def test_empty_metadata_keeps_the_file(client):
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "plan"})
     meta = json.dumps({"description": "d", "content": "the user's intent"})
-    card = {"template": "draft", "inputs": [{"name": "in"}]}
+    card = {"type": "draft", "inputs": [{"name": "in"}]}
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps(card), metaJson=meta),
         change("SetProject", json=json.dumps(doc)),
@@ -710,7 +710,7 @@ def test_draft_resolution_ignores_meta_schema_and_layout(client):
     snap = client.call("ProjectInspectRequest")
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "plan"})
-    draft = json.dumps({"template": "draft", "inputs": [{"name": "in"}]})
+    draft = json.dumps({"type": "draft", "inputs": [{"name": "in"}]})
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "first"}]})),
         change("SetProject", json=json.dumps(doc))])

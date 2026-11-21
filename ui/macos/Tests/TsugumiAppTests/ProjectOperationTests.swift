@@ -120,7 +120,7 @@ import TsugumiTestSupport
     defer { try? FileManager.default.removeItem(at: dir) }
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
     snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"template":"draft"}"#
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"type":"draft"}"#
     snapshot.definitions = [definition]
     let source = Tsugumi_RPC_SourceInfoT(); source.path = "definitions/a/data.bin"; source.hash = "selected-hash"; source.sizeBytes = 3
     snapshot.sources = [source]
@@ -154,7 +154,7 @@ import TsugumiTestSupport
     snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
     snapshot.layoutJson = "{}"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "a"; definition.cardJson = #"{"template":"draft"}"#
+    definition.id = "a"; definition.cardJson = #"{"type":"draft"}"#
     snapshot.definitions = [definition]
     let schema = Tsugumi_RPC_SourceInfoT()
     schema.path = "definitions/a/_outputs.fbs"; schema.hash = "custom"; schema.sizeBytes = 32
@@ -181,7 +181,7 @@ import TsugumiTestSupport
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
     snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"
-    definition.cardJson = #"{"template":"input","params":[{"name":"value","type":"int","data":1}]}"#
+    definition.cardJson = #"{"type":"input","params":[{"name":"value","type":"int","data":1}]}"#
     definition.metaJson = #"{"content":"before"}"#
     snapshot.definitions = [definition]
     session.receiveProjectSnapshot(snapshot, projectId: "p")
@@ -191,7 +191,7 @@ import TsugumiTestSupport
     session.inlineDraft?.content = "mine"
     let other = delta(0, "agent", "old"); other.projectJson = nil; other.origin = "agent"
     let changed = Tsugumi_RPC_DefinitionT(); changed.id = "a"
-    changed.cardJson = #"{"template":"input","params":[{"name":"value","type":"int","data":2}]}"#
+    changed.cardJson = #"{"type":"input","params":[{"name":"value","type":"int","data":2}]}"#
     changed.metaJson = #"{"content":"agent","description":"unrelated"}"#
     other.definitionsUpsert = [changed]; session.applyDelta(other)
     // The replies keep the documents: the Card under edit stays on the canvas.
@@ -291,10 +291,10 @@ import TsugumiTestSupport
       defer { try? FileManager.default.removeItem(at: dir) }
       let prefix = "externals/sub/"
       let project = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
-      func card(_ value: UInt64) -> String { #"{"template":"input","params":[{"name":"value","type":"int","data":\#(value)}]}"# }
+      func card(_ value: UInt64) -> String { #"{"type":"input","params":[{"name":"value","type":"int","data":\#(value)}]}"# }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
       snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
-      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"external":"sub"}"#
+      let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"type":"subgraph","external":"sub"}"#
       snapshot.definitions = [link]
       func source(_ file: String, _ text: String) -> Tsugumi_RPC_SourceInfoT {
         let value = Tsugumi_RPC_SourceInfoT(); value.path = prefix + file; value.documentJson = text
@@ -354,7 +354,7 @@ extension ProjectOperationTests {
         let d = delta(s.rev, id, "old"); d.projectJson = nil
         if isLayout { d.layoutJson = document(text).serialized() }
         else {
-          let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft"}"#; def.metaJson = document(text).serialized()
+          let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"type":"draft"}"#; def.metaJson = document(text).serialized()
           d.definitionsUpsert = [def]
         }
         return d
@@ -400,7 +400,7 @@ extension ProjectOperationTests {
       defer { try? FileManager.default.removeItem(at: dir) }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT()
       snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layoutJson = "{}"
-      let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"template":"draft","symbol":"before"}"#
+      let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"; definition.cardJson = #"{"type":"draft","symbol":"before"}"#
       let file = "definitions/a/data.bin"
       let info = Tsugumi_RPC_SourceInfoT(); info.path = file; info.hash = "before"; info.sizeBytes = 1
       snapshot.definitions = [definition]; snapshot.sources = [info]
@@ -410,7 +410,7 @@ extension ProjectOperationTests {
       else { editor.definition?["symbol"] = .string("mine") }
       func changed(_ text: String, _ id: String) -> Tsugumi_RPC_DocumentDeltaT {
         let d = delta(s.rev, id, "old"); d.projectJson = nil
-        let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft","symbol":"\#(text)"}"#
+        let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"type":"draft","symbol":"\#(text)"}"#
         let info = Tsugumi_RPC_SourceInfoT(); info.path = file; info.hash = text; info.sizeBytes = 1
         d.definitionsUpsert = [def]; d.sourcesUpsert = [info]
         return d
@@ -458,12 +458,12 @@ extension ProjectOperationTests {
       if body.expectedRev != s.rev { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
       #expect(body.documents.first??.path == "definitions/a/_card.json")
       let d = self.delta(s.rev, request.opId, "saved")
-      let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"template":"draft"}"#
+      let def = Tsugumi_RPC_DefinitionT(); def.id = "a"; def.cardJson = #"{"type":"draft"}"#
       d.definitionsUpsert = [def]
       return self.result(d)
     }
     func save(_ overwrite: Bool) async -> Bool {
-      await edit.replaceDocuments(s, overwrite: overwrite, [("definitions/a/_card.json", .object([("template", .string("draft"))]))])
+      await edit.replaceDocuments(s, overwrite: overwrite, [("definitions/a/_card.json", .object([("type", .string("draft"))]))])
     }
     #expect(await save(false) == false)
     #expect(edit.conflictRev == 1 && edit.error == nil)
@@ -473,7 +473,7 @@ extension ProjectOperationTests {
       #expect(revisions.last == 1)
     }
     #expect(await save(true))
-    #expect(s.cardDefinition("a")?["template"]?.string == "draft")
+    #expect(s.cardDefinition("a")?["type"]?.string == "draft")
   }
 }
 
@@ -486,7 +486,7 @@ extension ProjectOperationTests {
         let d = delta(s.rev, id, "old")
         d.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
         let def = Tsugumi_RPC_DefinitionT(); def.id = "a"
-        def.cardJson = #"{"template":"input","params":[{"name":"value","type":"int","data":\#(n)}]}"#
+        def.cardJson = #"{"type":"input","params":[{"name":"value","type":"int","data":\#(n)}]}"#
         def.metaJson = #"{"content":"\#(n)","description":"unrelated"}"#
         d.definitionsUpsert = [def]
         return d
@@ -543,7 +543,7 @@ extension ProjectOperationTests {
        "notes":[{"id":"note","x":100,"y":300},{"id":"other","x":3000,"y":300}],
        "displays":{"b":{"x":400,"y":400,"width":300,"height":200},"c":{"x":400,"y":400,"width":300,"height":200,"hidden":true}}}
       """
-    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"template":"draft"}"#) }, layout: initial)
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"draft"}"#) }, layout: initial)
     let marquee = CGRect(x: -100, y: -100, width: 1000, height: 1000)
     let items = s.marqueeItems(marquee, in: [])
     #expect(items.cards == ["a"] && items.notes == ["note"] && items.frames == ["b"])
@@ -608,7 +608,7 @@ extension ProjectOperationTests {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = #"{"cards":{"a":{"x":700,"y":500}},"displays":{"a":{"x":400,"y":300,"width":300,"height":200}},"groups":[{"id":"group","cards":["a","b"]}]}"#
-    let s = try offlineSession(dir, cards: [("a", #"{"language":"bash"}"#), ("b", #"{"template":"draft"}"#)], layout: layout)
+    let s = try offlineSession(dir, cards: [("a", #"{"type":"code","language":"bash"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
     let display = Tsugumi_Data_DisplayT()
     display.card = cardPath(["a"])
     display.runId = "run-a"; display.invocation = 1
@@ -619,9 +619,9 @@ extension ProjectOperationTests {
     let renamed = delta(0, "rename", "unused")
     renamed.projectJson = nil; renamed.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "a"; definition.cardJson = #"{"language":"bash"}"#; definition.metaJson = #"{"name":"same name"}"#
+    definition.id = "a"; definition.cardJson = #"{"type":"code","language":"bash"}"#; definition.metaJson = #"{"name":"same name"}"#
     let other = Tsugumi_RPC_DefinitionT()
-    other.id = "b"; other.cardJson = #"{"template":"draft"}"#; other.metaJson = definition.metaJson
+    other.id = "b"; other.cardJson = #"{"type":"draft"}"#; other.metaJson = definition.metaJson
     renamed.definitionsUpsert = [definition, other]
     let resolved = Tsugumi_RPC_ResolvedCardT()
     resolved.card = cardPath(["a"])
@@ -637,13 +637,13 @@ extension ProjectOperationTests {
   @Test func helpersSavesAreDrawnByTheirOwnBirds() throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"language":"bash"}"#) })
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"code","language":"bash"}"#) })
     s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
     let saved = delta(0, "helper save", "unused")
     saved.origin = "agent"; saved.projectJson = nil
     saved.definitionsUpsert = ["b", "c"].map { id in
       let definition = Tsugumi_RPC_DefinitionT()
-      definition.id = id; definition.cardJson = #"{"language":"bash","maxRuns":3}"#
+      definition.id = id; definition.cardJson = #"{"type":"code","language":"bash","maxRuns":3}"#
       return definition
     }
     s.applyDelta(saved)
@@ -658,14 +658,14 @@ extension ProjectOperationTests {
   @Test func commentEditsStayOnTheirCardAndReopeningClearsTheResolution() async throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: [("plan", #"{"template":"draft"}"#)])
+    let s = try offlineSession(dir, cards: [("plan", #"{"type":"draft"}"#)])
     s.referenceIdProvider = { _, _, _ in "comment" }
     s.operateProject = { request in
       let edits = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let edit = try #require(edits.edits.first??.value?.value as? Tsugumi_Host_ProjectJSONEditT)
       #expect(edit.filePath == "definitions/plan/_meta.json")
       let definition = Tsugumi_RPC_DefinitionT()
-      definition.id = "plan"; definition.cardJson = #"{"template":"draft"}"#; definition.metaJson = edit.newValue.json
+      definition.id = "plan"; definition.cardJson = #"{"type":"draft"}"#; definition.metaJson = edit.newValue.json
       let d = self.delta(s.rev, request.opId, "unused")
       d.projectJson = nil; d.definitionsUpsert = [definition]
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
@@ -680,7 +680,7 @@ extension ProjectOperationTests {
     let resolved = delta(s.rev, "agent", "unused")
     resolved.projectJson = nil; resolved.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "plan"; definition.cardJson = #"{"template":"draft"}"#
+    definition.id = "plan"; definition.cardJson = #"{"type":"draft"}"#
     definition.metaJson = #"{"comments":[{"id":"comment","author":"user","text":"Check units","resolved":true,"stateBy":"agent","resolution":"Checked","cards":["a"]}]}"#
     resolved.definitionsUpsert = [definition]
     s.applyDelta(resolved)

@@ -534,7 +534,7 @@ auto Service::execution_diagnostic(const Node& node,
                                    const std::vector<RemoteTarget>& targets)
     -> std::optional<Diag> {
   const auto& settings = node.settings;
-  if (node.kind != Template::Code) return std::nullopt;
+  if (node.kind != CardType::Code) return std::nullopt;
   const auto error = [&](std::string message) -> Diag {
     return {true, "invalid_setting", std::move(message), node.path, {}, {}};
   };

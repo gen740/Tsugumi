@@ -60,7 +60,7 @@ TEST_F(AgentProjectFixture,
     const auto id = json::Text(json::Object(raw), "id");
     if (id != "report" &&
         json::Text(json::Object(Read(root / "definitions" / id / "_card.json")),
-                   "template") != "draft")
+                   "type") != "draft")
       continue;
     implemented.push_back(id);
     auto meta =
@@ -83,7 +83,7 @@ TEST_F(AgentProjectFixture,
     for (const auto& name : inputs)
       input_defs.push_back(json::Encode(json::Members{{"name", Quote(name)}}));
     const auto definition = json::Encode(json::Members{
-        {"template", Quote("code")},
+        {"type", Quote("code")},
         {"language", Quote("python")},
         {"inputs", json::Encode(input_defs)},
         {"params",
@@ -134,7 +134,7 @@ TEST_F(AgentProjectFixture,
   for (const auto& id : implemented) {
     SCOPED_TRACE(id);
     const auto definition = Read(root / "definitions" / id / "_card.json");
-    EXPECT_EQ(JsonString(definition, "/template"), "code");
+    EXPECT_EQ(JsonString(definition, "/type"), "code");
     const auto params = json::Array(json::Object(definition).at("params"));
     const auto rate = json::Object(params.front());
     EXPECT_DOUBLE_EQ(std::stod(rate.at("data")), 0.001);

@@ -57,7 +57,7 @@ The whole project:
 `definitions/start/_card.json`
 
 ```json
-{"template": "trigger"}
+{"type": "trigger"}
 ```
 
 ### The input value Card
@@ -68,7 +68,7 @@ Write the output type in `_outputs.fbs`. The fields of `Outputs` are the output 
 `definitions/settings/_card.json`
 
 ```json
-{"template": "input", "params": [{"name": "value", "type": "uint64", "data": 21}]}
+{"type": "input", "params": [{"name": "value", "type": "uint64", "data": 21}]}
 ```
 
 `definitions/settings/_outputs.fbs`
@@ -96,6 +96,7 @@ Write the names of the input ports in `inputs`. Input types are not written: the
 
 ```json
 {
+  "type": "code",
   "language": "python",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
@@ -279,6 +280,7 @@ Delete `src/`, set `language` to `bash`, and write a string in `run` of `default
 
 ```json
 {
+  "type": "code",
   "language": "bash",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2, "nix": true}]
@@ -323,6 +325,7 @@ The input and output ports become members of `Card::Inputs` and `Card::Output` a
 
 ```json
 {
+  "type": "code",
   "language": "cpp",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
@@ -366,6 +369,7 @@ An R Card embeds R in the Card's worker. Messages are lists: the worker converts
 
 ```json
 {
+  "type": "code",
   "language": "r",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
@@ -404,6 +408,7 @@ A Julia Card embeds Julia in the Card's worker. Messages are Dicts, converted in
 
 ```json
 {
+  "type": "code",
   "language": "julia",
   "inputs": [{"name": "number"}],
   "params": [{"name": "factor", "type": "uint64", "data": 2}]
@@ -445,7 +450,7 @@ against the FlatBuffers schema. The instance can retain state between invocation
 `definitions/multiply/_card.json` (Ruby)
 
 ```json
-{"language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
+{"type":"code","language":"ruby","inputs":[{"name":"number"}],"params":[{"name":"factor","type":"int64","data":2}]}
 ```
 
 `definitions/multiply/default.nix` (Ruby)
@@ -845,7 +850,7 @@ Definition files:
 
 | File | What it is |
 | --- | --- |
-| `_card.json` | All settings: `language` or `template`, `inputs`, `params`, run settings |
+| `_card.json` | What the Card is (`type`, required) and all settings: `language`, `inputs`, `params`, run settings |
 | `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `{ run = ...; }` with one implementation or an ordered list |
@@ -853,9 +858,13 @@ Definition files:
 
 Never write `_inputs.fbs`: input types come from the connected outputs.
 
-### Built-in Cards (`"template"` in `_card.json`, no code)
+### Card types
 
-| Template | Ports | Use |
+Every `_card.json` states what the Card is in `type`; a missing or unknown `type` is a definition error.
+`code` runs the Card's own sources (below), `draft` is a step described but not written yet, and `subgraph` is a Card in Card (with `external`).
+The other types are built-in Cards with no code:
+
+| Type | Ports | Use |
 | --- | --- | --- |
 | `trigger` | out `out` | Where a whole run starts |
 | `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
@@ -877,7 +886,7 @@ and an output message with a `value:bool` field. Wire that output to the
 Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 
 ```json
-{"template": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
+{"type": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
 ```
 
 ### An input Card that hands on a project file
@@ -888,7 +897,7 @@ next Card receives its path.
 `definitions/load/_card.json` (the path is relative to this Card's definition folder):
 
 ```json
-{"template": "input",
+{"type": "input",
  "params": [{"name": "value", "type": "string", "data": "data/events.fits"}]}
 ```
 
@@ -914,7 +923,7 @@ The next Card reads it as a path: `inputs.input("events", EventsFile).Value().de
 
 ### Code Card settings
 
-Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`; remove `template` for a Code Card. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
+A Code Card has `"type": "code"`. Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
 
 With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
@@ -1018,7 +1027,7 @@ with whichever member arrived (`inputs.arrival.value.type` says which port). Pyt
 
 ### Ruby API
 
-`_card.json`: `{"language": "ruby", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
+`_card.json`: `{"type": "code", "language": "ruby", ...}`. Use the MRI adapter with worker-side typed JSON conversion:
 
 ```nix
 { pkgs, inputs, params }:
@@ -1068,7 +1077,7 @@ extensions that use libraries supplied through `buildInputs`.
 
 ### Draft wire ends and implementation
 
-A Draft (`_card.json` with `"template": "draft"`) has no input or output ports,
+A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
 including when `_meta.json` contains port descriptions or `_outputs.fbs` exists.
 A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
 The `port` field is required; the empty string is reserved for Draft ends.

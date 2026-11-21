@@ -13,7 +13,7 @@ from tsugumi_client import RpcFailure, change, make, new_id, text
 def setup(project):
     card = project / "definitions/data"
     card.mkdir(parents=True)
-    (card / "_card.json").write_text('{"template":"draft"}')
+    (card / "_card.json").write_text('{"type":"draft"}')
 
 
 def transfer(source, destination="definitions/data/input.csv", **kwargs):
@@ -238,7 +238,7 @@ def test_host_selected_source_root_and_more_than_1000_files(project, core_factor
 def test_transfer_permission_widening_still_requires_explicit_approval(project, core_factory, tmp_path):
     from projects import SINK, card, card_in_card, conn, write
 
-    write(project, {"src": {"template": "input", "params": [
+    write(project, {"src": {"type": "input", "params": [
         {"name": "text", "type": "string", "data": "x"},
         {"name": "value", "type": "bool", "data": True}],
         "_outputs": "table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},

@@ -89,9 +89,9 @@ def write_project(root, arguments: str, main: str, pyproject: str | None = PYPRO
         "connections": [{"from": {"card": "start", "port": "out"}, "to": {"card": "card", "port": "start"}}]}}
     put(root / "tsugumi.json", json.dumps(project))
     put(root / "layout.json", "{}")
-    put(root / "definitions/start/_card.json", json.dumps({"template": "trigger"}))
+    put(root / "definitions/start/_card.json", json.dumps({"type": "trigger"}))
     d = root / "definitions/card"
-    put(d / "_card.json", json.dumps({"language": "python", "inputs": [{"name": "start"}],
+    put(d / "_card.json", json.dumps({"type": "code", "language": "python", "inputs": [{"name": "start"}],
                                       **({} if sandbox or IN_VM else {"sandbox": False})}))
     put(d / "default.nix", nix(arguments))
     put(d / "_outputs.fbs", OUTPUTS)

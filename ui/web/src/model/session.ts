@@ -1396,7 +1396,7 @@ export class ProjectSession extends Observable {
   /** The Card's settings (its _card.json). */
   cardDefinition(k: CardKey): J | undefined {
     const d = this.cardDefinitionDraft(k)
-    return d && get(d.card, 'external') === undefined ? d.card : undefined
+    return d && definitionKind(d.card) !== 'subgraph' ? d.card : undefined
   }
 
   /** The Card's _meta.json. */
@@ -1435,7 +1435,7 @@ export class ProjectSession extends Observable {
   /** Changes a Card's _card.json in the draft. */
   updateCard(k: CardKey, fn: (c: JObj) => void) {
     const d = this.cardDefinitionDraft(k)
-    if (!d || get(d.card, 'external') !== undefined) return
+    if (!d || definitionKind(d.card) === 'subgraph') return
     const n = cloneDef(d)
     if (!isObj(n.card)) n.card = obj()
     fn(n.card as JObj)
@@ -1640,10 +1640,7 @@ export class ProjectSession extends Observable {
   // ---- Reading -------------------------------------------------------------------
 
   kind(k: CardKey): CardKind {
-    if (this.cardExternal(k) !== undefined) return 'subgraph'
-    const def = this.cardDefinition(k)
-    if (def === undefined) return 'draft'
-    return definitionKind(def)
+    return definitionKind(this.cardDefinitionDraft(k)?.card)
   }
 
   /** The editable human name; the identifier remains the exact address. */
@@ -2592,15 +2589,14 @@ export const KIND_ICON: Record<CardKind, string> = {
   code: 'chevron.left.forwardslash.chevron.right',
 }
 
-/** A kind as the daemon names it (VersionCanvasCard.kind). */
-export const cardKindNamed = (name: string): CardKind => ((KINDS as string[]).includes(name) ? name as CardKind : 'code')
+/** A kind by its _card.json "type" name (also VersionCanvasCard.kind). A
+ *  missing or unknown type is a definition error the daemon reports; such a
+ *  Card, like one without a definition, shows as a Draft: no ports, no run. */
+export const cardKindNamed = (name: string | undefined): CardKind =>
+  name !== undefined && (KINDS as string[]).includes(name) ? name as CardKind : 'draft'
 
-export function definitionKind(def: J | undefined): CardKind {
-  if (get(def, 'external') !== undefined) return 'subgraph'
-  const t = str(get(def, 'template'))
-  if (t && (KINDS as string[]).includes(t)) return t as CardKind
-  return get(def, 'language') === undefined ? 'draft' : 'code'
-}
+/** What a _card.json says the Card is: its "type". */
+export const definitionKind = (def: J | undefined): CardKind => cardKindNamed(str(get(def, 'type')))
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */

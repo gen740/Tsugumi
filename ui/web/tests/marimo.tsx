@@ -8,7 +8,7 @@ import { FailureSourceLink } from '../src/ui/history'
 
 const session = new ProjectSession('/p', 'marimo', 'marimo')
 session.project = parse('{"canvas":{"cards":[{"id":"notebook"}],"connections":[]}}')
-session.confirmedDefinitions.set('notebook', parse('{"language":"python"}'))
+session.confirmedDefinitions.set('notebook', parse('{"type":"code","language":"python"}'))
 const model = new CardEditorModel(session, 'notebook')
 const source = 'definitions/notebook/src/notebook.py'
 model.texts.set(source, 'unsaved notebook changes')

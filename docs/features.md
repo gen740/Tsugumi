@@ -66,16 +66,18 @@ Every Card has a permanent identifier and a separate human name in `_meta.json.n
 
 ### Kinds of Card
 
+Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigger`, `input`, `branch`, `fork`, `merge`, `collect` or `subgraph`. Nothing else decides it; a missing or unknown `type` is a definition error.
+
 | Kind | Role |
 | --- | --- |
-| Code Card | Defines its environment in `default.nix` and runs C++, Python, Bash, R, Julia, Ruby, Go, Rust or C# code |
+| Code Card (`code`) | Defines its environment in `default.nix` and runs C++, Python, Bash, R, Julia, Ruby, Go, Rust or C# code |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (declared inputs to `out`, a union named by input port with root `tsugumi.merge.Merged`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
 | fork | Splits a value by name: `value` goes out unchanged on every output declared in `outputs` (default `a` and `b`), each time it arrives. Its log says where it went (`fork -> a, b`). Every output always runs downstream, so a Fork never makes a path conditional |
 | Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
-| Draft | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
+| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
 A Card in Card uses full Card paths to distinguish state and history; visual groups in `layout.json` do not affect execution.
 

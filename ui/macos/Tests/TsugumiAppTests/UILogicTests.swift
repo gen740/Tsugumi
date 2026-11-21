@@ -205,7 +205,7 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let (start, log, draft) = ("start", "log", "plan")
-  let s = try offlineSession(dir, cards: [(start, #"{"template":"trigger"}"#), (log, #"{"language":"python"}"#), (draft, #"{"template":"draft"}"#)])
+  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code","language":"python"}"#), (draft, #"{"type":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -217,7 +217,7 @@ import TsugumiTestSupport
   // Once the Card is implemented, endpoint styling becomes solid.
   let implemented = Tsugumi_RPC_DocumentDeltaT()
   implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
-  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"language":"python"}"#
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code","language":"python"}"#
   implemented.definitionsUpsert = [definition]
   s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
@@ -663,7 +663,7 @@ private final class CountingRuler: LineNumberRuler {
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
   snapshot.definitions = ["plan", "next"].map { id in
-    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"template":"draft"}"#
+    let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"type":"draft"}"#
     return definition
   }
   session.prepareLayout = { _, layout, _ in layout }

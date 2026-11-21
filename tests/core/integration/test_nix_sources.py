@@ -27,14 +27,14 @@ def nix(body: str) -> str:
 
 
 DEFS = {
-    "start": {"template": "trigger"},
+    "start": {"type": "trigger"},
     # The name alone: reading the package does not build it.
-    "reads": {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+    "reads": {"type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
               "_nix": nix('{ run = "echo ${inputs.sources.ciao.packages.ciao.name} ${inputs.sources.ciao.rev}"; }')},
-    "plain": {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS, "_nix": nix('{ run = "echo plain"; }')},
-    "get_flake": {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+    "plain": {"type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS, "_nix": nix('{ run = "echo plain"; }')},
+    "get_flake": {"type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
                   "_nix": nix(f'{{ run = "echo ${{(builtins.getFlake "{REF}").rev}}"; }}')},
-    "fetch_tree": {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+    "fetch_tree": {"type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
                    "_nix": nix(f'{{ run = "echo ${{(builtins.fetchTree "{REF}").rev}}"; }}')},
 }
 
@@ -78,9 +78,9 @@ def test_connected_nix_exports_are_shared_by_run_list_implementations(core_facto
       ];
     }''')
     definitions = {
-        "start": {"template": "trigger"},
-        "producer": {"language": "bash", "_outputs": number, "_nix": producer},
-        "consumer": {"language": "bash", "inputs": [{"name": "data"}], "_outputs": OUTPUTS, "_nix": consumer},
+        "start": {"type": "trigger"},
+        "producer": {"type": "code", "language": "bash", "_outputs": number, "_nix": producer},
+        "consumer": {"type": "code", "language": "bash", "inputs": [{"name": "data"}], "_outputs": OUTPUTS, "_nix": consumer},
     }
     write(root, definitions, [card(name, name) for name in definitions],
           [conn("producer", "out", "consumer", "data")])
@@ -92,8 +92,8 @@ def test_nix_rejects_a_nested_run_list(core_factory, tmp_path):
     """An implementation is a shell body or package, so nested lists fail before execution."""
     root = tmp_path / "nested-run-list"
     definitions = {
-        "start": {"template": "trigger"},
-        "work": {"language": "bash", "_outputs": OUTPUTS,
+        "start": {"type": "trigger"},
+        "work": {"type": "code", "language": "bash", "_outputs": OUTPUTS,
                  "_nix": nix('{ run = [ [ "echo nested" ] ]; }')},
     }
     write(root, definitions, [card(name, name) for name in definitions], [])
@@ -202,7 +202,7 @@ def test_external_package_customization_preserves_original_and_changes_derivatio
     root = tmp_path / "customized"
     definitions = dict(DEFS)
     definitions["inspect"] = {
-        "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+        "type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
         "_nix": nix('''let
           original = inputs.sources.original.packages.ciao;
           customized = inputs.sources.customized.packages.ciao;
@@ -254,7 +254,7 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         root = tmp_path / "fixture-project"
         definitions = dict(DEFS)
         definitions["inspect"] = {
-            "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+            "type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
             "_nix": nix('''{
               run = "cat ${inputs.sources.fixture.packages.sample}/value ${inputs.sources.original.packages.sample}/value";
             }'''),
@@ -318,7 +318,7 @@ def test_card_override_attempt_points_to_supported_project_configuration(core_fa
     """A direct Card-side override explains the supported approved customization API."""
     root = tmp_path / "card-side-override"
     definitions = dict(DEFS)
-    definitions["custom"] = {"language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
+    definitions["custom"] = {"type": "code", "language": "bash", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
                              "_nix": nix('''let p = inputs.sources.ciao.packages.ciao.overrideAttrs (_: { name = "custom"; });
                                             in { run = "echo ${p.name}"; }''')}
     write(root, definitions, [card("start", "start"), card("c", "custom")], [conn("start", "out", "c", "start")])

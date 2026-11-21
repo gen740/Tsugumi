@@ -38,7 +38,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
 def env(tmp_path_factory):
     """One container for the module; each test swaps in its own project files."""
     root = tmp_path_factory.mktemp("cards") / "p"
-    write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
+    write(root, {"trigger": {"type": "trigger"}}, [card("start", "trigger")], [])
     e = real_environment(root)
     yield e
     e.cleanup()
@@ -73,13 +73,13 @@ def test_backpressure_stall_ends_the_run(env):
     """loop(any) -> step -> loop (feedback); step also feeds wait.value, whose
     condition never arrives: its queue fills, everything stops, the run ends."""
     defs = {
-        "trigger": {"template": "trigger"},
+        "trigger": {"type": "trigger"},
         "seed": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"'),
-        "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
+        "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["x"], maxRuns=1000,
                      reuseWorker=True),
-        "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
-        "branch": {"template": "branch"},
+        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+        "branch": {"type": "branch"},
     }
     c = load(env, defs,
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("step", "step"),
@@ -100,7 +100,7 @@ def test_backpressure_stall_ends_the_run(env):
 def test_shell_step_contract(env):
     big = "x" * 300_000
     defs = {
-        "trigger": {"template": "trigger"},
+        "trigger": {"type": "trigger"},
         "make": bash(f'printf \'{{"out":{{"value":"{big}"}}}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT),
         "use": bash(
             # preRun's cd and exports carry over; the input is a JSON file only (no .bin, no INPUT_).
@@ -150,7 +150,7 @@ def proc_count(env, pattern: str) -> int:
 
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_cancel_ends_every_descendant(env, sandbox):
-    defs = {"trigger": {"template": "trigger"},
+    defs = {"trigger": {"type": "trigger"},
             "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719 & echo descendants-ready; wait", sandbox=sandbox)}
     c = load(env, defs, [card("start", "trigger"), card("hang", "hang")], [])
     run_id = start_run(c, "start")
@@ -183,7 +183,7 @@ def test_isolation(env):
                "(read -r x < /control/server.ready) 2>/dev/null && { echo 'token readable'; fail=1; }; "
                "[ \"$UID\" = 65534 ] || { echo \"uid $UID\"; fail=1; }; "
                "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
-    defs = {"trigger": {"template": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
+    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
     run_id, st = run_and_wait(c, "start")
     detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
@@ -204,8 +204,8 @@ def test_nix_connected_exports(env):
   '';
 }
 ''')
-    defs = {"trigger": {"template": "trigger"}, "a": a,
-            "b": {"language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
+    defs = {"trigger": {"type": "trigger"}, "a": a,
+            "b": {"type": "code", "language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
@@ -221,7 +221,7 @@ def test_nix_connected_exports(env):
 
 
 def test_stages_and_cache(env):
-    defs = {"trigger": {"template": "trigger"}, "one": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')}
+    defs = {"trigger": {"type": "trigger"}, "one": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')}
     c = load(env, defs, [card("start", "trigger"), card("one", "one")], [])
     c.open()
     def collect_phases():
@@ -263,8 +263,8 @@ HOME = Path.home()                  # read when the module is loaded
 def main(inputs, report):
     report.text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
 '''
-    defs = {"trigger": {"template": "trigger"},
-            "show": {"language": "python",
+    defs = {"trigger": {"type": "trigger"},
+            "show": {"type": "code", "language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
@@ -364,8 +364,8 @@ def main(inputs, report):
     report.points([0, 1, 2], [0, 1, 4], [0, 1, 8], [0xff0000, 0x00ff00, 0x0000ff])
     report.module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
 '''
-    defs = {"trigger": {"template": "trigger"},
-            "show": {"language": "python",
+    defs = {"trigger": {"type": "trigger"},
+            "show": {"type": "code", "language": "python",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
@@ -499,12 +499,12 @@ def main(inputs):
     shell = bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && read -r -n 300 head < "$JSON_IN" && '
                  'case "$(cat "$JSON_IN")" in *18446744073709551615*) ;; *) exit 9;; esac && '
                  'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])
-    defs = {"trigger": {"template": "trigger"},
-            "make": {"language": "python", "_outputs": a_out, "_nix": py_nix},
-            "check": {"language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
+    defs = {"trigger": {"type": "trigger"},
+            "make": {"type": "code", "language": "python", "_outputs": a_out, "_nix": py_nix},
+            "check": {"type": "code", "language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
             "shell": shell,
-            "bad": {"language": "python", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
-            "missing": {"language": "python", "_outputs": a_out, "_nix": py_nix},
+            "bad": {"type": "code", "language": "python", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
+            "missing": {"type": "code", "language": "python", "_outputs": a_out, "_nix": py_nix},
             "after": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
     root = env.project
     c = load(env, defs,
@@ -622,11 +622,11 @@ in
 ''', "").replace(
         '''  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
 ''', "")
-    defs = {"trigger": {"template": "trigger"}, "seed": seed,
-            "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
+    defs = {"trigger": {"type": "trigger"}, "seed": seed,
+            "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
+            "calc": {"type": "code", "language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
                      "_outputs": calc_out, "_nix": calc_nix},
-            "other": {"language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
+            "other": {"type": "code", "language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
                       "params": [{"name": "step", "type": "uint64", "data": 10}],
                       "_outputs": other_out, "_nix": other_nix}}
     root = env.project
@@ -661,13 +661,13 @@ def test_unselected_branch_is_not_evaluated(env):
     Concurrency limits are exercised with explicit gates in test_run_lists.py;
     inferring concurrency from wall-clock invocation spans was timing evidence.
     """
-    broken = {"language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
+    broken = {"type": "code", "language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
               "_nix": '''{ pkgs, inputs, params }:
 { run = builtins.throw "must never be evaluated"; }
 '''}
-    defs = {"trigger": {"template": "trigger"},
-            "flag": {"template": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
-            "branch": {"template": "branch"}, "broken": broken}
+    defs = {"trigger": {"type": "trigger"},
+            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+            "branch": {"type": "branch"}, "broken": broken}
     c = load(env, defs,
              [card("start", "trigger"),
               card("cond", "flag"), card("gate", "branch"), card("never", "broken")],
@@ -682,12 +682,12 @@ def test_unselected_branch_is_not_evaluated(env):
 
 
 def test_worker_crash_then_edit_and_rerun(env):
-    crash = {"language": "python", "_outputs": NUM,
+    crash = {"type": "code", "language": "python", "_outputs": NUM,
              "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
 { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
 '''}
-    defs = {"trigger": {"template": "trigger"}, "crash": crash}
+    defs = {"trigger": {"type": "trigger"}, "crash": crash}
     root = env.project
     c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
     put(root / "definitions" / "crash" / "src" / "main.py", '''import os, signal

@@ -52,7 +52,7 @@ def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **s
         attrs.append(f"preRun = {nix_string(pre)};")
     if post:
         attrs.append(f"postRun = {nix_string(post)};")
-    body = {"language": "bash", "inputs": [{"name": i} for i in inputs], **settings}
+    body = {"type": "code", "language": "bash", "inputs": [{"name": i} for i in inputs], **settings}
     body["_outputs"] = outputs
     body["_nix"] = "{ pkgs, inputs, params }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
     return body
@@ -103,8 +103,8 @@ ENV_PRE_RUN = "mkdir -p there && cd there && export FROM_PRE=pre FROM_TOP_AND_PR
 def python_probe_project(main: str, pre: str | None = None) -> tuple:
     """(defs, cards, conns, files) of a trigger and a Python Card `show`."""
     attrs = f" preRun = {nix_string(pre)};" if pre else ""
-    defs = {"trigger": {"template": "trigger"},
-            "show": {"language": "python", "reuseWorker": True, "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
+    defs = {"trigger": {"type": "trigger"},
+            "show": {"type": "code", "language": "python", "reuseWorker": True, "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
     return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
 
 

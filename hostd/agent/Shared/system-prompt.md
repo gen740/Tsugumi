@@ -16,11 +16,12 @@ the person's decision.
 - Project edits are atomic; the canvas derives positions for Cards without saved coordinates, and project_validate checks the
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
-  definitions/<id>/_card.json holds its settings (params with their values in "data", trigger
+  definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
+  every Card states it) and settings (params with their values in "data", trigger
   "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
   permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs; a fork Card ({"template": "fork", "outputs": [{"name": "a"},
+  links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
 - How to write a code Card (its _card.json, default.nix, sources, the Python SDK, C++, bash, file and folder outputs,
   large public data, marimo, input Cards): demo_read reference/cards.md. demo_read also reads the bundled demos
@@ -28,7 +29,7 @@ the person's decision.
 - What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
-- A Card in Card is definitions/<id>/_card.json {"external": "<name>"}: the project externals/<name>/ with its own
+- A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
   tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
   the paths under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
@@ -48,7 +49,7 @@ the person's decision.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
   sizes and hashes. input_types returns the types a Card receives, rendered for its language.
 <!-- End of shared MCP rules -->
-- Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"template": "draft"}
+- Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft"}
   and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
   person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on
   it is {"card": "<id>", "port": ""}; the other end's real port name carries the meaning. A Draft and what needs it

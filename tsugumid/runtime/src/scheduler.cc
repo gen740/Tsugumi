@@ -542,7 +542,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     // A trigger starts the whole resolved workflow, including unwired sources
     // and nested projects (the same scope used by plan()).
     for (const auto& candidate : res.nodes)
-      if (!candidate.is_virtual && candidate.kind == Template::Trigger)
+      if (!candidate.is_virtual && candidate.kind == CardType::Trigger)
         triggers.insert(path_key(candidate.path));
     std::string next;
     for (const auto& trigger : triggers) {
@@ -973,7 +973,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         bytes += member.value.bytes.size();
       }
     }
-    if (node.kind == Template::Collect) return 1;
+    if (node.kind == CardType::Collect) return 1;
     if (std::ranges::any_of(
             groups, [](const auto& group) { return group.members.empty(); }))
       return 0;
@@ -990,7 +990,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   auto batch_inputs(const Node& node, const std::vector<TokenGroup>& groups,
                     uint32_t index) -> std::vector<Token> {
     std::vector<Token> inputs;
-    if (node.kind == Template::Collect) {
+    if (node.kind == CardType::Collect) {
       if (!groups.empty()) inputs = groups.front().members;
       return inputs;
     }
@@ -1004,7 +1004,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   auto remember_inputs(NodeRt& rt, const Work& batch) -> void {
     if (batch.from_saved ||
-        (rt.node->kind != Template::Code && batch.groups.empty()))
+        (rt.node->kind != CardType::Code && batch.groups.empty()))
       return;
     std::vector<SavedInputGroup> saved;
     for (const auto& group : batch.groups) {
@@ -1070,17 +1070,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     batch.card = node.path;
     batch.activation = work.activation;
     batch.execution_list =
-        node.kind != Template::Collect &&
+        node.kind != CardType::Collect &&
         std::ranges::any_of(work.groups, &TokenGroup::execution_list);
     std::unique_ptr<PreparedExecution> prepared;
     std::vector<CardBuild> implementations;
     uint32_t count = 0;
     bool reserved = false;
-    const bool code = node.kind == Template::Code;
+    const bool code = node.kind == CardType::Code;
     // An Input Card's value sweep multiplies like a run list: its values are
     // the Card's own implementations of the arriving combination.
     const bool sweep =
-        node.kind == Template::Input && has_value_sweep(node.settings);
+        node.kind == CardType::Input && has_value_sweep(node.settings);
     const auto sweep_size =
         sweep ? static_cast<uint32_t>(value_sweep_size(node.settings)) : 1u;
     batch.execution_list |= sweep;
@@ -1321,7 +1321,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     } else {
       s.state = CardState::running;
       if (!prepared) {
-        if (node.kind == Template::Code) {
+        if (node.kind == CardType::Code) {
           stage_begin(s, Phase::prepare, StageOutcome::reused);
           stage_begin(s, Phase::evaluate, StageOutcome::reused);
           stage_begin(s, Phase::build, StageOutcome::reused);
@@ -1336,7 +1336,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (w.cancellation->stop.load())
           throw Failed(FailureKind::cancelled,
                        "batch cancelled before execution");
-        if (node.kind == Template::Code)
+        if (node.kind == CardType::Code)
           out = run_code(rt, w, s, inputs, sources, lane);
         else
           out = run_builtin(rt, w, s, inputs);
@@ -1349,7 +1349,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       } catch (const std::exception& e) {
         out.failure = FailureData::make(FailureKind::internal_error, e.what());
       }
-      if (!out.failure && node.kind != Template::Code) {
+      if (!out.failure && node.kind != CardType::Code) {
         stage_begin(s, Phase::validate);
         const auto started = now_ms();
         try {
@@ -1387,7 +1387,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     rec.record_io = node.settings.record_io;
     rec.input_sources = sources;
     if (rec.record_io) {
-      if (node.kind != Template::Collect || inputs.size() <= 1)
+      if (node.kind != CardType::Collect || inputs.size() <= 1)
         rec.inputs = inputs;
       rec.outputs = out.outputs;
     }
@@ -1657,7 +1657,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           forwarded.insert(stdfs::path(*p).lexically_normal().string());
     std::set<std::string> seen;
     for (auto& v : outputs) {
-      if (node.kind != Template::Code && node.kind != Template::Collect) {
+      if (node.kind != CardType::Code && node.kind != CardType::Collect) {
         const auto* port = node.output(v.name);
         if (!port || !port->type)
           throw Failed(FailureKind::output_invalid, "unknown output " + v.name,
@@ -1807,7 +1807,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     Produced p;
     int64_t t0 = now_ms();
     switch (node.kind) {
-      case Template::Trigger: {
+      case CardType::Trigger: {
         FBB b;
         b.Finish(flatbuffers::Offset<void>(b.EndTable(b.StartTable())));
         p.outputs.push_back(
@@ -1819,7 +1819,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
              {}});
         break;
       }
-      case Template::Input: {
+      case CardType::Input: {
         const auto params =
             w.sweep_index
                 ? value_sweep_member(node.settings, *w.sweep_index).params
@@ -1881,7 +1881,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         }
         break;
       }
-      case Template::Branch: {
+      case CardType::Branch: {
         const Value* v = input(in, "value");
         const Value* c = input(in, "condition");
         if (!v || !c)
@@ -1896,7 +1896,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                  std::string("branch -> ") + (cond ? "a" : "b") + "\n");
         break;
       }
-      case Template::Fork: {
+      case CardType::Fork: {
         const Value* v = input(in, "value");
         if (!v) throw Failed(FailureKind::input_missing, "fork needs value");
         std::string sent;
@@ -1908,12 +1908,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                  "fork -> " + sent + "\n");
         break;
       }
-      case Template::Collect:
+      case CardType::Collect:
         p.outputs.push_back(collect_values(
             *node.input("in"), node.outputs.front(), in, svc_.file_roots(),
             invocation_dir(node, s.invocation) / "out", w.cancellation->stop));
         break;
-      case Template::Merge: {
+      case CardType::Merge: {
         if (in.size() != 1)
           throw Failed(FailureKind::input_missing,
                        "merge consumes exactly one arrival");
@@ -1933,7 +1933,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       default:
         throw Failed(
             FailureKind::unsupported,
-            std::string(template_name(node.kind)) + " cards cannot run");
+            std::string(card_type_name(node.kind)) + " cards cannot run");
     }
     svc_.server()->broadcast(timeline_note(run_id_, node.path, s.invocation,
                                            Phase::execute, 0, t0, now_ms()));
@@ -2046,14 +2046,14 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     const auto* target = doc_->resolution->find(p_.card);
     version_record::Run record;
     *record.whole = p_.card.empty() || (p_.propagate && target &&
-                                        target->kind == Template::Trigger);
+                                        target->kind == CardType::Trigger);
     *record.card = path_key(p_.card);
     *record.propagate = p_.propagate;
     for (const auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
       const auto key = path_key(n.node->path);
       if (n.recorded_invocations > 0 &&
-          !(*record.whole && n.node->kind == Template::Trigger)) {
+          !(*record.whole && n.node->kind == CardType::Trigger)) {
         version_record::Count count;
         *count.card = key;
         *count.count = n.recorded_invocations;
@@ -2342,7 +2342,7 @@ auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
   std::set<size_t> waits;
   std::vector<size_t> waiting;
   for (size_t i = 0; i < res.nodes.size(); ++i) {
-    if (res.nodes[i].kind != Template::Draft) continue;
+    if (res.nodes[i].kind != CardType::Draft) continue;
     waits.insert(i);
     waiting.push_back(i);
   }
@@ -2401,7 +2401,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
     // start.
     for (size_t i = 0; i < res.nodes.size(); ++i) {
       if (!inside(i) || res.nodes[i].is_virtual ||
-          res.nodes[i].kind == Template::Draft)
+          res.nodes[i].kind == CardType::Draft)
         continue;
       targets.insert(i);
       const auto& incoming = edges.incoming[i];
@@ -2423,7 +2423,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
         stack.pop_back();
         for (const auto* edge : edges.outgoing[i]) {
           const auto to = edge->to;
-          if (!targets.count(to) && res.nodes[to].kind != Template::Draft) {
+          if (!targets.count(to) && res.nodes[to].kind != CardType::Draft) {
             targets.insert(to);
             stack.push_back(to);
           }
@@ -2433,11 +2433,11 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   } else if (!propagate) {
     targets.insert(t);
     starts.push_back(t);
-  } else if (target->kind == Template::Trigger) {
+  } else if (target->kind == CardType::Trigger) {
     // Whole run: every executable Card; Start Cards are the trigger and all
     // sources without connected inputs.
     for (size_t i = 0; i < res.nodes.size(); ++i) {
-      if (res.nodes[i].is_virtual || res.nodes[i].kind == Template::Draft)
+      if (res.nodes[i].is_virtual || res.nodes[i].kind == CardType::Draft)
         continue;
       targets.insert(i);
       if (edges.incoming[i].empty()) starts.push_back(i);
@@ -2458,8 +2458,8 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   // its saved inputs.
   const auto waits = find_draft_waiting(res, edges);
   for (size_t i : waits)
-    if (i != t || target->kind == Template::Draft) targets.erase(i);
-  if (target->kind == Template::Draft)
+    if (i != t || target->kind == CardType::Draft) targets.erase(i);
+  if (target->kind == CardType::Draft)
     throw Failed(FailureKind::invalid_request,
                  path_key(card) + " is a Draft and is not implemented yet",
                  {{"card", path_key(card)}});
@@ -2467,7 +2467,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   std::erase_if(seeds, [&](size_t i) { return !targets.count(i); });
   for (size_t i : targets) {
     out.targets.push_back(res.nodes[i].path);
-    if (res.nodes[i].kind == Template::Code)
+    if (res.nodes[i].kind == CardType::Code)
       out.build_candidates.push_back(res.nodes[i].path);
     out.diagnostics.insert(out.diagnostics.end(), res.nodes[i].diags.begin(),
                            res.nodes[i].diags.end());

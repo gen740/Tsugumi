@@ -48,14 +48,8 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
   }
   if (card.empty()) return {};
   const auto definition = json::Object(card);
-  auto kind = json::Text(definition, "template", "code");
-  if (definition.contains("external")) {
-    kind = "subgraph";
-  } else {
-    const std::set<std::string> builtins{"trigger", "input", "branch", "fork",
-                                         "merge",   "collect", "draft"};
-    if (!builtins.contains(kind)) kind = "code";
-  }
+  const auto kind = json::Text(definition, "type");
+  if (kind.empty()) return {};
   std::string out = id + " is a " + kind + " Card; it has ";
   constexpr size_t kLimit = 6;
   size_t count = 0;

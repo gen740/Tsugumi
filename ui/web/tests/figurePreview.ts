@@ -174,8 +174,8 @@ assert.equal(figureMode('smooth'), 'update')
     '{"from":{"card":"src","port":"out"},"to":{"card":"mid","port":"in"}},{"from":{"card":"mid","port":"out"},"to":{"card":"plot","port":"in"}}]}}'
   s.project = parse(project)
   s.confirmedProject = parse(project)
-  s.confirmedDefinitions.set('plot', parse('{"language":"python"}'))
-  s.confirmedDefinitions.set('side', parse('{"language":"python","displayMode":"live"}'))
+  s.confirmedDefinitions.set('plot', parse('{"type":"code","language":"python"}'))
+  s.confirmedDefinitions.set('side', parse('{"type":"code","language":"python","displayMode":"live"}'))
   const inner = s as unknown as { applyDisplay(d: D.DisplayT): void }
   const show = (card: string, runId: string, invocation: bigint, revision: bigint, json: string) => inner.applyDisplay(Object.assign(new D.DisplayT(), {
     card: Object.assign(new D.CardPathT(), { segments: [card] }), runId, invocation, revision,

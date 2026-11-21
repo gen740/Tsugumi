@@ -60,9 +60,9 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   const std::string before =
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
   base.files["tsugumi.json"] = before;
-  base.files["definitions/knn/_card.json"] = R"({"template":"draft"})";
+  base.files["definitions/knn/_card.json"] = R"({"type":"draft"})";
   H::ProjectEditsT edits;
-  auto implement = Field({}, R"({"template":"draft"})", "{}");
+  auto implement = Field({}, R"({"type":"draft"})", R"({"type":"code"})");
   implement.file_path = "definitions/knn/_card.json";
   Add(edits, std::move(implement));
   Add(edits, WirePort("knn", "compare", "", "", "from", "result"));
@@ -88,7 +88,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   doc.project_json = project;
   doc.project = parse_project_json(project);
   for (const auto& [id, raw] :
-       {std::pair{"knn", "{}"}, {"compare", "{\"template\":\"draft\"}"}}) {
+       {std::pair{"knn", "{\"type\":\"code\"}"}, {"compare", "{\"type\":\"draft\"}"}}) {
     DefinitionDoc definition;
     definition.card_json = raw;
     definition.card = parse_card_json(id, raw);
@@ -124,7 +124,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
           {"project_json", json::Quote(before)},
           {"layout_json", "\"{}\""},
           {"definitions",
-           R"([{"id":"knn","card_json":"{\"template\":\"draft\"}"},{"id":"compare","card_json":"{\"template\":\"draft\"}"}])"}};
+           R"([{"id":"knn","card_json":"{\"type\":\"draft\"}"},{"id":"compare","card_json":"{\"type\":\"draft\"}"}])"}};
     } else {
       EXPECT_EQ(method, "project_save");
       ++saves;
@@ -179,14 +179,14 @@ TEST(ProjectEdit, BindsOnlyAnUnambiguousUnmentionedInputOnDraftImplementation) {
         R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":""}}]} })";
     const auto definition = prefix + "definitions/compare/_card.json";
     base.files[definition] = std::string(variant) == "already_code"
-                                 ? "{}"
-                                 : R"({"template":"draft"})";
+                                 ? R"({"type":"code"})"
+                                 : R"({"type":"draft"})";
     H::ProjectEditsT edits;
     auto implement =
         Field({}, base.files.at(definition),
               std::string(variant) == "multiple_inputs"
-                  ? R"({"inputs":[{"name":"source"},{"name":"other"}]})"
-                  : R"({"inputs":[{"name":"source"}]})");
+                  ? R"({"type":"code","inputs":[{"name":"source"},{"name":"other"}]})"
+                  : R"({"type":"code","inputs":[{"name":"source"}]})");
     implement.file_path = definition;
     Add(edits, std::move(implement));
     if (std::string(variant) == "explicit")
@@ -238,12 +238,12 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
       definition.card = parse_card_json(id, raw);
       doc.definitions[id] = std::move(definition);
     };
-    add("knn", R"({"template":"trigger"})");
+    add("knn", R"({"type":"trigger"})");
     add("compare",
-        std::string(scenario) == "draft" ? R"({"template":"draft"})"
+        std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":3}]})"
-            : R"({"inputs":[]})");
+            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":3}]})"
+            : R"({"type":"code","inputs":[]})");
     const auto resolved = resolve(
         doc, [](const auto&) -> std::optional<std::string> { return {}; });
     bool found = false;
@@ -389,7 +389,7 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   const std::string meta = R"({"comments":[{"id":"c","text":"first"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
-  base.files["definitions/a/_card.json"] = R"({"template":"draft"})";
+  base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
   const auto read = [](const auto&) -> std::optional<std::string> {
     return {};
   };
@@ -431,7 +431,7 @@ TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
   const std::string meta = R"({"comments":[{"id":"c","text":"last"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
-  base.files["definitions/a/_card.json"] = R"({"template":"draft"})";
+  base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
   base.files[path] = "\n  " + meta + "\n";
   H::ProjectJSONEditT remove;
   remove.file_path = path;
@@ -489,7 +489,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{}","meta_json":"{}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","meta_json":"{}"}]}})",
           {}};
     };
     const auto conflict =

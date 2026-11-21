@@ -369,14 +369,20 @@ void read_definition(git_repository* r, git_tree* tree,
                      VersionCanvasData::Card& card) {
   const std::string dir = "definitions/" + card.id + "/";
   const auto text = file_at(r, tree, (dir + "_card.json").c_str());
+  // A definition this build cannot read has no kind.
   DefinitionDoc def;
-  if (text && schema::decode(*text, def.card)) def.card = {};
-  const Template kind = template_of(text ? &def : nullptr);
-  card.kind = kind == Template::Code ? "code" : template_name(kind);
-  if (kind == Template::Merge) {
+  try {
+    if (!text) return;
+    def.card = parse_card_json(card.id, *text);
+  } catch (const DocumentError&) {
+    return;
+  }
+  const CardType kind = card_type_of(def);
+  card.kind = card_type_name(kind);
+  if (kind == CardType::Merge) {
     if (const auto* inputs = schema::get(def.card.inputs))
       card.fan = static_cast<uint32_t>(inputs->size());
-  } else if (kind == Template::Fork) {
+  } else if (kind == CardType::Fork) {
     card.fan = static_cast<uint32_t>(fork_outputs(def).size());
   }
 }

@@ -12,7 +12,7 @@ auto input_types(const Resolution& graph, const CardPath& card,
     const auto* source = end ? &graph.nodes[end->first] : nullptr;
     const auto* type = source ? source->output(end->second) : nullptr;
     if (!type &&
-        (!source || source->kind != Template::Draft || !output_port->empty()))
+        (!source || source->kind != CardType::Draft || !output_port->empty()))
       throw DocumentError("not_found", "unknown output " + *output_port);
     result.push_back({"", source, end->second, type});
     return result;
@@ -31,7 +31,7 @@ auto input_types(const Resolution& graph, const CardPath& card,
     }
     if (!connected) result.push_back({name, nullptr, "", nullptr});
   };
-  if (node->kind == Template::Draft) {
+  if (node->kind == CardType::Draft) {
     const auto index = graph.index.at(path_key(card));
     for (const auto& edge : graph.edges)
       if (edge.to == index) {

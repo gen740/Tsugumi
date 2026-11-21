@@ -11,19 +11,21 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     """Invalid card fields are rejected without changing the saved project."""
     before = client.call("ProjectInspectRequest")
     invalid_documents = (
-        '{"sandbox":true,"sandbox":false}',
-        '{"params":[{"name":"a","data":{"k":1,"k":2}}]}',
-        b'{"symbol":"\xff"}',
-        b'{"symbol":"\xc3"}',
-        '{"timeoutSeconds":NaN}',
-        '{"timeoutSeconds":Infinity}',
-        '{"sandbox":"true"}',
-        '{"maxRuns":-1}',
-        '{"maxRuns":1.5}',
-        '{"maxRuns":18446744073709551616}',
-        '{"sandbox":true} trailing',
-        '{"sandbox":null}',
-        '{"unknownCardField":true}',
+        '{"type":"code","sandbox":true,"sandbox":false}',
+        '{"type":"code","params":[{"name":"a","data":{"k":1,"k":2}}]}',
+        b'{"type":"code","symbol":"\xff"}',
+        b'{"type":"code","symbol":"\xc3"}',
+        '{"type":"code","timeoutSeconds":NaN}',
+        '{"type":"code","timeoutSeconds":Infinity}',
+        '{"type":"code","sandbox":"true"}',
+        '{"type":"code","maxRuns":-1}',
+        '{"type":"code","maxRuns":1.5}',
+        '{"type":"code","maxRuns":18446744073709551616}',
+        '{"type":"code","sandbox":true} trailing',
+        '{"type":"code","sandbox":null}',
+        '{"type":"code","unknownCardField":true}',
+        '{"language":"bash"}',
+        '{"type":"none"}',
     )
     for raw in invalid_documents:
         with pytest.raises(RpcFailure) as failure:
@@ -35,7 +37,7 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     assert all(text(definition.id) != "work" for definition in after.definitions)
 
     # A valid document on the same connection preserves spelling and nulls.
-    raw = ('{"template":"draft","symbol":"é","timeoutSeconds":null,'
+    raw = ('{"type":"draft","symbol":"é","timeoutSeconds":null,'
            '"maxRuns":18446744073709551615,'
            '"params":[{"name":"decimal","data":1.50e+2},'
            '{"name":"minimum","data":-9223372036854775808}]}')
@@ -63,7 +65,7 @@ def test_core_stores_opaque_layout_unchanged(client):
 def test_card_settings_round_trip(client):
     """Execution settings survive a save and inspect without a filesystem switch."""
     settings = {
-        "language": "bash", "inputs": [{"name": "data", "optional": True}],
+        "type": "code", "language": "bash", "inputs": [{"name": "data", "optional": True}],
         "params": [{"name": "limit", "type": "double", "data": 2.5}],
         "trigger": "eachInput", "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,

@@ -8,7 +8,7 @@ from tsugumi_client import RpcFailure, change, new_id, text
 
 def edit(snapshot, target, value):
     if target == "definition":
-        return [change("PutDefinition", id="settings", cardJson=json.dumps({"template": "draft", "symbol": value}))]
+        return [change("PutDefinition", id="settings", cardJson=json.dumps({"type": "draft", "symbol": value}))]
     project = json.loads(text(snapshot.projectJson))
     project["name"] = value
     return [change("SetProject", json=json.dumps(project))]

@@ -120,7 +120,7 @@ TEST(GraphLanguage, ArbitraryAndOmittedLanguagesRemainExecutable) {
                        "{pkgs,inputs,params}:{run=\"true\";}");
   ts::fs::write_atomic(root / "definitions/card/_outputs.fbs",
                        "table Outputs {} root_type Outputs;");
-  for (const auto* definition : {"{}", "{\"language\":\"custom-sdk\"}"}) {
+  for (const auto* definition : {R"({"type":"code"})", R"({"type":"code","language":"custom-sdk"})"}) {
     ts::fs::write_atomic(root / "definitions/card/_card.json", definition);
     ts::Store store({root, ""});
     store.open();

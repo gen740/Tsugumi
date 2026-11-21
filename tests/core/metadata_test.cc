@@ -16,7 +16,7 @@ class OpaqueMetadata : public ::testing::Test {
         root / "tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})");
     fs::write_atomic(root / "definitions/start/_card.json",
-                     R"({"template":"trigger"})");
+                     R"({"type":"trigger"})");
     fs::write_atomic(root / "layout.json", "{}");
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
@@ -40,7 +40,7 @@ TEST_F(OpaqueMetadata,
   ChangeIn put{};
   put.kind = ChangeIn::Kind::PutDefinition;
   put.id = "start";
-  put.json = R"({"template":"trigger","displayMode":{"future":true}})";
+  put.json = R"({"type":"trigger","displayMode":{"future":true}})";
   put.meta_json = R"({"comments":[false],"unknown":12})";
   auto after = commit(store, {put});
   EXPECT_EQ(after->execution_rev, before->execution_rev);
@@ -88,7 +88,7 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
   fs::write_atomic(
       root / "definitions/b/_card.json",
-      R"({"language":"python","params":[{"name":"x","type":"float","data":1}]})");
+      R"({"type":"code","language":"python","params":[{"name":"x","type":"float","data":1}]})");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();
@@ -108,7 +108,7 @@ TEST_F(OpaqueMetadata,
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
   fs::write_atomic(root / "definitions/b/_card.json",
-                   R"({"language":"python"})");
+                   R"({"type":"code","language":"python"})");
   Store store({root, ""});
   store.open();
   const auto* node = store.current()->resolution->find({"b"});
@@ -137,7 +137,7 @@ TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
-  card.json = R"({"template":"trigger","maxRuns":2})";
+  card.json = R"({"type":"trigger","maxRuns":2})";
   after = commit(store, {card});
   EXPECT_NE(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_GT(after->execution_rev, before->execution_rev);
@@ -154,7 +154,7 @@ TEST_F(OpaqueMetadata,
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
-  card.json = R"({"displayMode":false, "template": "trigger"})";
+  card.json = R"({"displayMode":false, "type": "trigger"})";
   auto after = commit(store, {project, card});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
@@ -172,12 +172,12 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})");
   std::filesystem::remove_all(root / "definitions/start");
   fs::write_atomic(root / "definitions/outer/_card.json",
-                   R"({"external":"library"})");
+                   R"({"type":"subgraph","external":"library"})");
   const std::string project =
       R"({"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":{},"outputs":{}}})";
   fs::write_atomic(root / "externals/library/tsugumi.json", project);
   fs::write_atomic(root / "externals/library/definitions/start/_card.json",
-                   R"({"template":"trigger"})");
+                   R"({"type":"trigger"})");
   fs::write_atomic(root / "externals/library/definitions/start/_meta.json",
                    R"({"name":false,"outputs":[false],"unknown":1})");
   Store store({root, ""});
@@ -196,7 +196,7 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
       {put("externals/library/tsugumi.json",
            R"({"name":false,"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":{},"outputs":{}}})"),
        put("externals/library/definitions/start/_card.json",
-           R"({"template":"trigger","displayMode":false})"),
+           R"({"type":"trigger","displayMode":false})"),
        put("externals/library/definitions/start/_meta.json",
            R"({"future":12,"comments":false})")});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
@@ -204,12 +204,12 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   ASSERT_NE(after->resolution->find({"outer", "start"}), nullptr);
   EXPECT_TRUE(after->resolution->find({"outer", "start"})->diags.empty());
   after = commit(store, {put("externals/library/definitions/start/_card.json",
-                             R"({"template":"trigger","maxRuns":2})")});
+                             R"({"type":"trigger","maxRuns":2})")});
   EXPECT_NE(after->execution_fingerprint, before->execution_fingerprint);
 }
 TEST_F(OpaqueMetadata, DraftHasNoPortsFromMetadataOrSchema) {
   fs::write_atomic(root / "definitions/start/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(
       root / "definitions/start/_meta.json",
       R"({"name":false,"comments":12,"outputs":[{"name":"planned","description":false,"future":1},false]})");
@@ -224,7 +224,7 @@ TEST_F(OpaqueMetadata, DraftHasNoPortsFromMetadataOrSchema) {
   ChangeIn put{};
   put.kind = ChangeIn::Kind::PutDefinition;
   put.id = "start";
-  put.json = R"({"template":"draft"})";
+  put.json = R"({"type":"draft"})";
   put.meta_json = R"({"outputs":[{"name":"different"}]})";
   auto after = commit(store, {put});
   EXPECT_EQ(after->resolution, before->resolution);
@@ -242,18 +242,18 @@ TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
     {"from":{"card":"next","port":""},"to":{"card":"collect","port":"in"}}
   ]}})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"input"})");
+                   R"({"type":"input"})");
   fs::write_atomic(root / "definitions/condition/_outputs.fbs",
                    "table Condition { value:bool; } table Outputs { "
                    "value:Condition; } root_type Outputs;");
   fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"template":"draft","inputs":[{"name":"ignored"}]})");
+                   R"({"type":"draft","inputs":[{"name":"ignored"}]})");
   fs::write_atomic(root / "definitions/next/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"template":"branch"})");
+                   R"({"type":"branch"})");
   fs::write_atomic(root / "definitions/collect/_card.json",
-                   R"({"template":"collect"})");
+                   R"({"type":"collect"})");
   Store store({root, ""});
   store.open();
   const auto& resolution = *store.current()->resolution;
@@ -279,9 +279,9 @@ TEST_F(OpaqueMetadata, RealEmptyConditionIsStillInvalidBesideADraft) {
     {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"value"}}
   ]}})");
   fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"template":"branch"})");
+                   R"({"type":"branch"})");
   Store store({root, ""});
   store.open();
   const auto& diagnostics =
@@ -301,13 +301,13 @@ TEST_F(OpaqueMetadata, DraftEmptyCannotMaskARealTypeDerivedSeveralStepsLater) {
     {"from":{"card":"condition","port":"value"},"to":{"card":"sink","port":"condition"}}
   ]}})");
   fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(root / "definitions/sink/_card.json",
-                   R"({"template":"branch"})");
+                   R"({"type":"branch"})");
   fs::write_atomic(root / "definitions/relay/_card.json",
-                   R"({"template":"branch"})");
+                   R"({"type":"branch"})");
   fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"template":"input"})");
+                   R"({"type":"input"})");
   fs::write_atomic(root / "definitions/condition/_outputs.fbs",
                    "table Condition { value:bool; } table Outputs { "
                    "value:Condition; } root_type Outputs;");
@@ -330,16 +330,16 @@ TEST_F(OpaqueMetadata,
   ]}})";
   fs::write_atomic(root / "tsugumi.json", project);
   fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(root / "definitions/next/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   Store store({root, ""});
   store.open();
   auto before = store.current();
   ChangeIn implementation{};
   implementation.kind = ChangeIn::Kind::PutDefinition;
   implementation.id = "plan";
-  implementation.json = R"({"template":"collect"})";
+  implementation.json = R"({"type":"collect"})";
   try {
     commit(store, {implementation});
     FAIL() << "Even the only input must be stated";
@@ -348,7 +348,7 @@ TEST_F(OpaqueMetadata,
   }
   EXPECT_EQ(store.current(), before);
   EXPECT_EQ(fs::read_file(root / "definitions/plan/_card.json"),
-            R"({"template":"draft"})");
+            R"({"type":"draft"})");
   ChangeIn wiring{};
   wiring.kind = ChangeIn::Kind::SetProject;
   wiring.json = project;
@@ -366,7 +366,7 @@ TEST_F(OpaqueMetadata,
                       R"("card":"plan","port":"out")");
   auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
-  EXPECT_EQ(after->resolution->find({"plan"})->kind, Template::Collect);
+  EXPECT_EQ(after->resolution->find({"plan"})->kind, CardType::Collect);
   EXPECT_TRUE(after->resolution->find({"next"})->inputs.empty());
 }
 
@@ -378,14 +378,14 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
     {"from":{"card":"outer","port":"out"},"to":{"card":"next","port":""}}
   ]}})");
   fs::write_atomic(root / "definitions/outer/_card.json",
-                   R"({"external":"child"})");
+                   R"({"type":"subgraph","external":"child"})");
   fs::write_atomic(root / "definitions/next/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   fs::write_atomic(
       root / "externals/child/tsugumi.json",
       R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"plan","port":""}},"outputs":{"out":{"card":"plan","port":""}}}})");
   fs::write_atomic(root / "externals/child/definitions/plan/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   Store store({root, ""});
   store.open();
   ASSERT_EQ(store.current()->resolution->edges.size(), 2);
@@ -394,7 +394,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
   implementation.path = "externals/child/definitions/plan/_card.json";
   implementation.base_hash =
       store.current()->sources.at(implementation.path).hash;
-  implementation.bytes = R"({"template":"collect"})";
+  implementation.bytes = R"({"type":"collect"})";
   try {
     commit(store, {implementation});
     FAIL();
@@ -402,7 +402,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
     EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
   EXPECT_EQ(store.current()->resolution->find({"outer", "plan"})->kind,
-            Template::Draft);
+            CardType::Draft);
   ChangeIn wiring{};
   wiring.kind = ChangeIn::Kind::PutSource;
   wiring.path = "externals/child/tsugumi.json";
@@ -412,12 +412,12 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
   const auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
   EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind,
-            Template::Collect);
+            CardType::Collect);
 }
 
 TEST_F(OpaqueMetadata, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
   fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"template":"draft"})");
+                   R"({"type":"draft"})");
   Store store({root, ""});
   store.open();
   ChangeIn wiring{};

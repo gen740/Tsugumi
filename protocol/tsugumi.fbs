@@ -880,6 +880,7 @@ table VersionCommit {
 // Raw version definition data. Presentation is interpreted by the host.
 table VersionCanvasCard {
   id:string (id: 0, required);
+  /// The _card.json "type" in that version; empty when it cannot be read.
   kind:string (id: 1, required);
   fan:uint32 (id: 2);
 }

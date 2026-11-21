@@ -19,7 +19,7 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
   std::filesystem::create_directories(file.parent_path());
   for (const auto* member : {"filesystem", "unrecognizedSetting"}) {
     fs::write_atomic(
-        file, "{\"template\":\"draft\",\"" + std::string(member) + "\":true}");
+        file, "{\"type\":\"draft\",\"" + std::string(member) + "\":true}");
     try {
       load_from_disk(directory.path);
       FAIL() << "Unknown settings must be rejected";
@@ -31,10 +31,36 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
   }
 }
 
+TEST(SchemaDecode, EveryCardStatesAKnownType) {
+  for (const auto& [text, message] : {
+           std::pair{R"({"language":"python"})", R"("type" is required)"},
+           std::pair{R"({"type":"none"})", R"(unknown type "none")"},
+           std::pair{R"({"type":"code","external":"inner"})",
+                     R"("external" needs "type": "subgraph")"},
+           std::pair{R"({"type":"subgraph"})", R"(a subgraph needs "external")"},
+       }) {
+    try {
+      parse_card_json("x", text);
+      FAIL() << text;
+    } catch (const DocumentError& error) {
+      EXPECT_EQ(error.code, "invalid_document");
+      EXPECT_NE(std::string(error.what()).find(message), std::string::npos)
+          << error.what();
+      EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
+    }
+  }
+  for (const auto* type : {"code", "draft", "trigger", "input", "branch",
+                           "fork", "merge", "collect"})
+    EXPECT_NO_THROW(
+        parse_card_json("x", std::string(R"({"type":")") + type + "\"}"));
+  EXPECT_NO_THROW(
+      parse_card_json("x", R"({"type":"subgraph","external":"inner"})"));
+}
+
 TEST(SchemaDecode, NestedUnknownAndWrongTypedSettingsKeepTheirLocation) {
   for (const auto& [text, member] :
-       {std::pair{R"({"params":[{"unrecognized":true}]})", "unrecognized"},
-        std::pair{R"({"sandbox":"yes"})", "sandbox"}}) {
+       {std::pair{R"({"type":"code","params":[{"unrecognized":true}]})", "unrecognized"},
+        std::pair{R"({"type":"code","sandbox":"yes"})", "sandbox"}}) {
     try {
       parse_card_json("x", text);
       FAIL() << "Invalid settings must be rejected";

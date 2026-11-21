@@ -159,13 +159,13 @@ TEST_F(VersionFiles, ProjectValidationRejectsEscapesAndInternalPaths) {
 TEST_F(VersionFiles,
        ImportedDemoDifferencesCannotAddInternalOrUnselectedFiles) {
   Put("tsugumi.json", R"({"versionPaths":["chosen.csv"]})");
-  Put("definitions/a/_card.json", "{}");
+  Put("definitions/a/_card.json", R"({"type":"code"})");
   Put(".tsugumi/state");
   Put("result.csv");
   Put(".tsugumi-history.json",
       R"({"commits":[{"id":"first","message":"First","time":1793700000,"files":{
     "chosen.csv":"chosen", ".tsugumi/state":"private", "externals/inner/.tsugumi/state":"private",
-    "result.csv":"result", "definitions/a/_card.json":"{\"template\":\"draft\"}"
+    "result.csv":"result", "definitions/a/_card.json":"{\"type\":\"draft\"}"
   }}],"branches":{"main":"first"},"head":"main"})");
   Versions versions(root);
   EXPECT_EQ(Paths(versions.init()),

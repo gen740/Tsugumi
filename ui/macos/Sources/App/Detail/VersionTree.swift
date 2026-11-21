@@ -123,7 +123,7 @@ struct VersionMiniMap: View {
   var body: some View {
     let cards = canvas.cards.compactMap { $0 }
     let map = VersionMiniMapLayout(
-      cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind(rawValue: $0.kind) ?? .code, fan: Int($0.fan), collapsed: $0.collapsed) },
+      cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind(rawValue: $0.kind) ?? .draft, fan: Int($0.fan), collapsed: $0.collapsed) },
       flow: canvas.flow == "topToBottom" ? .topToBottom : .leftToRight, width: Self.width, height: Self.maxHeight)
     let touched = Set(changed.map { String($0.split(separator: "/").first ?? "") })
     Canvas { g, _ in

@@ -1,4 +1,4 @@
 {
-  "template": "branch",
+  "type": "branch",
   "maxRuns": 100000
 }

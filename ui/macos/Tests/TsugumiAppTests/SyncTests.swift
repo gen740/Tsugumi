@@ -61,7 +61,7 @@ import TsugumiTestSupport
     }
   }
 
-  static let sinkCard = #"{"language":"bash","inputs":[{"name":"in"}]}"#
+  static let sinkCard = #"{"type":"code","language":"bash","inputs":[{"name":"in"}]}"#
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""
@@ -84,7 +84,7 @@ import TsugumiTestSupport
       for id in cards {
         let d = p.appendingPathComponent("definitions/\(id)")
         try fm.createDirectory(at: d, withIntermediateDirectories: true)
-        let definition = id == "start" ? #"{"template":"trigger"}"# : sinkCard
+        let definition = id == "start" ? #"{"type":"trigger"}"# : sinkCard
         try Data(definition.utf8).write(to: d.appendingPathComponent("_card.json"))
         if id != "start" {
           for (name, contents) in sinkSources {

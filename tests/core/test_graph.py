@@ -12,7 +12,7 @@ FLAG = 'namespace t; table Flag { value:bool; } table Outputs { flag:Flag (requi
 
 def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }', each_input=False):
     return {
-        "language": "bash", "sandbox": False,
+        "type": "code", "language": "bash", "sandbox": False,
         "trigger": "eachInput" if each_input else "allInputs",
         "inputs": [{"name": name.rstrip("?"), "optional": name.endswith("?")} for name in inputs],
         "_outputs": outputs, "_nix": "{ pkgs, inputs, params }: " + body,
@@ -77,8 +77,8 @@ def test_invalid_output_types_are_reported_to_the_client(core_factory, project, 
 def test_port_types_flow_through_branch(core_factory, project):
     """A downstream Card sees the original value type through a Branch."""
     _, resolved = inspect_graph(core_factory, project, {
-        "source": code(), "branch": {"template": "branch"},
-        "condition": {"template": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG},
+        "source": code(), "branch": {"type": "branch"},
+        "condition": {"type": "input", "params": [{"name": "value", "type": "bool", "data": True}], "_outputs": FLAG},
         "sink": code(["in"]),
     }, [conn("source", "out", "branch", "value"),
         conn("condition", "flag", "branch", "condition"), conn("branch", "a", "sink", "in")])
@@ -99,9 +99,9 @@ def assert_reference(node, name, target, valid=True):
 def test_fork_outputs_carry_the_value_type(core_factory, project):
     """A Fork has outputs a and b by default, or the declared ones, all typed as its value."""
     _, resolved = inspect_graph(core_factory, project, {
-        "source": code(), "pair": {"template": "fork"},
-        "three": {"template": "fork", "outputs": [{"name": "x"}, {"name": "y"}, {"name": "z"}]},
-        "broken": {"template": "fork", "outputs": [{"name": "x"}, {"name": "x"}, {"name": "not valid"}]},
+        "source": code(), "pair": {"type": "fork"},
+        "three": {"type": "fork", "outputs": [{"name": "x"}, {"name": "y"}, {"name": "z"}]},
+        "broken": {"type": "fork", "outputs": [{"name": "x"}, {"name": "x"}, {"name": "not valid"}]},
         "sink": code(["in"]),
     }, [conn("source", "out", "pair", "value"), conn("source", "out", "three", "value"),
         conn("source", "out", "broken", "value"), conn("three", "z", "sink", "in")])
@@ -118,9 +118,9 @@ def test_fork_outputs_carry_the_value_type(core_factory, project):
 def test_nix_exports_follow_the_connected_code_origin(core_factory, project, builtin):
     """A transparent built-in keeps the Code producer's exports on the destination port."""
     definitions = {"source": code(), "sink": code(["data"], body='{ run = inputs.data.command; }'),
-                   "bridge": {"template": builtin}}
+                   "bridge": {"type": builtin}}
     if builtin == "branch":
-        definitions["condition"] = {"template": "input", "_outputs": FLAG}
+        definitions["condition"] = {"type": "input", "_outputs": FLAG}
         connections = [conn("source", "out", "bridge", "value"), conn("condition", "flag", "bridge", "condition"),
                        conn("bridge", "a", "sink", "data")]
     elif builtin == "fork":
@@ -194,7 +194,7 @@ def test_builtin_nix_input_names_are_reserved(core_factory, project, name):
 
 def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factory, project):
     """Nix exports and typed values follow the flattened Workflow boundary."""
-    definitions = {"start": {"template": "trigger"}, "source": code(),
+    definitions = {"start": {"type": "trigger"}, "source": code(),
                    "inner": code(["in"], body='{ run = inputs.in.command; }'),
                    "sink": code(["in"], body='{ run = inputs.in.command; }')}
     cards = [card("start", "start"), card("source", "source"),

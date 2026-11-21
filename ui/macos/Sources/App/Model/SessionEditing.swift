@@ -39,6 +39,13 @@ enum CardKind: String {
   }
 }
 
+/// What a _card.json says the Card is: its "type". A missing or unknown type
+/// is a definition error the core reports; such a Card, like one without a
+/// definition, shows as a Draft: no ports, no run.
+func definitionKind(_ def: JSONValue?) -> CardKind {
+  def?["type"]?.string.flatMap(CardKind.init(rawValue:)) ?? .draft
+}
+
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card
 /// gets a definition folder of its own (definitions/<id>/).
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
@@ -104,12 +111,7 @@ struct NoteColor {
 extension ProjectSession {
   // MARK: - Reading
 
-  func kind(_ k: CardKey) -> CardKind {
-    if cardExternal(k) != nil { return .subgraph }
-    guard let def = cardDefinition(k) else { return .draft }
-    if let t = def["template"]?.string, let k = CardKind(rawValue: t) { return k }
-    return def["language"] == nil ? .draft : .code
-  }
+  func kind(_ k: CardKey) -> CardKind { definitionKind(cardDefinitionDraft(k)?.card) }
 
   /// The human name; exact addresses keep the permanent identifier.
   func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k }

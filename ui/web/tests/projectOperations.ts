@@ -147,7 +147,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.cardIdProvider = async () => 'new-card'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
-    definitions: [new R.DefinitionT('a', '{"template":"draft"}')],
+    definitions: [new R.DefinitionT('a', '{"type":"draft"}')],
   }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
@@ -241,7 +241,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
     rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
-    definitions: [new R.DefinitionT('a', '{"template":"draft"}', '{"description":"old"}')],
+    definitions: [new R.DefinitionT('a', '{"type":"draft"}', '{"description":"old"}')],
   }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {

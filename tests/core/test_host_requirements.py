@@ -11,9 +11,10 @@ def test_host_requirements_follow_acceptance_and_keep_card_identity(tmp_path, co
         "pkgsPath": "tsugumi:default",
         "canvas": {"cards": [{"id": "a"}], "connections": []},
     }))
-    card = {"hostFolders": [{"name": "data", "path": "/data"}]}
+    card = {"type": "code", "hostFolders": [{"name": "data", "path": "/data"}]}
     put(root / "definitions/a/_card.json", json.dumps(card))
     put(root / "definitions/unused/_card.json", json.dumps({
+        "type": "code",
         "hostFolders": [{"name": "ignored", "path": "/ignored", "write": True}],
     }))
     client = core_factory(project_root=root, mocked_builds=True).connect()
@@ -33,5 +34,5 @@ def test_host_requirements_follow_acceptance_and_keep_card_identity(tmp_path, co
     revision, folders = requirements()
     assert folders == [(["a"], "/data", True)]
     client.call("ProjectSaveRequest", opId=new_id(), origin="test", baseRev=revision,
-                changes=[change("PutDefinition", id="a", cardJson="{}")])
+                changes=[change("PutDefinition", id="a", cardJson='{"type":"code"}')])
     assert requirements()[1] == []

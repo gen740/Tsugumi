@@ -18,8 +18,8 @@ from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
 def file_fanout_project(root: Path) -> None:
     write(root,
-          defs={"trigger": {"template": "trigger"},
-                "doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
+          defs={"trigger": {"type": "trigger"},
+                "doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
                         "_outputs": FILE_FBS},
                 "sink": dict(SINK, recordIO=True)},
           cards=[card("src", "doc"), card("a", "sink"), card("b", "sink")],
@@ -79,9 +79,9 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
     src = "source-" + "x" * 80
     root = tmp_path / "p"
     write(root,
-          defs={"doc": {"template": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
+          defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
                         "_outputs": FILE_FBS},
-                "join": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
+                "join": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
                 "sink": dict(SINK, recordIO=True)},
           cards=[card(src, "doc"), card("join", "join"), card("out", "sink")],
           conns=[conn(src, "doc", "join", "a"), conn("join", "out", "out", "in")],
@@ -104,8 +104,8 @@ def test_direct_fanout_preserves_precise_numbers(tmp_path, core_factory):
     """Both branches retain small and precise typed floating-point values."""
     root = tmp_path / "p"
     write(root,
-          defs={"trigger": {"template": "trigger"},
-                "reading": {"template": "input",
+          defs={"trigger": {"type": "trigger"},
+                "reading": {"type": "input",
                             "params": [{"name": "rate", "type": "double", "data": 0.042169650342858},
                                        {"name": "tiny", "type": "double", "data": 1e-20}],
                             "_outputs": """

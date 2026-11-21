@@ -44,7 +44,7 @@ auto ConnectionWires(const std::string& state) -> std::set<std::string> {
 }
 TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"start":{"card":{"template":"trigger"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"start"},{"id":"a"},{"id":"b"}],"connections":[]}},"definitions":{"start":{"card":{"type":"trigger"}}}})";
   const auto first = ConnectDocuments(state, "start", "out", "a", "in");
   const auto second = ConnectDocuments(first, "start", "out", "b", "in");
   EXPECT_EQ(ConnectionWires(second),
@@ -54,7 +54,7 @@ TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"template":"draft"},"meta":{"content":"planned"}},"new":{"card":{"template":"trigger"}},"dest":{"card":{"language":"python"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code","language":"python"}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
   EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
@@ -64,7 +64,7 @@ TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
 TEST(DocumentConnect,
      DraftGesturesKeepMultipleIncomingAndOutgoingWiresPortless) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"template":"draft"}},"b":{"card":{"template":"draft"}},"c":{"card":{"template":"draft"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"c"}],"connections":[]}},"definitions":{"a":{"card":{"type":"draft"}},"b":{"card":{"type":"draft"}},"c":{"card":{"type":"draft"}}}})";
   const auto first = ConnectDocuments(state, "a", "+", "b", "+");
   EXPECT_EQ(ConnectionWires(first), (std::set<std::string>{"a.>b."}));
   const auto second = ConnectDocuments(first, "a", "+", "c", "+");
@@ -81,14 +81,14 @@ TEST(DocumentTemplate,
      BuiltinsAndCodeTemplatesHaveTheirSharedInitialDefinition) {
   const auto draft =
       json::Object(WriteTemplate("draft", "new-card").definition_json);
-  EXPECT_EQ(json::Text(json::Object(draft.at("card")), "template"), "draft");
+  EXPECT_EQ(json::Text(json::Object(draft.at("card")), "type"), "draft");
   EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
   for (const auto* name :
        {"trigger", "branch", "fork", "collect", "merge", "input"}) {
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "template"), name);
+    EXPECT_EQ(json::Text(card, "type"), name);
     if (std::string_view(name) == "merge")
       EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
     if (std::string_view(name) == "fork")
@@ -161,7 +161,7 @@ TEST(DocumentTemplate,
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"language":"python","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","language":"python","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/_card.json",
@@ -190,7 +190,7 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"template":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/x/_meta.json",
@@ -231,7 +231,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
-      CopyDocuments(R"({"definitions":{"a":{"card":{"external":"missing"}}}})",
+      CopyDocuments(R"({"definitions":{"a":{"card":{"type":"subgraph","external":"missing"}}}})",
                     {}, "definitions/a/", "definitions/b/", ""),
       std::runtime_error);
   EXPECT_THROW(

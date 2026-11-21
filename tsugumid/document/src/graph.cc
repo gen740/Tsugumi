@@ -6,6 +6,7 @@
 #include <map>
 #include <mutex>
 #include <set>
+#include <stdexcept>
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
@@ -28,28 +29,26 @@ auto Resolution::endpoint(const CardPath& card, const std::string& port,
   return alias->second;
 }
 
-const char* template_name(Template t) {
-  switch (t) {
-    case Template::Code:
-      return "none";
-    case Template::Trigger:
-      return "trigger";
-    case Template::Input:
-      return "input";
-    case Template::Branch:
-      return "branch";
-    case Template::Fork:
-      return "fork";
-    case Template::Merge:
-      return "merge";
-    case Template::Collect:
-      return "collect";
-    case Template::Subgraph:
-      return "subgraph";
-    case Template::Draft:
-      return "draft";
-  }
-  return "none";
+namespace {
+constexpr std::pair<CardType, const char*> kCardTypes[] = {
+    {CardType::Code, "code"},       {CardType::Draft, "draft"},
+    {CardType::Trigger, "trigger"}, {CardType::Input, "input"},
+    {CardType::Branch, "branch"},   {CardType::Fork, "fork"},
+    {CardType::Merge, "merge"},     {CardType::Collect, "collect"},
+    {CardType::Subgraph, "subgraph"},
+};
+}  // namespace
+
+const char* card_type_name(CardType t) {
+  for (const auto& [type, name] : kCardTypes)
+    if (type == t) return name;
+  return "";
+}
+
+std::optional<CardType> parse_card_type(std::string_view name) {
+  for (const auto& [type, text] : kCardTypes)
+    if (name == text) return type;
+  return std::nullopt;
 }
 
 std::optional<ParamType> parse_param_type(const std::string& s) {
@@ -213,19 +212,11 @@ ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
   return member;
 }
 
-Template template_of(const DefinitionDoc* def) {
-  if (!def) return Template::Draft;
-  if (schema::get(def->card.external)) return Template::Subgraph;
-  const auto* t = schema::get(def->card.template_name);
-  if (!t || *t == "none" || t->empty()) return Template::Code;
-  static const std::map<std::string, Template> m = {
-      {"trigger", Template::Trigger}, {"input", Template::Input},
-      {"branch", Template::Branch},   {"fork", Template::Fork},
-      {"merge", Template::Merge},     {"collect", Template::Collect},
-      {"draft", Template::Draft},
-  };
-  auto it = m.find(*t);
-  return it == m.end() ? Template::Code : it->second;
+CardType card_type_of(const DefinitionDoc& def) {
+  const auto* name = schema::get(def.card.type);
+  const auto type = name ? parse_card_type(*name) : std::nullopt;
+  if (!type) throw std::logic_error("card definition without a valid type");
+  return *type;
 }
 
 std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
@@ -349,7 +340,7 @@ class Builder {
                                "trigger must be allInputs or eachInput"));
     }
     if (const auto* ins = schema::get(d.inputs);
-        ins && n.kind != Template::Draft) {
+        ins && n.kind != CardType::Draft) {
       std::set<std::string> seen;
       for (const auto& in : *ins) {
         const auto* name = schema::get(in.name);
@@ -383,7 +374,7 @@ class Builder {
     boolean(d.reuse_worker, s.reuse_worker);
     boolean(d.network, s.network);
     if (const auto* v = schema::get(d.execution_service)) {
-      if (n.kind != Template::Code)
+      if (n.kind != CardType::Code)
         n.diags.push_back(
             diag(n.path, "invalid_setting",
                  "executionService is only available on Code Cards"));
@@ -523,7 +514,7 @@ class Builder {
         d.type = *pt;
         if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
         if (const auto* sweep = schema::get(p.sweep)) {
-          if (n.kind != Template::Input) {
+          if (n.kind != CardType::Input) {
             n.diags.push_back(
                 diag(n.path, "invalid_param",
                      "param " + d.name +
@@ -577,7 +568,7 @@ class Builder {
   void load_catalog(Node& n) {
     std::string rel = n.def_dir + "_outputs.fbs";
     if (!doc_.sources.count(rel)) {
-      if (n.kind == Template::Code || n.kind == Template::Input)
+      if (n.kind == CardType::Code || n.kind == CardType::Input)
         n.exec_diags.push_back(
             diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
@@ -663,33 +654,35 @@ class Builder {
       } else {
         def = external_definition(n);
       }
-      n.kind = template_of(def);
+      // An unreadable definition is already diagnosed above; it declares no
+      // ports and cannot run, like a Draft.
+      n.kind = def ? card_type_of(*def) : CardType::Draft;
       read_settings(n, def);
       switch (n.kind) {
-        case Template::Code:
+        case CardType::Code:
           if (!doc_.sources.count(n.def_dir + "default.nix"))
             n.exec_diags.push_back(diag(n.path, "missing_nix",
                                         "default.nix is missing", true,
                                         n.def_dir + "default.nix"));
           load_catalog(n);
           break;
-        case Template::Input:
+        case CardType::Input:
           // Optional start input: connected, the value is produced when the
           // start signal arrives (e.g. from the trigger); unconnected, the
           // Card is a source that fires once per run.
           n.input_defs = {{"start", true}};
           load_catalog(n);
           break;
-        case Template::Trigger:
+        case CardType::Trigger:
           n.outputs.push_back(
               {"out", PortKind::FlatBuffer, false, types::empty_type()});
           break;
-        case Template::Branch:
+        case CardType::Branch:
           n.input_defs = {{"value", false}, {"condition", false}};
           n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
                        {"b", PortKind::FlatBuffer, true, nullptr}};
           break;
-        case Template::Fork: {
+        case CardType::Fork: {
           // Every output always receives the value, unlike a Branch's.
           n.input_defs = {{"value", false}};
           std::set<std::string> seen;
@@ -708,7 +701,7 @@ class Builder {
                 diag(n.path, "invalid_setting", "fork needs declared outputs"));
           break;
         }
-        case Template::Merge:
+        case CardType::Merge:
           n.settings.any_mode = true;
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           if (n.input_defs.empty())
@@ -716,12 +709,12 @@ class Builder {
                 diag(n.path, "invalid_setting", "merge needs declared inputs"));
           for (auto& in : n.input_defs) in.optional = true;
           break;
-        case Template::Collect:
+        case CardType::Collect:
           n.input_defs = {{"in", false}};
           n.settings.any_mode = true;
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           break;
-        case Template::Draft:
+        case CardType::Draft:
           // Draft wires end on the Card itself. Neither metadata nor a schema
           // declares ports until the Card is implemented.
           n.input_defs.clear();
@@ -729,7 +722,7 @@ class Builder {
               diag(n.path, "draft",
                    "draft cards are not implemented and cannot run"));
           break;
-        case Template::Subgraph:
+        case CardType::Subgraph:
           n.is_virtual = true;
           break;
       }
@@ -794,7 +787,7 @@ class Builder {
       auto it = res_->index.find(path_key(path));
       if (it == res_->index.end()) return std::nullopt;
       Node& n = res_->nodes[it->second];
-      if (n.kind != Template::Subgraph) return std::make_pair(it->second, port);
+      if (n.kind != CardType::Subgraph) return std::make_pair(it->second, port);
       const auto* b = n.boundary ? &*n.boundary : nullptr;
       const auto* side =
           b ? (output ? schema::get(b->outputs) : schema::get(b->inputs))
@@ -830,7 +823,7 @@ class Builder {
   void connect_all() {
     // Boundary ports become ports of the virtual subgraph node for display.
     for (auto& n : res_->nodes) {
-      if (n.kind != Template::Subgraph) continue;
+      if (n.kind != CardType::Subgraph) continue;
       if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
         if (const auto* ins = schema::get(b->inputs))
           for (const auto& [name, _] : ins->entries())
@@ -864,7 +857,7 @@ class Builder {
       const auto check = [&](Node& node, const std::string& port, bool output) {
         const auto side = output ? "from" : "to";
         const auto card = path_key(node.path);
-        const bool draft = node.kind == Template::Draft;
+        const bool draft = node.kind == CardType::Draft;
         if (draft ? port.empty()
                   : (output ? node.output(port) != nullptr
                             : node.input(port) != nullptr))
@@ -891,7 +884,7 @@ class Builder {
           }
           if (!ports.empty())
             fix += "; write " + std::string(side) + ".port as one of " + ports;
-          if (!output && node.kind == Template::Code &&
+          if (!output && node.kind == CardType::Code &&
               (!port.empty() || ports.empty()))
             fix += "; add {\"name\": " +
                    schema::text(
@@ -909,7 +902,7 @@ class Builder {
       check(sn, src->second, true);
       check(dn, dst->second, false);
       if (!ok) continue;
-      if (sn.kind != Template::Draft && dn.kind != Template::Draft &&
+      if (sn.kind != CardType::Draft && dn.kind != CardType::Draft &&
           !wires.emplace(src->first, src->second, dst->first, dst->second)
                .second) {
         dn.diags.push_back(diag(dn.path, "duplicate_wire",
@@ -940,8 +933,8 @@ class Builder {
       for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
         bool changed = false;
         for (const auto& e : res_->edges) {
-          if (res_->nodes[e.to].kind == Template::Draft) continue;
-          const bool from_draft = res_->nodes[e.from].kind == Template::Draft;
+          if (res_->nodes[e.to].kind == CardType::Draft) continue;
+          const bool from_draft = res_->nodes[e.from].kind == CardType::Draft;
           if (from_draft && !include_drafts) continue;
           types::PortType draft{"", PortKind::FlatBuffer, true,
                                 types::empty_type()};
@@ -973,7 +966,7 @@ class Builder {
           bool provisional = false;
           for (const auto& input : n.inputs) {
             // A Branch's output type follows value, not condition.
-            if (n.kind == Template::Branch && input.name != "value") continue;
+            if (n.kind == CardType::Branch && input.name != "value") continue;
             provisional |= provisional_inputs_.contains({i, input.name});
           }
           if (provisional)
@@ -986,7 +979,7 @@ class Builder {
     for (auto& n : res_->nodes) {
       if (n.is_virtual) continue;
       for (auto& p : n.outputs)
-        if (!p.type && n.kind != Template::Code && n.kind != Template::Input &&
+        if (!p.type && n.kind != CardType::Code && n.kind != CardType::Input &&
             connected_out(n, p.name))
           n.diags.push_back(diag(n.path, "unresolved_type",
                                  "output " + p.name +
@@ -1028,14 +1021,14 @@ class Builder {
           }
         }
         Shape shape = Shape::unspecified;
-        if (node.kind == Template::Collect)
+        if (node.kind == CardType::Collect)
           shape = Shape::single;
-        else if (node.kind == Template::Input && has_value_sweep(node.settings))
+        else if (node.kind == CardType::Input && has_value_sweep(node.settings))
           shape = Shape::list;
         else if (lists > 0 && (!node.settings.any_mode || lists == connected))
           shape = Shape::list;
-        else if (node.kind != Template::Code &&
-                 node.kind != Template::Subgraph && singles == connected)
+        else if (node.kind != CardType::Code &&
+                 node.kind != CardType::Subgraph && singles == connected)
           shape = Shape::single;
         for (auto& port : node.outputs) {
           if (port.execution_shape == shape) continue;
@@ -1050,8 +1043,8 @@ class Builder {
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
-      case Template::Branch:
-      case Template::Fork: {
+      case CardType::Branch:
+      case CardType::Fork: {
         const auto* v = n.input("value");
         if (v && v->type)
           for (auto& o : n.outputs)
@@ -1062,7 +1055,7 @@ class Builder {
             }
         break;
       }
-      case Template::Collect: {
+      case CardType::Collect: {
         const auto* in = n.input("in");
         if (!in || !in->type || n.outputs[0].type) break;
         std::string error;
@@ -1078,7 +1071,7 @@ class Builder {
         }
         break;
       }
-      case Template::Merge: {
+      case CardType::Merge: {
         if (n.outputs[0].type || derive_failed_.count(path_key(n.path))) break;
         std::vector<std::pair<std::string, TypeRef>> ins;
         bool ready = true;
@@ -1127,7 +1120,7 @@ class Builder {
           n.diags.push_back(diag(n.path, "unresolved_type",
                                  "input " + p.name + " type is unresolved"));
       }
-      if (n.kind == Template::Branch) {
+      if (n.kind == CardType::Branch) {
         const auto* c = n.input("condition");
         if (c && c->type && !provisional_inputs_.contains({i, "condition"}) &&
             !types::is_condition(*c->type))
@@ -1236,8 +1229,8 @@ class Builder {
   auto trace_nix_producers(size_t source, std::set<size_t>& visiting,
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
-    if (kind != Template::Collect && kind != Template::Branch &&
-        kind != Template::Fork && kind != Template::Merge) {
+    if (kind != CardType::Collect && kind != CardType::Branch &&
+        kind != CardType::Fork && kind != CardType::Merge) {
       result.insert(source);
       return;
     }
@@ -1248,7 +1241,7 @@ class Builder {
     bool found = false;
     for (const auto& edge : res_->edges) {
       if (edge.to != source) continue;
-      if (kind == Template::Branch && edge.to_port != "value") continue;
+      if (kind == CardType::Branch && edge.to_port != "value") continue;
       found = true;
       trace_nix_producers(edge.from, visiting, result);
     }
@@ -1259,7 +1252,7 @@ class Builder {
   auto check_nix_references() -> void {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       auto& node = res_->nodes[i];
-      if (node.kind != Template::Code) continue;
+      if (node.kind != CardType::Code) continue;
       const auto file = node.def_dir + "default.nix";
       const auto allowed = res_->nix_upstream(i);
       std::map<std::string, std::set<size_t>> producers;
@@ -1332,7 +1325,7 @@ std::vector<size_t> Resolution::nix_upstream(size_t node) const {
   std::vector<size_t> out;
   if (node >= guaranteed.size()) return out;
   for (size_t u : guaranteed[node]) {
-    if (nodes[u].kind != Template::Code) continue;
+    if (nodes[u].kind != CardType::Code) continue;
     const auto& gu = guaranteed[u];
     if (std::find(gu.begin(), gu.end(), node) != gu.end()) continue;
     out.push_back(u);

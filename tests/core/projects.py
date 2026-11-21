@@ -28,7 +28,7 @@ root_type Outputs;
 attribute "tsugumi";
 """
 
-SINK = {"template": "collect"}
+SINK = {"type": "collect"}
 
 ENDED = (RunState.succeeded, RunState.failed, RunState.cancelled)
 
@@ -74,10 +74,10 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
             doc["boundary"] = inner["boundary"]
             put(root / "externals" / cid / "tsugumi.json", json.dumps(doc))
-            put(folder / "_card.json", json.dumps({"external": cid}))
+            put(folder / "_card.json", json.dumps({"type": "subgraph", "external": cid}))
             continue
         d = c.get("definition")
-        body = copy.deepcopy(defs[d]) if d else {"template": "draft"}
+        body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
         outputs, nix = body.pop("_outputs", None), body.pop("_nix", None)
         for k, v in c.items():
             if k not in ("id", "definition", "params"):
@@ -110,14 +110,14 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:
     """An input Card wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
-        "trigger": {"template": "trigger"},
-        "source": {"template": "input", "params": [{"name": "text", "type": "string", "data": "x"},
+        "trigger": {"type": "trigger"},
+        "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": "x"},
                                                    {"name": "value", "type": "bool", "data": True}],
                    "_outputs": MSG_FBS},
         "sink": SINK,
-        "branch": {"template": "branch"},
-        "fork": {"template": "fork"},
-        "merge": {"template": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
+        "branch": {"type": "branch"},
+        "fork": {"type": "fork"},
+        "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }
     # The input Card is a start Card (no inputs).
     write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "sink"),

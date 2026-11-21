@@ -24,14 +24,14 @@ const session = () => {
   const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
   inner.subscription = 'sub'
   inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}',
-    definitions: [definition('a', '{"template":"draft"}')], resolution: [resolved('a')] }))
+    definitions: [definition('a', '{"type":"draft"}')], resolution: [resolved('a')] }))
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }
 
 {
   const { s, asked, apply } = session()
   assert.equal(s.kind('a'), 'draft')
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"language":"python"}')] }))
+  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code","language":"python"}')] }))
   assert.equal(s.kind('a'), 'code')
   assert.deepEqual(asked, [['a']], 'the Draft that became code asks for its displays')
 }
@@ -39,15 +39,15 @@ const session = () => {
 // Nothing changed about which Cards send results: nothing is asked again.
 {
   const { asked, apply } = session()
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"template":"draft"}')] }))
+  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"draft"}')] }))
   assert.deepEqual(asked, [])
 }
 
 // A Card that stops being one (code back to a Draft) is left out at once as well.
 {
   const { s, asked, apply } = session()
-  s.confirmedDefinitions.set('a', parse('{"language":"python"}'))
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"template":"draft"}')] }))
+  s.confirmedDefinitions.set('a', parse('{"type":"code","language":"python"}'))
+  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"draft"}')] }))
   assert.deepEqual(asked, [[]])
 }
 

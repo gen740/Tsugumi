@@ -70,8 +70,8 @@ writeShellApplication {
     {"name": "Smoke", "pkgsPath": "tsugumi:default", "canvas": {"cards": [{"id": "start"}, {"id": "square"}],
      "connections": [{"from": {"card": "start", "port": "out"}, "to": {"card": "square", "port": "x"}}]}}
     EOF
-    echo '{"template": "trigger"}' > "$project/definitions/start/_card.json"
-    echo '{"template": "draft", "inputs": [{"name": "x"}]}' > "$project/definitions/square/_card.json"
+    echo '{"type": "trigger"}' > "$project/definitions/start/_card.json"
+    echo '{"type": "draft", "inputs": [{"name": "x"}]}' > "$project/definitions/square/_card.json"
 
     export TSUGUMI_HOST_STATE="$work/host-core" TSUGUMI_SOCKET_DIR="$work/s"
     mkdir -p "$TSUGUMI_SOCKET_DIR"

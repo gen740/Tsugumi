@@ -11,7 +11,7 @@ when the original Draft has a description or content; an empty field can be fill
 Context records what the person asked and what the Draft says. fill_context is a project_save convenience;
 project_edit writes the context field itself. Boundary endpoints in tsugumi.json are editable in the same way.
 
-For example, plan starts with _card.json {"template":"draft"} and _meta.json
+For example, plan starts with _card.json {"type":"draft"} and _meta.json
 {"description":"Make a greeting","content":"Return hello."}, with no context or source files. Its incoming wire is
 start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field:
@@ -25,12 +25,13 @@ arguments implement plan and retain its intent text and every unrelated project 
       "old_value": {
         "present": true,
         "value": {
-          "template": "draft"
+          "type": "draft"
         }
       },
       "new_value": {
         "present": true,
         "value": {
+          "type": "code",
           "language": "bash",
           "inputs": [
             {
@@ -152,7 +153,7 @@ The returned diagnostics and project_validate check the saved graph; run_record 
 
 ## Code Cards
 
-A code Card's _card.json, e.g. {"language": "python", "inputs": [{"name": "config"}], "params": [{"name": "rMin",
+A code Card's _card.json, e.g. {"type": "code", "language": "python", "inputs": [{"name": "config"}], "params": [{"name": "rMin",
 "type": "double", "data": 2.5}]}: "language" is python, cpp, go, rust, csharp, bash, r, julia or ruby; "inputs"
 names each input port (the "to" port of each incoming wire); a param type is bool, int64, uint64, double or string,
 or one of them with [] for a list; code reads a param by its name (inputs.params.rMin), so lowerCamelCase names
@@ -160,7 +161,7 @@ read as written. A code Card also has _outputs.fbs (one table per output port; t
 and its sources in src/. You can use input_types to read the resolved input definitions; pass the intended language for a Draft.
 
 * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
-  _card.json {"template": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
+  _card.json {"type": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
   relative to this Card's definition folder, e.g. data/x.fits>"}]} (its optional "start" input stays wired to the
   trigger), and _outputs.fbs with a File port (one table whose only field is value:string):
       attribute "tsugumi";
@@ -174,9 +175,9 @@ and its sources in src/. You can use input_types to read the resolved input defi
   "sweep": [8, 12, 16] instead of "data" hands on each value in its own invocation (an execution list; a list-typed
   param's "data" stays one vector). A code Card's run may be a list of implementations, one invocation each; an entry
   { label = "threshold=10"; run = ...; } names it in the history (demos/en/signal-sweep). Other built-ins: branch,
-  merge, collect (one batch to one vector), and fork ({"template": "fork", "outputs": [{"name": "a"}, {"name": "b"}]}:
+  merge, collect (one batch to one vector), and fork ({"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}]}:
   its value input goes out unchanged on every output, so each one always runs downstream).
-* Otherwise a code Card: _card.json without "template", e.g. {"language": "python", "inputs": [{"name": "config"}],
+* Otherwise a code Card: _card.json {"type": "code", "language": "python", "inputs": [{"name": "config"}],
   "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
   "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a
   save is refused without it); a param type is bool, int64, uint64, double or string, or one of them with [] for a

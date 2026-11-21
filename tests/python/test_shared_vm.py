@@ -29,7 +29,7 @@ pytestmark = pytest.mark.skipif(
 
 
 def project(root, script, name):
-    write(root, {"trigger": {"template": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
+    write(root, {"trigger": {"type": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
     return VMEnv(root).start()
 
 
@@ -139,7 +139,7 @@ in
     from test_cards_container import NUM
     from projects import put
     root = tmp_path / "P"
-    write(root, {"trigger": {"template": "trigger"}, "one": {"language": "cpp", "_outputs": NUM, "_nix": nix}},
+    write(root, {"trigger": {"type": "trigger"}, "one": {"type": "code", "language": "cpp", "_outputs": NUM, "_nix": nix}},
          [c_("start", "trigger"), c_("one", "one")], [])
     put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
     p = VMEnv(root).start()

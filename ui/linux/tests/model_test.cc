@@ -53,8 +53,8 @@ auto SceneTest() -> void {
   const std::string layout =
       R"({"flow": "leftToRight", "cards": {"start": {"x": 10, "y": -20.5}, "square": {"x": 400, "y": 0}}})";
   const std::vector<ui::Definition> definitions = {
-      {"start", R"({"template": "trigger"})", R"({"name": "Start"})"},
-      {"square", R"({"language": "python"})", ""},
+      {"start", R"({"type": "trigger"})", R"({"name": "Start"})"},
+      {"square", R"({"type": "code", "language": "python"})", ""},
   };
   const auto scene = ui::BuildScene(project, layout, definitions);
   CHECK(!scene.top_to_bottom);
@@ -78,7 +78,7 @@ auto SceneTest() -> void {
   // definitions_json carries each _card.json as text.
   CHECK(
       ui::CompletionDefinitions(definitions) ==
-      R"({"square":"{\"language\": \"python\"}","start":"{\"template\": \"trigger\"}"})");
+      R"({"square":"{\"type\": \"code\", \"language\": \"python\"}","start":"{\"type\": \"trigger\"}"})");
 }
 
 auto LogWindowTest() -> void {

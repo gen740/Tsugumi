@@ -59,14 +59,10 @@ function cardFiles(dir) {
   })
 }
 
-const KINDS = new Set(['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft'])
+const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'subgraph'])
 
 /** As definitionKind in ui/web/src/model/session.ts. */
-function kindOf(def) {
-  if (def?.external) return 'subgraph'
-  if (KINDS.has(def?.template)) return def.template
-  return def?.language === undefined ? 'draft' : 'code'
-}
+const kindOf = (def) => (KINDS.has(def?.type) ? def.type : 'draft')
 
 /** As paramText in ui/web/src/model/session.ts. */
 const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? JSON.stringify(v) : '')

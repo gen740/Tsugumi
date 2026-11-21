@@ -1,4 +1,5 @@
 {
+  "type": "code",
   "language": "cpp",
   "maxRuns": 100000,
   "inputs": [

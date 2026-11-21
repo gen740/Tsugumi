@@ -243,7 +243,9 @@ auto Prepare(
     definition(prefix + "definitions/" + id + '/',
                json::Encode(json::Members{
                    {"card",
-                    json::Encode(json::Members{{"external", json::Quote(id)}})},
+                    json::Encode(json::Members{
+                        {"type", json::Quote("subgraph")},
+                        {"external", json::Quote(id)}})},
                    {"meta", json::Encode(
                                 json::Members{{"name", json::Quote(name)}})}}));
   };

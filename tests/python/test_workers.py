@@ -117,7 +117,7 @@ auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
 @pytest.fixture(scope="module")
 def env(tmp_path_factory):
     root = tmp_path_factory.mktemp("workers") / "p"
-    write(root, {"trigger": {"template": "trigger"}}, [card("start", "trigger")], [])
+    write(root, {"trigger": {"type": "trigger"}}, [card("start", "trigger")], [])
     e = real_environment(root)
     yield e
     e.cleanup()
@@ -133,8 +133,8 @@ def invocations(c, run_id, card_id):
 
 
 def test_resident_worker_serves_later_runs(env):
-    c = load(env, {"trigger": {"template": "trigger"},
-                   "count": {"language": "cpp", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
+    c = load(env, {"trigger": {"type": "trigger"},
+                   "count": {"type": "code", "language": "cpp", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_container import reload
@@ -157,8 +157,8 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     make = bash('test -d "$TSUGUMI_OUTPUT_DIR" && test ! -e /proc/self/fd/900 && '
                 'echo "line $TSUGUMI_INVOCATION-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
-    c = load(env, {"trigger": {"template": "trigger"}, "make": make,
-                   "read": {"language": "cpp", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
+    c = load(env, {"trigger": {"type": "trigger"}, "make": make,
+                   "read": {"type": "code", "language": "cpp", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
@@ -185,9 +185,9 @@ table Outputs { again:Num; }
 root_type Outputs;
 ''')
     seed = bash('echo \'{"out":{"value":3}}\' > "$TSUGUMI_OUTPUT"')
-    c = load(env, {"trigger": {"template": "trigger"}, "seed": seed,
-                   "loop": {"template": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-                   "fresh": {"language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,  # no reuseWorker: the default
+    c = load(env, {"trigger": {"type": "trigger"}, "seed": seed,
+                   "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
+                   "fresh": {"type": "code", "language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,  # no reuseWorker: the default
                              "_outputs": out, "_nix": nix}},
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
@@ -219,9 +219,9 @@ let f = x: f (x + 1); in { run = f 0; }
                 '''"sleep 60; mkdir -p $out/lib"; }
 ''')
     ok = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
-    c = load(env, {"trigger": {"template": "trigger"},
-                   "loop": {"language": "bash", "_outputs": NUM, "_nix": loop_nix},
-                   "slow": {"language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
+    c = load(env, {"trigger": {"type": "trigger"},
+                   "loop": {"type": "code", "language": "bash", "_outputs": NUM, "_nix": loop_nix},
+                   "slow": {"type": "code", "language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
              [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
     run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}
@@ -252,7 +252,7 @@ def test_network_is_off_unless_the_card_allows_it(env):
     body = REACH + """
 printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_OUTPUT"
 """
-    cards = {"trigger": {"template": "trigger"}}
+    cards = {"trigger": {"type": "trigger"}}
     for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": False},
                            "open": {"network": True}, "open_unsandboxed": {"network": True, "sandbox": False}}.items():
         cards[name] = bash(body, inputs=["go"], outputs=outputs, recordIO=True,
@@ -282,7 +282,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
                   hostFolders=[{"path": str(shared), "name": "out", "write": True}])
     other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
-    load(env, {"trigger": {"template": "trigger"}, "read": read, "write": write_, "other": other},
+    load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),
           card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")])
     # The share is set when the project's environment starts.

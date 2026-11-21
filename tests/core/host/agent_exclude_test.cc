@@ -57,11 +57,11 @@ TEST_F(AgentExcludeTest, DefaultsExplicitEmptyAndResolvedPaths) {
 }
 TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
   Write(root / "definitions/group/_card.json",
-        R"({"external":"unaccepted-folder"})");
+        R"({"type":"subgraph","external":"unaccepted-folder"})");
   AgentExclude policy(
       root,
       R"({"agentExclude":["externals/different-folder/definitions/leaf"]})",
-      {{"definitions/group/_card.json", R"({"external":"different-folder"})"}});
+      {{"definitions/group/_card.json", R"({"type":"subgraph","external":"different-folder"})"}});
   Refused([&] {
     policy.CheckContent(R"({"targets":[{"segments":["group","leaf"]}]})");
   });
@@ -81,7 +81,7 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
                           {{"path", R"("definitions/hidden/src/main.py")"}});
     });
   const auto filtered = policy.Filter(
-      R"({"entries":[{"path":"definitions/hidden/src/main.py"},{"path":"definitions/public/main.py"}],"definitions":[{"id":"hidden","card_json":"SECRET"},{"id":"public","card_json":"{}","meta_json":"SECRET"}],"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"hidden\"},{\"id\":\"public\"}],\"connections\":[]}}"})");
+      R"({"entries":[{"path":"definitions/hidden/src/main.py"},{"path":"definitions/public/main.py"}],"definitions":[{"id":"hidden","card_json":"SECRET"},{"id":"public","card_json":"{\"type\":\"code\"}","meta_json":"SECRET"}],"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"hidden\"},{\"id\":\"public\"}],\"connections\":[]}}"})");
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_EQ(filtered.find("hidden"), std::string::npos);
   EXPECT_NE(filtered.find("public"), std::string::npos);
@@ -212,7 +212,7 @@ TEST_F(AgentExcludeTest, DefinitionRemovalChecksExcludedDescendants) {
       base));
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"a","card_json":"{}"}}]})"),
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"a","card_json":"{\"type\":\"code\"}"}}]})"),
       base));
 }
 TEST_F(AgentExcludeTest, WholeDocumentsCannotDropOrRenameTreesWithHiddenFiles) {
@@ -266,7 +266,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
       root,
       R"({"agentExclude":["externals/original/definitions/a/private.txt"]})");
   SaveBase base;
-  base.files["definitions/group/_card.json"] = R"({"external":"original"})";
+  base.files["definitions/group/_card.json"] = R"({"type":"subgraph","external":"original"})";
   Refused([&] {
     policy.CheckSave(
         j::Object(
@@ -276,7 +276,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
   Refused([&] {
     policy.CheckSave(
         j::Object(
-            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"external\":\"elsewhere\"}"}}]})"),
+            R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"subgraph\",\"external\":\"elsewhere\"}"}}]})"),
         base);
   });
   Refused([&] {
@@ -287,7 +287,7 @@ TEST_F(AgentExcludeTest, LinksCannotDetachAnExternalWithHiddenDescendants) {
   });
   EXPECT_NO_THROW(policy.CheckSave(
       j::Object(
-          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"external\":\"original\"}"}}]})"),
+          R"({"changes":[{"value_type":"PutDefinition","value":{"id":"group","card_json":"{\"type\":\"subgraph\",\"external\":\"original\"}"}}]})"),
       base));
 }
 TEST_F(AgentExcludeTest,
@@ -330,11 +330,11 @@ TEST_F(AgentExcludeTest,
        DemoCardCopyIncludesSourcesAndNestedDefinitionClosure) {
   const auto demo = temporary.path / "demo";
   Write(demo / "tsugumi.json", initial_project_json("Demo"));
-  Write(demo / "definitions/group/_card.json", R"({"external":"nested"})");
+  Write(demo / "definitions/group/_card.json", R"({"type":"subgraph","external":"nested"})");
   Write(demo / "definitions/group/_meta.json", R"({"name":"Group"})");
   Write(demo / "externals/nested/tsugumi.json", initial_project_json("Nested"));
   Write(demo / "externals/nested/definitions/leaf/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   Write(demo / "externals/nested/definitions/leaf/src/main.py",
         "COMPLETE_SOURCE");
   H::ProjectOperateRequestT operation;

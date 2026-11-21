@@ -103,11 +103,13 @@ struct WorkerConditionJson {
 };
 
 struct CardDefinition {
+  // What the Card is: code, draft, trigger, input, branch, fork, merge,
+  // collect or subgraph. Required; parse_card_json checks the value.
+  Opt<"type", v::String> type;
   Opt<"external", v::String>
-      external;  // externals/<external>/ for Cards in Card
+      external;  // externals/<external>/ for a subgraph (Card in Card)
   Opt<"symbol", v::String> symbol;
   Opt<"language", v::String> language;
-  Opt<"template", v::String> template_name;
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
   Opt<"outputs", v::Array<Obj<OutputDef>>> outputs;  // a Fork's

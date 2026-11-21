@@ -1,3 +1,4 @@
 {
+  "type": "subgraph",
   "external": "collatz-cpp"
 }

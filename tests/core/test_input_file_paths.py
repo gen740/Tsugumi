@@ -13,10 +13,10 @@ from Tsugumi.Data.FailureKind import FailureKind
 def project_with_file(root, value, external=False, record_io=False):
     owner = root / "externals/child" if external else root
     write(owner,
-          defs={"load": {"template": "input",
+          defs={"load": {"type": "input",
                          "params": [{"name": "value", "type": "string", "data": value}],
                          "recordIO": record_io, "retainArtifact": True, "artifactOutput": "doc", "_outputs": FILE_FBS},
-                "shared": {"template": "trigger"}},
+                "shared": {"type": "trigger"}},
           cards=[card("load", "load"), card("shared", "shared")], conns=[],
           files={"definitions/load/data/events.txt": "Card-local contents",
                  "definitions/shared/data/events.txt": "Owning-project contents",
@@ -25,10 +25,10 @@ def project_with_file(root, value, external=False, record_io=False):
         doc = json.loads((owner / "tsugumi.json").read_text())
         doc["boundary"] = {"inputs": {}, "outputs": {"doc": {"card": "load", "port": "doc"}}}
         put(owner / "tsugumi.json", json.dumps(doc))
-        write(root, defs={"shared": {"template": "trigger"}}, cards=[card("child"), card("shared", "shared")], conns=[],
+        write(root, defs={"shared": {"type": "trigger"}}, cards=[card("child"), card("shared", "shared")], conns=[],
               files={"definitions/shared/data/events.txt": "Outer-project contents"})
         (root / "definitions/child/_card.json").unlink()
-        put(root / "definitions/child/_card.json", '{"external":"child"}')
+        put(root / "definitions/child/_card.json", '{"type":"subgraph","external":"child"}')
     return owner, ["child", "load"] if external else ["load"]
 
 

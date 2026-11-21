@@ -78,19 +78,19 @@ enum PresenceEvents {
 
   /// What a save by the Agent wrote at the top level of the document.
   /// - Parameters:
-  ///   - before/after: `template` of each definition (nil: a code Card, or none)
+  ///   - typeBefore/typeAfter: the `type` of each definition
   ///   - existedBefore: definitions there before the save
   ///   - upserted: definitions the save wrote; `touchedSources`: Cards whose sources it wrote
   ///   - connectionsBefore/After: the top-level wiring
   ///   - order: where a Card is along the flow (written upstream first)
   static func written(upserted: [String], touchedSources: [String], existedBefore: Set<String>,
-                      templateBefore: [String: String], templateAfter: [String: String], cards: Set<String>,
+                      typeBefore: [String: String], typeAfter: [String: String], cards: Set<String>,
                       connectionsBefore: [Connection], connectionsAfter: [Connection],
                       order: (String) -> Double) -> (cards: [(String, reveal: Bool)], wires: [Connection]) {
     var out: [String: Bool] = [:]
     for id in upserted where cards.contains(id) {
-      let wasDraftOrNew = !existedBefore.contains(id) || templateBefore[id] == "draft"
-      let isDraft = templateAfter[id] == "draft"
+      let wasDraftOrNew = !existedBefore.contains(id) || typeBefore[id] == "draft"
+      let isDraft = typeAfter[id] == "draft"
       out[id] = wasDraftOrNew && !isDraft
     }
     for id in touchedSources where cards.contains(id) && out[id] == nil { out[id] = false }

@@ -38,7 +38,7 @@ extension ProjectSession {
     func note(_ list: String, _ name: String) -> String? {
       m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
     }
-    let draft = def == nil || def?["template"]?.string == "draft"
+    let draft = definitionKind(def) == .draft
     if draft { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
@@ -206,10 +206,7 @@ extension ProjectSession {
 
   func nodeData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil,
                 collapsed: Bool? = nil, outputs: [PortData]? = nil) -> CardNodeData {
-    let kind: CardKind
-    if let definition {
-      kind = definition["template"]?.string.flatMap(CardKind.init(rawValue:)) ?? (definition["language"] == nil ? .draft : .code)
-    } else { kind = self.kind(k) }
+    let kind = definition.map(definitionKind) ?? self.kind(k)
     let state = cardStates[k]
     let batch = executionBatch(k)
     let executionList = batch?.executionList == true

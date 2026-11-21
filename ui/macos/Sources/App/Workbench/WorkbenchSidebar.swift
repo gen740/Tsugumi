@@ -168,12 +168,6 @@ struct WorkbenchSidebar: View {
   }
 }
 
-func definitionKind(_ def: JSONValue?) -> CardKind {
-  if def?["external"] != nil { return .subgraph }
-  if let t = def?["template"]?.string, let k = CardKind(rawValue: t) { return k }
-  return def?["language"] == nil ? .draft : .code
-}
-
 /// Dragging onto the canvas: a template makes a new Card, a definition
 /// folder without a Card is placed (carried as prefixed strings).
 enum DefinitionDrag {

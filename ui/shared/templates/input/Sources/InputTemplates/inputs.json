@@ -1,10 +1,10 @@
 {
   "input": {
-    "_card.json": "{\n  \"template\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"double\",\n      \"data\": 0\n    }\n  ]\n}\n",
+    "_card.json": "{\n  \"type\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"double\",\n      \"data\": 0\n    }\n  ]\n}\n",
     "_outputs.fbs": "namespace @NAMESPACE@;\ntable Value { value:double; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
   },
   "input_bool": {
-    "_card.json": "{\n  \"template\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"bool\",\n      \"data\": false\n    }\n  ]\n}\n",
+    "_card.json": "{\n  \"type\": \"input\",\n  \"params\": [\n    {\n      \"name\": \"value\",\n      \"type\": \"bool\",\n      \"data\": false\n    }\n  ]\n}\n",
     "_outputs.fbs": "namespace @NAMESPACE@;\ntable Value { value:bool; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
   }
 }

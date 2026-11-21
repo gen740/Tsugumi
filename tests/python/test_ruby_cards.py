@@ -46,7 +46,7 @@ def ruby_project(tmp_path):
 
 
 def ruby(source, *, params=(), outputs=EMPTY, **settings):
-    return {'card': {'language': 'ruby', 'params': list(params), **settings}, 'nix': RUBY_NIX,
+    return {'card': {'type': 'code', 'language': 'ruby', 'params': list(params), **settings}, 'nix': RUBY_NIX,
             'outputs': outputs, 'src': {'main.rb': source}}
 
 
@@ -133,9 +133,9 @@ auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
 }
 '''
     c = connect({
-        'python': {'card': {'language':'python'}, 'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }', 'outputs':NUMBERS, 'src':{'main.py':source}},
+        'python': {'card': {'type':'code','language':'python'}, 'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }', 'outputs':NUMBERS, 'src':{'main.py':source}},
         'ruby': ruby(transform, inputs=[{'name':'in'}], outputs=NUMBERS),
-        'cpp': {'card': {'language':'cpp','inputs':[{'name':'in'}]}, 'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; in { run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }', 'outputs':EMPTY, 'src':{'card.cc':sink}},
+        'cpp': {'card': {'type':'code','language':'cpp','inputs':[{'name':'in'}]}, 'nix': '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; in { run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }', 'outputs':EMPTY, 'src':{'card.cc':sink}},
     }, [('python','out','ruby','in'), ('ruby','out','cpp','in')])
     rid, status = run_and_wait(c, 'python')
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)

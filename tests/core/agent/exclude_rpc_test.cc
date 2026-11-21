@@ -74,9 +74,9 @@ class AgentExclusionRPC : public AgentProjectFixture {
   auto Open(const std::vector<std::string>& excluded, bool shell = false)
       -> std::string {
     Write(directory.path / "project/definitions/public/_card.json",
-          R"({"template":"draft"})");
+          R"({"type":"draft"})");
     Write(directory.path / "project/definitions/hidden/_card.json",
-          R"({"template":"draft"})");
+          R"({"type":"draft"})");
     Write(directory.path / "project/definitions/hidden/src/secret.txt",
           "EXCLUDED_CONTENT_SENTINEL");
     std::vector<std::string> entries;
@@ -101,11 +101,11 @@ TEST_F(AgentExclusionRPC,
   const std::map<std::string, std::string> files{
       {"tsugumi.json", project},
       {"layout.json", R"({"cards":{"sub":{"x":10,"y":20}}})"},
-      {"definitions/sub/_card.json", R"({"external":"inner"})"},
+      {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"data"}],"connections":[]}})"},
       {"externals/inner/definitions/data/_card.json",
-       R"({"template":"draft"})"},
+       R"({"type":"draft"})"},
       {"externals/inner/definitions/data/src/raw.bin",
        std::string("\0\xff\x80\n", 4)}};
   for (const auto& [path, bytes] : files) Write(folder / path, bytes);
@@ -251,16 +251,16 @@ TEST_F(AgentExclusionRPC,
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})";
   const std::string binary("\0\xff\x80\n", 4);
   Write(folder / "tsugumi.json", project);
-  Write(folder / "definitions/sub/_card.json", R"({"external":"inner"})");
+  Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
   Write(folder / "definitions/sub/_meta.json",
         R"({"name":"Original","description":"Keep this"})");
   Write(folder / "externals/inner/tsugumi.json", project);
   Write(folder / "externals/inner/definitions/next/_card.json",
-        R"({"external":"deep"})");
+        R"({"type":"subgraph","external":"deep"})");
   Write(folder / "externals/inner/externals/deep/tsugumi.json", project);
   const auto definition =
       "externals/inner/externals/deep/definitions/data/_card.json";
-  Write(folder / definition, R"({"template":"draft"})");
+  Write(folder / definition, R"({"type":"draft"})");
   const auto source =
       "externals/inner/externals/deep/definitions/data/src/raw.bin";
   Write(folder / source, binary);
@@ -303,11 +303,11 @@ TEST_F(AgentExclusionRPC,
 TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
   const auto folder = directory.path / "attached";
   Write(folder / "tsugumi.json", R"({"canvas":{"cards":[],"connections":[]}})");
-  Write(folder / "definitions/sub/_card.json", R"({"external":"inner"})");
+  Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
   Write(folder / "externals/inner/tsugumi.json",
         R"({"canvas":{"cards":[],"connections":[]}})");
   Write(folder / "externals/inner/definitions/data/_card.json",
-        R"({"template":"draft"})");
+        R"({"type":"draft"})");
   const auto secret = folder / "externals/inner/definitions/data/src/raw.bin";
   Write(secret, "EXCLUDED_ATTACHMENT");
   const auto c = Open({secret.string()});
@@ -387,7 +387,7 @@ TEST_F(AgentExclusionRPC, DemoReadListCopyAndHelpersCannotReachExcludedDemo) {
   Write(
       demo / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(demo / "definitions/step/_card.json", R"({"template":"draft"})");
+  Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
   Write(demo / "definitions/step/src/note.txt", "EXCLUDED_DEMO_SENTINEL");
   Write(
       directory.path / "demos/ja/index.json",
@@ -426,7 +426,7 @@ TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
   Write(
       demo / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(demo / "definitions/step/_card.json", R"({"template":"draft"})");
+  Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
   Write(demo / "definitions/step/_meta.json",
         R"({"name":"Source step","description":"Keep description"})");
   Write(demo / "definitions/step/src/note.txt", "COPIED_COMPLETE_SOURCE");
