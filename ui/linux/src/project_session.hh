@@ -55,6 +55,8 @@ class ProjectSession : public std::enable_shared_from_this<ProjectSession> {
   [[nodiscard]] auto CardState(const std::string& card) const
       -> Tsugumi::Data::CardState;
 
+  // No "run the Workflow" yet: RunRequest always names a Card, and finding the
+  // root trigger is a UI convenience each UI does itself, not hostd.
   // Runs from card through what is downstream of it (RunRequest, propagate).
   auto Run(const std::string& card) -> void;
   auto Cancel() -> void;

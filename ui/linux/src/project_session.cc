@@ -94,8 +94,8 @@ auto ProjectSession::Open() -> void {
     if (!self || self->phase_ != Phase::kStarting) return;
     if (const auto* progress = event.value_as_EnvironmentProgress();
         progress && progress->project()->str() == self->path_) {
-      // hostd's stage names are English; see the PR's list of what moves
-      // into hostd.
+      // hostd's stage names are English; words for them are each UI's
+      // (presentation), and this UI shows the name as it comes.
       self->detail_ = progress->stage()->str();
       self->Changed();
     }
@@ -264,6 +264,8 @@ auto ProjectSession::CompleteLayout(std::string project_json,
       });
 }
 
+// The state the Canvas shows is each UI's to derive (presentation, not
+// hostd's); this UI shows the latest invocation's.
 // The Cards' states in the current run, which notifications then update.
 auto ProjectSession::ReadInvocations() -> void {
   if (run_id_.empty()) return;

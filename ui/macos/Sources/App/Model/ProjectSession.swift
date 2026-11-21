@@ -855,6 +855,8 @@ final class ProjectSession {
     return batch
   }
 
+  // The state the Canvas shows is presentation: each UI derives it from run
+  // notifications (execution-list batches) rather than asking hostd.
   func canvasCardState(_ card: CardKey) -> Tsugumi_Data_CardState? {
     if let batch = executionBatch(card), batch.executionList {
       if runStatus?.state == .cancelled, !batch.complete || batch.failed { return .cancelled }

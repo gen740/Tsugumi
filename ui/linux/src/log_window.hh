@@ -30,6 +30,7 @@ struct LogPiece {
   bool exists = false;
 };
 
+// Log window bookkeeping is this view's state, kept by each UI, not hostd.
 class LogWindow {
  public:
   static constexpr uint32_t kReadBytes = 1U << 20;
