@@ -44,7 +44,7 @@ class VersionFiles : public ::testing::Test {
   std::filesystem::path root;
 };
 
-TEST_F(VersionFiles, DefinitionsAndLiteralOptInsShareOneSelection) {
+TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {
   Put("tsugumi.json",
       R"({"versionPaths":["inputs/reference.csv","chosen folder","missing","literal[1].csv"]})");
   const std::set<std::string> definitions = {
@@ -58,6 +58,8 @@ TEST_F(VersionFiles, DefinitionsAndLiteralOptInsShareOneSelection) {
       "definitions/a/_outputs.fbs",
       "definitions/b/_card.json",
       "skills/example/SKILL.md",
+      "templates/example/example/_card.json",
+      "templates/example/layout.json",
       "externals/inner/tsugumi.json",
       "externals/inner/definitions/b/_card.json"};
   for (const auto& path : definitions) Put(path);
@@ -74,6 +76,8 @@ TEST_F(VersionFiles, DefinitionsAndLiteralOptInsShareOneSelection) {
   Put(".tsugumi/runs.sqlite");
   Put("externals/inner/.tsugumi/runs.sqlite");
   Put("definitions/a/.tsugumi/private");
+  Put("templates/example/.git/config");
+  Put("templates/example/.tsugumi/private");
   std::filesystem::create_directory_symlink(
       root / ".tsugumi", root / "chosen folder/linked-state");
   std::filesystem::create_symlink(root / ".tsugumi/runs.sqlite",
