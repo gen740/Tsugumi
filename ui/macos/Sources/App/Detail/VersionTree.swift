@@ -88,6 +88,8 @@ struct VersionMiniMapLayout {
     let outline: Path
     let shape: CardShape
     let draft: Bool
+    /// A definition the version's build cannot read (no type, or an unknown one).
+    var invalid = false
   }
   static let padding = 8.0
   var cards: [String: Placed] = [:]
@@ -106,7 +108,7 @@ struct VersionMiniMapLayout {
       let x = ox + (c.x - left) * k, y = Self.padding + (c.y - top) * k
       let o = g.outlineRect
       let outline = g.outline(in: CGRect(x: x + o.minX * k, y: y + o.minY * k, width: o.width * k, height: o.height * k), cornerScale: k)
-      self.cards[c.id] = Placed(box: CGRect(x: x, y: y, width: g.size.width * k, height: g.size.height * k), outline: outline, shape: g.shape, draft: c.kind == .draft)
+      self.cards[c.id] = Placed(box: CGRect(x: x, y: y, width: g.size.width * k, height: g.size.height * k), outline: outline, shape: g.shape, draft: c.kind == .draft, invalid: c.kind == .invalid)
     }
     height = spanY * k + Self.padding * 2
     named = CardGeometry.width * k >= 34
@@ -123,7 +125,7 @@ struct VersionMiniMap: View {
   var body: some View {
     let cards = canvas.cards.compactMap { $0 }
     let map = VersionMiniMapLayout(
-      cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind(rawValue: $0.kind) ?? .draft, fan: Int($0.fan), collapsed: $0.collapsed) },
+      cards.map { .init(id: $0.id, x: $0.x, y: $0.y, kind: CardKind.named($0.kind), fan: Int($0.fan), collapsed: $0.collapsed) },
       flow: canvas.flow == "topToBottom" ? .topToBottom : .leftToRight, width: Self.width, height: Self.maxHeight)
     let touched = Set(changed.map { String($0.split(separator: "/").first ?? "") })
     Canvas { g, _ in
@@ -140,8 +142,8 @@ struct VersionMiniMap: View {
         let r = c.box
         g.fill(c.outline, with: .color(Color(nsColor: .windowBackgroundColor)))
         g.fill(c.outline, with: .color(touched.contains(id) ? Color.accentColor.opacity(0.45) : Color.secondary.opacity(0.22)))
-        g.stroke(c.outline, with: .color(touched.contains(id) ? Color.accentColor : .secondary),
-                 style: StrokeStyle(lineWidth: touched.contains(id) ? 1.25 : 0.75, dash: c.draft ? [3, 2] : []))
+        g.stroke(c.outline, with: .color(c.invalid ? Tsugumi_Data_CardState.failed.color : touched.contains(id) ? Color.accentColor : .secondary),
+                 style: StrokeStyle(lineWidth: touched.contains(id) || c.invalid ? 1.25 : 0.75, dash: c.draft ? [3, 2] : []))
         if map.named && (c.shape == .card || c.shape == .start) {
           let fit = max(1, Int(r.width / 5) - 1)
           g.draw(Text(id.count * 5 > Int(r.width) ? id.prefix(fit) + "…" : id).font(.system(size: 8.5)), at: CGPoint(x: r.midX, y: r.midY))

@@ -451,7 +451,7 @@ struct CardSettingsEditor: View {
     switch m.kind {
     case .code: return CardEditorCategory.allCases
     case .input: return [.general, .source, .ports, .log, .executions, .artifacts, .notes]
-    case .draft: return [.general, .notes]
+    case .draft, .invalid: return [.general, .notes]
     case .subgraph: return [.general, .ports, .executions, .notes]
     default: return [.general, .ports, .log, .executions, .artifacts, .notes]
     }
@@ -658,7 +658,7 @@ private struct GeneralCategory: View {
           ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
         }
       }
-      if model.kind != .subgraph && model.kind != .draft {
+      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("実行") {
           if model.kind == .code {
             Picker("trigger", selection: string("trigger", fallback: "allInputs")) {
@@ -1077,7 +1077,7 @@ private struct PortsCategory: View {
           .font(.caption).foregroundStyle(.secondary)
       }
       if model.kind == .fork && model.definition != nil { ForkOutputsSection(model: model) } else { OutputPortsSection(model: model) }
-      if model.kind != .subgraph && model.kind != .draft {
+      if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("記録と成果物") {
           toggle("recordIO", label: "入出力を記録")
           toggle("retainArtifact", label: "成果物を保持")

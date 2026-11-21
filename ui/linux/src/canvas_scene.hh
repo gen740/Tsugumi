@@ -18,6 +18,8 @@ struct Definition {
   std::string id;
   std::string card_json;  // definitions/<id>/_card.json
   std::string meta_json;  // its metadata (name, ...), may be empty
+  // The core's first error about this Card (its ResolvedCard), may be empty.
+  std::string diagnostic;
 };
 
 struct SceneCard {
@@ -25,6 +27,11 @@ struct SceneCard {
   std::string name;
   double x = 0;
   double y = 0;
+  // Its _card.json has no type, one this build does not know or one that
+  // does not match "external" (or there is no definition): drawn as a
+  // definition error with the core's diagnostic, and never run.
+  bool definition_error = false;
+  std::string diagnostic;
 };
 
 struct SceneWire {
@@ -66,6 +73,10 @@ struct Scene {
   // The Card drawn at a point, or nullptr.
   [[nodiscard]] auto CardAt(double x, double y) const -> const SceneCard*;
 };
+
+// Whether a _card.json states one of the Card types (a subgraph exactly when
+// it names an "external"). Only recognises the value; the core validates.
+auto StatesKnownType(std::string_view card_json) -> bool;
 
 // LayoutCompleteRequest's definitions_json: each Card id with the text of its
 // _card.json.

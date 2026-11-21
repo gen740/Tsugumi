@@ -5,8 +5,20 @@ import Foundation
 import TsugumiRPC
 
 /// What a Card is, for choosing what the canvas and the editor offer.
+/// `invalid`: its _card.json has no type or one this build does not know (or
+/// one that does not match `external`), a definition error the core reports.
 enum CardKind: String {
-  case trigger, input, branch, fork, merge, collect, draft, subgraph, code
+  case trigger, input, branch, fork, merge, collect, draft, subgraph, code, invalid
+
+  /// The _card.json "type" names.
+  static let types: [CardKind] = [.trigger, .input, .branch, .fork, .merge, .collect, .draft, .subgraph, .code]
+
+  /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
+  /// for a definition the daemon cannot read). Anything else is `invalid`: the
+  /// Card shows as a definition error, with no ports and no run.
+  static func named(_ name: String?) -> CardKind {
+    types.first { $0.rawValue == name } ?? .invalid
+  }
 
   var editsValueOnCanvas: Bool { self == .input }
 
@@ -21,6 +33,7 @@ enum CardKind: String {
     case .draft: return "Draft"
     case .subgraph: return "Card in Card"
     case .code: return String(localized: "処理")
+    case .invalid: return String(localized: "定義エラー")
     }
   }
 
@@ -35,15 +48,16 @@ enum CardKind: String {
     case .draft: return "pencil.and.outline"
     case .subgraph: return "link"
     case .code: return "chevron.left.forwardslash.chevron.right"
+    case .invalid: return "xmark.octagon"
     }
   }
 }
 
-/// What a _card.json says the Card is: its "type". A missing or unknown type
-/// is a definition error the core reports; such a Card, like one without a
-/// definition, shows as a Draft: no ports, no run.
+/// What a _card.json says the Card is: its "type" (a subgraph exactly when it
+/// names an `external`). Without a definition, `invalid` as well.
 func definitionKind(_ def: JSONValue?) -> CardKind {
-  def?["type"]?.string.flatMap(CardKind.init(rawValue:)) ?? .draft
+  let kind = CardKind.named(def?["type"]?.string)
+  return (kind == .subgraph) == (def?["external"] != nil) ? kind : .invalid
 }
 
 /// What a new Card starts from: a built-in Card or a scaffold. Every Card

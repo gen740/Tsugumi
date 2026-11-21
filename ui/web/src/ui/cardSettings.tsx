@@ -470,7 +470,7 @@ function categories(m: CardEditorModel): CardEditorCategory[] {
   switch (m.kind) {
     case 'code': return ['general', 'source', 'ports', 'log', 'dependencies', 'executions', 'artifacts', 'notes']
     case 'input': return ['general', 'source', 'ports', 'log', 'executions', 'artifacts', 'notes']
-    case 'draft': return ['general', 'notes']
+    case 'draft': case 'invalid': return ['general', 'notes']
     case 'subgraph': return ['general', 'ports', 'executions', 'notes']
     default: return ['general', 'ports', 'log', 'executions', 'artifacts', 'notes']
   }
@@ -753,7 +753,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
         </Section>
       )}
-      {kind !== 'subgraph' && kind !== 'draft' && (
+      {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
           {kind === 'code' && (
             <Row label="trigger" help={L('allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。')}>
@@ -1051,7 +1051,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         )}
       </Section>
       {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
-      {model.kind !== 'subgraph' && model.kind !== 'draft' && (
+      {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
         <Section title={L('記録と成果物')}>
           <Row label={L('入出力を記録')}>
             <Toggle checked={bool(get(def, 'recordIO')) ?? false} onChange={(v) => model.setSetting('recordIO', v ? true : undefined)} />

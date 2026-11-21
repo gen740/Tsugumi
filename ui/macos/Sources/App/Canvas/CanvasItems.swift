@@ -46,9 +46,9 @@ struct CardMenu: View {
     }
     Divider()
     Button("ここから下流を実行") { RunActions.run(session, card: cardKey, propagate: true) }
-      .disabled(!session.connected || session.runActive)
+      .disabled(!session.connected || session.runActive || kind == .invalid)
     Button("この Card だけ実行（最後の入力）") { RunActions.run(session, card: cardKey, propagate: false) }
-      .disabled(!session.connected || session.runActive)
+      .disabled(!session.connected || session.runActive || kind == .invalid)
     Divider()
     Button("複製") { Task { tab.selection = await session.duplicate(targets, in: tab.scope) } }
       .disabled(!session.isEditable)

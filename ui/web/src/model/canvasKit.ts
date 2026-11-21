@@ -203,8 +203,10 @@ export class CardGeometry {
   readonly grid?: number
 
   constructor(d: CardNodeData, readonly flow: FlowDirection) {
-    this.inputs = d.kind === 'draft' ? [] : d.inputs.map((p) => p.name)
-    this.outputs = d.kind === 'draft' ? [] : d.outputs.map((p) => p.name)
+    // A Draft and a Card whose definition cannot be read have no ports.
+    const portless = d.kind === 'draft' || d.kind === 'invalid'
+    this.inputs = portless ? [] : d.inputs.map((p) => p.name)
+    this.outputs = portless ? [] : d.outputs.map((p) => p.name)
     this.collapsed = d.collapsed
     this.draft = d.kind === 'draft'
     this.draftEditing = this.draft && !!d.draftEditing

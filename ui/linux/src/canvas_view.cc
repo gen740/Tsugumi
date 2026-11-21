@@ -165,7 +165,9 @@ auto DrawScene(cairo_t* cr, int width, int height, const Scene& scene,
   for (const auto& card : scene.cards) {
     const auto box = Scene::CardBox(card);
     const auto state = state_of ? state_of(card.id) : D::CardState::unspecified;
-    const auto color = StateColor(state, colors);
+    // A Card whose definition cannot be read is drawn as a failure.
+    const auto color = StateColor(
+        card.definition_error ? D::CardState::failed : state, colors);
     RoundedBox(cr, box);
     SetColor(cr, color, 0.12);
     cairo_fill_preserve(cr);
@@ -174,7 +176,14 @@ auto DrawScene(cairo_t* cr, int width, int height, const Scene& scene,
     cairo_stroke(cr);
     SetColor(cr, colors.text);
     Label(cr, card.name, box, box.y + 18, 15, true);
-    if (const auto* text = CardStateText(state); *text != '\0') {
+    if (card.definition_error) {
+      SetColor(cr, color);
+      Label(cr, L("定義エラー"), box, box.y + 40, 13, true);
+      Label(cr,
+            card.diagnostic.empty() ? L("Card の定義を読めません")
+                                    : card.diagnostic,
+            box, box.y + 58, 11, false);
+    } else if (const auto* text = CardStateText(state); *text != '\0') {
       SetColor(cr, color);
       Label(cr, L(text), box, box.y + 46, 13, false);
     }

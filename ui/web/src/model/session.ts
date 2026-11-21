@@ -2311,8 +2311,9 @@ export class ProjectSession extends Observable {
       inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
       outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
     }
-    const draft = definitionKind(def) === 'draft'
-    if (draft) return { inputs: [], outputs: [] }
+    const kind = definitionKind(def)
+    const draft = kind === 'draft'
+    if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
         inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
@@ -2485,8 +2486,10 @@ export class ProjectSession extends Observable {
     const def = opts.definition ?? this.cardDefinition(k)
     const m = opts.meta ?? this.cardMeta(k)
     let summary = str(get(m, 'description'))
-    // What a Draft shows on its Card is what it says it will do.
+    // What a Draft shows on its Card is what it says it will do; a Card whose
+    // definition cannot be read, what the core says about it.
     if (kind === 'draft') summary = str(get(m, 'content')) || summary
+    if (kind === 'invalid') summary = diags.find((x) => x.error)?.message ?? L('Card の定義を読めません')
     const frame = this.displayFrame(k)
     const display = (this.displays.has(k) || frame !== undefined) && bool(get(frame, 'hidden')) !== true
     const d = this.displays.get(k)
@@ -2495,7 +2498,7 @@ export class ProjectSession extends Observable {
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: sym || undefined, summary: summary || undefined,
+      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: d ? this.markForRun(d.runId) : state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: state?.transfer ?? pending ?? (d ? (executionList ? `#${d.invocation} · ` : '') + displaySummary(d) : !state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
@@ -2574,29 +2577,36 @@ export class ProjectSession extends Observable {
 
 // ---- Kinds, templates and labels ------------------------------------------------------
 
-/** What a Card is, for choosing what the canvas and the editor offer. */
-export type CardKind = 'trigger' | 'input' | 'branch' | 'fork' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code'
+/** What a Card is, for choosing what the canvas and the editor offer.
+ *  `invalid`: its _card.json has no type or one this build does not know (or
+ *  one that does not match `external`), a definition error the core reports. */
+export type CardKind = 'trigger' | 'input' | 'branch' | 'fork' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+/** The _card.json "type" names. */
 const KINDS: CardKind[] = ['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
   trigger: L('開始'), input: L('入力'), branch: L('分岐'), fork: L('分配'), merge: L('合流'), collect: L('収集'),
-  draft: 'Draft', subgraph: 'Card in Card', code: L('処理'),
+  draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
   trigger: 'play.circle', input: 'slider.horizontal.3', branch: 'arrow.triangle.swap', fork: 'arrow.triangle.branch',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
-  code: 'chevron.left.forwardslash.chevron.right',
+  code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
 }
 
-/** A kind by its _card.json "type" name (also VersionCanvasCard.kind). A
- *  missing or unknown type is a definition error the daemon reports; such a
- *  Card, like one without a definition, shows as a Draft: no ports, no run. */
+/** A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
+ *  for a definition the daemon cannot read). Anything else is `invalid`: the
+ *  Card shows as a definition error, with no ports and no run. */
 export const cardKindNamed = (name: string | undefined): CardKind =>
-  name !== undefined && (KINDS as string[]).includes(name) ? name as CardKind : 'draft'
+  name !== undefined && (KINDS as string[]).includes(name) ? name as CardKind : 'invalid'
 
-/** What a _card.json says the Card is: its "type". */
-export const definitionKind = (def: J | undefined): CardKind => cardKindNamed(str(get(def, 'type')))
+/** What a _card.json says the Card is: its "type" (a subgraph exactly when it
+ *  names an `external`). Without a definition, `invalid` as well. */
+export function definitionKind(def: J | undefined): CardKind {
+  const kind = cardKindNamed(str(get(def, 'type')))
+  return (kind === 'subgraph') === (get(def, 'external') !== undefined) ? kind : 'invalid'
+}
 
 /** What a new Card starts from: a built-in Card or a scaffold. Every Card
  *  gets a definition folder of its own (definitions/<id>/). */

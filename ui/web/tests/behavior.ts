@@ -66,6 +66,7 @@ await import("./freeSpot")
 
 
 await import("./draftDisplays")
+await import("./definitionErrors")
 
 await import("./nixSources")
 await import("./marimoTemplate")

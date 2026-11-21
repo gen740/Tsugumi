@@ -2,6 +2,7 @@
 
 #include <glib.h>
 
+#include <map>
 #include <utility>
 
 #include "main_thread.hh"
@@ -221,11 +222,25 @@ auto ProjectSession::Opened(const R::OpenResult& result) -> void {
   seq_ = result.seq().value_or(1);
   const auto& snapshot = *result.snapshot();
   rev_ = snapshot.rev().value_or(0);
+  // The core's first error about each top-level Card.
+  std::map<std::string, std::string, std::less<>> diagnostics;
+  for (const auto* resolved : *snapshot.resolution()) {
+    const auto* segments = resolved->card()->segments();
+    if (segments->size() != 1) continue;
+    for (const auto* d : *resolved->diagnostics())
+      if (d->severity() != D::Severity::warning) {
+        diagnostics.emplace(segments->Get(0)->str(), d->message()->str());
+        break;
+      }
+  }
   std::vector<Definition> definitions;
-  for (const auto* definition : *snapshot.definitions())
-    definitions.push_back({definition->id()->str(),
-                           definition->card_json()->str(),
-                           Str(definition->meta_json())});
+  for (const auto* definition : *snapshot.definitions()) {
+    const auto id = definition->id()->str();
+    const auto diagnostic = diagnostics.find(id);
+    definitions.push_back(
+        {id, definition->card_json()->str(), Str(definition->meta_json()),
+         diagnostic != diagnostics.end() ? diagnostic->second : ""});
+  }
   SetRun(*snapshot.run());
   if (const auto name = ProjectTitle(snapshot.project_json()->str(), "");
       !name.empty())
