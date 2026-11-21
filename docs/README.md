@@ -38,6 +38,9 @@ Start from the document that fits what you want to read. To read with moving fig
 | [Versions.md](Versions.md) | Versions: the project's git, each run's version and result (git notes), the version tree and "Start from This Version" |
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
 | [HostPresentation.md](HostPresentation.md) | Host formatting tools, deterministic editor support and language-dependent version presentation |
+| [CoreAndSDK.md](CoreAndSDK.md) | Decided, not yet implemented: the core knows no language; what the core needs from a language SDK; the order of work |
+| [CardABI.md](CardABI.md) | Decided, not yet implemented: Card ABI 9, its fixed schemas and effects, and what it leaves out |
+| [SandboxContract.md](SandboxContract.md) | Decided, not yet implemented: what the worker builds for a Card (directories, inputs, outputs, grants, sandbox options, secrets) |
 | [Protocol.md](Protocol.md) | The project RPC requests and notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |
 
