@@ -211,11 +211,11 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     if (const auto& root = service_.options().host_folders; !root.empty())
       source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
     std::error_code ec;
-    if (!std::filesystem::is_directory(source, ec))
+    const auto status = std::filesystem::status(source, ec);
+    if (!std::filesystem::is_directory(status) &&
+        (sp.shared_vm || !std::filesystem::is_regular_file(status)))
       throw Failed(FailureKind::not_found,
-                   "the folder " + f.path + " (/host/" + f.name +
-                       ") is not available here: it is missing on this Mac, or "
-                       "the project must be opened again to share it",
+                   "host path grant " + f.name + " is not available: " + f.path,
                    {{"path", f.path}});
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }

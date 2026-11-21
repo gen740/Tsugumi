@@ -708,7 +708,7 @@ private struct GeneralCategory: View {
           }
         }
       }
-      let diags = model.session.resolution[model.cardKey]?.diagnostics ?? []
+      let diags = model.session.diagnostics.filter { $0.card.map(key) == model.cardKey }
       if !diags.isEmpty {
         Section("診断") {
           ForEach(diags) { d in
@@ -916,7 +916,7 @@ private struct HostFoldersEditor: View {
           VStack(alignment: .leading, spacing: 1) {
             Text(path).lineLimit(1).truncationMode(.middle).font(.callout)
             Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                        : present ? "/host/\(f["name"]?.string ?? "")" : String(localized: "この Mac にはありません（実行すると失敗します）"))
+                        : present ? "TSUGUMI_GRANT_\(grantName(f["name"]?.string ?? ""))" : String(localized: "この Mac にはありません（実行すると失敗します）"))
               .font(.caption).foregroundStyle(present ? Color.secondary : Color.orange)
           }
           Spacer()
@@ -930,7 +930,7 @@ private struct HostFoldersEditor: View {
         }
       }
       Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                  : String(localized: "選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。"))
+                  : String(localized: "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。"))
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
@@ -943,20 +943,21 @@ private struct HostFoldersEditor: View {
     model.definition?["grants"] = grants.object?.isEmpty == false ? grants : nil
   }
 
+  private func grantName(_ name: String) -> String {
+    String(name.uppercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
+  }
+
   private func add() {
     let panel = NSOpenPanel()
     panel.canChooseDirectories = true
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    func normalize(_ name: String) -> String {
-      String(name.uppercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
-    }
-    let taken = Set((model.definition?["grants"]?["hostPaths"]?.array ?? []).compactMap { $0["name"]?.string }.map(normalize))
+    let taken = Set((model.definition?["grants"]?["hostPaths"]?.array ?? []).compactMap { $0["name"]?.string }.map(grantName))
     let base = String(url.lastPathComponent.map { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) ? $0 : "-" })
     var name = base.isEmpty || base == "." || base == ".." ? "folder" : base
     var n = 2
-    while taken.contains(normalize(name)) { name = "\(base)-\(n)"; n += 1 }
+    while taken.contains(grantName(name)) { name = "\(base)-\(n)"; n += 1 }
     edit { $0.append(.object([("path", .string(url.path)), ("name", .string(name))])) }
   }
 }

@@ -159,6 +159,7 @@ class WorkerProc {
   std::string scratch_;
   std::filesystem::path cgroup_;
   bool read_only_inputs_ = false;
+  bool x11_mounted_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;

@@ -681,7 +681,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
     </Row>
   )
   const params = arr(get(def, 'params')) ?? []
-  const diags = session.resolution.get(model.cardKey)?.diagnostics ?? []
+  const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
   const kind = model.kind
   const serviceSetting = string('executionService', 'auto')
   const serviceId = serviceSetting.value
@@ -889,6 +889,8 @@ function setGrant(model: CardEditorModel, key: string, value: J | undefined) {
 /** Folders of the host this Card's worker may read (Experimental): each at
  *  /host/<name> in the worker, read-only unless allowed to write. Only the
  *  folder's path is kept in the project. */
+const grantName = (name: string) => name.toUpperCase().replace(/[^A-Z0-9]/g, '_')
+
 function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: boolean }) {
   const folders = arr(get(get(model.definition, 'grants'), 'hostPaths')) ?? []
   const usable = app.status?.hostFolders ?? true
@@ -915,12 +917,11 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
     setGrant(model, 'hostPaths', list.length ? list : undefined)
   }
   const add = (p: string) => {
-    const normalize = (s: string) => s.toUpperCase().replace(/[^A-Z0-9]/g, '_')
-    const taken = new Set(folders.map((f) => normalize(str(get(f, 'name')) ?? '')))
+    const taken = new Set(folders.map((f) => grantName(str(get(f, 'name')) ?? '')))
     const last = p.replace(/\/+$/, '').split('/').pop() ?? ''
     const base = [...last].map((c) => (/[A-Za-z0-9\-_.]/.test(c) ? c : '-')).join('')
     let name = !base || base === '.' || base === '..' ? 'folder' : base
-    for (let n = 2; taken.has(normalize(name)); n++) name = `${base}-${n}`
+    for (let n = 2; taken.has(grantName(name)); n++) name = `${base}-${n}`
     edit((l) => l.push(obj([['path', p], ['name', name]])))
   }
   return (
@@ -939,7 +940,7 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
             <div className="col flex1 min0">
               <span className="callout ellipsis" title={p}>{p}</span>
               <span className="caption" style={{ color: ok && usable ? 'var(--secondary)' : 'var(--orange)' }}>
-                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `/host/${str(get(f, 'name')) ?? ''}` : L('このホストにはありません（実行すると失敗します）')}
+                {remote ? L('外部の実行サービスにはホストのフォルダを共有できません。') : !usable ? L('この Web UI では使えません（実行すると失敗します）') : ok ? `TSUGUMI_GRANT_${grantName(str(get(f, 'name')) ?? '')}` : L('このホストにはありません（実行すると失敗します）')}
               </span>
             </div>
             <Toggle kind="checkbox" label={L('書き込み')} help={L('オフ（デフォルト）: 読み取り専用')} checked={bool(get(f, 'write')) ?? false} disabled={remote}
@@ -950,7 +951,7 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
       })}
       {remote ? <div className="caption secondary">{L('外部の実行サービスにはホストのフォルダを共有できません。')}</div>
         : !usable && <div className="caption" style={{ color: 'var(--orange)' }}>{L('macOS 上の Web UI では、フォルダを Card に共有できません（Mac アプリの共通 VM が必要です）。この設定のある Card を実行すると失敗します。')}</div>}
-      <div className="caption secondary">{L('選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。')}</div>
+      <div className="caption secondary">{L('Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。')}</div>
       {picking && <FolderPicker message={L('worker から読めるようにするフォルダを選んでください')} onClose={() => setPicking(false)} onPick={(p) => { setPicking(false); add(p) }} />}
     </div>
   )

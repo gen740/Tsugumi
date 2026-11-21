@@ -464,8 +464,11 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
         value = "/run/tsugumi-wayland";
         argv.insert(argv.end(), {"--bind", socket->source, value});
       }
-      if (socket->variable == "DISPLAY" && (filesystem || temporary == "/tmp"))
+      if (socket->variable == "DISPLAY" &&
+          (filesystem || temporary == "/tmp")) {
         argv.insert(argv.end(), {"--bind", socket->source, socket->source});
+        x11_mounted_ = temporary == "/tmp";
+      }
       if (filesystem)
         argv.insert(argv.end(), {"--dev-bind-try", "/dev/dri", "/dev/dri"});
       gui_env.push_back(socket->variable + "=" + value);
@@ -716,7 +719,9 @@ void WorkerProc::clear_scratch() {
     return;
   }
   try {
-    for (const auto& d : {tmp_dir(), out_dir(), inputs_dir()})
+    fs::clear_staging(tmp_dir(), recover_permissions_,
+                      x11_mounted_ ? ".X11-unix" : "");
+    for (const auto& d : {out_dir(), inputs_dir()})
       fs::clear_staging(d, recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,

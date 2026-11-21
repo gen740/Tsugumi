@@ -35,9 +35,10 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.shared_vm = source.shared_vm;
           if (!source.secrets.empty()) {
             spawn.secrets = std::make_shared<WorkerSecrets>();
+            spawn.secrets->values.reserve(source.secrets.size());
             for (auto& entry : source.secrets)
               spawn.secrets->values.emplace_back(std::move(entry->name),
-                                                 std::move(entry->value));
+                                                 entry->value);
             clear_spawn_secrets(*packet.message);
           }
           spawn.store_path = source.store_path;

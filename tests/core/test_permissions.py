@@ -44,7 +44,7 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     except RpcFailure as e:
         assert e.kind == "approval_required"
     save(c, [put("src", wide)], approved=asked, origin="external", check=True)
-    assert card_json(c, "src")["network"] is True
+    assert card_json(c, "src")["grants"]["network"] is True
     # Making the folder writable is another widening; narrowing is not.
     writable = dict(wide, grants={**wide["grants"], "hostPaths": [{"path": "/data", "name": "data", "write": True}]})
     try:
@@ -53,7 +53,7 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     except RpcFailure as e:
         assert permissions(e) == ["host_folder_write src /data"]
     save(c, [put("src", body)])
-    assert "network" not in card_json(c, "src")
+    assert "grants" not in card_json(c, "src")
     # With the same token and origin, explicit comparison off permits widening.
     save(c, [put("src", wide)], origin="external", check=False)
 
@@ -100,7 +100,10 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     # Returning to local narrows the target; auto would allow other workers too.
     path.write_text(json.dumps(body))
     before = client.call("ProjectInspectRequest")
-    reload()
+    with pytest.raises(RpcFailure) as unbounded:
+        reload()
+    assert permissions(unbounded.value) == [f"sandbox_options {cid}"]
+    reload([f"sandbox_options {cid}"])
 
     before = client.call("ProjectInspectRequest")
     base_hash = next(text(source.hash) for source in before.sources if text(source.path) == rel)

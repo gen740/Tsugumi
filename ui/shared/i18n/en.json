@@ -1,4 +1,5 @@
 {
+  "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。": "The Card reads the folder path from TSUGUMI_GRANT_<NAME>. Reopen the project to apply changes in the shared VM.",
   "CPU 上限（コア）": "CPU limit (cores)",
   "メモリ上限（MiB）": "Memory limit (MiB)",
   "PID 名前空間を分離": "Isolate PID namespace",

@@ -712,7 +712,7 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
         FailureKind::resource_limit,
         "source manifest has " + std::to_string(doc->sources.size()) +
             " entries; limit is 10000 (10,000). Keep data in an attached "
-            "folder and read it through hostFolders (/host/<name>).");
+            "folder and read it through a grants.hostPaths entry.");
 
   // File operations for document files, computed from the final model.
   if (doc->project_json != base->project_json) {

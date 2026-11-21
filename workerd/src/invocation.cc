@@ -86,8 +86,11 @@ auto receive_secrets(const stdfs::path& directory,
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
-    for (auto& secret : body->secrets)
-      secrets.emplace_back(std::move(secret->name), std::move(secret->value));
+    secrets.reserve(body->secrets.size());
+    for (auto& secret : body->secrets) {
+      secrets.emplace_back(std::move(secret->name), secret->value);
+      workerd::clear_secret(secret->value);
+    }
   } catch (const std::exception&) {
     workerd::clear_secret(frame);
     for (auto& secret : secrets) workerd::clear_secret(secret.second);
@@ -329,7 +332,13 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       throw std::runtime_error("remote invocation input size does not match");
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
+                                 frame.size());
+  if (!W::VerifyWorkerMessageBuffer(verifier))
+    throw std::runtime_error("invalid remote invocation call");
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();
+  if (!call)
+    throw std::runtime_error("remote invocation does not contain a Card call");
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);

@@ -541,7 +541,8 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     -> std::vector<std::pair<std::string, std::string>> {
   const auto& names = node.settings.secrets;
   if (names.empty()) return {};
-  std::vector<std::pair<std::string, std::string>> values;
+  WorkerSecrets supplied;
+  auto& values = supplied.values;
   try {
     values = remote_jobs_.card_secrets(names, stop);
   } catch (const std::exception& error) {
@@ -550,7 +551,9 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
                      std::string(error.what()) +
                      "): open the project from the Tsugumi app or Web UI");
   }
-  std::vector<std::pair<std::string, std::string>> ordered;
+  WorkerSecrets result;
+  auto& ordered = result.values;
+  ordered.reserve(names.size());
   std::string missing;
   for (const auto& name : names) {
     const auto found = std::ranges::find_if(
@@ -558,14 +561,14 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     if (found == values.end() || found->second.empty())
       missing += (missing.empty() ? "" : ", ") + name;
     else
-      ordered.push_back(std::move(*found));
+      ordered.push_back(*found);
   }
   if (!missing.empty())
     throw Failed(FailureKind::not_found,
                  "Card secret not set: " + missing +
                      ". Set it in Settings > Card secrets, then run again",
                  {{"secrets", missing}});
-  return ordered;
+  return std::move(result.values);
 }
 
 auto Service::remote_targets(std::stop_token stop) const
