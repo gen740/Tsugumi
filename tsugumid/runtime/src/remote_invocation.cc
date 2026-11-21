@@ -209,11 +209,11 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                  "run cancelled before external submission");
   const auto ptype = NixRunner::params_type(request.node);
   const auto params = NixRunner::params_buffer(request.node);
-  std::vector<std::pair<std::string, std::string>> env;
-  if (request.node.settings.language == "bash" ||
-      request.node.settings.language == "r")
-    env.emplace_back("TSUGUMI_PARAMS_JSON",
-                     NixRunner::params_json(request.node, false));
+  // The remote adapter chooses which realized implementations need this
+  // ABI 8 parameter encoding when it sees the manifest.
+  const std::vector<std::pair<std::string, std::string>> env{
+      {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
+  };
   auto call = worker_call_frame(
       1, request.summary.run_id, request.node.path, request.summary.invocation,
       inputs, ptype->bfbs, ptype->root_type, params, request.node.outputs, "",
@@ -255,6 +255,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   job.ipc = settings.sandbox.ipc;
   job.identity = settings.sandbox.identity;
   job.network = settings.grants.network;
+  job.r_params_environment = settings.language == "r";
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &job));
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};

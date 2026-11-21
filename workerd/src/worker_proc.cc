@@ -422,11 +422,18 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     } else if (sp.sandbox.ipc) {
       argv.insert(argv.end(), {"--tmpfs", "/dev/shm"});
     }
+    const auto gui = sp.gui && !sp.shared_vm ? gui_socket() : std::nullopt;
     // Paths under the original /tmp must remain visible after mounting scratch.
     const auto under_tmp = [](const std::string& path) {
       return path == "/tmp" || path.starts_with("/tmp/");
     };
-    if (!under_tmp(scratch_) && !under_tmp(sp.worker_binary) &&
+    const bool preserve_tmp =
+        !filesystem &&
+        (std::ranges::any_of(
+             sp.binds,
+             [&](const auto& grant) { return under_tmp(grant.source); }) ||
+         (gui && gui->variable == "WAYLAND_DISPLAY" && under_tmp(gui->source)));
+    if (!preserve_tmp && !under_tmp(scratch_) && !under_tmp(sp.worker_binary) &&
         !std::ranges::any_of(sp.ro_paths, under_tmp)) {
       argv.insert(argv.end(), {"--bind", tmp_dir(), "/tmp"});
       temporary = "/tmp";
@@ -455,7 +462,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
       }
     }
     if (sp.gui) {
-      const auto socket = sp.shared_vm ? std::nullopt : gui_socket();
+      const auto& socket = gui;
       if (!socket)
         throw Failed(FailureKind::unsupported,
                      "grants.gui needs a native Linux GUI socket");
@@ -476,6 +483,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     argv.insert(argv.end(), {"--chdir", work_dir(), "--", sp.worker_binary});
   } else {
     spec.argv = {sp.worker_binary};
+    spec.uid = sp.uid;
+    spec.gid = sp.gid;
   }
   if (sp.sandbox.limits.limited()) {
     auto group = sp.cgroup;
@@ -507,6 +516,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   spec.env = {"PATH=" + sp.path,
               "LANG=C.UTF-8",
               "HOME=" + work_dir(),
+              "XDG_CONFIG_HOME=" + work_dir() + "/.config",
+              "XDG_CACHE_HOME=" + work_dir() + "/.cache",
               "TMPDIR=" + temporary,
               "TSUGUMI_WORK_DIR=" + work_dir(),
               "TSUGUMI_TMP_DIR=" + temporary,

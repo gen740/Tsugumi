@@ -422,8 +422,14 @@ auto effective_local_options(const Settings& settings,
   if (settings.grants.network && settings.sandbox.filesystem)
     notes.push_back("Seatbelt still restricts access to the local host");
 #else
-  if (!target.namespace_isolation && !settings.grants.network)
-    notes.push_back("network isolation unavailable");
+  if (!target.namespace_isolation) {
+    if (!settings.grants.network)
+      notes.push_back("network isolation unavailable");
+    if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
+    if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
+    if (settings.sandbox.identity)
+      notes.push_back("identity namespace unavailable");
+  }
 #endif
   std::string message;
   for (const auto note : notes) {

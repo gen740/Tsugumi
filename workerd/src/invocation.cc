@@ -35,7 +35,7 @@ constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
 // How long a built invocation waits for its Card secrets from the core.
 constexpr auto kSecretWait = std::chrono::minutes(5);
 
-using Secrets = std::vector<std::pair<std::string, std::string>>;
+using Secrets = std::shared_ptr<WorkerSecrets>;
 
 // Reads the job's Card secrets from the listener's pipe once the environment
 // is built and nothing but the Card's process remains to start. The values
@@ -45,6 +45,7 @@ auto receive_secrets(const stdfs::path& directory,
   const auto marker = directory / workerd::kSecretsWanted;
   fs::write_atomic(marker, "", 0600);
   std::string frame;
+  frame.reserve(workerd::kMaxFrame + 4);
   bool closed = false;
   const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
   while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
@@ -60,8 +61,10 @@ auto receive_secrets(const stdfs::path& directory,
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0)
       closed = true;
-    else
+    else {
       frame.append(buffer, static_cast<size_t>(n));
+      workerd::wipe_secret({buffer, static_cast<size_t>(n)});
+    }
   }
   ::close(workerd::kSecretChannelFd);
   std::error_code ec;
@@ -76,7 +79,7 @@ auto receive_secrets(const stdfs::path& directory,
                  "the Card's secrets did not arrive within 5 minutes. Run the "
                  "Card again");
   }
-  Secrets secrets;
+  auto secrets = std::make_shared<WorkerSecrets>();
   try {
     if (!closed || frame.size() < 4 ||
         workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
@@ -86,24 +89,22 @@ auto receive_secrets(const stdfs::path& directory,
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
-    secrets.reserve(body->secrets.size());
+    secrets->values.reserve(body->secrets.size());
     for (auto& secret : body->secrets) {
-      secrets.emplace_back(std::move(secret->name), secret->value);
+      secrets->values.emplace_back(std::move(secret->name), secret->value);
       workerd::clear_secret(secret->value);
     }
   } catch (const std::exception&) {
     workerd::clear_secret(frame);
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets arrived incomplete. Run the Card again");
   }
   workerd::clear_secret(frame);
   std::vector<std::string> wanted = job.secrets, given;
-  for (const auto& secret : secrets) given.push_back(secret.first);
+  for (const auto& secret : secrets->values) given.push_back(secret.first);
   std::ranges::sort(wanted);
   std::ranges::sort(given);
   if (wanted != given) {
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets do not match the names it declares");
   }
@@ -190,10 +191,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   spawn.worker_binary = *worker_binary;
   spawn.bash = *shell;
   spawn.path = *path;
-  if (!secrets.empty()) {
-    spawn.secrets = std::make_shared<WorkerSecrets>();
-    spawn.secrets->values = std::move(secrets);
-  }
+  spawn.secrets = std::move(secrets);
   spawn.closure = env.closure;
   spawn.cgroup = group;
   spawn.store_path = (store / "nix/store").string();
@@ -253,9 +251,10 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  for (const auto* v : *call.environment())
-    if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      request.params.json = v->value()->str();
+  if (spawn.program.bash || job.r_params_environment)
+    for (const auto* v : *call.environment())
+      if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
+        request.params.json = v->value()->str();
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;

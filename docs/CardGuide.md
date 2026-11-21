@@ -925,7 +925,7 @@ The next Card reads it as a path: `inputs.input("events", EventsFile).Value().de
 
 A Code Card has `"type": "code"`. Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
 
-With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
+Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
 Use `executionService` to select a registered service. The default is `auto`. In `sandbox`, `filesystem`, `pid`, `ipc` and `identity` default to true. Use `sandbox.limits.cpu` for a limit in cores (fractions are allowed) and `sandbox.limits.memoryMiB` for a memory limit in MiB. Omit either value or use `null` for an unlimited resource. A Linux worker with delegated cgroup v2 applies these limits to the Card's process.
 

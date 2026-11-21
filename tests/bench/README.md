@@ -26,7 +26,7 @@ macOS uses the native Darwin daemon and worker. No app, foreground interaction,
 VM controller or shared Linux VM is needed. Linux needs the sandbox facilities
 and dependencies described in [building](../../docs/INSTALL.md#building-from-source).
 Run as an ordinary user on a disk-backed filesystem. The generated benchmark
-Cards use `sandbox: true` and `recordIO: false` on both paths.
+Cards use default filesystem isolation and `recordIO: false` on both paths.
 Only the resident scenario sets `reuseWorker: true`.
 
 The existing `tests/core/harness/daemon.py` starts a real `tsugumid`, with its
