@@ -70,6 +70,12 @@ struct HostFolder {
   bool write = false;
 };
 
+struct CardGrants {
+  bool network = false;
+  bool gui = false;
+  std::vector<HostFolder> host_paths;
+};
+
 inline constexpr char kLocalExecutionService[] = "local";
 
 struct Settings {
@@ -84,14 +90,12 @@ struct Settings {
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;
-  bool sandbox = true;
+  SandboxOptions sandbox;
+  CardGrants grants;
   bool reuse_worker = false;
-  bool network = false;
   std::string execution_service = "auto";
   std::shared_ptr<const worker_condition::Condition> worker_condition;
-  std::optional<ExecutionResources> execution_resources;
   std::string system;  // "" = the execution service's native system
-  std::vector<HostFolder> host_folders;
   // Card secret names, in declaration order: [a-z][a-z0-9_]{0,63}, each the
   // name of the environment variable that carries its value.
   std::vector<std::string> secrets;

@@ -27,7 +27,7 @@ def expression(value):
 
 
 def definition(**extra):
-    return {"type": "code", "language": "bash", "sandbox": False, "reuseWorker": True, **extra}
+    return {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "reuseWorker": True, **extra}
 
 
 @pytest.mark.parametrize("changed_input", [

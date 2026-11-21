@@ -69,8 +69,7 @@ dir.create(destination, recursive = TRUE)
 # Preserve source, parameter provenance and related assets with the rendered HTML.
 if (!all(file.copy(list.files(work, all.files = TRUE, no.. = TRUE, full.names = TRUE), destination,
                    recursive = TRUE, copy.mode = FALSE))) stop("could not save report artifacts")
-metadata <- list(source = entry, run_id = Sys.getenv("TSUGUMI_RUN_ID"), card = Sys.getenv("TSUGUMI_CARD"),
-                 invocation = as.numeric(Sys.getenv("TSUGUMI_INVOCATION")))
+metadata <- list(source = entry)
 writeLines(json(metadata), file.path(destination, "metadata.json"), useBytes = TRUE)
 writeLines(json(list(report = list(value = destination), html = list(value = file.path(destination, html)))),
            Sys.getenv("TSUGUMI_OUTPUT"), useBytes = TRUE)

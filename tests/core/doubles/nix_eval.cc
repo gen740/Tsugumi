@@ -105,6 +105,10 @@ auto NixStore::init_process() -> void {}
 
 auto NixStore::substituters() -> std::vector<std::string> { return {}; }
 
+auto NixStore::closure(const std::string& path) -> std::vector<std::string> {
+  return {path};
+}
+
 NixEvaluator::NixEvaluator(std::string, std::vector<std::string> allowed)
     : impl_(std::make_unique<Impl>()) {
   const char* control = std::getenv("TSUGUMI_MOCK_CONTROL");

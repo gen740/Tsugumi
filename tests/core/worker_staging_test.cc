@@ -13,6 +13,7 @@
 #include <system_error>
 #include <thread>
 
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/sparse.hh"
 #include "tsugumi/workerd/staging.hh"
 
@@ -385,12 +386,38 @@ auto copy_link_race(const stdfs::path& root) -> void {
   expect(read_file(secret) == "host-secret", "race changed host file");
 }
 
+auto swap_linked_inputs(const stdfs::path& root) -> void {
+  const auto original = root / "input-original";
+  const auto replacement = root / "input-replacement";
+  const auto staged = root / "input-staged";
+  std::ofstream(original) << "first";
+  std::ofstream(replacement) << "second";
+  const auto size =
+      tsugumi::fs::link_beneath(root, original.filename(), staged);
+#ifdef __linux__
+  expect(size == 5 && stdfs::equivalent(original, staged),
+         "input was not linked");
+#else
+  expect(!size, "input was linked without Linux");
+  tsugumi::fs::copy_beneath(root, original.filename(), staged, {});
+  expect(!stdfs::equivalent(original, staged), "input was not copied");
+#endif
+  std::ifstream retained(staged);
+  stdfs::remove(staged);
+  tsugumi::fs::copy_beneath(root, replacement.filename(), staged, {});
+  std::string old_value;
+  retained >> old_value;
+  expect(old_value == "first" && tsugumi::fs::read_file(staged) == "second",
+         "input replacement changed an open file");
+}
+
 }  // namespace
 
 auto main() -> int {
   try {
     Scratch scratch;
     clean_card_entries(scratch.path);
+    swap_linked_inputs(scratch.path);
     clean_unreadable_directories(scratch.path);
     copy_sparse_outputs(scratch.path);
     failure_details(scratch.path);

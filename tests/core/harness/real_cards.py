@@ -118,21 +118,21 @@ def shown_by_probe(c) -> tuple[str, str]:
 def check_python_card_environment(c) -> None:
     """preRun's exports and `cd`, and what the module's top set, reach main
     through both os.environ and the C environment, on every run of the worker;
-    what main itself set lasts for that call."""
-    first_id, first = shown_by_probe(c)
+    changes main makes to its environment survive reuse."""
+    _, first = shown_by_probe(c)
     first = json.loads(first)
     second_id, second = shown_by_probe(c)
     second = json.loads(second)
     reused, = c.call("RunInvocationsRequest", runId=second_id, card=path("show")).records
     assert reused.workerReused
     assert first["cwd"].endswith("/there"), first
-    for seen, run_id in ((first, first_id), (second, second_id)):
+    for seen, previous in ((first, None), (second, "main")):
         for values in (seen["python"], seen["native"]):
             assert values["FROM_PRE"] == "pre", seen
             assert values["FROM_TOP"] == "top", seen
             assert values["FROM_TOP_AND_PRE"] == "pre", seen  # preRun runs later, so it wins
-            assert values["FROM_MAIN"] is None, seen
-            assert values["TSUGUMI_RUN_ID"] == run_id, seen
+            assert values["FROM_MAIN"] == previous, seen
+            assert values["TSUGUMI_RUN_ID"] is None, seen
 
 
 # Discard context only in the assertions: otherwise this fixture would add the

@@ -12,7 +12,7 @@ FLAG = 'namespace t; table Flag { value:bool; } table Outputs { flag:Flag (requi
 
 def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }', each_input=False):
     return {
-        "type": "code", "language": "bash", "sandbox": False,
+        "type": "code", "language": "bash", "sandbox": {"filesystem": False},
         "trigger": "eachInput" if each_input else "allInputs",
         "inputs": [{"name": name.rstrip("?"), "optional": name.endswith("?")} for name in inputs],
         "_outputs": outputs, "_nix": "{ pkgs, inputs, params }: " + body,

@@ -207,7 +207,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                  "run cancelled before external submission");
 
   s.execution_system = system_;
-  s.execution_resources = settings.execution_resources;
+  if (settings.sandbox.limits.limited())
+    s.execution_resources = settings.sandbox.limits;
   s.execution_state = RemoteExecutionState::queued;
   s.worker_reused = false;
   RemoteJobRecord job{{}, instance_, std::move(spec)};
@@ -266,9 +267,9 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         auto secrets = service_.card_secrets(node, request.stop);
         s.secrets.clear();
         for (const auto& secret : secrets) s.secrets.push_back(secret.first);
-        client_.deliver_secrets(s.execution_service, job.instance,
-                                s.execution_job_id, crypto::sha256_hex(job.spec),
-                                secrets, request.stop);
+        client_.deliver_secrets(
+            s.execution_service, job.instance, s.execution_job_id,
+            crypto::sha256_hex(job.spec), secrets, request.stop);
       } catch (const Failed& error) {
         s.execution_state = RemoteExecutionState::failed;
         output.failure = error.failure;
@@ -349,11 +350,13 @@ auto RemoteExecutionService::prepare(const Node& node,
                                      BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
   const auto& settings = node.settings;
-  if (!settings.sandbox || settings.reuse_worker ||
-      !settings.host_folders.empty())
+  if (!settings.sandbox.filesystem || !settings.sandbox.pid ||
+      settings.reuse_worker || settings.grants.gui ||
+      !settings.grants.host_paths.empty())
     throw Failed(
         FailureKind::unsupported,
-        "remote worker requires sandbox, no worker reuse or host folders");
+        "remote workers require filesystem and PID isolation and do not "
+        "support worker reuse, GUI or host path grants");
   const auto targets = service_.remote_targets(build.cancel);
   if (build.cancel.stop_requested())
     throw Failed(FailureKind::cancelled, "worker selection cancelled");
@@ -365,7 +368,7 @@ auto RemoteExecutionService::prepare(const Node& node,
                                                " is not registered");
   auto probe = client_.probe(target->id, target->server_id, build.cancel);
   auto system = settings.system.empty() ? probe.native_system : settings.system;
-  if (settings.execution_resources && !probe.resource_limits)
+  if (settings.sandbox.limits.limited() && !probe.resource_limits)
     throw Failed(FailureKind::unsupported,
                  "the remote execution daemon cannot enforce resource limits");
   if (!settings.system.empty() &&

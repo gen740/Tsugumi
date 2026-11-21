@@ -14,6 +14,7 @@
   openssl,
   bash,
   bubblewrap,
+  cacert,
   cardNixpkgs,
   hosq,
   llvmPackages,
@@ -70,6 +71,7 @@ clangStdenv.mkDerivation {
       "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
       "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"
       "-DTSUGUMI_CARD_NIXPKGS_NARHASH=${cardNixpkgs.narHash}"
+      "-DTSUGUMI_CACERT=${cacert}/etc/ssl/certs/ca-bundle.crt"
       "-DTSUGUMI_BASH=${bash}/bin/bash"
     ]
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
@@ -80,6 +82,7 @@ clangStdenv.mkDerivation {
     TSUGUMI_FORMAT_NIX = "${nixfmt}/bin/nixfmt";
     TSUGUMI_FORMAT_SH = "${shfmt}/bin/shfmt";
     TSUGUMI_FLATBUFFERS_SOURCE = "${flatbuffers.src}";
+    TSUGUMI_CACERT = "${cacert}/etc/ssl/certs/ca-bundle.crt";
     HOSQ_INCLUDE_DIR = "${hosq}/include";
     TSUGUMI_CARD_NIXPKGS_REV = cardNixpkgs.rev;
     TSUGUMI_CARD_NIXPKGS_NARHASH = cardNixpkgs.narHash;

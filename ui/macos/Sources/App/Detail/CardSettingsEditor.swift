@@ -687,9 +687,12 @@ private struct GeneralCategory: View {
               Label("外部の実行サービスでは worker の状態を残せません。", systemImage: "exclamationmark.triangle")
                 .font(.caption)
             }
-            toggle("sandbox", label: "ファイルアクセスを制限", fallback: true)
-              .disabled(remote && model.definition?["sandbox"]?.bool != false)
-            if remote && model.definition?["sandbox"]?.bool == false {
+            nestedToggle("sandbox", "filesystem", label: "ファイルアクセスを制限", fallback: true)
+              .disabled(remote && model.definition?["sandbox"]?["filesystem"]?.bool != false)
+            nestedToggle("sandbox", "pid", label: "PID 名前空間を分離", fallback: true)
+            nestedToggle("sandbox", "ipc", label: "IPC 名前空間を分離", fallback: true)
+            nestedToggle("sandbox", "identity", label: "実行ユーザーと権限を分離", fallback: true)
+            if remote && model.definition?["sandbox"]?["filesystem"]?.bool == false {
               Label("外部の実行サービスにはファイルアクセスの制限が必要です。", systemImage: "exclamationmark.triangle")
                 .font(.caption)
             }
@@ -697,15 +700,15 @@ private struct GeneralCategory: View {
         }
         if model.kind == .code {
           Section {
-            toggle("network", label: "ネットワークへのアクセスを許可する", fallback: false)
-              .help("オフ（デフォルト）: ファイルアクセスの制限がオンなら、preRun・run・postRun の外部通信を禁止します。")
+            nestedToggle("grants", "network", label: "ネットワークへのアクセスを許可する", fallback: false)
+            nestedToggle("grants", "gui", label: "GUI へのアクセスを許可する", fallback: false)
             HostFoldersEditor(model: model, remote: remote)
           } header: {
-            Label("Experimental", systemImage: "flask")
+            Text("アクセス許可")
           }
         }
       }
-      let diags = model.session.resolution[model.cardKey]?.diagnostics ?? []
+      let diags = model.session.diagnostics.filter { $0.card.map(key) == model.cardKey }
       if !diags.isEmpty {
         Section("診断") {
           ForEach(diags) { d in
@@ -728,7 +731,7 @@ private struct GeneralCategory: View {
     let serviceSetting = string("executionService", fallback: "auto")
     let serviceId = serviceSetting.wrappedValue
     let service = services.first { $0.id == serviceId }
-    let resourceLimits = serviceId != "local" && service?.resourceLimits == true
+    let resourceLimits = serviceId == "auto" || service?.resourceLimits == true
     let nativeSystem = service?.nativeSystem ?? ""
     let systems = service?.systems.compactMap { $0 } ?? []
     let system = string("system", fallback: "")
@@ -781,14 +784,14 @@ private struct GeneralCategory: View {
     }
     if resourceLimits {
       Text("CPU とメモリの上限を指定します。実行先のリソースは他のジョブと共有します。").font(.caption).foregroundStyle(.secondary)
-      executionResource("cpuMillis", label: "CPU 上限（ミリコア）", example: "1000")
-      executionResource("memoryBytes", label: "メモリ上限（バイト）", example: "1073741824")
+      executionResource("cpu", label: "CPU 上限（コア）", example: "0.5")
+      executionResource("memoryMiB", label: "メモリ上限（MiB）", example: "1024")
     }
-    if model.definition?["executionResources"] != nil {
+    if model.definition?["sandbox"]?["limits"] != nil {
       if !resourceLimits {
         Label("この実行サービスではリソースを指定できません。", systemImage: "exclamationmark.triangle").font(.caption)
       }
-      Button("リソース指定を削除") { model.definition?["executionResources"] = nil }
+      Button("リソース指定を削除") { setNested("sandbox", "limits", nil) }
     }
   }
 
@@ -801,17 +804,30 @@ private struct GeneralCategory: View {
     return service.id
   }
 
+  private func setNested(_ group: String, _ key: String, _ value: JSONValue?) {
+    var settings = JSONValue.object(model.definition?[group]?.object ?? [])
+    settings[key] = value
+    model.definition?[group] = settings.object?.isEmpty == false ? settings : nil
+  }
+
+  private func nestedToggle(_ group: String, _ key: String, label: LocalizedStringKey, fallback: Bool) -> some View {
+    Toggle(label, isOn: Binding(
+      get: { model.definition?[group]?[key]?.bool ?? fallback },
+      set: { setNested(group, key, $0 == fallback ? nil : .bool($0)) }))
+  }
+
   private func executionResource(_ name: String, label: LocalizedStringKey, example: String) -> some View {
     TextField(label, text: Binding(
       get: {
-        let value = model.definition?["executionResources"]?[name]
+        let value = model.definition?["sandbox"]?["limits"]?[name]
         return value?.numberText ?? value?.string ?? ""
       },
       set: { value in
         let text = value.trimmingCharacters(in: .whitespaces)
-        var resources = JSONValue.object(model.definition?["executionResources"]?.object ?? [])
-        resources[name] = text.isEmpty ? nil : (UInt64(text).map { .number(String($0)) } ?? .string(text))
-        model.definition?["executionResources"] = resources.object?.isEmpty == false ? resources : nil
+        var resources = JSONValue.object(model.definition?["sandbox"]?["limits"]?.object ?? [])
+        let number = name == "cpu" ? Double(text).flatMap { $0.isFinite ? String($0) : nil } : UInt64(text).map { String($0) }
+        resources[name] = text.isEmpty ? nil : (number.map { .number($0) } ?? .string(text))
+        setNested("sandbox", "limits", resources.object?.isEmpty == false ? resources : nil)
       }), prompt: Text(example))
   }
 
@@ -883,7 +899,7 @@ private struct HostFoldersEditor: View {
   let remote: Bool
 
   var body: some View {
-    let folders = model.definition?["hostFolders"]?.array ?? []
+    let folders = model.definition?["grants"]?["hostPaths"]?.array ?? []
     VStack(alignment: .leading, spacing: 6) {
       HStack {
         Text("ホストのフォルダへのアクセスを許可する")
@@ -900,7 +916,7 @@ private struct HostFoldersEditor: View {
           VStack(alignment: .leading, spacing: 1) {
             Text(path).lineLimit(1).truncationMode(.middle).font(.callout)
             Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                        : present ? "/host/\(f["name"]?.string ?? "")" : String(localized: "この Mac にはありません（実行すると失敗します）"))
+                        : present ? "TSUGUMI_GRANT_\(grantName(f["name"]?.string ?? ""))" : String(localized: "この Mac にはありません（実行すると失敗します）"))
               .font(.caption).foregroundStyle(present ? Color.secondary : Color.orange)
           }
           Spacer()
@@ -914,15 +930,21 @@ private struct HostFoldersEditor: View {
         }
       }
       Text(remote ? String(localized: "外部の実行サービスにはホストのフォルダを共有できません。")
-                  : String(localized: "選んだフォルダだけを、この Card の worker から /host/<名前> として読めます。プロジェクトに保存するのはフォルダの場所だけです。追加・変更はプロジェクトを開き直すと反映されます。"))
+                  : String(localized: "Card は TSUGUMI_GRANT_<名前> からフォルダのパスを取得できます。共有 VM での追加・変更はプロジェクトを開き直すと反映されます。"))
         .font(.caption).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
     }
   }
 
   private func edit(_ fn: (inout [JSONValue]) -> Void) {
-    var list = model.definition?["hostFolders"]?.array ?? []
+    var list = model.definition?["grants"]?["hostPaths"]?.array ?? []
     fn(&list)
-    model.definition?["hostFolders"] = list.isEmpty ? nil : .array(list)
+    var grants = JSONValue.object(model.definition?["grants"]?.object ?? [])
+    grants["hostPaths"] = list.isEmpty ? nil : .array(list)
+    model.definition?["grants"] = grants.object?.isEmpty == false ? grants : nil
+  }
+
+  private func grantName(_ name: String) -> String {
+    String(name.uppercased().map { $0.isASCII && ($0.isLetter || $0.isNumber) ? $0 : "_" })
   }
 
   private func add() {
@@ -931,11 +953,11 @@ private struct HostFoldersEditor: View {
     panel.canChooseFiles = false
     panel.allowsMultipleSelection = false
     guard panel.runModal() == .OK, let url = panel.url else { return }
-    let taken = Set((model.definition?["hostFolders"]?.array ?? []).compactMap { $0["name"]?.string })
+    let taken = Set((model.definition?["grants"]?["hostPaths"]?.array ?? []).compactMap { $0["name"]?.string }.map(grantName))
     let base = String(url.lastPathComponent.map { $0.isASCII && ($0.isLetter || $0.isNumber || "-_.".contains($0)) ? $0 : "-" })
     var name = base.isEmpty || base == "." || base == ".." ? "folder" : base
     var n = 2
-    while taken.contains(name) { name = "\(base)-\(n)"; n += 1 }
+    while taken.contains(grantName(name)) { name = "\(base)-\(n)"; n += 1 }
     edit { $0.append(.object([("path", .string(url.path)), ("name", .string(name))])) }
   }
 }

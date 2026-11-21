@@ -5,6 +5,7 @@
 #include <atomic>
 #include <filesystem>
 #include <functional>
+#include <string_view>
 
 namespace tsugumi::fs {
 using TransferProgress =
@@ -18,8 +19,8 @@ using TransferProgress =
 // recover(parent, name), executed with the Card's own identity and sandbox.
 // Without a callback, unreadable Darwin directories fail with EACCES.
 auto clear_staging(const std::filesystem::path& path,
-                   const std::function<void(int, const char*)>& recover = {})
-    -> void;
+                   const std::function<void(int, const char*)>& recover = {},
+                   std::string_view preserved_entry = {}) -> void;
 
 // Copy only one declared File/Directory from a pinned staging root. Within a
 // Directory, materialize relative symlinks whose fully resolved targets stay

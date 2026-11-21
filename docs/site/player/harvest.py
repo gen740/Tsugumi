@@ -79,7 +79,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
             if card.get("type") == "code":
-                card["sandbox"] = False
+                card["sandbox"] = {"filesystem": False}
                 f.write_text(json.dumps(card))
     return dst
 

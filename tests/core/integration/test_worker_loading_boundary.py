@@ -15,7 +15,7 @@ def test_only_main_library_is_loaded(tmp_path):
 __attribute__((constructor)) static void constructor(void) {
   puts("runtime constructor"); fflush(stdout);
   const char* marker = getenv("LOAD_MARKER");
-  if (marker) { FILE* f = fopen(marker, "w"); fputs(getenv("TSUGUMI_RUN_ID"), f); fclose(f); }
+  if (marker) { FILE* f = fopen(marker, "w"); fputs("unexpected", f); fclose(f); }
 }
 int tsugumi_main(const tsugumi_call* c) { return 1; }
 ''', "runtime")
@@ -50,14 +50,14 @@ def test_source_unsets_survive_later_calls(tmp_path):
 int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_PREPARE) setenv("SDK_DEFAULT", "default", 1);
   if (c->phase == TSUGUMI_LOAD) {
-    unsetenv("SDK_DEFAULT"); unsetenv("ONLY_FIRST_CALL");
+    unsetenv("SDK_DEFAULT"); unsetenv("startup_key");
   }
   if (c->phase != TSUGUMI_RUN) return 0;
-  if (getenv("SDK_DEFAULT") || getenv("ONLY_FIRST_CALL")) return 1;
+  if (getenv("SDK_DEFAULT") || getenv("startup_key")) return 1;
   return 0;
 }
 ''')
-    with worker(tmp_path) as (_, data, _):
+    with worker(tmp_path, startup={"startup_key": "test-value"}) as (_, data, _):
         for call_id in (1, 2):
             send_call(data, tmp_path, call_id)
             assert receive(data).valueType == WorkerPayload.WorkerResult

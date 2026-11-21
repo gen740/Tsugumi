@@ -66,6 +66,13 @@ class NativeProcess final : public EnvironmentProcess {
          {"XDG_CACHE_HOME", "XDG_CONFIG_HOME", "XDG_DATA_HOME"})
       if (const auto* value = std::getenv(name))
         environment.push_back(std::string(name) + "=" + value);
+#ifdef __linux__
+    if (!launch.vm_helper)
+      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                               "TSUGUMI_CARD_CGROUP_ROOT"})
+        if (const auto* value = std::getenv(name))
+          environment.push_back(std::string(name) + "=" + value);
+#endif
     if (trace::LaunchEnabled())
       environment.push_back(std::string(trace::kLaunchVariable) + "=1");
     if (launch.vm_helper) {
@@ -268,20 +275,19 @@ auto ProjectConnection(const Tsugumi::Host::EnvironmentStateT& ready)
     throw std::runtime_error("Cannot connect to project core");
   auto response =
       connection
-          ->Call(
-              [&](uint64_t id) {
-                flatbuffers::FlatBufferBuilder b;
-                auto hello = R::CreateSessionHelloRequest(
-                    b, b.CreateString(ready.project_id),
-                    b.CreateString(ready.token), Tsugumi::Trace::Client::Host);
-                auto request = R::CreateRequest(
-                    b, R::RequestPayload::SessionHelloRequest, hello.Union());
-                R::FinishMessageBuffer(
-                    b, R::CreateMessage(b, id, R::Payload::Request,
-                                        request.Union()));
-                return client::Bytes(b.GetBufferPointer(),
-                                     b.GetBufferPointer() + b.GetSize());
-              })
+          ->Call([&](uint64_t id) {
+            flatbuffers::FlatBufferBuilder b;
+            auto hello = R::CreateSessionHelloRequest(
+                b, b.CreateString(ready.project_id),
+                b.CreateString(ready.token), Tsugumi::Trace::Client::Host);
+            auto request = R::CreateRequest(
+                b, R::RequestPayload::SessionHelloRequest, hello.Union());
+            R::FinishMessageBuffer(
+                b,
+                R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          })
           .get();
   if (response.error) throw std::runtime_error("Project handshake failed");
   return connection;
@@ -290,22 +296,20 @@ auto ReadProjectRequirements(const Tsugumi::Host::EnvironmentStateT& ready)
     -> Tsugumi::RPC::ProjectHostRequirementsT {
   namespace R = Tsugumi::RPC;
   auto connection = ProjectConnection(ready);
-  auto result =
-      connection
-          ->Call(
-              [](uint64_t id) {
-                flatbuffers::FlatBufferBuilder b;
-                auto value = R::CreateProjectHostRequirementsRequest(b);
-                auto request = R::CreateRequest(
-                    b, R::RequestPayload::ProjectHostRequirementsRequest,
-                    value.Union());
-                R::FinishMessageBuffer(
-                    b, R::CreateMessage(b, id, R::Payload::Request,
-                                        request.Union()));
-                return client::Bytes(b.GetBufferPointer(),
-                                     b.GetBufferPointer() + b.GetSize());
-              })
-          .get();
+  auto result = connection
+                    ->Call([](uint64_t id) {
+                      flatbuffers::FlatBufferBuilder b;
+                      auto value = R::CreateProjectHostRequirementsRequest(b);
+                      auto request = R::CreateRequest(
+                          b, R::RequestPayload::ProjectHostRequirementsRequest,
+                          value.Union());
+                      R::FinishMessageBuffer(
+                          b, R::CreateMessage(b, id, R::Payload::Request,
+                                              request.Union()));
+                      return client::Bytes(b.GetBufferPointer(),
+                                           b.GetBufferPointer() + b.GetSize());
+                    })
+                    .get();
   if (result.error)
     throw std::runtime_error("Cannot read project host requirements");
   const auto* value = R::GetMessage(result.bytes.data())->payload_as_Reply();
@@ -324,19 +328,17 @@ auto EnvironmentProcess::Busy(const Tsugumi::Host::EnvironmentStateT& ready)
   auto connection = ProjectConnection(ready);
   auto result =
       connection
-          ->Call(
-              [](uint64_t id) {
-                flatbuffers::FlatBufferBuilder b;
-                auto value = R::CreateProjectActivityRequest(b);
-                auto request = R::CreateRequest(
-                    b, R::RequestPayload::ProjectActivityRequest,
-                    value.Union());
-                R::FinishMessageBuffer(
-                    b, R::CreateMessage(b, id, R::Payload::Request,
-                                        request.Union()));
-                return client::Bytes(b.GetBufferPointer(),
-                                     b.GetBufferPointer() + b.GetSize());
-              })
+          ->Call([](uint64_t id) {
+            flatbuffers::FlatBufferBuilder b;
+            auto value = R::CreateProjectActivityRequest(b);
+            auto request = R::CreateRequest(
+                b, R::RequestPayload::ProjectActivityRequest, value.Union());
+            R::FinishMessageBuffer(
+                b,
+                R::CreateMessage(b, id, R::Payload::Request, request.Union()));
+            return client::Bytes(b.GetBufferPointer(),
+                                 b.GetBufferPointer() + b.GetSize());
+          })
           .get();
   if (result.error) throw std::runtime_error("Cannot read project activity");
   const auto* reply = R::GetMessage(result.bytes.data())->payload_as_Reply();

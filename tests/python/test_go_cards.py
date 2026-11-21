@@ -22,7 +22,9 @@ def write_project(root,cards,connections):
     write_language_project(root,cards,connections)
     for name in cards:
         p=root/'definitions'/name/'_card.json'
-        data=json.loads(p.read_text());data['sandbox']=True;p.write_text(json.dumps(data))
+        data = json.loads(p.read_text())
+        data["sandbox"] = {"filesystem": True}
+        p.write_text(json.dumps(data))
 
 
 def go(source,**card):

@@ -49,9 +49,13 @@ export function defaultPermissionSelection(asked: string[]): string[] {
 /** Only the properties shown as badges on a Card; this is not the permission catalog. */
 export function cardPermissions(card: J | undefined): PermissionKind[] {
   const out: PermissionKind[] = []
-  if (get(card, 'network') === true) out.push('network')
-  if (get(card, 'sandbox') === false) out.push('sandbox_off')
-  const folders = get(card, 'hostFolders')
+  const grants = get(card, 'grants')
+  const sandbox = get(card, 'sandbox')
+  if (get(grants, 'network') === true) out.push('network')
+  if (get(grants, 'gui') === true) out.push('gui')
+  if (get(sandbox, 'filesystem') === false) out.push('sandbox_off')
+  if (['pid', 'ipc', 'identity'].some(key => get(sandbox, key) === false)) out.push('sandbox_options')
+  const folders = get(grants, 'hostPaths')
   if (Array.isArray(folders) && folders.length) out.push(folders.some((f) => get(f as J, 'write') === true) ? 'host_folder_write' : 'host_folder_read')
   return out
 }

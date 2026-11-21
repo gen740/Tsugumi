@@ -96,8 +96,8 @@ The shared-VM suites also require an explicit opt-in on an Apple silicon Mac wit
 
 ```sh
 vm/macos/tools/build-vmctl.sh
-TSUGUMI_TEST_CONTAINER=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
-  tests/python/test_shared_vm.py tests/python/test_cards_container.py tests/python/test_workers.py
+TSUGUMI_TEST_SHARED_VM=1 nix develop -c python3 tests/run-isolated.py python3 -m pytest -q \
+  tests/python/test_shared_vm.py tests/python/test_cards_shared_vm.py tests/python/test_workers.py
 ```
 
 The VM support directory and its store are disposable and removed at session end. `TSUGUMI_VM_X86=qemu` selects QEMU instead of Rosetta for x86_64 Linux Cards. These VM suites do not run in CI.
@@ -132,7 +132,7 @@ To show the RPC Trace tab in the Mac debug panel and permit recording in newly l
 open -g -n --env TSUGUMI_RPC_TRACE=1 --env TSUGUMI_HOST_STATE=/absolute/debug-host dist/Tsugumi.app
 ```
 
-For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. The panel follows the host connection and shows new entries as they are recorded. Closing the panel ends delivery to the view. Select Off to stop recording and clear captured bodies. Reusing a running host or project core leaves its launch setting unchanged. A VM-backed project requires a guest image with the matching RPC trace protocol. To verify propagation through the real VM, run the shared VM suite with `TSUGUMI_TEST_CONTAINER=1` and a matching image. The Web UI and CLI have no RPC Trace view.
+For a scripted launch, set `TSUGUMI_RPC_TRACE=1` in the environment of `ui/macos/tools/run-ui.sh`. Open a project to start the host, then select a recording mode in the debug panel. The panel follows the host connection and shows new entries as they are recorded. Closing the panel ends delivery to the view. Select Off to stop recording and clear captured bodies. Reusing a running host or project core leaves its launch setting unchanged. A VM-backed project requires a guest image with the matching RPC trace protocol. To verify propagation through the real VM, run the shared VM suite with `TSUGUMI_TEST_SHARED_VM=1` and a matching image. The Web UI and CLI have no RPC Trace view.
 
 ## Execution ownership and timing
 

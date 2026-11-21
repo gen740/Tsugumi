@@ -502,7 +502,7 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         read -r release < {shlex.quote(str(release))}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1)
@@ -542,7 +542,7 @@ def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, t
         printf '%s' '雪Y'
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
@@ -579,7 +579,7 @@ def test_card_log_ui_page_sizes(project, core_factory):
         printf '%s' {shlex.quote(end)}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=STRING_OUTPUT,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
     run_id = start_run(client, "work", propagate=False)
     assert wait_run(client, run_id).state == RunState.succeeded

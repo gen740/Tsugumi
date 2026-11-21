@@ -5,18 +5,15 @@
 // as the invocation's logs.
 //
 // Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: lib/main.so; Card code loads inside its first invocation) or a bash script
+// package (--package: lib/main.so; Card code loads inside its first invocation)
+// or a bash script
 // (--run). preRun / postRun (--pre / --post) are bash and get no Card inputs;
 // the environment and working directory produced by preRun carry over. An
 // earlier failure is never cleared by a later step's success. One deadline
 // covers all steps, and cancel/deadline are checked before each step starts.
 //
-// The environment of a package body, weakest first: what the worker was
-// started with, the call's, what the package set while loading (the top of a
-// Python Card's main.py), preRun's exports. The first preRun also controls
-// source loading. Package libraries and runtime initialization are invocation
-// work.
-//
+// The process environment and cwd are configured at launch. ABI 8 preRun
+// overrides and the Bash/R parameter JSON apply only to the current call.
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
@@ -91,10 +88,10 @@ std::optional<std::string> read_frame(int fd) {
 void send_frame(flatbuffers::FlatBufferBuilder& b) {
   std::lock_guard<std::mutex> l(g_write_mu);
   try {
-    frame::Write(kData,
-                 {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                  b.GetSize()},
-                 kMaxFrame);
+    frame::Write(
+        kData,
+        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+        kMaxFrame);
   } catch (const frame::Error&) {
   }
 }
@@ -141,9 +138,9 @@ std::optional<D::FailureKind> kind_from_name(const std::string& n) {
 struct Options {
   std::string bash;
   std::string package;  // contains lib/main.so
-  std::string pre;   // a file with bash text
-  std::string run;   // a file with bash text (a bash body)
-  std::string post;  // a file with bash text
+  std::string pre;      // a file with bash text
+  std::string run;      // a file with bash text (a bash body)
+  std::string post;     // a file with bash text
 };
 
 struct Call {
@@ -763,12 +760,7 @@ tsugumi_main_fn g_main = nullptr;
 bool g_card_loaded = false;
 std::string g_load_error;
 std::string g_last_run;
-std::vector<std::string>
-    g_loaded_env;  // the process environment once the package was loaded
-std::vector<std::string>
-    g_set_by_load;  // NAME=value for sets; NAME for removals
-
-std::vector<std::string> process_env() {
+auto process_env() -> std::vector<std::string> {
   std::vector<std::string> out;
   for (char** e = environ; *e; ++e) out.emplace_back(*e);
   return out;
@@ -781,29 +773,69 @@ auto env_value(const std::vector<std::string>& env, const std::string& name)
   return std::nullopt;
 }
 
-auto remove_env(std::vector<std::string>& env, const std::string& name)
-    -> void {
-  std::erase_if(env, [&](const auto& e) { return e.starts_with(name + "="); });
-}
+class StepEnvironment {
+ public:
+  using Value = std::optional<std::string>;
 
-// Save only loading's changes, including unset variables. Invocation identity
-// and preRun's transient environment must not become the resident baseline.
-auto remember_loaded_env(const std::vector<std::string>& before) -> void {
-  const auto loaded = process_env();
-  for (const auto& e : before) {
-    const auto name = e.substr(0, e.find('='));
-    if (!env_value(loaded, name)) {
-      g_set_by_load.push_back(name);
-      remove_env(g_loaded_env, name);
+  auto set(const std::string& name, Value value) -> void {
+    const char* previous = ::getenv(name.c_str());
+    changes_.try_emplace(name, previous ? Value(previous) : std::nullopt,
+                         std::move(value));
+    apply(name, changes_.at(name).second);
+  }
+
+  auto adopt(const std::vector<std::string>& before,
+             const std::vector<std::string>& after) -> void {
+    for (const auto& entry : before) {
+      const auto name = entry.substr(0, entry.find('='));
+      if (!env_value(after, name) && ::getenv(name.c_str())) set(name, {});
+    }
+    for (const auto& entry : after) {
+      const auto eq = entry.find('=');
+      const auto name = entry.substr(0, eq);
+      auto value = entry.substr(eq + 1);
+      if (env_value(before, name) != value) set(name, std::move(value));
     }
   }
-  for (const auto& e : loaded)
-    if (std::find(before.begin(), before.end(), e) == before.end()) {
-      g_set_by_load.push_back(e);
-      const auto eq = e.find('=');
-      set_env(g_loaded_env, e.substr(0, eq), e.substr(eq + 1));
+
+  auto reapply() const -> void {
+    for (const auto& [name, values] : changes_) apply(name, values.second);
+  }
+
+  ~StepEnvironment() {
+    for (auto& [name, values] : changes_) {
+      apply(name, values.first);
+      if (values.first) tsugumi::workerd::clear_secret(*values.first);
+      if (values.second) tsugumi::workerd::clear_secret(*values.second);
     }
-}
+  }
+
+ private:
+  static auto apply(const std::string& name, const Value& value) -> void {
+    if (value)
+      ::setenv(name.c_str(), value->c_str(), 1);
+    else
+      ::unsetenv(name.c_str());
+  }
+
+  std::map<std::string, std::pair<Value, Value>> changes_;
+};
+
+class StepDirectory {
+ public:
+  auto enter(const std::string& path) -> bool {
+    previous_ = ::open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
+    return previous_ >= 0 && ::chdir(path.c_str()) == 0;
+  }
+  ~StepDirectory() {
+    if (previous_ < 0) return;
+    if (::fchdir(previous_) != 0) ::_exit(126);
+    ::close(previous_);
+  }
+
+ private:
+  int previous_ = -1;
+};
 
 void open_package(const std::string& lib) {
   g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
@@ -866,46 +898,6 @@ auto invoke(tsugumi_call& call, tsugumi_phase phase, const char* name) -> bool {
     return false;
   }
   return !g_call->failure;
-}
-
-// The environment of a package body (the order is at the top of this file):
-// `step` is the call's environment with preRun's exports, `call` without them.
-std::vector<std::string> body_env(const std::vector<std::string>& call,
-                                  const std::vector<std::string>& step) {
-  auto out = g_loaded_env;
-  for (const auto& e : call) {
-    const auto name = e.substr(0, e.find('='));
-    if (!env_value(step, name)) remove_env(out, name);
-  }
-  for (const auto& e : step) {
-    auto eq = e.find('=');
-    set_env(out, e.substr(0, eq), e.substr(eq + 1));
-  }
-  for (const auto& e : g_set_by_load) {
-    auto eq = e.find('=');
-    std::string name = e.substr(0, eq);
-    if (env_value(step, name) == env_value(call, name)) {
-      if (eq == std::string::npos)
-        remove_env(out, name);
-      else
-        set_env(out, name, e.substr(eq + 1));
-    }
-  }
-  return out;
-}
-
-// Replaces the process environment with the step environment.
-void apply_env(const std::vector<std::string>& env) {
-  std::vector<std::string> names;
-  for (char** e = environ; *e; ++e) {
-    std::string kv = *e;
-    names.push_back(kv.substr(0, kv.find('=')));
-  }
-  for (const auto& n : names) ::unsetenv(n.c_str());
-  for (const auto& e : env) {
-    auto eq = e.find('=');
-    ::setenv(e.substr(0, eq).c_str(), e.substr(eq + 1).c_str(), 1);
-  }
 }
 
 // Inputs of a bash body: JSON files and File / Directory paths.
@@ -1140,22 +1132,24 @@ void execute(const Options& opt, Call& call,
           flatbuffers::Verify(schema, *root, bytes->data(), bytes->size()))
         continue;
     }
-    record_failure(D::FailureKind::type_mismatch,
-                   "input " + input->name()->str() + " does not match its type");
+    record_failure(
+        D::FailureKind::type_mismatch,
+        "input " + input->name()->str() + " does not match its type");
     return;
   }
   std::string work = m->working_directory()->str();
   std::string tmp = m->temporary_directory()->str();
   std::string out_dir =
       m->output_directory() ? m->output_directory()->str() : "";
-  std::vector<std::string> env;
+  StepEnvironment parameters;
   for (const auto* e : *m->environment())
-    env.push_back(e->name()->str() + "=" + e->value()->str());
-  set_env(env, "TSUGUMI_WORK_DIR", work);
-  set_env(env, "TSUGUMI_TMP_DIR", tmp);
-  if (!out_dir.empty()) set_env(env, "TSUGUMI_OUTPUT_DIR", out_dir);
-  set_env(env, "TMPDIR", tmp);
-  const auto call_env = env;
+    if (e->name()->string_view() == "TSUGUMI_PARAMS_JSON")
+      parameters.set("TSUGUMI_PARAMS_JSON", e->value()->str());
+  std::vector<std::string> env;
+  if (!opt.pre.empty() || !opt.run.empty() || !opt.post.empty())
+    env = process_env();
+  StepEnvironment pre_overrides;
+  StepDirectory pre_directory;
   bool timed_out = false;
   std::string cwd = work;
   // Nothing starts after a cancel or once the single call deadline passed.
@@ -1195,58 +1189,55 @@ void execute(const Options& opt, Call& call,
     auto pre_env = env;
     set_env(pre_env, "TSUGUMI_ENV_DUMP_FD", std::to_string(dump.writer()));
     // Sourced, so that its exports and `cd` can be read back afterwards.
-    int st = run_shell(
-        opt.bash,
-        {"-c",
-         ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env \"$TSUGUMI_ENV_DUMP_FD\"",
-         opt.pre},
-        pre_env, cwd, call, &timed_out);
-    const auto dumped = dump.finish();
+    int st = run_shell(opt.bash,
+                       {"-c",
+                        ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env "
+                        "\"$TSUGUMI_ENV_DUMP_FD\"",
+                        opt.pre},
+                       pre_env, cwd, call, &timed_out);
+    auto dumped = dump.finish();
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       step_failed("preRun", st);
     } else {
       auto next = parse_env_dump(dumped);
-      if (!next.empty()) env = next;
+      if (!next.empty()) {
+        if (!opt.package.empty()) pre_overrides.adopt(env, next);
+        for (auto& entry : env) tsugumi::workerd::clear_secret(entry);
+        env = std::move(next);
+      }
       // A `cd` in preRun carries over (bash keeps PWD current).
       if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
     }
+    tsugumi::workerd::clear_secret(dumped);
+    for (auto& entry : pre_env) tsugumi::workerd::clear_secret(entry);
   }
   if (!call.failure && !opt.package.empty() && may_start("run")) {
-    apply_env(body_env(call_env, env));
-    if (::chdir(cwd.c_str()) != 0)
+    if (cwd != work && !pre_directory.enter(cwd))
       record_failure(D::FailureKind::worker_failed,
                      "cannot enter working directory " + cwd);
     if (!call.failure) {
       auto c = make_call(call, work, tmp, out_dir);
-      if (!g_card_loaded && g_load_error.empty() && may_start("source loading")) {
-        // Keep lifetime HOME for interpreter caches. Card source code gets
-        // this invocation's HOME, just like the run-start hook and run.
-        const auto before_open = process_env();
+      if (!g_card_loaded && g_load_error.empty() &&
+          may_start("source loading")) {
         open_package(opt.package + "/lib/main.so");
-        remember_loaded_env(before_open);
         if (g_main) {
-          auto initialization_env = process_env();
-          if (auto home = env_value(g_loaded_env, "HOME"))
-            set_env(initialization_env, "HOME", *home);
-          apply_env(initialization_env);
-          const auto before_prepare = process_env();
           if (!invoke(c, TSUGUMI_PREPARE, "language runtime initialization"))
-            g_load_error = "cannot initialize the language runtime (see stderr)";
-          remember_loaded_env(before_prepare);
-          apply_env(body_env(call_env, env));
-          const auto before_load = process_env();
-          if (g_load_error.empty() && !invoke(c, TSUGUMI_LOAD, "Card source loading"))
+            g_load_error =
+                "cannot initialize the language runtime (see stderr)";
+          pre_overrides.reapply();
+          if (g_load_error.empty() &&
+              !invoke(c, TSUGUMI_LOAD, "Card source loading"))
             g_load_error = "Card source loading failed (see stderr)";
-          remember_loaded_env(before_load);
           g_card_loaded = true;
           std::fflush(stdout);
           std::fflush(stderr);
         }
       }
-      if (g_card_loaded) apply_env(body_env(call_env, env));
+      pre_overrides.reapply();
       if (!g_load_error.empty())
         record_failure(D::FailureKind::worker_failed, g_load_error);
-      if (!call.failure && may_start("run-start hook") && call.run_id != g_last_run)
+      if (!call.failure && may_start("run-start hook") &&
+          call.run_id != g_last_run)
         invoke(c, TSUGUMI_RUN_START, "onRunStart");
       g_last_run = call.run_id;
       if (!call.failure && may_start("main")) {
@@ -1275,6 +1266,7 @@ void execute(const Options& opt, Call& call,
         if (!call.failure) bash_outputs(out_json);
       }
     }
+    for (auto& entry : run_env) tsugumi::workerd::clear_secret(entry);
   }
   result = finish_outputs(call);
   // postRun also runs after a failed step (cleanup), but never after a
@@ -1292,11 +1284,13 @@ void execute(const Options& opt, Call& call,
     set_env(post_env, "TSUGUMI_OUTPUTS", sent);
     int st =
         run_shell(opt.bash, {opt.post}, post_env, cwd, call, &post_timeout);
+    for (auto& entry : post_env) tsugumi::workerd::clear_secret(entry);
     if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
       timed_out = post_timeout;
       step_failed("postRun", st);
     }
   }
+  for (auto& entry : env) tsugumi::workerd::clear_secret(entry);
 }
 
 void reply(const Call& call, flatbuffers::FlatBufferBuilder& result) {
@@ -1340,6 +1334,11 @@ void control_loop() {
 
 int main(int argc, char** argv) {
   ::signal(SIGPIPE, SIG_IGN);
+  ::signal(
+      SIGTERM, +[](int number) {
+        if (const pid_t child = g_child.load()) ::kill(-child, SIGKILL);
+        ::_exit(128 + number);
+      });
   if (argc == 3 && std::string(argv[1]) == "--dump-env") {
     // Used after preRun to carry its environment into the next steps,
     // written to the worker's pipe.
@@ -1355,9 +1354,11 @@ int main(int argc, char** argv) {
       if (n <= 0) return 1;
       written += static_cast<size_t>(n);
     }
+    tsugumi::workerd::clear_secret(out);
     return 0;
   }
   Options opt;
+  if (!::getenv("TSUGUMI_WORKER")) ::setenv("TSUGUMI_WORKER", argv[0], 1);
   for (int i = 1; i + 1 < argc; i += 2) {
     std::string k = argv[i];
     if (k == "--bash")
@@ -1375,9 +1376,9 @@ int main(int argc, char** argv) {
   }
   // Standby starts only the worker executable. No package-controlled code,
   // including constructors or an alleged SDK adapter, runs before a call.
-  g_loaded_env = process_env();
   std::thread(control_loop).detach();
   uint64_t last_call = 0;
+  bool started = false;
   while (true) {
     auto frame = read_frame(kData);
     if (!frame) return 0;
@@ -1385,6 +1386,16 @@ int main(int argc, char** argv) {
                             frame->size());
     if (!W::VerifyWorkerMessageBuffer(v)) return 2;
     const auto* m = W::GetWorkerMessage(frame->data());
+    if (m->value_type() == W::WorkerPayload::WorkerStart && !started) {
+      started = true;
+      bool success = true;
+      for (const auto* e : *m->value_as_WorkerStart()->environment())
+        success &= ::setenv(e->name()->c_str(), e->value()->c_str(), 1) == 0;
+      tsugumi::workerd::clear_secret(*frame);
+      if (!success) return 2;
+      continue;
+    }
+    started = true;
     if (m->value_type() != W::WorkerPayload::WorkerCall || !m->call_id() ||
         *m->call_id() <= last_call)
       return 2;
