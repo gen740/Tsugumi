@@ -146,7 +146,7 @@ TEST_F(AgentProjectFixture,
         R"({"type":"trigger"})");
   StartProject(
       false,
-      R"({"agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"Templates","pkgsPath":"tsugumi:default","agentExclude":["templates/private"],"canvas":{"cards":[],"connections":[]}})");
   const auto conversation = Conversation("agent-templates");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
