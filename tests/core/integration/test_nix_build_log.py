@@ -42,7 +42,7 @@ def test_build_log_preserves_output_and_flushes_before_notifications(core_factor
     cancelling = state == RunState.cancelled
     # A unique derivation forces the daemon to build and stream these records.
     definition = {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
 { pkgs, inputs, params }:
@@ -157,7 +157,7 @@ def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, opti
     monkeypatch.setenv("NIX_CONFIG", f"{config}\nmax-jobs = {max_jobs}\ncores = 2\nbuilders =")
     root = tmp_path / "project"
     definition = {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
 { pkgs, inputs, params }:
@@ -259,7 +259,7 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
 
 def blocked_builder(name, port):
     return {
-        "type": "code", "language": "bash",
+        "type": "code",
         "_outputs": MSG_FBS,
         # Fixed-output derivations can reach loopback in the Nix sandbox.
         # The fixture checks the connection lifetime across PID namespaces.

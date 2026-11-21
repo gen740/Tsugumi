@@ -109,7 +109,6 @@ struct CardDefinition {
   Opt<"external", v::String>
       external;  // externals/<external>/ for a subgraph (Card in Card)
   Opt<"symbol", v::String> symbol;
-  Opt<"language", v::String> language;
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
   Opt<"outputs", v::Array<Obj<OutputDef>>> outputs;  // a Fork's

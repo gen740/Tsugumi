@@ -32,7 +32,6 @@ arguments implement plan and retain its intent text and every unrelated project 
         "present": true,
         "value": {
           "type": "code",
-          "language": "bash",
           "inputs": [
             {
               "name": "start"
@@ -153,12 +152,12 @@ The returned diagnostics and project_validate check the saved graph; run_record 
 
 ## Code Cards
 
-A code Card's _card.json, e.g. {"type": "code", "language": "python", "inputs": [{"name": "config"}], "params": [{"name": "rMin",
-"type": "double", "data": 2.5}]}: "language" is python, cpp, go, rust, csharp, bash, r, julia or ruby; "inputs"
+A code Card's _card.json, e.g. {"type": "code", "inputs": [{"name": "config"}], "params": [{"name": "rMin",
+"type": "double", "data": 2.5}]}. "inputs"
 names each input port (the "to" port of each incoming wire); a param type is bool, int64, uint64, double or string,
 or one of them with [] for a list; code reads a param by its name (inputs.params.rMin), so lowerCamelCase names
 read as written. A code Card also has _outputs.fbs (one table per output port; the root table Outputs), default.nix
-and its sources in src/. You can use input_types to read the resolved input definitions; pass the intended language for a Draft.
+and its sources in src/. Choose the SDK in default.nix. Use input_types to read the resolved FlatBuffers schemas and routing details.
 
 * Data that is already in the project (a file, fixed values) is handed on by a built-in input Card, not code:
   _card.json {"type": "input", "params": [{"name": "value", "type": "string", "data": "<path of the file,
@@ -177,9 +176,8 @@ and its sources in src/. You can use input_types to read the resolved input defi
   { label = "threshold=10"; run = ...; } names it in the history (demos/en/signal-sweep). Other built-ins: branch,
   merge, collect (one batch to one vector), and fork ({"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}]}:
   its value input goes out unchanged on every output, so each one always runs downstream).
-* Otherwise a code Card: _card.json {"type": "code", "language": "python", "inputs": [{"name": "config"}],
-  "params": [{"name": "rMin", "type": "double", "data": 2.5}]}: "language" is "python", "cpp", "go", "rust",
-  "csharp", "bash", "r", "julia" or "ruby"; "inputs" names each input port (the "to" port of each incoming wire; a
+* Otherwise a code Card: _card.json {"type": "code", "inputs": [{"name": "config"}],
+  "params": [{"name": "rMin", "type": "double", "data": 2.5}]}. "inputs" names each input port (the "to" port of each incoming wire; a
   save is refused without it); a param type is bool, int64, uint64, double or string, or one of them with [] for a
   list; name params in lowerCamelCase (code reads them by that name, e.g. inputs.params.rMin). Write
   _outputs.fbs (one table per output port; the root table Outputs), default.nix and the sources in src/.

@@ -247,7 +247,7 @@ def waiting_plugin(tmp_path):
                                       "canvas": {"cards": [{"id": "work"}], "connections": []}})
     definition = tmp_path / "proj/definitions/work"
     definition.mkdir(parents=True)
-    for name, text in {"_card.json": '{"type":"code","language":"bash"}', "default.nix": "{}",
+    for name, text in {"_card.json": '{"type":"code"}', "default.nix": "{}",
                        "_outputs.fbs": "table Outputs {} root_type Outputs;",
                        "mock-build.json": '{"gate":"web-wait","error":"fixture completion"}'}.items():
         (definition / name).write_text(text)

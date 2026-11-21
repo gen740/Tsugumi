@@ -198,7 +198,7 @@ No fields.
 | --- | --- | --- |
 | [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
 | [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
-| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. The host renders SDK definitions in language (default: Card language; use language for a Draft or "schema" for tables). output_port selects an upstream output instead. |
+| [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
 | [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
@@ -223,7 +223,6 @@ No fields.
 | `card` | `CardPath` | yes |  |
 | `output_port` | `string` |  |  |
 | `at_rev` | `uint64` |  |  |
-| `language` | `string` |  | SDK language for host rendering; opaque to the project core. |
 
 ### OutputTypes
 
@@ -641,7 +640,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DisplayGeometryRequest` | None |
 | `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
-| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `language: string`, `at_rev: ulong` |
+| `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |
 | `EnvironmentListRequest` | None |
 | `HostTraceRequest` | `mode: ubyte`, `source: string`, `after: ulong`, `generation: ulong` |

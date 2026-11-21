@@ -25,10 +25,8 @@ in
         inherit core hosq;
         runtime = ci-runtime;
         mock = ci-mock;
-        inputTypes = ci-input-types;
       };
       ci-mock = ci-core.override { target = "tsugumid-mock"; };
-      ci-input-types = ci-core.override { target = "tsugumi_input_types_tests"; };
       client-wasm = pkgs.callPackage ../client-wasm.nix { };
       web = pkgs.callPackage ../web.nix { inherit client-wasm; };
       kernel = pkgs.callPackage ../../vm/guest/kernel.nix { };
@@ -43,7 +41,6 @@ in
           ci-core
           ci-runtime
           ci-mock
-          ci-input-types
           client-wasm
           web
           ;

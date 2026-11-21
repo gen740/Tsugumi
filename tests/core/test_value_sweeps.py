@@ -44,7 +44,7 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
     """Labels from the execution plan are recorded on every member, and an unlabeled entry keeps only its index."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True}, outputs=NUMBER,
+    graph.card("work", {"type": "code", "sandbox": False, "recordIO": True}, outputs=NUMBER,
                manifest={"runs": [implementation(1), implementation(2), implementation(3)]},
                plan={"labels": ["threshold 10", "", "threshold 14"]})
     graph.save(client)
@@ -67,7 +67,7 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
 ])
 def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, project, labels, message):
     client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph = Project(project).card("work", {"type": "code", "sandbox": False}, outputs=NUMBER,
                                   manifest={"runs": [implementation(1), implementation(2)]},
                                   plan={"labels": labels})
     graph.save(client)
@@ -83,7 +83,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     """Each swept value is one member; the last param varies fastest and arriving batches stay the outer axis."""
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("starts", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("starts", {"type": "code", "sandbox": False}, outputs=NUMBER,
                manifest={"runs": [implementation(7), implementation(8)]})
     graph.card("values", {"type": "input", "recordIO": True, "params": [
         {"name": "left", "type": "uint64", "sweep": [1, 2]},
@@ -162,7 +162,7 @@ def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
 def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, project):
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
-    graph.card("starts", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("starts", {"type": "code", "sandbox": False}, outputs=NUMBER,
                manifest={"runs": [implementation(n) for n in range(2)]})
     graph.card("values", {"type": "input", "params": [
         {"name": "value", "type": "uint64", "sweep": list(range(200))}]}, outputs=NUMBER)
@@ -184,7 +184,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
     ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": list(range(17))},
                                       {"name": "right", "type": "uint64", "sweep": list(range(16))}]},
      "at most 256"),
-    ({"type": "code", "language": "bash", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
+    ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
       "_nix": "{ pkgs, inputs, params }: { run = \"true\"; }"},
      "sweep is for Input Cards"),
 ])

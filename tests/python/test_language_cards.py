@@ -181,14 +181,14 @@ def project(tmp_path):
 def test_values_cross_r_and_julia_and_each_display_arrives(project):
     root, connect = project
     write_project(root, {
-        "make": {"card": {"type": "code", "language": "r", "inputs": [{"name": "start"}], "params": [
+        "make": {"card": {"type": "code", "inputs": [{"name": "start"}], "params": [
             {"name": "count", "type": "uint64", "data": 3},
             {"name": "scale", "type": "double", "data": 1.5},
             {"name": "big", "type": "uint64", "data": 9007199254740993}]},
                  "nix": R_NIX, "outputs": NUMBERS, "src": {"main.R": R_MAKE}},
-        "double": {"card": {"type": "code", "language": "julia", "inputs": [{"name": "numbers"}]},
+        "double": {"card": {"type": "code", "inputs": [{"name": "numbers"}]},
                    "nix": JULIA_NIX, "outputs": NUMBERS, "src": {"main.jl": JULIA_DOUBLE}},
-        "report": {"card": {"type": "code", "language": "r", "inputs": [{"name": "numbers"}],
+        "report": {"card": {"type": "code", "inputs": [{"name": "numbers"}],
                             "retainArtifact": True, "artifactOutput": "report"},
                    "nix": R_NIX, "outputs": REPORT, "src": {"main.R": R_REPORT}},
     }, [("start", "out", "make", "start"), ("make", "numbers", "double", "numbers"), ("double", "numbers", "report", "numbers")])
@@ -214,12 +214,12 @@ def test_values_cross_r_and_julia_and_each_display_arrives(project):
 def test_a_double_crosses_bash_r_and_julia_unchanged(project):
     root, connect = project
     write_project(root, {
-        "make": {"card": {"type": "code", "language": "bash", "inputs": [{"name": "start"}]}, "nix": BASH_MAKE, "outputs": EXACT},
-        "r": {"card": {"type": "code", "language": "r", "inputs": [{"name": "numbers"}]},
+        "make": {"card": {"type": "code", "inputs": [{"name": "start"}]}, "nix": BASH_MAKE, "outputs": EXACT},
+        "r": {"card": {"type": "code", "inputs": [{"name": "numbers"}]},
               "nix": R_NIX, "outputs": EXACT, "src": {"main.R": R_EXACT}},
-        "julia": {"card": {"type": "code", "language": "julia", "inputs": [{"name": "numbers"}]},
+        "julia": {"card": {"type": "code", "inputs": [{"name": "numbers"}]},
                   "nix": JULIA_NIX, "outputs": EXACT, "src": {"main.jl": JULIA_EXACT}},
-        "show": {"card": {"type": "code", "language": "bash", "inputs": [{"name": "numbers"}]}, "nix": BASH_SHOW},
+        "show": {"card": {"type": "code", "inputs": [{"name": "numbers"}]}, "nix": BASH_SHOW},
     }, [("start", "out", "make", "start"), ("make", "numbers", "r", "numbers"),
         ("r", "numbers", "julia", "numbers"), ("julia", "numbers", "show", "numbers")])
     c = connect()
@@ -245,7 +245,7 @@ def test_bash_display_validates_the_report(project):
     ''; }
     """
     write_project(root, {"show": {
-        "card": {"type": "code", "language": "bash", "params": [{"name": "report", "type": "string", "data": "{}"}]},
+        "card": {"type": "code", "params": [{"name": "report", "type": "string", "data": "{}"}]},
         "nix": nix,
     }}, [])
     c = connect()
@@ -306,7 +306,7 @@ end
 def test_interpreter_state_and_run_hook(project, language):
     root, connect = project
     nix, name, source = LIFECYCLE[language]
-    write_project(root, {"count": {"card": {"type": "code", "language": language, "reuseWorker": True},
+    write_project(root, {"count": {"card": {"type": "code", "reuseWorker": True},
                                   "nix": nix, "src": {name: source}}}, [])
     c = connect()
     for n in (1, 2):
@@ -381,7 +381,7 @@ def test_a_card_keeps_no_interpreter_state_by_default(project, language):
     # that there was a first one.
     root, connect = project
     nix, name, source = CARRIED[language]
-    write_project(root, {"probe": {"card": {"type": "code", "language": language}, "nix": nix, "src": {name: source}}}, [])
+    write_project(root, {"probe": {"card": {"type": "code"}, "nix": nix, "src": {name: source}}}, [])
     c = connect()
     seen = []
     for _ in range(2):
@@ -400,7 +400,7 @@ def test_reuse_worker_carries_globals_options_and_the_random_position(project, l
     # for every call, so those two never carry.
     root, connect = project
     nix, name, source = CARRIED[language]
-    write_project(root, {"probe": {"card": {"type": "code", "language": language, "reuseWorker": True},
+    write_project(root, {"probe": {"card": {"type": "code", "reuseWorker": True},
                                   "nix": nix, "src": {name: source}}}, [])
     c = connect()
     seen = []
@@ -438,7 +438,7 @@ end
 def test_disabling_reuse_drops_the_previous_interpreter(project, language):
     root, connect = project
     nix, name, source = VERSIONED[language]
-    settings = {"type": "code", "language": language, "reuseWorker": True}
+    settings = {"type": "code", "reuseWorker": True}
     write_project(root, {"count": {"card": settings, "nix": nix,
                                   "src": {name: source.replace("VERSION", "calls")}}}, [])
     c = connect()
@@ -461,7 +461,7 @@ def test_disabling_reuse_drops_the_previous_interpreter(project, language):
 def test_a_changed_source_replaces_the_resident_interpreter(project, language):
     root, connect = project
     nix, name, source = VERSIONED[language]
-    write_project(root, {"count": {"card": {"type": "code", "language": language, "reuseWorker": True},
+    write_project(root, {"count": {"card": {"type": "code", "reuseWorker": True},
                                   "nix": nix, "src": {name: source.replace("VERSION", "first")}}}, [])
     c = connect()
     for expected, again in (("first 1", False), ("first 2", True)):
@@ -479,7 +479,7 @@ def test_a_changed_source_replaces_the_resident_interpreter(project, language):
 def test_changed_r_packages_replace_the_resident_interpreter(project):
     root, connect = project
     _, name, source = VERSIONED["r"]
-    write_project(root, {"count": {"card": {"type": "code", "language": "r", "reuseWorker": True}, "nix": R_NIX,
+    write_project(root, {"count": {"card": {"type": "code", "reuseWorker": True}, "nix": R_NIX,
                                   "src": {name: source.replace("VERSION", "calls")}}}, [])
     c = connect()
     for expected in ("calls 1", "calls 2"):
@@ -616,7 +616,7 @@ def test_a_resident_interpreter_is_not_reused_after_a_bad_call(project, language
     nix, name, source = BAD_SECOND_CALL[language]
     modes = ("fail", "cancel", "exit", "crash") if language in ("r", "julia") else ("fail", "cancel")
     write_project(root, {
-        how: {"card": {"type": "code", "language": language, "reuseWorker": True,
+        how: {"card": {"type": "code", "reuseWorker": True,
                        "params": [{"name": "how", "type": "string", "data": how}]},
               "nix": nix, "src": {name: source}}
         for how in modes
@@ -673,7 +673,7 @@ def test_display_arrives_before_completion_and_cancel_stops_worker(project, lang
     from projects import start_run, wait_run
     root, connect = project
     nix, name, source = LIVE[language]
-    write_project(root, {"live": {"card": {"type": "code", "language": language}, "nix": nix, "src": {name: source}}}, [])
+    write_project(root, {"live": {"card": {"type": "code"}, "nix": nix, "src": {name: source}}}, [])
     c = connect()
     from Tsugumi.RPC.NotificationPayload import NotificationPayload
     from test_demos import first_display
@@ -702,7 +702,7 @@ def test_interpreter_deadline_ends_uncooperative_code(project, language):
 
     return nothing
 end''')
-    write_project(root, {"slow": {"card": {"type": "code", "language": language, "timeoutSeconds": 1},
+    write_project(root, {"slow": {"card": {"type": "code", "timeoutSeconds": 1},
                                  "nix": nix, "src": {name: source}}}, [])
     c = connect()
     run_id, status = run_and_wait(c, "start")
@@ -739,29 +739,29 @@ JSON
 ''; }'''
     show = "{ pkgs, inputs, params }: { run = ''jq -n --rawfile m \"$JSON_VALUE\" '{text:$m}' > \"$TSUGUMI_REPORT\"''; }"
     write_project(root, {
-        "make": {"card": {"type": "code", "language": "bash"}, "nix": make, "outputs": schema},
-        "r": {"card": {"type": "code", "language": "r", "recordIO": True, "inputs": [{"name": "value"}]},
+        "make": {"card": {"type": "code"}, "nix": make, "outputs": schema},
+        "r": {"card": {"type": "code", "recordIO": True, "inputs": [{"name": "value"}]},
               "nix": R_NIX, "outputs": schema,
               "src": {"main.R": '''main <- function(inputs, report, run) {
   value <- inputs$input("value")
   stopifnot(identical(value$defaulted, "9223372036854775808"))
   list(value = value, unused = NULL)
 }'''}},
-        "julia": {"card": {"type": "code", "language": "julia", "recordIO": True, "inputs": [{"name": "value"}]},
+        "julia": {"card": {"type": "code", "recordIO": True, "inputs": [{"name": "value"}]},
                   "nix": JULIA_NIX, "outputs": schema,
                   "src": {"main.jl": '''function main(inputs, report)
     value = Tsugumi.input(inputs, "value")
     @assert value["defaulted"] == 9223372036854775808
     return Dict("value" => value, "unused" => nothing)
 end'''}},
-        "ruby": {"card": {"type": "code", "language": "ruby", "inputs": [{"name": "value"}]},
+        "ruby": {"card": {"type": "code", "inputs": [{"name": "value"}]},
                  "nix": RUBY_NIX, "outputs": schema,
                  "src": {"main.rb": '''def main(inputs)
   value = inputs.input("value")
   raise unless value.fetch("defaulted") == 9223372036854775808
   {value: value}
 end'''}},
-        "show": {"card": {"type": "code", "language": "bash", "inputs": [{"name": "value"}]}, "nix": show},
+        "show": {"card": {"type": "code", "inputs": [{"name": "value"}]}, "nix": show},
     }, [("make", "value", "r", "value"), ("r", "value", "julia", "value"),
         ("julia", "value", "ruby", "value"), ("ruby", "value", "show", "value")])
     c = connect()
@@ -781,7 +781,7 @@ end'''}},
 def test_json_sdk_cannot_omit_required_output(project, language, nix, name, source):
     root, connect = project
     schema = "table Value { value:ulong; } table Outputs { value:Value (required); } root_type Outputs;"
-    write_project(root, {"omit": {"card": {"type": "code", "language": language}, "nix": nix,
+    write_project(root, {"omit": {"card": {"type": "code"}, "nix": nix,
                                   "outputs": schema, "src": {name: source}}}, [])
     c = connect()
     _, status = run_and_wait(c, "omit")
@@ -794,7 +794,7 @@ def test_nix_r_packages_available_in_resident_interpreter(project):
     source = '''main <- function(inputs, report, run) { report$text(digest::digest("pinned", algo="sha256"))
   invisible(NULL)
 }'''
-    write_project(root, {"package": {"card": {"type": "code", "language": "r"}, "nix": nix, "src": {"main.R": source}}}, [])
+    write_project(root, {"package": {"card": {"type": "code"}, "nix": nix, "src": {"main.R": source}}}, [])
     c = connect()
     for _ in range(2):
         run_id, status = run_and_wait(c, "start")
@@ -808,7 +808,7 @@ def test_julia_package_resolution_does_not_enable_ifd(project):
     # Julia must not bypass the evaluator's policy to make that path work.
     root, connect = project
     nix = '{ pkgs, inputs, params }: { run = inputs.tsugumi.juliaCard { src = ./src; packages = [ "JSON" ]; }; }'
-    write_project(root, {"package": {"card": {"type": "code", "language": "julia"}, "nix": nix,
+    write_project(root, {"package": {"card": {"type": "code"}, "nix": nix,
                                     "src": {"main.jl": '''function main(inputs, report)
 
     return nothing
@@ -853,8 +853,8 @@ def test_file_and_directory_inputs_refresh_in_resident_interpreters(project, lan
 end'''
     nix, name, source = (R_NIX, "main.R", r) if language == "r" else (JULIA_NIX, "main.jl", julia)
     write_project(root, {
-        "make": {"card": {"type": "code", "language": "bash"}, "nix": make, "outputs": schema},
-        "read": {"card": {"type": "code", "language": language, "inputs": [{"name": "file"}, {"name": "directory"}]},
+        "make": {"card": {"type": "code"}, "nix": make, "outputs": schema},
+        "read": {"card": {"type": "code", "inputs": [{"name": "file"}, {"name": "directory"}]},
                  "nix": nix, "src": {name: source}},
     }, [("make", port, "read", port) for port in ("file", "directory")])
     c = connect()

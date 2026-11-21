@@ -329,19 +329,32 @@ auto diff_reads(const std::string& path) -> bool {
   while (i + 1 < parts.size() && parts[i] == "externals") i += 2;
   if (i == parts.size() - 1) return parts[i] == "tsugumi.json";
   if (i + 2 >= parts.size() || parts[i] != "definitions") return false;
-  const std::string& file = parts[i + 2];
-  if (i + 3 == parts.size())
-    return file == "_card.json" || file == "_meta.json" ||
-           file == "_outputs.fbs" || file == "default.nix";
-  static const std::set<std::string> code = {".py",  ".cc",  ".cpp", ".cxx",
-                                             ".c",   ".h",   ".hh",  ".hpp",
-                                             ".nix", ".fbs", ".sh"};
-  return file == "src" &&
-         code.count(stdfs::path(path).extension().string()) > 0;
+  // Card data directories and CSV data are outside the model-visible diff.
+  return std::find(parts.begin() + i + 2, parts.end() - 1, "data") ==
+             parts.end() - 1 &&
+         stdfs::path(path).extension() != ".csv";
 }
 
-// Every file supplied through a Card's src/ is a source input, including
-// assets and languages outside the model-diff allowlist. Only its path is read.
+auto diff_text_blob(git_repository* repo, const git_diff_file& file) -> bool {
+  if (file.mode == 0) return true;  // Added and deleted files have one side.
+  if (file.mode != GIT_FILEMODE_BLOB &&
+      file.mode != GIT_FILEMODE_BLOB_EXECUTABLE)
+    return false;
+  Blob blob;
+  check(git_blob_lookup(blob.out(), repo, &file.id), "diff blob");
+  constexpr size_t kMaxFileSize = 1024 * 1024;
+  constexpr size_t kBinaryProbeSize = 8192;
+  const auto size = git_blob_rawsize(blob.get());
+  if (size == 0) return true;
+  if (size > kMaxFileSize) return false;
+  const std::string_view prefix(
+      static_cast<const char*>(git_blob_rawcontent(blob.get())),
+      std::min<size_t>(size, kBinaryProbeSize));
+  return prefix.find('\0') == std::string_view::npos;
+}
+
+// Every file supplied through a Card's src/ counts as a source input in
+// version notes. Only its path is read.
 auto source_input(const std::string& path) -> bool {
   std::vector<std::string> parts;
   for (const auto& part : stdfs::path(path)) parts.push_back(part.string());
@@ -1172,7 +1185,10 @@ auto Versions::diff(const std::string& commit, const std::string& from)
     const auto* delta = git_diff_get_delta(changes.get(), i);
     const char* path =
         delta->new_file.path ? delta->new_file.path : delta->old_file.path;
-    if (!path || !diff_reads(path)) continue;
+    if (!path || !diff_reads(path) ||
+        !diff_text_blob(repo.get(), delta->old_file) ||
+        !diff_text_blob(repo.get(), delta->new_file))
+      continue;
     Patch patch;
     check(git_patch_from_diff(patch.out(), changes.get(), i), "file patch");
     if (!patch) continue;

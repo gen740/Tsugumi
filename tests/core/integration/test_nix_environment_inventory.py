@@ -13,7 +13,7 @@ def test_recorded_closure_matches_nix_and_survives_definition_changes(core_facto
     graph = Project(project)
     environments = []
     for greeting in ["first", "first", "changed"]:
-        graph.card("work", {"type": "code", "language": "bash", "sandbox": False},
+        graph.card("work", {"type": "code", "sandbox": False},
                    outputs="table Outputs {} root_type Outputs;",
                    sources={"default.nix": '{ pkgs, inputs, params }: { run = "echo ' + greeting + '"; }'})
         graph.save(client)
@@ -50,7 +50,7 @@ def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, pro
     from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
 
     client = core_factory().connect()
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True},
+    Project(project).card("work", {"type": "code", "sandbox": False, "recordIO": True},
                           outputs=TXT, sources={"default.nix": DEFINITION_TOOLS_NIX}).save(client)
     observed = []
     for _ in range(2):

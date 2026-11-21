@@ -124,7 +124,7 @@ def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_pat
 def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path, settings, message):
     """Names follow one rule, and a Card with secrets keeps no resident worker."""
     root = tmp_path / "p"
-    write(root, {"use": {"type": "code", "language": "bash", "_outputs": NUM,
+    write(root, {"use": {"type": "code", "_outputs": NUM,
                          "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}},
           [card("use", "use")], [])
     validation = core_factory(project_root=root).connect().call("ProjectValidateRequest")

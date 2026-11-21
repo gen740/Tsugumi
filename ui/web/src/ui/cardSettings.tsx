@@ -115,7 +115,7 @@ export class CardEditorModel extends Observable {
   get implementation() {
     const kind = definitionKind(this.definition)
     if (kind === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
-    return kind === 'code' ? str(get(this.definition, 'language')) ?? kind : kind
+    return kind
   }
 
   implementAs(value: string) {
@@ -131,8 +131,7 @@ export class CardEditorModel extends Observable {
           this.presetOutputs = outputs
         }
       }
-    } else if (['python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia'].includes(value)) this.definition = obj([['type', 'code'], ['language', value]])
-    else this.definition = obj([['type', value]])
+    } else this.definition = obj([['type', value]])
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
@@ -744,8 +743,8 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'python', 'cpp', 'go', 'rust', 'ruby', 'csharp', 'bash', 'r', 'julia', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
-            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value }))
+          ['draft', 'code', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
+            .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
       {params.length > 0 && (

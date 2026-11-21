@@ -205,11 +205,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
 
 auto Tools::InputTypesQuery(const std::string& project, json::Members args,
                             std::stop_token stop) -> H::InputTypesT {
-  std::optional<std::string> language;
-  if (args.contains("language")) {
-    language = json::Text(args, "language");
-    args.erase("language");
-  }
   std::string bytes;
   const auto envelope =
       RawProjectCall(project, "input_types", json::Encode(args), stop, &bytes);
@@ -219,7 +214,7 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
         json::Object(json::Get(json::Object(envelope), "value", "{}"));
     throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
   }
-  return host::InputTypes(*reply->value_as_InputTypesResult(), language);
+  return host::InputTypes(*reply->value_as_InputTypesResult());
 }
 
 auto Tools::InspectProject(const std::string& project, std::stop_token stop)

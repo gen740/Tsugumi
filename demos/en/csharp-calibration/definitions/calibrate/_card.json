@@ -1,6 +1,5 @@
 {
   "type": "code",
-  "language": "csharp",
   "inputs": [
     {
       "name": "numbers"

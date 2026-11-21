@@ -3,13 +3,9 @@
 #include <gtest/gtest.h>
 
 #include <algorithm>
-#include <fstream>
-#include <iostream>
-#include <iterator>
 
 #include "agent/catalog.hh"
 #include "agent/context.hh"
-#include "input.hh"
 #include "tsugumi/document/input_types.hh"
 #include "tsugumi/util/crypto.hh"
 #include "wire.hh"
@@ -43,7 +39,6 @@ auto Graph(const std::string& cards, const std::string& wires, Files files)
   });
 }
 auto Present(const Resolution& graph, const CardPath& card,
-             const std::optional<std::string>& language = {},
              const std::optional<std::string>& output = {})
     -> Tsugumi::Host::InputTypesT {
   flatbuffers::FlatBufferBuilder b;
@@ -55,14 +50,12 @@ auto Present(const Resolution& graph, const CardPath& card,
         end.source ? b.CreateString(end.source_port) : 0,
         end.type ? wire::port(b, *end.type) : 0));
   const auto result = Tsugumi::RPC::CreateInputTypesResult(
-      b, 3, b.CreateString(graph.find(card)->settings.language),
-      b.CreateVector(ends));
+      b, 3, b.CreateVector(ends));
   b.Finish(result);
   return host::InputTypes(*flatbuffers::GetRoot<Tsugumi::RPC::InputTypesResult>(
-                              b.GetBufferPointer()),
-                          language);
+                              b.GetBufferPointer()));
 }
-TEST(InputTypes, PlainWireDefaultLanguageFileAndNoSource) {
+TEST(InputTypes, PlainWireSchemasAndRouting) {
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"dest"},{"id":"file"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"dest","port":"data"}},
@@ -73,26 +66,33 @@ TEST(InputTypes, PlainWireDefaultLanguageFileAndNoSource) {
        {"definitions/file/_outputs.fbs",
         R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"file"); } root_type Outputs;)"},
        {"definitions/dest/_card.json",
-        R"({"type":"code","language":"python","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
+        R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
   const auto result = Present(*graph, {"dest"});
   ASSERT_EQ(result.inputs.size(), 3u);
-  EXPECT_EQ(result.language, "python");
+  EXPECT_EQ(result.rev, 3u);
+  EXPECT_EQ(result.inputs[0]->port, "data");
+  EXPECT_EQ(result.inputs[0]->state, "resolved");
   EXPECT_EQ(result.inputs[0]->source_card->segments, (CardPath{"src"}));
   EXPECT_EQ(result.inputs[0]->source_port, "out");
   EXPECT_EQ(result.inputs[0]->kind, "value");
-  EXPECT_NE(result.inputs[0]->definition.find("noiseSd: float"),
+  EXPECT_NE(result.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
-  EXPECT_NE(result.inputs[0]->definition.find("title: Optional[bytes]"),
+  EXPECT_NE(result.inputs[0]->definition.find("title:string"),
             std::string::npos);
+  std::string root;
+  std::string error;
+  EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
+      << error;
+  EXPECT_EQ(root, "inputs.data.sample.Message");
   EXPECT_EQ(result.inputs[1]->kind, "file");
-  EXPECT_NE(result.inputs[1]->definition.find("value: Optional[bytes]"),
+  EXPECT_NE(result.inputs[1]->definition.find("value:string"),
             std::string::npos);
   EXPECT_EQ(result.inputs[2]->state, "no_source");
   EXPECT_FALSE(result.inputs[2]->source_card);
   EXPECT_TRUE(result.inputs[2]->definition.empty());
-  const auto upstream = Present(*graph, {"src"}, "cpp", "out");
+  const auto upstream = Present(*graph, {"src"}, "out");
   ASSERT_EQ(upstream.inputs.size(), 1u);
-  EXPECT_NE(upstream.inputs[0]->definition.find("double noise_sd"),
+  EXPECT_NE(upstream.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
 }
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
@@ -115,7 +115,7 @@ TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   }
   std::ranges::sort(sources);
   EXPECT_EQ(sources, (CardPath{"other", "src"}));
-  EXPECT_EQ(Present(*graph, {"draft"}, "python").inputs.size(), 2u);
+  EXPECT_EQ(Present(*graph, {"draft"}).inputs.size(), 2u);
 }
 TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   const auto graph = Graph(
@@ -179,7 +179,7 @@ TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
     ASSERT_TRUE(ends[0].type->type) << card;
     EXPECT_EQ(ends[0].type->type, graph->find({card})->output(port)->type);
     EXPECT_FALSE(
-        Present(*graph, {card}, "python", port).inputs[0]->definition.empty());
+        Present(*graph, {card}, port).inputs[0]->definition.empty());
   }
 }
 TEST(InputTypes, CompatibleProducersUseTheDestinationCodeContract) {
@@ -200,7 +200,7 @@ TEST(InputTypes, CompatibleProducersUseTheDestinationCodeContract) {
   ASSERT_EQ(ends.size(), 2u);
   EXPECT_EQ(ends[0].type, graph->find({"dest"})->input("in"));
   EXPECT_EQ(ends[1].type, ends[0].type);
-  const auto descriptions = Present(*graph, {"dest"}, "python");
+  const auto descriptions = Present(*graph, {"dest"});
   EXPECT_EQ(descriptions.inputs[0]->definition,
             descriptions.inputs[1]->definition);
 }
@@ -208,20 +208,20 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   std::string schema = "table Large {\n";
   for (int i = 0; i < 5000; ++i)
     schema += "  field_" + std::to_string(i) + ":double;\n";
-  schema += "} root_type Large;\n";
-  const auto definition = sdk::DescribeInput(schema, "python");
-  ASSERT_GT(definition.size(), agent::kToolResultBytes);
-  EXPECT_NE(definition.find("field4999: float"), std::string::npos);
+  schema += "}\n";
   const auto graph = Graph(
       R"([{"id":"src"},{"id":"draft"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}}])",
       {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs",
-        schema.substr(0, schema.find("root_type")) +
+        schema +
             "table Outputs { out:Large; } root_type Outputs;"}});
-  const auto presented = Present(*graph, {"draft"}, "python");
+  const auto presented = Present(*graph, {"draft"});
   ASSERT_EQ(presented.inputs.size(), 1u);
-  EXPECT_EQ(presented.inputs[0]->definition, definition);
+  const auto& definition = presented.inputs[0]->definition;
+  ASSERT_GT(definition.size(), agent::kToolResultBytes);
+  EXPECT_NE(definition.find("field_4999:double"), std::string::npos);
+  EXPECT_NE(definition.find("root_type Large;"), std::string::npos);
   agent::ContentBlock call;
   call.type = "tool_use";
   call.name = "input_types";
@@ -235,18 +235,6 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
       {"user", {result}, {}, {}, agent::ProviderAPI::AnthropicMessages}};
   EXPECT_EQ(agent::RequestMessages(messages, 0, 100).back().content[0].text,
             definition);
-  EXPECT_EQ(sdk::DescribeInput(schema, "unknown"), schema);
 }
 }  // namespace
 }  // namespace tsugumi
-
-int main(int argc, char** argv) {
-  if (argc == 4 && std::string(argv[1]) == "--describe") {
-    std::ifstream file(argv[3]);
-    const std::string schema((std::istreambuf_iterator<char>(file)), {});
-    std::cout << tsugumi::sdk::DescribeInput(schema, argv[2]);
-    return 0;
-  }
-  ::testing::InitGoogleTest(&argc, argv);
-  return RUN_ALL_TESTS();
-}

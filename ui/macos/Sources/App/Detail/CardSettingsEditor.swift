@@ -90,7 +90,7 @@ final class CardEditorModel {
     if kind == .input, definition?["params"]?.array?.first?["type"]?.string == "bool" {
       return DefinitionTemplate.booleanInput.rawValue
     }
-    return kind == .code ? definition?["language"]?.string ?? kind.rawValue : kind.rawValue
+    return kind.rawValue
   }
 
   func implementAs(_ value: String) {
@@ -112,8 +112,6 @@ final class CardEditorModel {
       } catch {
         message = error.localizedDescription
       }
-    } else if ["python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia"].contains(value) {
-      definition = .object([("type", .string("code")), ("language", .string(value))])
     } else { definition = .object([("type", .string(value))]) }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
     if value == "fork" { definition?["outputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
@@ -645,9 +643,13 @@ private struct GeneralCategory: View {
       if model.session.kind(model.cardKey) == .draft {
         Section {
           Picker("種類", selection: Binding(get: { model.implementation }, set: { model.implementAs($0) })) {
-            ForEach(["draft", "python", "cpp", "go", "rust", "ruby", "csharp", "bash", "r", "julia", "input",
+            ForEach(["draft", "code", "input",
                      DefinitionTemplate.booleanInput.rawValue, "trigger", "branch", "fork", "merge", "collect"], id: \.self) { value in
-              Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+              if value == "code" {
+                Text("コード").tag(value)
+              } else {
+                Text(value == DefinitionTemplate.booleanInput.rawValue ? DefinitionTemplate.booleanInput.label : value).tag(value)
+              }
             }
           }
         } header: { Text("Draft を手動で実装") }

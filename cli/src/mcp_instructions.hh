@@ -57,6 +57,6 @@ the person's decision.
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,
-  sizes and hashes. input_types returns the types a Card receives, rendered for its language.
+  sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 )TSUGUMI";
 }  // namespace tsugumi::cli

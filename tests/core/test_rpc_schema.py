@@ -24,7 +24,7 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
         '{"type":"code","sandbox":true} trailing',
         '{"type":"code","sandbox":null}',
         '{"type":"code","unknownCardField":true}',
-        '{"language":"bash"}',
+        '{}',
         '{"type":"none"}',
     )
     for raw in invalid_documents:
@@ -65,7 +65,7 @@ def test_core_stores_opaque_layout_unchanged(client):
 def test_card_settings_round_trip(client):
     """Execution settings survive a save and inspect without a filesystem switch."""
     settings = {
-        "type": "code", "language": "bash", "inputs": [{"name": "data", "optional": True}],
+        "type": "code", "inputs": [{"name": "data", "optional": True}],
         "params": [{"name": "limit", "type": "double", "data": 2.5}],
         "trigger": "eachInput", "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,

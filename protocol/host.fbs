@@ -478,16 +478,13 @@ table VersionCanvasRequest {
 /// Read the project version’s comment changes from its first parent.
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 
-/// -> InputTypes. Read each incoming wire's source, kind and complete input
-/// definition as Card code sees it. May help when writing a Card; routing types
-/// are resolved automatically. language defaults to the Card implementation;
-/// pass it for a Draft, or "schema" for plain tables. output_port selects
-/// one upstream output instead. No result size limit.
+/// -> InputTypes. Read the project revision and each incoming wire's source,
+/// port, kind, resolution state and full FlatBuffers schema text.
+/// output_port selects one upstream output instead. No result size limit.
 table InputTypesRequest {
   project:string (required);
   card:Tsugumi.Data.CardPath (required);
   output_port:string;
-  language:string;
   at_rev:ulong = null;
 }
 table InputType {
@@ -498,9 +495,10 @@ table InputType {
   kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);
+  /// Complete .fbs schema when resolved.
   definition:string;
 }
-table InputTypes { rev:ulong = null; language:string; inputs:[InputType]; }
+table InputTypes { rev:ulong = null; inputs:[InputType]; }
 
 // Pure editing support: paths select a language and label diagnostics, never files.
 table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }

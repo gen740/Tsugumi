@@ -11,7 +11,7 @@ def templates():
     for kind, extension in [('rmarkdown', 'Rmd'), ('quarto', 'qmd')]:
         files = {
             '_card.json': json.dumps({
-                'type': 'code', 'language': 'r', 'inputs': [{'name': 'data'}],
+                'type': 'code', 'inputs': [{'name': 'data'}],
                 'recordIO': True, 'retainArtifact': True, 'artifactOutput': 'report',
                 'params': [{'name': 'title', 'type': 'string', 'data': 'Analysis report'}],
             }, indent=2) + '''

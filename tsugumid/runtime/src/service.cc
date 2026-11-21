@@ -2384,8 +2384,7 @@ void Service::input_types(RequestIn& req) {
   check_at_rev(request->at_rev(), *doc);
   const auto card = wire::card_arg(request->card());
   const auto& graph = *doc->resolution;
-  const auto* node = graph.find(card);
-  if (!node)
+  if (!graph.find(card))
     throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
   FBB b;
   std::vector<flatbuffers::Offset<R::InputType>> inputs;
@@ -2408,9 +2407,7 @@ void Service::input_types(RequestIn& req) {
   } catch (const DocumentError& error) {
     throw Failed(FailureKind::not_found, error.what());
   }
-  auto result = R::CreateInputTypesResult(
-      b, doc->rev, b.CreateString(node->settings.language),
-      b.CreateVector(inputs));
+  auto result = R::CreateInputTypesResult(b, doc->rev, b.CreateVector(inputs));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::InputTypesResult,
                          result.Union()));
 }

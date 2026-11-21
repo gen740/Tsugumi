@@ -658,8 +658,6 @@ struct Service::State {
                                       {"segments", json::Encode(segments)}})}};
       if (input->output_port())
         args["output_port"] = json::Quote(input->output_port()->str());
-      if (input->language())
-        args["language"] = json::Quote(input->language()->str());
       if (input->at_rev())
         args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
       lock.unlock();

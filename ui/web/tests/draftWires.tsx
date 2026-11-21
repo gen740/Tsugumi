@@ -68,7 +68,6 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   await s.applyMutation((x) => {
     x.updateCard(draft, (c) => {
       c.set('type', 'code')
-      c.set('language', 'python')
       c.set('inputs', parse('[{"name":"in"}]'))
     })
     x.updateGraph([], (g) => g.set('connections', parse(`[

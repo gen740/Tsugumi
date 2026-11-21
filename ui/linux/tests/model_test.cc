@@ -54,7 +54,7 @@ auto SceneTest() -> void {
       R"({"flow": "leftToRight", "cards": {"start": {"x": 10, "y": -20.5}, "square": {"x": 400, "y": 0}}})";
   const std::vector<ui::Definition> definitions = {
       {"start", R"({"type": "trigger"})", R"({"name": "Start"})", ""},
-      {"square", R"({"type": "code", "language": "python"})", "", ""},
+      {"square", R"({"type": "code"})", "", ""},
   };
   const auto scene = ui::BuildScene(project, layout, definitions);
   CHECK(!scene.top_to_bottom);
@@ -80,7 +80,7 @@ auto SceneTest() -> void {
   // definitions_json carries each _card.json as text.
   CHECK(
       ui::CompletionDefinitions(definitions) ==
-      R"({"square":"{\"type\": \"code\", \"language\": \"python\"}","start":"{\"type\": \"trigger\"}"})");
+      R"({"square":"{\"type\": \"code\"}","start":"{\"type\": \"trigger\"}"})");
 }
 
 // A Card without a known type is a definition error, not a Draft: drawn with
@@ -89,7 +89,7 @@ auto SceneTest() -> void {
 auto DefinitionErrorTest() -> void {
   CHECK(ui::StatesKnownType(R"({"type": "draft"})"));
   CHECK(ui::StatesKnownType(R"({"type": "subgraph", "external": "lib"})"));
-  CHECK(!ui::StatesKnownType(R"({"language": "python"})"));
+  CHECK(!ui::StatesKnownType(R"({})"));
   CHECK(!ui::StatesKnownType(R"({"type": "something new"})"));
   CHECK(!ui::StatesKnownType(R"({"type": "code", "external": "lib"})"));
   CHECK(!ui::StatesKnownType(R"({"type": "subgraph"})"));
@@ -101,7 +101,7 @@ auto DefinitionErrorTest() -> void {
       R"(definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph))";
   const auto scene =
       ui::BuildScene(project, "{}",
-                     {{"old", R"({"language": "python"})", "", missing},
+                     {{"old", R"({})", "", missing},
                       {"future", R"({"type": "something new"})", "", ""},
                       {"plan", R"({"type": "draft"})", "", ""}});
   CHECK(scene.cards[0].definition_error &&

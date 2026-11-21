@@ -205,7 +205,7 @@ def test_nix_connected_exports(env):
 }
 ''')
     defs = {"trigger": {"type": "trigger"}, "a": a,
-            "b": {"type": "code", "language": "bash", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
+            "b": {"type": "code", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
@@ -264,7 +264,7 @@ def main(inputs, report):
     report.text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
 '''
     defs = {"trigger": {"type": "trigger"},
-            "show": {"type": "code", "language": "python",
+            "show": {"type": "code",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
@@ -365,7 +365,7 @@ def main(inputs, report):
     report.module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
 '''
     defs = {"trigger": {"type": "trigger"},
-            "show": {"type": "code", "language": "python",
+            "show": {"type": "code",
                      "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
                      "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
@@ -500,11 +500,11 @@ def main(inputs):
                  'case "$(cat "$JSON_IN")" in *18446744073709551615*) ;; *) exit 9;; esac && '
                  'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])
     defs = {"trigger": {"type": "trigger"},
-            "make": {"type": "code", "language": "python", "_outputs": a_out, "_nix": py_nix},
-            "check": {"type": "code", "language": "cpp", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
+            "make": {"type": "code", "_outputs": a_out, "_nix": py_nix},
+            "check": {"type": "code", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
             "shell": shell,
-            "bad": {"type": "code", "language": "python", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
-            "missing": {"type": "code", "language": "python", "_outputs": a_out, "_nix": py_nix},
+            "bad": {"type": "code", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
+            "missing": {"type": "code", "_outputs": a_out, "_nix": py_nix},
             "after": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
     root = env.project
     c = load(env, defs,
@@ -624,9 +624,9 @@ in
 ''', "")
     defs = {"trigger": {"type": "trigger"}, "seed": seed,
             "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"type": "code", "language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
+            "calc": {"type": "code", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
                      "_outputs": calc_out, "_nix": calc_nix},
-            "other": {"type": "code", "language": "cpp", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
+            "other": {"type": "code", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
                       "params": [{"name": "step", "type": "uint64", "data": 10}],
                       "_outputs": other_out, "_nix": other_nix}}
     root = env.project
@@ -661,7 +661,7 @@ def test_unselected_branch_is_not_evaluated(env):
     Concurrency limits are exercised with explicit gates in test_run_lists.py;
     inferring concurrency from wall-clock invocation spans was timing evidence.
     """
-    broken = {"type": "code", "language": "bash", "inputs": [{"name": "in"}], "_outputs": NUM,
+    broken = {"type": "code", "inputs": [{"name": "in"}], "_outputs": NUM,
               "_nix": '''{ pkgs, inputs, params }:
 { run = builtins.throw "must never be evaluated"; }
 '''}
@@ -682,7 +682,7 @@ def test_unselected_branch_is_not_evaluated(env):
 
 
 def test_worker_crash_then_edit_and_rerun(env):
-    crash = {"type": "code", "language": "python", "_outputs": NUM,
+    crash = {"type": "code", "_outputs": NUM,
              "_nix": '''{ pkgs, inputs, params }:
 let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
 { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
