@@ -19,7 +19,7 @@ import TsugumiRPC
     entries = []; selection = nil; error = nil
     latest = known?.record?.display.flatMap(recordedDisplay)
     display = latest
-    guard let rpc, !exact, (known?.aggregate?.calls ?? known?.record?.summary.invocation ?? 0) > 1 else { return }
+    guard let rpc, !exact, (known?.aggregate.calls ?? known?.record?.summary.invocation ?? 0) > 1 else { return }
     do {
       var found: [Entry] = []
       var newest = latest
