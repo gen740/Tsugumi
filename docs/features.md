@@ -54,7 +54,7 @@ and Card templates in `ui/shared`.
 
 See the [trust boundaries](security.md#1-the-trust-boundaries), [RPC contract](Protocol.md) and [repository map](../AGENTS.md#map).
 
-The decided target for the boundary between the core and Card SDKs, the Card ABI and what a Card sees is in [The core and the Card SDK](CoreAndSDK.md), [Card ABI 9](CardABI.md) and [The sandbox contract](SandboxContract.md). These are not implemented yet; each states what the code does today.
+The decided target for the boundary between the core and the language SDKs, the Card ABI and what a Card sees is in [The core and the language SDKs](CoreAndSDK.md), [Card ABI 9](CardABI.md) and [The sandbox contract](SandboxContract.md). These are not implemented yet; each states what the code does today.
 
 The host-side `tsugumi-hostd` exposes environment operations through `EnvironmentRequest` in `protocol/host.fbs`: state, start, stop and attached-folder changes. Its native adapter launches `tsugumid` on Linux; its signed Mac adapter boots the shared VM and applies the mounts hostd specifies. In both cases, the service owns readiness checks, endpoint and project registration, execution-broker authorization, concurrent starts and process-exit reporting. Host events carry state, progress and stopped notifications. On the Mac, quitting the app requests orderly host and shared VM shutdown, including work from other clients, after one confirmation if work is in progress. Closing the last window quits only when enabled in General Settings (off by default). Hostd and project cores do not exit for idleness; without the app, the resident host remains until explicitly stopped. An open Web UI can start it again through its existing reconnect. SIGTERM, SIGINT and SIGHUP also request bounded orderly shutdown; hostd exit or a lost Watch connection makes vmhost do the same. Archiving incompatible history requires an explicit start flag. `HostRuntimeRequest` reports runtime/store state without starting a VM.
 
@@ -166,7 +166,7 @@ Use [Build Cache settings](Usage.md#manage-build-and-scratch-space) to inspect a
 
 ## 4. Card SDK and workers
 
-Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGuide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation). The decided, not yet implemented contract between the core and an SDK is [Card ABI 9](CardABI.md).
+Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGuide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation). The decided, not yet implemented contract between the core and a language SDK is [Card ABI 9](CardABI.md).
 
 ### Execution service
 

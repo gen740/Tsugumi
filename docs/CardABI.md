@@ -3,7 +3,7 @@
 **Status:** decided by the owner on 2026-11-13 and 2026-11-21; not implemented yet. ABI 9 replaces ABI 8.
 Each section states what is decided and what the code does today. Points that are not decided yet are listed under [Open](#open).
 
-The ABI is the contract between the core and a [Card SDK](CoreAndSDK.md). What the worker builds around the call is in [The sandbox contract](SandboxContract.md).
+The ABI is the contract between the core and a [language SDK](CoreAndSDK.md#terms): `tsugumi_main` plus `card.fbs`. What the worker builds around the call is in [The sandbox contract](SandboxContract.md).
 
 ## Entry point
 
@@ -63,7 +63,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
   1. The result is received.
   2. The worker copies every newly created output out as a snapshot. A reflink is allowed; a rename or a hardlink is not.
   3. Only then may the worker clear scratch, send the next call, or be destroyed.
-- A snapshot is a copy of each file, taken at collection time. There is no atomic guarantee across a directory: a Card thread that is still writing gets whatever each file holds when it is copied. The SDK documentation requires the Card to finish writing before it returns.
+- A snapshot is a copy of each file, taken at collection time. There is no atomic guarantee across a directory: a Card thread that is still writing gets whatever each file holds when it is copied. The language SDK's documentation requires the Card to finish writing before it returns.
 - Each call has budgets for its total output bytes and for its number of entries.
 - Remote workers follow the same rules.
 - Clearing scratch after a call no longer clears the working directory (`work/`).
@@ -129,13 +129,13 @@ The local history also has `run_definition_paths`, `active_environments`, `statu
 - Lifetimes:
   - The `display` callback stays valid for the life of the process.
   - `host` and the ABI callbacks `cancelled` and `remaining_ms` may be called only during a call.
-  - Outside a call, the SDK globals `cancelled()` and `remaining_ms()` return true and 0 without calling the host.
+  - Outside a call, the language SDK's globals `cancelled()` and `remaining_ms()` return true and 0 without calling the host.
 
 **Today.**
 
 - The ABI 8 function table also carries logging, failures and JSON conversion.
 - The worker fills the Card, `run_id` and invocation of each `Display` (`protocol/data.fbs`), and `WorkerCall` carries them.
-- The SDKs give `Report` and `Run` objects whose callbacks belong to one invocation. A retained one rejects later calls: for example C# throws `ObjectDisposedException` ([C#](CSharp.md)), and Python's Matplotlib display does nothing outside a call (`sdk/python/tsugumi/mpl.py`).
+- Today's language SDKs give `Report` and `Run` objects whose callbacks belong to one invocation. A retained one rejects later calls: for example C# throws `ObjectDisposedException` ([C#](CSharp.md)), and Python's Matplotlib display does nothing outside a call (`sdk/python/tsugumi/mpl.py`).
 
 ## The display form
 
@@ -146,7 +146,7 @@ The local history also has `run_definition_paths`, `active_environments`, `statu
   2. JS/DOM modules, which run in WebKit.
 - `Data.Display` becomes module + config + blobs.
 - Today's fixed kinds become default view modules that the core ships on the UI side ([Displays in the UI](CoreAndSDK.md#displays-in-the-ui)). The kinds are text, markdown, scalar, table, image, points, line chart, Plotly and Vega-Lite.
-- The SDK's overloads, such as `card::display(Table{...})`, stay. Inside, they encode the data for those default modules.
+- The C++ SDK's overloads, such as `card::display(Table{...})`, stay. Inside, they encode the data for those default modules.
 - These are removed:
   - the `Text` … `PointCloud` tables of `protocol/data.fbs`;
   - the display kinds of the ABI;
@@ -205,7 +205,7 @@ The local history also has `run_definition_paths`, `active_environments`, `statu
 **Decided.**
 
 - In every language a Card is `(input) -> output`. There is no `Report` object.
-- Side effects go through global functions of the SDK. In C++:
+- Side effects go through global functions of the language SDK. In the C++ SDK:
   - `card::display(...)`, overloaded by value type, for example `card::display(Table{...})`, a scalar or an image. Argument-dependent lookup may be used;
   - `cancelled()` and `remaining_ms()`, beside it.
 - The per-call record flag is an argument of `display`.

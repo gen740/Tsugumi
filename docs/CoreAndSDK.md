@@ -1,29 +1,39 @@
-# The core and the Card SDK
+# The core and the language SDKs
 
 **Status:** decided by the owner on 2026-11-13 and 2026-11-21; not implemented yet.
 Each section states what is decided and what the code does today. Points that are not decided yet are listed under [Open](#open).
 
 The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
 
+## Terms
+
+| Term | Meaning |
+| --- | --- |
+| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` plus `card.fbs` ([Card ABI 9](CardABI.md)) |
+| **_language_ SDK** (C++ SDK, Python SDK, …) | The swappable part for one language: the Nix builder that produces `lib/main.so`, the code generation for `card.hh` and `tsugumi_main`, the runtime library (`card::display`, `cancelled()`, `remaining_ms()`, and an embedded interpreter where one is needed) and its documentation |
+| **tsugumi-kit** | The separate repository (`gen740/tsugumi-kit`) that holds the default language SDKs and the example templates |
+
+"SDK" always names one language's part. It never names the whole `sdk/` folder, tsugumi-kit, or the worker, which belongs to the core.
+
 ## The core knows no language
 
 **Decided.**
 
 - The core is `tsugumid`, `workerd`, `hostd`, `protocol` and the UIs. None of them knows a programming language.
-- A Card SDK is a swappable part, chosen per Card. It will later move to its own repository, so that users can build their own SDK.
-- A Card selects its SDK in its `default.nix`, by the SDK that gets injected into it, not in `_card.json`. This leaves room for third-party SDK implementations without tying the Card document to Nix evaluation.
-- The contract between the core and an SDK is the common [Card ABI](CardABI.md).
-- The worker comes from the core, including the build of a worker for a foreign system or a remote host (decided 2026-11-22). This revises the 2026-11-13 rule that a Card brings its worker from its SDK commit. Across versions, the promise is the Card ABI.
-- Bash-bodied Cards, `preRun` and `postRun` are abolished for now. If they return, it will be as an SDK extension for each language that needs them, not in the core.
+- A language SDK is a swappable part, chosen per Card. The default language SDKs will later move to tsugumi-kit, so that users can build their own language SDKs.
+- A Card selects its language SDK in its `default.nix`, by the language SDK that gets injected into it, not in `_card.json`. This leaves room for third-party language SDKs without tying the Card document to Nix evaluation.
+- The contract between the core and a language SDK is the common [Card ABI](CardABI.md).
+- The worker comes from the core, including the build of a worker for a foreign system or a remote host (decided 2026-11-22). This revises the 2026-11-13 rule that a Card brings its worker from the commit of its language SDK. Across versions, the promise is the Card ABI.
+- Bash-bodied Cards, `preRun` and `postRun` are abolished for now. If they return, it will be as an extension of each language SDK that needs them, not in the core.
 
 **Today.**
 
 - `_card.json` names a `language` from a fixed list (`python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia`, `ruby`; [Code Card settings](CardGuide.md#code-card-settings)).
 - The kernel runs a Bash Card's program directly, and Package Cards load `lib/main.so` ([Another system](features.md#another-system-x86_64-linux)).
-- For another system, a Card's build makes the worker (`worker` of the Nix SDK) from the Card's own nixpkgs ([Another system](features.md#another-system-x86_64-linux)).
+- For another system, a Card's build makes the worker (`worker` in `sdk/nix/default.nix`) from the Card's own nixpkgs ([Another system](features.md#another-system-x86_64-linux)).
 - `preRun → run → postRun` are steps that the worker runs ([Worker state](CardGuide.md#worker-state)).
-- hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)), and `InputTypes` takes a `language` used to render SDK definitions ([Protocol](Protocol.md#inputtypes)).
-- The SDKs live in [sdk/](../sdk/) of this repository, with the [Nix SDK](../sdk/nix/default.nix).
+- hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)), and `InputTypes` takes a `language` used to render language-specific type definitions ([Protocol](Protocol.md#inputtypes)).
+- Today's language SDKs live in [sdk/](../sdk/) of this repository, with their Nix builders in [sdk/nix/default.nix](../sdk/nix/default.nix).
 
 ## What the core evaluates
 
@@ -33,23 +43,23 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
   - `run`: one or more derivations containing `lib/main.so`, plus their labels;
   - `views`;
   - `exports`.
-- An SDK's Nix entry only returns the derivation.
+- A language SDK's Nix builder only returns the derivation.
 - This removes the manifest JSON that is defined in two places today.
 
-**Today.** `entry_nix` in `tsugumid/runtime/src/nix.cc` calls `tsugumi.manifestFor` ([sdk/nix/default.nix](../sdk/nix/default.nix)). The SDK writes the manifest JSON, and `schema::CardManifest` decodes it again (`nix.cc:773`).
+**Today.** `entry_nix` in `tsugumid/runtime/src/nix.cc` calls `tsugumi.manifestFor` ([sdk/nix/default.nix](../sdk/nix/default.nix)). The Nix builders write the manifest JSON, and `schema::CardManifest` decodes it again (`nix.cc:773`).
 
-## What the core needs from an SDK
+## What the core needs from a language SDK
 
-**Decided.** There is no SDK metadata. The interface between the core and an SDK is only:
+**Decided.** There is no language SDK metadata. The interface between the core and a language SDK is only:
 
-1. **a Nix build entry** that returns a derivation containing `lib/main.so`;
+1. **a Nix builder** that returns a derivation containing `lib/main.so`;
 2. **[Card ABI 9](CardABI.md).**
 
-What an SDK might otherwise have described lives elsewhere:
+What a language SDK might otherwise have described lives elsewhere:
 
 - Highlighting by file extension is UI presentation.
 - Formatting is the Agent's job, or the Card's `default.nix` can expose a formatter.
-- The guide is ordinary documentation in the SDK's repository.
+- The guide is ordinary documentation of the language SDK, in tsugumi-kit.
 - The generated header (`card.hh`) is the description of the types.
 - These are removed from the core:
   - hostd's `DescribeInput`;
@@ -67,7 +77,7 @@ What an SDK might otherwise have described lives elsewhere:
 
 **Decided.**
 
-- Templates are independent of the SDK, and of the core and the UI.
+- Templates are independent of the language SDKs, and of the core and the UI.
 - There are template stores at two levels:
   - the host, under Tsugumi's support folder;
   - the project: `templates/` in the project, versioned with it.
@@ -83,7 +93,7 @@ What an SDK might otherwise have described lives elsewhere:
 - The "New Card" menu offers:
   - Draft, Trigger, Input, Branch, Fork, Merge and Collect;
   - "From template…", with Project and Host sections and nothing preselected.
-- No templates ship in the core. Example templates live in the separate SDK repository, which will be split out later.
+- No templates ship in the core. Example templates live in tsugumi-kit.
 - These are removed:
   - the fixed language lists;
   - `ui/shared/templates`;
@@ -148,28 +158,28 @@ The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. E
 **Decided.**
 
 1. Remove language knowledge from the core.
-2. Rebuild the SDK with C++ as the reference.
-3. Make the SDK self-contained in this repository.
-4. Split it out into its own repository.
+2. Rebuild the language SDKs, with the C++ SDK as the reference.
+3. Make the language SDKs self-contained in this repository.
+4. Split them out into tsugumi-kit.
 
-- The default SDK ships with the core until the split.
+- The default language SDKs ship with the core until the split.
 - The migration to [Card ABI 9](CardABI.md) happens on `main`. C++ moves first; each other language is unavailable until it is ported.
 
 **Today.** None of these steps has started.
 
-## The bundled SDKs
+## The default language SDKs
 
-**Decided.** These points are part of the plan for the SDKs bundled with Tsugumi, not constraints of the ABI.
+**Decided.** These points are part of the plan for the default language SDKs, not constraints of the ABI.
 
-- How values are mapped inside an SDK is that SDK's business.
-- R, Julia and Ruby start by passing values as JSON inside their SDK:
-  - Generated, typed C++ in that SDK's `main.so` converts FlatBuffers to and from JSON, with no reflection.
+- How values are mapped inside a language SDK is that SDK's business.
+- The R, Julia and Ruby SDKs start by passing values as JSON inside the SDK:
+  - Generated, typed C++ in the SDK's `main.so` converts FlatBuffers to and from JSON, with no reflection.
   - The interpreter uses its ordinary JSON library.
   - The ABI, and the values passed from Card to Card, stay FlatBuffers.
   - In R, integers beyond 2^53 become decimal strings.
   - NaN and Inf become fixed tokens.
   - `[ubyte]` becomes base64.
-- The SDK may later switch to direct C-API glue without touching the ABI.
+- Each of these SDKs may later switch to direct C-API glue without touching the ABI.
 
 **Today.** R, Julia and Ruby return values that the worker converts from JSON to each port's FlatBuffer ([Building results](CardGuide.md#building-results)).
 
@@ -187,7 +197,6 @@ The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. E
 
 These questions are not decided yet:
 
-- The name of the separate SDK repository, for example `tsugumi-kit` or `tsugumi-sdk`.
 - **The native module contract**, the next design topic (from a Codex study):
   - a single `view_dispatch` entry, with `Init`, `DataChanged`, `Viewport`, `Input`, `Action` and `Frame`;
   - optional host services:

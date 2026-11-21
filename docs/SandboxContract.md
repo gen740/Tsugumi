@@ -30,7 +30,7 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 - With `reuseWorker`, a Card may carry state across its own runs. This is acceptable for the same reason that memory carries over.
 - A reused worker:
   - ends when the series of runs ends;
-  - is recreated when the Card's definition, SDK or grants change;
+  - is recreated when the Card's definition, language SDK or grants change;
   - takes one call at a time.
 - When a definition changes:
   - new calls go to a new worker;
@@ -86,7 +86,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - the network.
 - Grants reach the Card as environment variables.
 - The TLS CA is confined to the Card. It defaults to Nix's `cacert` and never comes from the launcher's environment.
-- **I/O that the Card starts through a grant is an explicitly permitted side effect.** For example, a Card can download from the network or write into a read-write host path. "Run data travel only on `tsugumid`'s channel" ([The core and the Card SDK](CoreAndSDK.md#philosophy-constraints-that-still-hold)) covers Tsugumi's own transport, not what a Card does through its grants.
+- **I/O that the Card starts through a grant is an explicitly permitted side effect.** For example, a Card can download from the network or write into a read-write host path. "Run data travel only on `tsugumid`'s channel" ([The core and the language SDKs](CoreAndSDK.md#philosophy-constraints-that-still-hold)) covers Tsugumi's own transport, not what a Card does through its grants.
 
 **Today.**
 
@@ -150,7 +150,7 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 - the `TSUGUMI_*_DIR` variables;
 - the per-call change of `HOME`.
 
-`MPLCONFIGDIR` moves to the SDK.
+`MPLCONFIGDIR` moves to the Python SDK.
 
 **Today.**
 

@@ -51,8 +51,8 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. The signed helper holds `vm.lock` and hostd manages its resident project environments ([Architecture](features.md#1-architecture)) |
 | **`tsugumi-vmd`** | The managing process inside the VM. Starts each project's `tsugumid` with its own uid, namespaces and cgroup |
 | **`tsugumi-workerd`** | The persistent listener on a remote worker machine; starts `tsugumi-worker` processes to run Cards ([Remote execution](RemoteExecution.md)) |
-| **Card SDK** | The part that turns a Card's sources into `lib/main.so` for one language; chosen per Card. Decided: the core knows no language ([The core and the Card SDK](CoreAndSDK.md)) |
-| **Card ABI** | The contract between the core and a Card SDK: the `tsugumi_main` entry in `lib/main.so`. ABI 8 today; ABI 9 is decided ([Card ABI 9](CardABI.md)) |
+| **_language_ SDK** | The swappable part for one language (C++ SDK, Python SDK, …) that turns a Card's sources into `lib/main.so`; chosen per Card. Decided: the core knows no language ([The core and the language SDKs](CoreAndSDK.md#terms)) |
+| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` in `lib/main.so` plus `card.fbs`. ABI 8 today; ABI 9 is decided ([Card ABI 9](CardABI.md)) |
 | **Worker** | The process that runs a Card's code. Can stay resident across runs ([Worker state](CardGuide.md#worker-state)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **pkgsPath** | The nixpkgs that Cards use, pinned (`tsugumi.json`) |
