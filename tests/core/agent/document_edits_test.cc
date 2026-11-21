@@ -104,7 +104,8 @@ TEST(DocumentTemplate,
     const auto reply = WriteTemplate(name, "new-card.2");
     const auto card =
         json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "language"), name);
+    EXPECT_EQ(json::Text(card, "type"), "code");
+    EXPECT_FALSE(card.contains("language"));
     EXPECT_EQ(json::Array(card.at("inputs")).size(), 1);
     std::set<std::string> paths;
     for (const auto& file : reply.files) {

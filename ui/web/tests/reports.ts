@@ -10,7 +10,8 @@ for (const engine of ['rmarkdown', 'quarto']) {
   const template = `report_${engine}` as DefinitionTemplate
   const card = await session.addCard(template, [], { x: 0, y: 0 })
   const definition = session.cardDefinition(card)
-  assert.equal(get(definition, 'language'), 'r')
+  assert.equal(get(definition, 'type'), 'code')
+  assert.equal(get(definition, 'language'), undefined)
   assert.equal(get(definition, 'retainArtifact'), true)
   assert.equal(get(definition, 'artifactOutput'), 'report')
   assert.ok(templateIcon(template))
