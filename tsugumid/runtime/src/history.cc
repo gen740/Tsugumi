@@ -1048,7 +1048,7 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
       *j.schema = put_schema(db, *v.type);
       *j.root_type = v.type->root_type;
       *j.data_b64 = crypto::base64(v.bytes);
-      *j.recorded_path = v.recorded_path;
+      *j.recorded_path = v.recorded_path.value_or("");
       entry.values->push_back(std::move(j));
     }
     list.groups->push_back(std::move(entry));
@@ -1586,7 +1586,8 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
       }
       if (!crypto::base64_decode(**value.data_b64, v.bytes)) return std::nullopt;
       v.type = type->second;
-      v.recorded_path = *value.recorded_path;
+      if (const auto* path = schema::get(value.recorded_path); path && !path->empty())
+        v.recorded_path = *path;
       group.values.push_back(std::move(v));
     }
     li.groups.push_back(std::move(group));
