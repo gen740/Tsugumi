@@ -33,6 +33,9 @@ class Db;
 struct ExecutionResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
+  // Completed remote build and journal entries commit with the invocation.
+  std::vector<std::pair<LogStream, std::string>> auxiliary_logs = {};
+  bool auxiliary_logs_truncated = false;
 };
 
 // One invocation handed to a backend.

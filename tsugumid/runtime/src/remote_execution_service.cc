@@ -306,6 +306,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
           });
         }
         output.outputs = std::move(result.outputs);
+        output.auxiliary_logs = std::move(result.auxiliary_logs);
+        output.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
         output.failure = std::move(result.failure);
         if (output.failure) s.execution_state = RemoteExecutionState::failed;
         return output;

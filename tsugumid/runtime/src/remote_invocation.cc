@@ -11,6 +11,7 @@
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/log.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -66,7 +67,7 @@ auto staged_input_path(size_t index, const stdfs::path& name) -> stdfs::path {
 }
 
 auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
-                 const WorkerProc::LogSink& sink) -> void {
+                 const WorkerProc::LogSink& sink, RemoteInvocationResult& result) -> void {
   std::ifstream stream(path, std::ios::binary);
   // The complete result is authoritative: the entries recorded while the job
   // ran must be exactly its prefix, so none is recorded twice or lost.
@@ -83,10 +84,17 @@ auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
   }
   if (recorded.bytes && prefix.finish_hex() != recorded.sha256)
     throw std::runtime_error("remote log differs from its recorded part");
+  workerd::InvocationLog auxiliary_budget(kInvocationLogLimitBytes);
   std::string line;
-  while (std::getline(stream, line))
-    if (auto [stream, text] = decode_remote_log_entry(line); sink)
-      sink(stream, text);
+  while (std::getline(stream, line)) {
+    auto [kind, text] = decode_remote_log_entry(line);
+    if (kind == LogStream::standard_output || kind == LogStream::standard_error) {
+      if (sink) sink(kind, text);
+    } else if (auxiliary_budget.append(kind, text)) {
+      result.auxiliary_logs.emplace_back(kind, std::move(text));
+    }
+  }
+  result.auxiliary_logs_truncated = auxiliary_budget.truncated();
 }
 
 }  // namespace
@@ -454,7 +462,7 @@ auto import_remote_result(
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }
-  import_logs(temp / "logs.jsonl", recorded, log);
+  import_logs(temp / "logs.jsonl", recorded, log, result);
   if (display && decoded_display) display(*decoded_display);
   return result;
 }

@@ -834,6 +834,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   struct Produced {
     std::vector<Value> outputs;
     std::optional<FailureData> failure;
+    std::vector<std::pair<LogStream, std::string>> auxiliary_logs = {};
+    bool auxiliary_logs_truncated = false;
     bool detached = false;
     std::optional<InvocationSummaryData> unpublished;
   };
@@ -1508,10 +1510,29 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           w.cancellation->failed.store(true);
           w.cancellation->request_stop();
         }
+        bool auxiliary_truncated = false;
+        if (!out.auxiliary_logs.empty() || out.auxiliary_logs_truncated) {
+          std::lock_guard lock(log_policy_mu_);
+          auto& budget = log_budget(s.card, s.invocation);
+          std::erase_if(out.auxiliary_logs, [&](const auto& entry) {
+            return !budget.append(entry.first, entry.second);
+          });
+          if (out.auxiliary_logs_truncated) budget.truncate();
+          auxiliary_truncated = budget.truncated();
+        }
+        std::map<LogStream, std::vector<LogEnd>> logs;
         h.write_sync([&](sql::Db& db) {
           if (artifact) History::put_artifact(db, *artifact);
+          for (const auto& [stream, text] : out.auxiliary_logs)
+            logs[stream] = History::append_log(
+                db, s.run_id, s.card, s.invocation, stream, text);
+          if (auxiliary_truncated)
+            History::mark_log_truncated(db, s.run_id, s.card, s.invocation,
+                                        kInvocationLogLimitBytes, true);
           h.complete_invocation(db, rec);
         });
+        for (const auto& [_, ends] : logs)
+          for (const auto& end : ends) svc_.server()->broadcast(log_note(end));
         // The record holds the save stage as closed just before its commit.
         s.stages = done.stages;
         h.clear_live(s);
@@ -2040,6 +2061,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     s.transfer_name.clear();
     Produced p;
     p.failure = std::move(result.failure);
+    p.auxiliary_logs = std::move(result.auxiliary_logs);
+    p.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
     if (!p.failure) p.outputs = std::move(result.outputs);
     return p;
   }
