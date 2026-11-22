@@ -138,6 +138,15 @@ class Service : public RequestSink {
   // A run finished: its record goes to the project's copy soon.
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& record_json);
+  // The views a Card declares (name -> blob), set with the full list each
+  // time CardViewsUpdated is sent; an empty list clears them. CardViewRead
+  // serves only these files.
+  struct DeclaredView {
+    std::string name;
+    std::string blob;
+  };
+  auto set_card_views(const CardPath& card, std::vector<DeclaredView> views)
+      -> void;
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -211,6 +220,7 @@ class Service : public RequestSink {
   void artifact_read(RequestIn& req);
   void log_range(RequestIn& req);
   void view_set_visible(RequestIn& req);
+  void card_view_read(RequestIn& req);
   void view_save(RequestIn& req);
 
   // Receipt handling shared by mutating requests. Returns true when the
@@ -250,6 +260,8 @@ class Service : public RequestSink {
   // (size, modification time) when checked. Later pages read their range only.
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
+  std::mutex card_views_mu_;
+  std::map<std::string, std::vector<DeclaredView>> card_views_;  // path_key
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;

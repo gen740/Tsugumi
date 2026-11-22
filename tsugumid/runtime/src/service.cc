@@ -746,6 +746,7 @@ std::vector<std::string> Service::capabilities() {
                                    "LogRange",
                                    "ViewSetVisible",
                                    "ViewSave",
+                                   "CardViewRead",
                                    "NixSourceResolve",
                                    "VersionInit",
                                    "VersionMark",
@@ -1017,6 +1018,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::view_set_visible);
     case P::ViewSaveRequest:
       return on_lane(r, std::move(req), &Service::view_save);
+    case P::CardViewReadRequest:
+      return on_lane(r, std::move(req), &Service::card_view_read);
     default:
       return fail(req, FailureData::make(FailureKind::unsupported,
                                          "request is not supported"));

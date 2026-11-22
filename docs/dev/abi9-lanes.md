@@ -16,11 +16,13 @@ Branch each lane from the shared contracts with `origin/main` merged through
 | Host ↔ UI and Agent | [`host.fbs`](../../protocol/host.fbs) lists `TemplateEntry{store, name}` via `TemplateListRequest`. `ProjectTemplateCopy` takes the store and name and copies a graph with fresh Card IDs. `TemplateAdd` is a project operation for the versioned `templates/` store. `HostTemplateAddRequest` writes to the host support folder's `templates/` store. Both accept a folder or a public HTTPS Git repository, ref, and subdirectory. |
 | Card → worker → core | The ABI effect is `int (*send)(void* host, const char* view, const uint8_t* bytes, size_t size)`. It remains valid for the process lifetime, including after a call returns. The private frame is `WorkerDisplay{view, bytes}` with `call_id = 0`. The worker's relay hands off `WorkerDisplayData{view, bytes}` through `WorkerProc::DisplaySink`. |
 | Definition → core → UI | A Card explicitly declares `views = [ { name; type = "dawn"\|"html"; blob; } ]` and can concatenate `sdk.views`. The RPC sends a full `CardViewsUpdated{card, views:[Data.CardView{name, type, blob}]}` through the project subscription. `blob` is the immutable store path to one file. `type` is a string. The list is available before a run, and an empty list clears previous declarations for the Card. |
+| Core → UI (view files) | `CardViewReadRequest{card, name, offset, length}` returns `CardViewContent{bytes, total}`: a page (at most 1 MiB, default 1 MiB) of the blob that the Card's current declaration names `name`, and the file's total size. The core serves only blobs of the list it last sent in `CardViewsUpdated` (`Service::set_card_views`). It rejects other names with `not_found` and an offset past the end with `invalid_range`. It neither checks nor interprets the bytes. UIs read view files through this request, including when the store is inside the VM. |
 | Core → UI | `DisplayUpdated{display:Data.Display{card, run_id, view, bytes}}`. The core stamps the Card and active run; `run_id` is absent between runs. `DisplayRunStateChanged{card, run_id, state}` carries `started` or `ended`. Use [`data.fbs`](../../protocol/data.fbs) and [`tsugumi.fbs`](../../protocol/tsugumi.fbs). The queue keeps the latest pending data per Card and view. Preserve control message order. |
 | UI → HTML | In an isolated, network-disabled frame, transfer a MessagePort with `{tsugumi: 1, port}`. Send `{type: "data", bytes: ArrayBuffer}` and `{type: "run", state: "started"\|"ended"}` on that port. Show a placeholder for `dawn` until the native host is available. |
 
-The core relays declarations and data without resolving view names, reading
-blob contents, or interpreting their bytes. The UI matches the name against the
+The core relays declarations and data without resolving view names or
+interpreting their bytes. Serving a declared blob through `CardViewRead` is
+transport: the core reads only the file the Card declared under that name. The UI matches the name against the
 Card's declarations and hosts the declared type. Unknown names are handled in
 the UI. Display messages and control events are transient, including for
 remote runs. The display path has no history rows, output files, trace
@@ -95,10 +97,15 @@ payloads, or `ModuleRead` request.
   and `template_copy` respect project access, and `template_add` and
   `template_import` require approval.
 - Consume the Nix view list and `DisplaySink`. Publish
-  `CardViewsUpdated` on visibility and definition changes, stamp
-  `DisplayUpdated` using the active run at arrival, and publish
-  `DisplayRunStateChanged` around each Card's participation. Coalesce only
-  pending data for the same Card and view within a control interval.
+  `CardViewsUpdated` on visibility and definition changes, and pass the same
+  list to `Service::set_card_views` so `CardViewRead` serves it (an empty list
+  clears it). Stamp `DisplayUpdated` using the active run at arrival, and
+  publish `DisplayRunStateChanged` around each Card's participation.
+  Coalesce only pending data for the same Card and view within a control
+  interval.
+- When the declarations arrive, remove the strict `xfail` markers in
+  `tests/core/test_card_view_read.py`. The test's mocked build uses the Nix
+  lane's `product` plan.
 - Accept when RPC tests show the declaration list before any run, deliver
   arbitrary bytes including NUL and non-UTF-8 under the original view name,
   cover start/data/end order and slow subscribers, and verify post-return
@@ -112,9 +119,9 @@ payloads, or `ModuleRead` request.
   Coordinate shared viewer or localization edits requested by the Mac lane.
   Keep the Web template picker and its tests on the Host RPCs.
 - Consume generated TypeScript `CardViewsUpdated`, `DisplayUpdated`,
-  and `DisplayRunStateChanged`. The Web host reads declared HTML files
-  through the platform store access path and the browser hosts them in a
-  sandboxed iframe. Scope file access to the declared immutable view blobs.
+  and `DisplayRunStateChanged`. Read declared HTML files with
+  `CardViewReadRequest` in pages until `total`, and host them in a sandboxed
+  iframe in the browser. Do not read view blobs from the store directly.
 - Accept when `web-typecheck` and the Web behavior tests cover two
   independently addressed views, a pre-run empty frame, byte-for-byte
   MessagePort delivery, ordered control messages, network isolation, frame
@@ -128,8 +135,8 @@ payloads, or `ModuleRead` request.
   Coordinate the bundled Git and nixfmt resources with the Nix evaluation
   lane.
 - Consume the same three notifications in the generated Swift types.
-  Load the declared HTML through the platform store access path and keep it
-  inside an isolated WebKit frame. Use the same MessagePort contract as Web.
+  Load the declared HTML with `CardViewReadRequest`, paging until `total`,
+  because the store is inside the VM. Keep it inside an isolated WebKit frame. Use the same MessagePort contract as Web.
 - Accept when Swift tests and a signed background app run verify pre-run
   views, per-name routing, start/data/end, post-return bytes, network
   isolation, teardown, and the Dawn placeholder. Check the app bundle for

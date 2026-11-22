@@ -1,4 +1,4 @@
-// Run, SDK, history, value, artifact and log handlers.
+// Run, SDK, history, value, artifact, declared view file and log handlers.
 #include <flatbuffers/reflection.h>
 #include <sys/stat.h>
 
@@ -987,6 +987,54 @@ void Service::artifact_read(RequestIn& req) {
   reply(req, wire::file_page(req.request_id,
                              stdfs::path(member->path).filename().string(),
                              *slice, offset, size, member->hash));
+}
+
+auto Service::set_card_views(const CardPath& card,
+                             std::vector<DeclaredView> views) -> void {
+  std::lock_guard<std::mutex> l(card_views_mu_);
+  if (views.empty())
+    card_views_.erase(path_key(card));
+  else
+    card_views_[path_key(card)] = std::move(views);
+}
+
+// Transport only: the file comes from the Card's own declaration, and its
+// bytes are neither checked nor interpreted.
+void Service::card_view_read(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_CardViewReadRequest();
+  auto card = wire::card_arg(r->card());
+  std::string name = r->name()->str();
+  std::string blob;
+  {
+    std::lock_guard<std::mutex> l(card_views_mu_);
+    if (auto found = card_views_.find(path_key(card));
+        found != card_views_.end())
+      for (const auto& v : found->second)
+        if (v.name == name) blob = v.blob;
+  }
+  if (blob.empty())
+    throw Failed(FailureKind::not_found, "the Card declares no view " + name,
+                 {{"name", name}});
+  uint64_t offset = r->offset().value_or(0);
+  uint64_t limit = content_limit(r->length());
+  struct stat st{};
+  if (::stat(blob.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+    throw Failed(FailureKind::not_found, "the view file is missing",
+                 {{"name", name}});
+  auto total = static_cast<uint64_t>(st.st_size);
+  if (offset > total)
+    throw Failed(FailureKind::invalid_range, "offset is past the end");
+  auto slice =
+      fs::read_range(blob, offset, std::min<uint64_t>(limit, total - offset));
+  if (!slice)
+    throw Failed(FailureKind::not_found, "the view file is missing",
+                 {{"name", name}});
+  FBB b(slice->size() + 256);
+  auto bytes = b.CreateVector(reinterpret_cast<const uint8_t*>(slice->data()),
+                              slice->size());
+  auto off = R::CreateCardViewContent(b, bytes, total);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardViewContent,
+                         off.Union()));
 }
 
 void Service::log_range(RequestIn& req) {
