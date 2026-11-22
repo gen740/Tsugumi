@@ -31,13 +31,14 @@ let
           // {
             contract = g + "/contract";
           }
-          // pkgs.lib.optionalAttrs ((builtins.functionArgs builder) ? definitionDir) {
+          // pkgs.lib.optionalAttrs ((pkgs.lib.functionArgs builder) ? definitionDir) {
             inherit definitionDir;
           }
         );
+      # Builders made with callPackage are overridable functors.
       bindBuilders = builtins.mapAttrs (
         _: value:
-        if builtins.isFunction value then
+        if pkgs.lib.isFunction value then
           bind value
         else if builtins.isAttrs value && !pkgs.lib.isDerivation value then
           bindBuilders value

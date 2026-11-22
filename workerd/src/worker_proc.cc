@@ -484,12 +484,22 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   }
 #endif
   spec.argv.insert(spec.argv.end(), {"--package", sp.package});
-  // No PATH: a Card reaches only the tools its SDK builder declared.
   spec.env = {"LANG=C.UTF-8",
               "HOME=" + work_dir(),
               "XDG_CONFIG_HOME=" + work_dir() + "/.config",
               "XDG_CACHE_HOME=" + work_dir() + "/.cache",
               "TMPDIR=" + temporary};
+  // No implicit PATH: only the tools the Card declared to its SDK builder,
+  // which the builder installs in the package's bin directory.
+  {
+    constexpr std::string_view store = "/nix/store";
+    auto on_host = sp.package;
+    if (on_host.starts_with(store))
+      on_host = sp.store_path + on_host.substr(store.size());
+    std::error_code ec;
+    if (std::filesystem::is_directory(on_host + "/bin", ec))
+      spec.env.push_back("PATH=" + sp.package + "/bin");
+  }
   for (const auto& bind : sp.binds) {
     auto path = bind.source;
 #ifdef __linux__

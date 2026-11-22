@@ -13,7 +13,7 @@ from __future__ import annotations
 import socket
 
 from projects import card, conn, run_and_wait, write
-from harness.real_cards import TXT, accept_in_background, bash
+from harness.real_cards import TXT, accept_in_background, python_card, txt_main
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -32,14 +32,29 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
         secret.write_text("of this host")
         escape = tmp_path / "escape.txt"
         project_file = tmp_path / "p" / "tsugumi.json"
-        probe = bash(
-            f'if (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; then echo "loopback: connected"; else echo "loopback: refused"; fi\n'
-            f'if cat {secret} 2>/dev/null; then echo "read: yes"; else echo "read: no"; fi\n'
-            f'if cat {project_file} 2>/dev/null; then echo "project read: yes"; else echo "project read: no"; fi\n'
-            f'echo x > {escape} 2>/dev/null || true\n'
-            f'echo overwritten > {secret} 2>/dev/null || true\n'
-            f'echo tampered >> {project_file} 2>/dev/null || true\n'
-            'printf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT)
+        probe = python_card(txt_main(f"""
+    import socket
+    lines = []
+    try:
+        socket.create_connection(("127.0.0.1", {port}), timeout=5).close()
+        lines.append("loopback: connected")
+    except OSError:
+        lines.append("loopback: refused")
+    for label, name in (("read", {str(secret)!r}), ("project read", {str(project_file)!r})):
+        try:
+            print(open(name).read(), flush=True)
+            lines.append(label + ": yes")
+        except OSError:
+            lines.append(label + ": no")
+    for name, mode, value in (({str(escape)!r}, "w", "x"), ({str(secret)!r}, "w", "overwritten"),
+                              ({str(project_file)!r}, "a", "tampered")):
+        try:
+            with open(name, mode) as f:
+                f.write(value)
+        except OSError:
+            pass
+    print("\\n".join(lines), flush=True)
+    RESULT = 'done'"""), outputs=TXT)
         root = tmp_path / "p"
         write(root, {"start": {"type": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
               [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
@@ -75,23 +90,30 @@ def test_linux_switches_and_named_grants(core_factory, tmp_path):
     original_pid = os.readlink("/proc/self/ns/pid")
     original_ipc = os.readlink("/proc/self/ns/ipc")
     scripts = {
-        "disabled": bash(
-            f'test "$UID" = {os.getuid()} && '
-            f'test "$(readlink /proc/self/ns/pid)" = "{original_pid}" && '
-            f'test "$(readlink /proc/self/ns/ipc)" = "{original_ipc}" && '
-            f'test -f "{outside}" && '
-            """printf '{"out":{"value":"open"}}' > "$TSUGUMI_OUTPUT" """,
-            outputs=TXT, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False}),
-        "enabled": bash(
-            'test "$UID" = 65534 && '
-            f'test "$(readlink /proc/self/ns/pid)" != "{original_pid}" && '
-            f'test "$(readlink /proc/self/ns/ipc)" != "{original_ipc}" && '
-            f'test ! -f "{outside}" && '
-            'test "$(cat "$TSUGUMI_GRANT_SAMPLE_DATA/data")" = readable && '
-            'if echo modified >> "$TSUGUMI_GRANT_SAMPLE_DATA/data"; then exit 1; fi; '
-            'echo staged > "$TSUGUMI_GRANT_RESULT/data"; '
-            """printf '{"out":{"value":"isolated"}}' > "$TSUGUMI_OUTPUT" """,
-            outputs=TXT, grants={"hostPaths": [
+        "disabled": python_card(txt_main(f"""
+    import os
+    assert os.getuid() == {os.getuid()}
+    assert os.readlink("/proc/self/ns/pid") == {original_pid!r}
+    assert os.readlink("/proc/self/ns/ipc") == {original_ipc!r}
+    assert os.path.isfile({str(outside)!r})
+    RESULT = 'open'"""), outputs=TXT, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False}),
+        "enabled": python_card(txt_main(f"""
+    import os
+    assert os.getuid() == 65534
+    assert os.readlink("/proc/self/ns/pid") != {original_pid!r}
+    assert os.readlink("/proc/self/ns/ipc") != {original_ipc!r}
+    assert not os.path.isfile({str(outside)!r})
+    sample = os.environ["TSUGUMI_GRANT_SAMPLE_DATA"] + "/data"
+    assert open(sample).read() == "readable"
+    try:
+        open(sample, "a").write("modified")
+    except OSError:
+        pass
+    else:
+        raise AssertionError("the read grant was writable")
+    with open(os.environ["TSUGUMI_GRANT_RESULT"] + "/data", "w") as f:
+        f.write("staged\\n")
+    RESULT = 'isolated'"""), outputs=TXT, grants={"hostPaths": [
                 {"name": "sample-data", "path": str(shared)},
                 {"name": "result", "path": str(writable), "write": True},
             ]}),
@@ -121,10 +143,16 @@ def test_linux_wayland_socket_is_visible_only_when_granted(core_factory, tmp_pat
         with socket.socket(socket.AF_UNIX) as compositor:
             compositor.bind(endpoint)
             monkeypatch.setenv("WAYLAND_DISPLAY", endpoint)
-            output = """printf '{"out":{"value":"done"}}' > "$TSUGUMI_OUTPUT" """
             definitions = {
-                "granted": bash('test -S "$WAYLAND_DISPLAY" && ' + output, outputs=TXT, grants={"gui": True}),
-                "closed": bash(f'test -z "${{WAYLAND_DISPLAY-}}" && test ! -S "{endpoint}" && ' + output, outputs=TXT),
+                "granted": python_card(txt_main("""
+    import os, stat
+    assert stat.S_ISSOCK(os.stat(os.environ["WAYLAND_DISPLAY"]).st_mode)
+    RESULT = 'done'"""), outputs=TXT, grants={"gui": True}),
+                "closed": python_card(txt_main(f"""
+    import os
+    assert not os.environ.get("WAYLAND_DISPLAY")
+    assert not os.path.exists({endpoint!r})
+    RESULT = 'done'"""), outputs=TXT),
             }
             root = tmp_path / "p"
             write(root, definitions, [card(name, name) for name in definitions], [])

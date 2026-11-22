@@ -46,6 +46,50 @@ def nix_string(s: str) -> str:
     return json.dumps(s).replace("${", "\\${")
 
 
+# main.py that prints PRINTED (bound with values=) and returns no outputs.
+PRINT_MAIN = """from card import Output
+
+def run(input):
+    print(PRINTED, flush=True)
+    return Output()
+"""
+
+
+def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str:
+    """The Nix expression of an ABI 9 run whose main.py is `main`, built with
+    the kit's pythonCard. `values` binds Python names to Nix string expressions
+    (store paths, evaluated names); their string context builds them into the
+    Card's closure. `tools` is a Nix list of packages for subprocesses."""
+    parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
+    source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
+    options = f" tools = {tools};" if tools else ""
+    return "(inputs.tsugumi.pythonSdk.pythonCard { src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
+
+
+def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: str = "", extra: str = "") -> str:
+    """default.nix of a Card whose run is python_run(main, ...)."""
+    return ("{ pkgs, inputs, params }:\n" + (f"let\n{let}\nin\n" if let else "")
+            + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
+
+
+def printing_run(text_nix: str) -> str:
+    """A run that prints the value of the Nix string expression `text_nix`."""
+    return python_run(PRINT_MAIN, values={"PRINTED": text_nix})
+
+
+def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools="", extra="", **settings) -> dict:
+    body = {"type": "code", "inputs": [{"name": i} for i in inputs], **settings}
+    body["_outputs"] = outputs
+    body["_nix"] = python_nix(main, values=values, let=let, tools=tools, extra=extra)
+    return body
+
+
+def txt_main(body: str) -> str:
+    """main.py running `body` (Python, indented by 4) and returning out = RESULT."""
+    return ("from card import Output\nfrom outputs.out.t.Txt import TxtT\n\ndef run(input):\n"
+            + body + "\n    return Output(out=TxtT(value=RESULT))\n")
+
+
 def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **settings) -> dict:
     attrs = [f"run = {nix_string(script)};"]
     if pre:
@@ -135,34 +179,23 @@ def check_python_card_environment(c) -> None:
             assert values["TSUGUMI_RUN_ID"] is None, seen
 
 
-# Discard context only in the assertions: otherwise this fixture would add the
-# tools to the closure itself and conceal a missing manifest dependency.
-DEFINITION_TOOLS_NIX = r'''{ pkgs, inputs, params }:
-let
-  tools = with pkgs; [ bash coreutils findutils gnugrep gnused gawk gnutar gzip jq ];
-  path = builtins.unsafeDiscardStringContext (pkgs.lib.makeBinPath tools);
-  shell = builtins.unsafeDiscardStringContext "${pkgs.bash}/bin/bash";
-  # Not named `jq`: a let binding would take the place of pkgs.jq in `tools`.
-  jqProgram = builtins.unsafeDiscardStringContext "${pkgs.lib.getBin pkgs.jq}/bin/jq";
-  check = ''
-    set -eu
-    test "$BASH" = "${shell}"
-    test "$PATH" = "${path}"
-    test "$(command -v jq)" = "${jqProgram}"
-    jq --version >&2
-  '';
-in {
-  preRun = check + "echo pre-definition-tools";
-  run = check + ''
-    jq -nc --arg value "$PATH;$BASH" '{out:{value:$value}}' > "$TSUGUMI_OUTPUT"
-  '';
-  postRun = check + "echo post-definition-tools";
-}
-'''
+# A Card that declares jq to its builder: the worker puts only the package's
+# bin directory on PATH, so jq resolves there and nothing else does.
+DEFINITION_TOOLS_MAIN = """import os, shutil, subprocess
+from card import Output
+from outputs.out.t.Txt import TxtT
+
+def run(input):
+    jq = shutil.which("jq")
+    assert jq and shutil.which("bash") is None and shutil.which("sh") is None, os.environ.get("PATH")
+    subprocess.run([jq, "--version"], check=True)
+    return Output(out=TxtT(value=os.environ["PATH"] + ";" + os.path.realpath(jq)))
+"""
+DEFINITION_TOOLS_NIX = python_nix(DEFINITION_TOOLS_MAIN, tools="[ pkgs.jq ]")
 
 
 def check_definition_tools(client, run_id, name="work"):
-    """The body and both hooks use the definition's tools, all in its recorded closure."""
+    """The Card's PATH is its package's bin, and the declared tool is in its recorded closure."""
     from harness.observations import decode_scalar, read_output
 
     environment = next(e for e in client.call("RunEnvironmentsRequest", runId=run_id).environments
@@ -176,10 +209,8 @@ def check_definition_tools(client, run_id, name="work"):
         if page.nextOffset is None:
             break
         offset = page.nextOffset
-    search, shell = decode_scalar(read_output(client, run_id, card=name)).split(";")
-    assert str(Path(shell).parent.parent) in paths
-    for directory in search.split(":"):
-        assert str(Path(directory).parent) in paths
-    logs = text(client.call("LogRangeRequest", runId=run_id, card=path(name), stream=1).text)
-    assert {"pre-definition-tools", "post-definition-tools"} <= set(logs.splitlines())
-    return text(environment.id), set(paths), search, shell
+    search, tool = decode_scalar(read_output(client, run_id, card=name)).split(";")
+    assert ":" not in search and search.endswith("/bin"), search
+    assert str(Path(search).parent) in paths
+    assert "/".join(tool.split("/")[:4]) in paths, tool
+    return text(environment.id), set(paths), search, tool

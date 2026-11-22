@@ -12,6 +12,7 @@ import pytest
 
 from projects import builtin_project, card, card_in_card, conn, run_and_wait, write
 from harness.permissions import permissions, save
+from harness.real_cards import python_run, printing_run
 from tsugumi_client import RpcFailure, change, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
@@ -22,6 +23,20 @@ SOURCE = {"name": "ciao", "type": "flake", "ref": REF}
 OUTPUTS = "namespace t;\ntable Outputs {}\nroot_type Outputs;\n"
 
 
+NUMBER_ONE = """from card import Output
+from outputs.out.Number import NumberT
+
+def run(input):
+    return Output(out=NumberT(value=1))
+"""
+CAT_VALUES = """from card import Output
+
+def run(input):
+    print(open(FIRST).read() + open(SECOND).read(), end="", flush=True)
+    return Output()
+"""
+
+
 def nix(body: str) -> str:
     return "{ pkgs, inputs, params }:\n" + body + "\n"
 
@@ -30,12 +45,12 @@ DEFS = {
     "start": {"type": "trigger"},
     # The name alone: reading the package does not build it.
     "reads": {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
-              "_nix": nix('{ run = "echo ${inputs.sources.ciao.packages.ciao.name} ${inputs.sources.ciao.rev}"; }')},
-    "plain": {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS, "_nix": nix('{ run = "echo plain"; }')},
+              "_nix": nix('{ run = ' + printing_run('"${inputs.sources.ciao.packages.ciao.name} ${inputs.sources.ciao.rev}"') + '; }')},
+    "plain": {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS, "_nix": nix('{ run = ' + printing_run('"plain"') + '; }')},
     "get_flake": {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
-                  "_nix": nix(f'{{ run = "echo ${{(builtins.getFlake "{REF}").rev}}"; }}')},
+                  "_nix": nix('{ run = ' + printing_run(f'(builtins.getFlake "{REF}").rev') + '; }')},
     "fetch_tree": {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
-                   "_nix": nix(f'{{ run = "echo ${{(builtins.fetchTree "{REF}").rev}}"; }}')},
+                   "_nix": nix('{ run = ' + printing_run(f'(builtins.fetchTree "{REF}").rev') + '; }')},
 }
 
 
@@ -64,19 +79,15 @@ def run(core_factory, root, *card_path, expected=RunState.succeeded):
 
 
 def test_connected_nix_exports_are_shared_by_run_list_implementations(core_factory, tmp_path):
-    """Two Bash implementations read the same function through a connected input port."""
+    """Two implementations read the same function through a connected input port."""
     root = tmp_path / "run-list"
     number = 'table Number { value:ulong; } table Outputs { out:Number; } root_type Outputs;'
     producer = nix('''{
       exports.greet = name: "hello ${name}";
-      run = ''printf '%s' '{"out":{"value":1}}' > "$TSUGUMI_OUTPUT"'';
+      run = ''' + python_run(NUMBER_ONE) + ''';
     }''')
-    consumer = nix('''{
-      run = [
-        "echo '${inputs.data.greet \"first\"}'"
-        "echo '${inputs.data.greet \"second\"}'"
-      ];
-    }''')
+    consumer = nix('{ run = [ ' + printing_run('inputs.data.greet "first"') + ' '
+                   + printing_run('inputs.data.greet "second"') + ' ]; }')
     definitions = {
         "start": {"type": "trigger"},
         "producer": {"type": "code", "_outputs": number, "_nix": producer},
@@ -89,7 +100,7 @@ def test_connected_nix_exports_are_shared_by_run_list_implementations(core_facto
 
 
 def test_nix_rejects_a_nested_run_list(core_factory, tmp_path):
-    """An implementation is a shell body or package, so nested lists fail before execution."""
+    """An implementation is a Card package, so nested lists fail before execution."""
     root = tmp_path / "nested-run-list"
     definitions = {
         "start": {"type": "trigger"},
@@ -206,7 +217,7 @@ def test_external_package_customization_preserves_original_and_changes_derivatio
         "_nix": nix('''let
           original = inputs.sources.original.packages.ciao;
           customized = inputs.sources.customized.packages.ciao;
-        in { run = "echo ${original.name} ${customized.name} ${builtins.toString (original.drvPath != customized.drvPath)}"; }'''),
+        in { run = ''' + printing_run('"${original.name} ${customized.name} ${builtins.toString (original.drvPath != customized.drvPath)}"') + '''; }'''),
     }
     write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
     opt_in(root, [dict(SOURCE, name="original"),
@@ -256,7 +267,8 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         definitions["inspect"] = {
             "type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
             "_nix": nix('''{
-              run = "cat ${inputs.sources.fixture.packages.sample}/value ${inputs.sources.original.packages.sample}/value";
+              run = ''' + python_run(CAT_VALUES, values={"FIRST": '"${inputs.sources.fixture.packages.sample}/value"',
+                                                       "SECOND": '"${inputs.sources.original.packages.sample}/value"'}) + ''';
             }'''),
         }
         write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
@@ -320,7 +332,7 @@ def test_card_override_attempt_points_to_supported_project_configuration(core_fa
     definitions = dict(DEFS)
     definitions["custom"] = {"type": "code", "inputs": [{"name": "start"}], "_outputs": OUTPUTS,
                              "_nix": nix('''let p = inputs.sources.ciao.packages.ciao.overrideAttrs (_: { name = "custom"; });
-                                            in { run = "echo ${p.name}"; }''')}
+                                            in { run = ''' + printing_run('p.name') + '''; }''')}
     write(root, definitions, [card("start", "start"), card("c", "custom")], [conn("start", "out", "c", "start")])
     opt_in(root, [SOURCE])
     run(core_factory, root, "c", expected=RunState.failed)

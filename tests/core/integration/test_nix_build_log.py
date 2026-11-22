@@ -9,7 +9,7 @@ from uuid import uuid4
 
 import pytest
 
-from harness.real_cards import bash, log
+from harness.real_cards import log, python_card, python_nix
 from harness.scenario import run
 from projects import (MSG_FBS, card, run_and_wait, start_run, wait_for_log, wait_run,
                       wait_run_notification, write)
@@ -20,6 +20,34 @@ from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+
+# ABI 9 Cards that depend on the probe derivation through main.py's text.
+PROBE_MAIN = """import os
+from card import Output
+
+def run(input):
+    assert os.path.exists(PROBE)
+    print(PRINTED, flush=True)
+    return Output()
+"""
+CAT_MAIN = """from card import Output
+
+def run(input):
+    print(open(PROBE).read(), end="", flush=True)
+    return Output()
+"""
+EXISTS_MAIN = """import os
+from card import Output
+
+def run(input):
+    assert os.path.exists(PROBE)
+    return Output()
+"""
+EMPTY_MAIN = """from card import Output
+
+def run(input):
+    return Output()
+"""
 
 
 @pytest.mark.parametrize(
@@ -60,12 +88,9 @@ let
     printf 'builder reached finish\n' >&2
     @finish@
   '';
-in {
-  preRun = ''printf 'pre-run: \377\n' >&2'';
-  run = "test -f ${probe} && echo card-ran";
-  postRun = ''printf 'post-run: \377\n' >&2'';
-}
-'''.replace("@id@", uuid4().hex).replace("@finish@", finish),
+in
+@run@'''.replace("@id@", uuid4().hex).replace("@finish@", finish).replace(
+            "@run@", python_nix(PROBE_MAIN, values={"PROBE": "\"${probe}\"", "PRINTED": "\"card-ran\""}).split("\n", 1)[1]),
     }
     if cancelling:
         # Let the gate fail visibly if a regression prevents live log delivery.
@@ -138,9 +163,6 @@ in {
         assert record.summary.failure.kind == FailureKind.nix_failed
     if state == RunState.succeeded and not truncating:
         assert log(client, run_id, "probe", LogStream.standard_output) == "card-ran\n"
-        stderr = log(client, run_id, "probe", LogStream.standard_error)
-        assert "pre-run: \ufffd\n" in stderr
-        assert "post-run: \ufffd\n" in stderr
 
 
 @pytest.mark.parametrize(
@@ -165,10 +187,9 @@ let
   probe = pkgs.runCommand "tsugumi-build-cores-@id@" {} ''
     printf '%s\n' "$NIX_BUILD_CORES" > "$out"
   '';
-in {
-  run = "cat ${probe}";
-}
-'''.replace("@id@", uuid4().hex),
+in
+@run@'''.replace("@id@", uuid4().hex).replace(
+            "@run@", python_nix(CAT_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
     }
     write(root, {"probe": definition}, [card("probe", "probe")], [])
     client = core_factory(project_root=root).connect()
@@ -193,7 +214,7 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
         listener.settimeout(120)
         port = listener.getsockname()[1]
         defs = {"probe": blocked_builder("probe", port)}
-        defs["warm"] = bash("true", outputs="table Outputs {} root_type Outputs;")
+        defs["warm"] = python_card(EMPTY_MAIN, outputs="table Outputs {} root_type Outputs;")
         write(root, defs, [card(name, name) for name in defs], [])
         client = core_factory(project_root=root).connect()
         # Exercise a build on a later Run, using the existing evaluator.
@@ -227,7 +248,7 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
 
         # The project's pin names a tarball no store has, so the Card's
         # evaluation fetches it through this proxy.
-        write(root, {"fetch": bash("true", outputs="table Outputs {} root_type Outputs;")},
+        write(root, {"fetch": python_card(EMPTY_MAIN, outputs="table Outputs {} root_type Outputs;")},
               [card("fetch", "fetch")], [])
         doc_file = root / "tsugumi.json"
         doc = json.loads(doc_file.read_text())
@@ -277,6 +298,7 @@ let
     read -r line <&3
     touch "$out"
   '';
-in { run = "test -f ${probe}"; }
-'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name),
+in
+@run@'''.replace("@id@", uuid4().hex).replace("@port@", str(port)).replace("@card@", name).replace(
+            "@run@", python_nix(EXISTS_MAIN, values={"PROBE": "\"${probe}\""}).split("\n", 1)[1]),
     }
