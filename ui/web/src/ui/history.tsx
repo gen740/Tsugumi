@@ -304,7 +304,6 @@ type Preview = { kind: 'html'; html: string } | { kind: 'text'; text: string } |
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', tiff: 'image/tiff', svg: 'image/svg+xml', webp: 'image/webp', pdf: 'application/pdf',
 }
-const kindName = (k: D.PortKind) => (k === D.PortKind.File ? 'file' : k === D.PortKind.Directory ? 'directory' : k === D.PortKind.FlatBuffer ? 'flatbuffer' : 'unspecified')
 
 /** Retained outputs of one Card: run/invocation → outputs → files → preview. */
 export function CardArtifactsView({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
@@ -353,7 +352,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       alive = false
     }
   }, [runId, cardKey, session.recordingRevision])
-  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.kind === D.PortKind.Directory ? m : null)
+  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.directory ? m : null)
   useEffect(() => {
     setPreview(undefined)
     if (!session.rpc || !selected || !member) return
@@ -419,7 +418,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}
                   onClick={() => { setArtifactId(s(a.artifactId)); setMember(a.members[0] ? s(a.members[0].path) : undefined) }}>
                   <b className="callout">{s(a.output)}</b>
-                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {kindName(a.kind)} · {a.members.length} 件</span>
+                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {a.directory ? 'directory' : 'file'} · {a.members.length} 件</span>
                 </div>
               ))}
             </div>,

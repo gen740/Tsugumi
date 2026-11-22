@@ -19,7 +19,9 @@ auto InputTypes(const R::InputTypesResult& resolved) -> H::InputTypesT {
       if (const auto* port = input->type()) {
         item->kind =
             port->kind() == Tsugumi::Data::PortKind::Path ? "path" : "value";
-        if (port->schema_bfbs() && port->root_type()) {
+        if (port->kind() == Tsugumi::Data::PortKind::Path) {
+          item->state = "resolved";
+        } else if (port->schema_bfbs() && port->root_type()) {
           types::Type type;
           type.bfbs.assign(
               reinterpret_cast<const char*>(port->schema_bfbs()->data()),

@@ -91,7 +91,7 @@ import Testing
 @MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
   func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
     let v = Tsugumi_Data_NamedValueT()
-    v.name = "file"; v.kind = .file; v.rootType = "File"; v.schemaBfbs = [1]
+    v.name = "file"; v.kind = .path
     v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
     return v
   }

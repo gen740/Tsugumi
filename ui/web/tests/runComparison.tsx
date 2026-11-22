@@ -86,7 +86,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 // Files compare their recorded content, never the serialized storage path.
 {
   const file = (path: string, digest: string | null) => Object.assign(new D.NamedValueT(), {
-    name: 'file', kind: D.PortKind.File, rootType: 'File', schemaBfbs: [1],
+    name: 'file', kind: D.PortKind.Path,
     inlineBytes: [...new TextEncoder().encode(path)], contentHash: path, fileContentHash: digest,
   })
   const x = file('/runs/left/value', 'bytes'), y = file('/runs/right/value', 'bytes')

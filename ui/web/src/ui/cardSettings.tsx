@@ -10,6 +10,7 @@ import { hostCall } from '../wire/host'
 import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
+import { pathChoices } from '../model/pathChoices'
 import { prefs } from '../model/prefs'
 import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
@@ -959,12 +960,12 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   // execution list). A list-typed value without it stays one vector.
   const sweep = arr(get(param, 'sweep'))
   const [draft, setDraft] = useState<string>()
-  const fileInput = model.kind === 'input' && name === 'value' && type === 'string' &&
-    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.File)
+  const pathInput = model.kind === 'input' && name === 'value' && type === 'string' &&
+    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
   const folder = model.session.definitionDir(model.cardKey) ?? ''
   const entered = str(value) ?? ''
   const target = entered.startsWith('project:')
-    ? folder.slice(0, folder.lastIndexOf('definitions/')) + entered.slice(8)
+    ? folder.split('/').slice(0, -3).map((part) => part + '/').join('') + entered.slice(8)
     : folder + entered
   const update = (change: (p: JObj) => void) => {
     const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
@@ -981,6 +982,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
       p.set('data', on ? undefined : first)
     })
   }
+  const choices = pathInput && !sweep ? pathChoices(model.session.sourcePaths, folder) : []
   const sweepText = draft ?? serialize(sweep ?? [], false)
   const parsedSweep = arr(tryParse(sweepText))
   return (
@@ -995,6 +997,10 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
             : type === 'bool'
             ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
             : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
+          {pathInput && !sweep && <Select value={choices.includes(entered) ? entered : ''} onChange={(v) => v && set(v)} style={{ maxWidth: 220 }}
+            help={L('プロジェクトのファイルかフォルダを選びます。')}
+            options={[{ value: '', label: L('ファイルかフォルダを選択…'), disabled: true },
+              ...choices.map((p) => ({ value: p, label: p }))]} />}
           <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
         </div>
         {model.kind === 'input' && <div className="row gap6 center" style={{ marginTop: 4 }}>
@@ -1006,7 +1012,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
             : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
           {type.endsWith('[]') && <div>{L('リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。')}</div>}
         </div>}
-        {fileInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+        {pathInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
           <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
           {!sweep && <div>{L('参照先: {0}', target)}</div>}
         </div>}
@@ -1042,7 +1048,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
     fn(a)
     model.setSetting('inputs', a.length ? a : undefined)
   }
-  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.File || p.kind === D.PortKind.Directory)
+  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.Path)
   return (
     <Form>
       {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
@@ -1093,13 +1099,13 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
             </Row>
           })}
-          {/* Only File / Directory outputs can be kept as artifacts. */}
+          {/* Only Path outputs can be kept as artifacts. */}
           <Row label={L('成果物にする出力')}>
             {keepable.length === 0
-              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('File / Directory の出力がないため、保持できる出力はありません')}</span>
+              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('Path の出力がないため、保持できる出力はありません')}</span>
               : <Select value={str(get(def, 'artifactOutput')) ?? ''} onChange={(v) => model.setSetting('artifactOutput', v || undefined)}
                   options={[{ value: '', label: L('なし') },
-                    ...keepable.map((p) => ({ value: p.name, label: L('{0}（{1}）', p.name, p.kind === D.PortKind.File ? 'File' : 'Directory') }))]} />}
+                    ...keepable.map((p) => ({ value: p.name, label: p.name }))]} />}
           </Row>
         </Section>
       )}
@@ -1202,20 +1208,16 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
           <div className="row gap8 center fill">
             <span className="mono ellipsis" style={{ width: 120, flex: 'none' }}>{port.name}</span>
             <TextField {...portNote(model, 'outputs', port.name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            {types.length === 0 || !p ? (
-              <span className="caption secondary nowrap">{(port.rootType ?? L('未解決')) + (port.optional ? L('（省略可）') : '')}</span>
+            {!p ? (
+              <span className="caption secondary nowrap">{(port.kind === D.PortKind.Path ? 'Path' : port.rootType ?? L('未解決')) + (port.optional ? L('（省略可）') : '')}</span>
             ) : (
-              <>
-                <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }} help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
-                  onChange={(t) => void set(port.name, t, port.kind)}
-                  options={[...(port.rootType === undefined ? [{ value: '', label: L('未解決') }] : []),
-                    ...(port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
-                    ...types.map((t) => ({ value: t, label: shortType(t) }))]} />
-                <Select<number> value={port.kind} style={{ maxWidth: 100 }} help={L('File / Directory は、型に文字列の value（パス）がある場合に選べます')}
-                  onChange={(k) => void set(port.name, port.rootType ?? '', k)}
-                  options={[{ value: D.PortKind.FlatBuffer, label: L('値') }, { value: D.PortKind.File, label: 'File' }, { value: D.PortKind.Directory, label: 'Directory' },
-                    ...(port.kind === D.PortKind.unspecified ? [{ value: D.PortKind.unspecified, label: '—' }] : [])]} />
-              </>
+              <Select value={port.kind === D.PortKind.Path ? 'string' : port.rootType ?? ''} style={{ maxWidth: 150 }}
+                help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
+                onChange={(type) => void set(port.name, type, type === 'string' ? D.PortKind.Path : D.PortKind.FlatBuffer)}
+                options={[...(port.kind !== D.PortKind.Path && port.rootType === undefined ? [{ value: '', label: L('未解決'), disabled: true }] : []),
+                  { value: 'string', label: 'Path' },
+                  ...(port.kind !== D.PortKind.Path && port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
+                  ...types.map((type) => ({ value: type, label: shortType(type) }))]} />
             )}
           </div>
         </Row>

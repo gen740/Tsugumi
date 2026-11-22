@@ -64,7 +64,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
-        R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"path"); } root_type Outputs;)"},
+        R"(attribute "tsugumi"; table Outputs { out:string (tsugumi:"path"); } root_type Outputs;)"},
        {"definitions/dest/_card.json",
         R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
   const auto result = Present(*graph, {"dest"});
@@ -85,8 +85,8 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
   EXPECT_EQ(result.inputs[1]->kind, "path");
-  EXPECT_NE(result.inputs[1]->definition.find("value:string"),
-            std::string::npos);
+  EXPECT_EQ(result.inputs[1]->state, "resolved");
+  EXPECT_TRUE(result.inputs[1]->definition.empty());
   EXPECT_EQ(result.inputs[2]->state, "no_source");
   EXPECT_FALSE(result.inputs[2]->source_card);
   EXPECT_TRUE(result.inputs[2]->definition.empty());
@@ -94,6 +94,23 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   ASSERT_EQ(upstream.inputs.size(), 1u);
   EXPECT_NE(upstream.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
+}
+TEST(InputTypes, PathWithoutSchemaIsResolved) {
+  namespace R = Tsugumi::RPC;
+  namespace D = Tsugumi::Data;
+  flatbuffers::FlatBufferBuilder b;
+  const auto type = D::CreatePort(b, b.CreateString("out"), D::PortKind::Path);
+  const auto input = R::CreateInputType(
+      b, b.CreateString("source"), wire::path(b, {"producer"}),
+      b.CreateString("out"), type);
+  const std::vector inputs{input};
+  b.Finish(R::CreateInputTypesResult(b, 3, b.CreateVector(inputs)));
+  const auto result = host::InputTypes(
+      *flatbuffers::GetRoot<R::InputTypesResult>(b.GetBufferPointer()));
+  ASSERT_EQ(result.inputs.size(), 1u);
+  EXPECT_EQ(result.inputs[0]->state, "resolved");
+  EXPECT_EQ(result.inputs[0]->kind, "path");
+  EXPECT_TRUE(result.inputs[0]->definition.empty());
 }
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(

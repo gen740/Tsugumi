@@ -147,7 +147,7 @@ struct EvidenceView: View {
         artifactMember = member
         let request = Tsugumi_RPC_ArtifactReadRequestT()
         request.artifactId = a.artifactId
-        request.member = a.kind == .directory ? member : nil
+        request.member = a.directory ? member : nil
         request.limitBytes = 65536
         let data: Tsugumi_RPC_FileContentT = try await rpc.call(.artifactreadrequest, request)
         if data.eof == true { preview = NSImage(data: Data(data.bytes)) }
@@ -182,7 +182,7 @@ struct EvidenceView: View {
       guard await target.exists(in: session) else {
         exportError = String(localized: "このプロジェクトに根拠の記録がありません"); return
       }
-      let data = try await rpc.readArtifact(id: artifact.artifactId, member: artifact.kind == .directory ? member : nil)
+      let data = try await rpc.readArtifact(id: artifact.artifactId, member: artifact.directory ? member : nil)
       try data.write(to: url, options: .atomic)
     } catch { exportError = String(describing: error) }
   }

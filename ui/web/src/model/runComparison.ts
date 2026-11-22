@@ -53,7 +53,7 @@ const sameBytes = (a: number[], b: number[]) => a.length === b.length && a.every
 export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Difference {
   if (!a || !b) return a || b ? 'unknown' : 'same'
   if (a.kind !== b.kind || s(a.rootType) !== s(b.rootType) || !sameBytes(a.schemaBfbs, b.schemaBfbs)) return 'changed'
-  if (a.kind === D.PortKind.File) {
+  if (a.kind === D.PortKind.Path) {
     const x = s(a.fileContentHash), y = s(b.fileContentHash)
     return x && y ? x === y ? 'same' : 'changed' : 'unknown'
   }

@@ -67,7 +67,7 @@ function EvidenceArtifactExport({ session, target, artifact, member }: { session
     setBusy(true); setError(undefined)
     void (async () => {
       if (!session.rpc || !await resolveEvidence(session, target)) throw new Error(L('このプロジェクトに根拠の記録がありません'))
-      const data = await session.rpc.readArtifact(s(artifact.artifactId), artifact.kind === D.PortKind.Directory ? member : null)
+      const data = await session.rpc.readArtifact(s(artifact.artifactId), artifact.directory ? member : null)
       download(member.split('/').pop() ?? 'artifact', data)
     })().catch(e => setError(String(e.message ?? e))).finally(() => setBusy(false))
   }}>{busy ? L('読み込み中…') : L('書き出す…')}</Button>{error && <p role="alert">{error}</p>}</>
@@ -96,7 +96,7 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
       if (t.kind === 'artifact') {
         const a = (await rpc.artifacts(t.run!)).find(a => s(a.artifactId) === t.artifact)!
         const member = t.member ?? (a.members[0] ? s(a.members[0].path) : undefined)
-        const bytes = member ? await rpc.call<R.FileContentT>(R.RequestPayload.ArtifactReadRequest, Object.assign(new R.ArtifactReadRequestT(), { artifactId: t.artifact, member: a.kind === D.PortKind.Directory ? member : null, limitBytes: 65536 })) : undefined
+        const bytes = member ? await rpc.call<R.FileContentT>(R.RequestPayload.ArtifactReadRequest, Object.assign(new R.ArtifactReadRequestT(), { artifactId: t.artifact, member: a.directory ? member : null, limitBytes: 65536 })) : undefined
         let preview: ReactNode = L('バイナリの成果物です')
         if (bytes) {
           const data = Uint8Array.from(bytes.bytes)
