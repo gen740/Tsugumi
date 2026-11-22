@@ -91,8 +91,6 @@ def consumers(path):
         return {"pack-guest"}
     if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
         return {"swift"}
-    if path.startswith("ui/linux/"):
-        return set()
     if path.startswith(("ui/web/tests/", "ui/web/scripts/test.mjs")):
         return {"web-contracts"}
     if path == "ui/web/scripts/check-boundaries.mjs":

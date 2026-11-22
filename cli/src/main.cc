@@ -20,10 +20,10 @@
 #include <vector>
 
 #include "commands.hh"
-#include "tsugumi/cli/launch.hh"
-#include "tsugumi/cli/rpc.hh"
+#include "launch.hh"
 #include "maintenance.hh"
 #include "mcp.hh"
+#include "rpc.hh"
 
 namespace {
 namespace f = std::filesystem;

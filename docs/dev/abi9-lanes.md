@@ -111,8 +111,8 @@ payloads, or `ModuleRead` request.
 
 ### Web UI
 
-- Own `ui/web/**`, `ui/linux/**`, `ui/shared/modules/**`,
-  `ui/shared/i18n/en.json`, and `nix/{web.nix,web-checks.nix,linux-ui-check.nix}`.
+- Own `ui/web/**`, `ui/shared/modules/**`,
+  `ui/shared/i18n/en.json`, and `nix/{web.nix,web-checks.nix}`.
   Coordinate shared viewer or localization edits requested by the Mac lane.
   Keep the Web template picker and its tests on the Host RPCs.
 - Consume generated TypeScript `CardViewsUpdated`, `DisplayUpdated`,

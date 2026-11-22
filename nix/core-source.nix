@@ -1,8 +1,4 @@
-# extra: further paths of a package that builds its own targets in this tree.
-{
-  lib,
-  extra ? [ ],
-}:
+{ lib }:
 lib.fileset.toSource {
   root = ../.;
   fileset = lib.fileset.unions (
@@ -27,7 +23,6 @@ lib.fileset.toSource {
       ../client/include
       ../client/src
       ../cli/CMakeLists.txt
-      ../cli/include
       ../cli/src
       ../nix/card-entry.nix
       ../nix/kit-entry.nix
