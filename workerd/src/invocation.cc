@@ -1,5 +1,6 @@
-#include "tsugumi/workerd/manifest.hh"
 // Realises and runs one accepted invocation inside its supervised namespace.
+#include "tsugumi/workerd/invocation.hh"
+
 #include <fcntl.h>
 #include <flatbuffers/reflection.h>
 #include <poll.h>
@@ -13,12 +14,12 @@
 
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/frame.hh"
-#include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/protocol.hh"
@@ -163,6 +164,26 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
+auto relay_display(const WorkerDisplayData& display) -> void {
+  if (display.view.size() > workerd::kRemoteDisplayBytes ||
+      display.bytes.size() > workerd::kRemoteDisplayBytes - display.view.size())
+    return;
+  flatbuffers::FlatBufferBuilder b;
+  const auto message = W::CreateWorkerDisplay(
+      b, b.CreateString(display.view),
+      b.CreateVector(reinterpret_cast<const uint8_t*>(display.bytes.data()),
+                     display.bytes.size()));
+  b.Finish(message);
+  try {
+    rpc::frame::Write(
+        workerd::kDisplayChannelFd,
+        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+        workerd::kRemoteDisplayBytes);
+  } catch (const rpc::frame::Error&) {
+    // A lost listener drops live data and leaves the invocation running.
+  }
+}
+
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::InvocationJson& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
@@ -232,12 +253,14 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
   request.output_directory = directory / "result/files/out";
+  request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
+  request.display = relay_display;
   request.transfer = progress;
   return workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
@@ -253,6 +276,8 @@ namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
+  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0)
+    throw std::runtime_error("the job's live display channel is missing");
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&
       ::fcntl(kSecretChannelFd, F_SETFD, FD_CLOEXEC) != 0)

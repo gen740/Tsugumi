@@ -43,8 +43,10 @@ retain their original identity. For new outputs the default budget is
 
 The worker drains process-lifetime `send(view, bytes)` messages without
 opening a view or reading its declarations. Local workers relay them
-directly to the core. Remote job results contain typed outputs and the
-bounded log.
+directly to the core. For remote jobs the adapter relays them through an
+inherited socket to the listener. Status replies drain a 1 MiB transient
+queue of the latest pending data per view. Remote job results contain
+typed outputs and the bounded log.
 
 ## Remote execution
 

@@ -104,8 +104,8 @@ TEST(LocalWorker, DiscardsStaleRepliesAndReceivesDataWhileIdle) {
     ASSERT_GE(descriptors[i], 0);
     ::fcntl(descriptors[i], F_SETFL, O_NONBLOCK);
   }
-  WorkerProc worker({descriptors, {}, 7, 1, false, [] {}, [](bool) {}, [] {}});
   std::promise<WorkerDisplayData> received;
+  WorkerProc worker({descriptors, {}, 7, 1, false, [] {}, [](bool) {}, [] {}});
   auto data = received.get_future();
   worker.set_display([&](const auto& value) { received.set_value(value); });
   const auto send = [&](uint64_t id, W::WorkerPayload kind,

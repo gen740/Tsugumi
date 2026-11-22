@@ -237,7 +237,8 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=()):
+def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
+              output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
         pytest.skip("needs the installed ABI 9 worker build sources")
@@ -254,10 +255,10 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
       })
     """
     derivation = subprocess.check_output(
-        ["nix", "eval", "--impure", "--raw", "--expr",
-         "let plan = (" + expression + ") { system = " +
-         json.dumps(R.string(peer.caps.nativeSystem)) + "; nixDirectory = " +
-         json.dumps(nix_directory) + "; }; in plan.drvPath"],
+        ["nix-instantiate", "--extra-experimental-features", "flakes",
+         "--impure", "--expr", expression,
+         "--argstr", "system", R.string(peer.caps.nativeSystem),
+         "--argstr", "nixDirectory", nix_directory],
         text=True,
     ).strip()
     output = subprocess.check_output(
@@ -290,7 +291,7 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
         invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
-        logLimitBytes=8 << 20,
+        logLimitBytes=8 << 20, **(output_budget or {}),
     ))
 
 
@@ -388,7 +389,9 @@ read -r line < "$TEST_GATE"
             peer.close()
 
 
-@pytest.mark.parametrize("case", ["forward-and-snapshot", "symlink", "byte-budget", "entry-budget"])
+@pytest.mark.parametrize("case", [
+    "forward-and-snapshot", "symlink", "byte-budget", "entry-budget", "configured-budget",
+])
 def test_real_remote_output_boundary(worker, case):
     from harness.observations import decode_scalar
     from doubles.worker import scalar
@@ -411,6 +414,10 @@ def test_real_remote_output_boundary(worker, case):
         outputs.append(PortT(name="new_file", kind=PortKind.File,
                              schemaBfbs=compiled.schemaBfbs, rootType=compiled.rootType))
         body = """
+          static const uint8_t latest[] = {0, 255, 128, 'v'};
+          static const uint8_t superseded[] = {0, 0};
+          if (call.effects->send(call.host, "unlisted", superseded, sizeof(superseded)) ||
+              call.effects->send(call.host, "unlisted", latest, sizeof(latest))) return 1;
           std::ofstream("new-file") << "snapshot";
           std::ofstream("unused") << "ignore";
           out.file(input_path(in));
@@ -429,19 +436,32 @@ def test_real_remote_output_boundary(worker, case):
           fs::resize_file("huge", (64ull << 30) + 1);
           out.file("huge");
         """
-    else:
+    elif case == "entry-budget":
         body = """
           fs::create_directory("tree");
           for (int i = 0; i < 1000; ++i)
             std::ofstream(fs::path("tree") / std::to_string(i)).close();
           out.directory("tree");
         """
-    spec = card_spec(peer, job, body, outputs=outputs, inputs=inputs, files=files)
+    else:
+        body = 'std::ofstream("file") << "four"; out.file("file");'
+    budget = {"outputLimitBytes": 3, "outputLimitEntries": 1} if case == "configured-budget" else None
+    spec = card_spec(peer, job, body, outputs=outputs, inputs=inputs, files=files, output_budget=budget)
     fingerprint = hashlib.sha256(spec).hexdigest()
     try:
         response = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
         assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
         record = peer.wait_state(job, R.JobState.Succeeded)
+
+        status = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body
+        if case == "forward-and-snapshot":
+            display, = status.displays
+            assert R.string(display.view) == "unlisted"
+            assert bytes(display.bytes) == b"\x00\xff\x80v"
+            next_status = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body
+            assert not next_status.displays
+        else:
+            assert not status.displays
 
         def result_bytes(digest):
             response = peer.call(R.RequestBody.GetBlobRequest,
@@ -466,7 +486,7 @@ def test_real_remote_output_boundary(worker, case):
             assert result.value.failure.kind == FailureKind.output_invalid
             diagnostic = R.string(result.value.failure.diagnostic)
             assert {"symlink": "symbolic link", "byte-budget": "byte budget",
-                    "entry-budget": "entry budget"}[case] in diagnostic
+                    "entry-budget": "entry budget", "configured-budget": "byte budget"}[case] in diagnostic
             assert not any(name.startswith("files/") for name in entries)
     finally:
         peer.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=job)
@@ -488,7 +508,7 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     def log_slice(job, offset, limit=1 << 20):
         reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
-        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes or b"")
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes) if reply.body.logBytes is not None else b""
 
     # Like the invocation, append a flushed JSONL entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'

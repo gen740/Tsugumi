@@ -50,6 +50,10 @@ auto validate_secret_names(const R::JobSpecT& spec) -> void;
 // The job's Card secrets travel from the listener to its invocation through
 // this inherited pipe descriptor, as one frame holding a CardSecrets reply.
 inline constexpr int kSecretChannelFd = 6;
+// The invocation sends live view frames to the listener through this socket.
+// Leave room for the log slice and the rest of a Status reply.
+inline constexpr int kDisplayChannelFd = 7;
+inline constexpr uint32_t kRemoteDisplayBytes = 1 << 20;
 // The marker a running job's work directory holds while its invocation waits
 // for its Card secrets; it never holds a value.
 inline constexpr std::string_view kSecretsWanted = "secrets-wanted";

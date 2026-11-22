@@ -220,11 +220,26 @@ auto stage_outputs(
                             [](const auto& part) { return part == ".."; }))
       throw invalid("output path is outside the worker's working directory");
 
-    copy_output(work_root, relative, destination / relative, value.kind, cancel,
-                delivery, progress, budget);
+    relative = relative.lexically_normal();
+    if (!relative.has_filename()) {
+      if (value.kind == PortKind::File)
+        throw invalid("file output path ends in a directory separator");
+      relative = relative.parent_path();
+    }
     const auto root = local ? destination : stdfs::path("out");
-    value =
-        with_path(value, (root / relative).lexically_normal().generic_string());
+    const auto delivered = relative == "." ? root : root / relative;
+    if (!local) {
+      try {
+        remote::relative_path(delivered.generic_string());
+      } catch (const std::exception& error) {
+        throw invalid(error.what());
+      }
+    }
+    const auto snapshot =
+        relative == "." ? destination : destination / relative;
+    copy_output(work_root, relative, snapshot, value.kind, cancel, delivery,
+                progress, budget);
+    value = with_path(value, delivered.generic_string());
   }
 }
 
