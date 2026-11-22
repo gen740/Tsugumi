@@ -445,6 +445,7 @@ final class ProjectSession {
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
+      viewFiles = .rpc { [weak self] in self?.client }
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1

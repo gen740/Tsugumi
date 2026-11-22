@@ -446,7 +446,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`CardViewRead`](#cardviewread) | CardViewContent | Read a page of the file a Card declared as the view `name` (the blob of that entry in its views list, as CardViewsUpdated last sent it). Only declared files are served, and their bytes are relayed without being interpreted. offset defaults to 0 and length to 1 MiB (1..1048576). |
+| [`CardViewRead`](#cardviewread) | FileContent | Read a page of the file a Card declared as the view `name` (the blob of that entry in its views list, as CardViewsUpdated last sent it). Only declared files are served, and their bytes are relayed without being interpreted. FileContent.name is the view name and hash is the declared store path, which names immutable content. offset defaults to 0 and limit_bytes to 1 MiB (1..1048576). |
 
 ### ViewSetVisible
 
@@ -471,7 +471,7 @@ No fields.
 | `card` | `CardPath` | yes |  |
 | `name` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
-| `length` | `uint32` |  |  |
+| `limit_bytes` | `uint32` |  |  |
 
 ## Versions
 

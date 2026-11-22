@@ -146,7 +146,7 @@ table RuntimeFile { path:string (required); ok:bool; }
 table HostHome {
   home:string (required); documents:string (required); repo:string;
   host_folders:bool; vm:bool; nix:bool;
-  tsugumid:RuntimeFile; worker:RuntimeFile; sdk:RuntimeFile;
+  tsugumid:RuntimeFile; worker:RuntimeFile; nix_dir:RuntimeFile;
 }
 // Shows a file or folder in Finder or the file manager.
 table HostRevealRequest { path:string (required); }

@@ -32,7 +32,6 @@ struct WorkerSpawn {
   std::string worker_binary;
   std::string store_path = "/nix/store";
   std::string package;
-  std::string path;
   std::vector<std::string> closure;
   // Remote supervision knows this leaf and cleans it on interruption.
   std::filesystem::path cgroup;

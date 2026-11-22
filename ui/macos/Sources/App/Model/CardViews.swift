@@ -129,7 +129,7 @@ struct CardViewFilePage {
 struct CardViewFiles {
   static let limit = 32 * 1024 * 1024
 
-  /// `CardViewReadRequest{card, name, offset}` -> `FileContent`.
+  /// `CardViewReadRequest{card, name, offset, limit_bytes}` -> `FileContent`.
   let page: @MainActor (_ card: [String], _ name: String, _ offset: UInt64) async throws -> CardViewFilePage
 
   @MainActor func read(card: [String], name: String) async throws -> Data {
@@ -146,8 +146,17 @@ struct CardViewFiles {
     }
   }
 
-  /// Until the project RPC serves view files.
+  /// Before the session is connected.
   static let unavailable = CardViewFiles { _, _, _ in throw CardViewFileError.unavailable }
+
+  /// Pages served by the connected project core.
+  static func rpc(_ client: @escaping @MainActor () -> RPCClient?) -> CardViewFiles {
+    CardViewFiles { card, name, offset in
+      guard let c = client() else { throw RPCError.disconnected }
+      let page = try await c.readCardView(card: card, name: name, offset: offset)
+      return CardViewFilePage(bytes: Data(page.bytes), eof: page.eof == true, nextOffset: page.nextOffset)
+    }
+  }
 }
 
 enum CardViewFileError: LocalizedError {

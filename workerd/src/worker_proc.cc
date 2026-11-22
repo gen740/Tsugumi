@@ -484,8 +484,8 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   }
 #endif
   spec.argv.insert(spec.argv.end(), {"--package", sp.package});
-  spec.env = {"PATH=" + sp.path,
-              "LANG=C.UTF-8",
+  // No PATH: a Card reaches only the tools its SDK builder declared.
+  spec.env = {"LANG=C.UTF-8",
               "HOME=" + work_dir(),
               "XDG_CONFIG_HOME=" + work_dir() + "/.config",
               "XDG_CACHE_HOME=" + work_dir() + "/.cache",

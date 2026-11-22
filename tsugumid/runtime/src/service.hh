@@ -263,8 +263,8 @@ class Service : public RequestSink {
   // (size, modification time) when checked. Later pages read their range only.
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
-  std::mutex card_views_mu_;
-  std::map<std::string, std::vector<DeclaredView>> card_views_;  // path_key
+  std::mutex view_files_mu_;
+  std::map<std::string, std::vector<DeclaredView>> view_files_;  // path_key
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;

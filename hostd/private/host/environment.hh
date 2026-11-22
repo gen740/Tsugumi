@@ -97,7 +97,7 @@ struct EnvironmentOptions {
   std::filesystem::path run_scratch_directory;
   std::filesystem::path tsugumid;
   std::filesystem::path worker;
-  std::filesystem::path sdk;
+  std::filesystem::path nix_dir;  // installed Card evaluator
   std::shared_ptr<EnvironmentProcess> process;
   std::function<std::function<void()>(const std::filesystem::path&)>
       reserve_project_identity;

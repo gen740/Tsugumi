@@ -991,11 +991,11 @@ void Service::artifact_read(RequestIn& req) {
 
 auto Service::set_card_views(const CardPath& card,
                              std::vector<DeclaredView> views) -> void {
-  std::lock_guard<std::mutex> l(card_views_mu_);
+  std::lock_guard<std::mutex> l(view_files_mu_);
   if (views.empty())
-    card_views_.erase(path_key(card));
+    view_files_.erase(path_key(card));
   else
-    card_views_[path_key(card)] = std::move(views);
+    view_files_[path_key(card)] = std::move(views);
 }
 
 // Transport only: the file comes from the Card's own declaration, and its
@@ -1006,9 +1006,9 @@ void Service::card_view_read(RequestIn& req) {
   std::string name = r->name()->str();
   std::string blob;
   {
-    std::lock_guard<std::mutex> l(card_views_mu_);
-    if (auto found = card_views_.find(path_key(card));
-        found != card_views_.end())
+    std::lock_guard<std::mutex> l(view_files_mu_);
+    if (auto found = view_files_.find(path_key(card));
+        found != view_files_.end())
       for (const auto& v : found->second)
         if (v.name == name) blob = v.blob;
   }
@@ -1016,7 +1016,7 @@ void Service::card_view_read(RequestIn& req) {
     throw Failed(FailureKind::not_found, "the Card declares no view " + name,
                  {{"name", name}});
   uint64_t offset = r->offset().value_or(0);
-  uint64_t limit = content_limit(r->length());
+  uint64_t limit = content_limit(r->limit_bytes());
   struct stat st{};
   if (::stat(blob.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
     throw Failed(FailureKind::not_found, "the view file is missing",
@@ -1029,12 +1029,7 @@ void Service::card_view_read(RequestIn& req) {
   if (!slice)
     throw Failed(FailureKind::not_found, "the view file is missing",
                  {{"name", name}});
-  FBB b(slice->size() + 256);
-  auto bytes = b.CreateVector(reinterpret_cast<const uint8_t*>(slice->data()),
-                              slice->size());
-  auto off = R::CreateCardViewContent(b, bytes, total);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardViewContent,
-                         off.Union()));
+  reply(req, wire::file_page(req.request_id, name, *slice, offset, total, blob));
 }
 
 void Service::log_range(RequestIn& req) {

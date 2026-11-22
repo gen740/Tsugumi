@@ -168,6 +168,16 @@ public extension RPCClient {
     return out
   }
 
+  /// One page of the file a Card declared as the view `name`.
+  func readCardView(card: [String], name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
+    let r = Tsugumi_RPC_CardViewReadRequestT()
+    r.card = cardPath(card)
+    r.name = name
+    r.offset = offset
+    r.limitBytes = 1 << 20
+    return try await call(.cardviewreadrequest, r)
+  }
+
   func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
     let r = Tsugumi_RPC_ViewSetVisibleRequestT()
     r.subscriptionId = subscription

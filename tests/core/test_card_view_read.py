@@ -10,16 +10,17 @@ from Tsugumi.RPC.NotificationPayload import NotificationPayload
 CONTENT = b"<!doctype html>\x00\xff\xfe" + bytes(range(256)) * 9
 
 
-def read_view(client, name, *, length):
+def read_view(client, name, *, limit):
     pieces, offset = [], 0
     while True:
         page = client.call("CardViewReadRequest", card=path("work"), name=name,
-                           offset=offset, length=length)
-        assert len(page.bytes) <= length
+                           offset=offset, limitBytes=limit)
+        assert len(page.bytes) <= limit and page.offset == offset
         pieces.append(bytes(page.bytes))
-        offset += len(page.bytes)
-        if offset >= page.total:
-            return b"".join(pieces), page.total
+        if page.eof:
+            return b"".join(pieces), page.sizeBytes
+        assert page.nextOffset == offset + len(page.bytes)
+        offset = page.nextOffset
 
 
 def rejected(client, kind, **fields):
@@ -38,8 +39,6 @@ def test_files_that_were_not_declared_are_not_served(project, core_factory):
         rejected(client, "not_found", name=name)
 
 
-@pytest.mark.xfail(strict=True, reason="needs the Nix lane's views list and the tsugumid "
-                   "lane's CardViewsUpdated publishing (docs/dev/abi9-lanes.md)")
 def test_declared_view_is_served_in_pages(project, tmp_path, core_factory):
     """The declared blob is read by name in pages; other names stay rejected."""
     blob = tmp_path / "store" / "page.html"
@@ -61,16 +60,17 @@ def test_declared_view_is_served_in_pages(project, tmp_path, core_factory):
                              and n.value.views, timeout=20)
 
     whole = client.call("CardViewReadRequest", card=path("work"), name="page")
-    assert bytes(whole.bytes) == CONTENT and whole.total == len(CONTENT)
-    assert read_view(client, "page", length=1000) == (CONTENT, len(CONTENT))
+    assert bytes(whole.bytes) == CONTENT and whole.sizeBytes == len(CONTENT) and whole.eof
+    assert text(whole.name) == "page" and text(whole.hash) == str(blob)
+    assert read_view(client, "page", limit=1000) == (CONTENT, len(CONTENT))
     tail = client.call("CardViewReadRequest", card=path("work"), name="page",
-                       offset=len(CONTENT) - 3, length=1000)
-    assert bytes(tail.bytes) == CONTENT[-3:] and tail.total == len(CONTENT)
+                       offset=len(CONTENT) - 3, limitBytes=1000)
+    assert bytes(tail.bytes) == CONTENT[-3:] and tail.eof
     end = client.call("CardViewReadRequest", card=path("work"), name="page", offset=len(CONTENT))
-    assert bytes(end.bytes) == b"" and end.total == len(CONTENT)
+    assert bytes(end.bytes) == b"" and end.eof and end.sizeBytes == len(CONTENT)
 
     rejected(client, "invalid_range", name="page", offset=len(CONTENT) + 1)
-    rejected(client, "invalid_request", name="page", length=0)
-    rejected(client, "invalid_request", name="page", length=(1 << 20) + 1)
+    rejected(client, "invalid_request", name="page", limitBytes=0)
+    rejected(client, "invalid_request", name="page", limitBytes=(1 << 20) + 1)
     for name in ("other", "Page", str(blob), str(other)):
         rejected(client, "not_found", name=name)

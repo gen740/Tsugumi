@@ -99,7 +99,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   request.reuse = reuse;
   auto& target = request.spawn = std::make_unique<L::SpawnT>();
   target->worker_binary = spawn.worker_binary;
-  target->path = spawn.path;
   target->closure = spawn.closure;
   target->shared_vm = spawn.shared_vm;
   if (spawn.secrets) {

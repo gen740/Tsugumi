@@ -787,16 +787,17 @@ table ViewSaveRequest {
   view_json:string (id: 2, required);
 }
 
-/// -> CardViewContent. Read a page of the file a Card declared as the view
-/// `name` (the blob of that entry in its views list, as CardViewsUpdated last
-/// sent it). Only declared files are served, and their bytes are relayed
-/// without being interpreted. offset defaults to 0 and length to 1 MiB
-/// (1..1048576).
+/// -> FileContent. Read a page of the file a Card declared as the view `name`
+/// (the blob of that entry in its views list, as CardViewsUpdated last sent
+/// it). Only declared files are served, and their bytes are relayed without
+/// being interpreted. FileContent.name is the view name and hash is the
+/// declared store path, which names immutable content. offset defaults to 0
+/// and limit_bytes to 1 MiB (1..1048576).
 table CardViewReadRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
   offset:uint64 = null (id: 2);
-  length:uint32 = null (id: 3);
+  limit_bytes:uint32 = null (id: 3);
 }
 
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
@@ -1218,13 +1219,6 @@ table LogSlice {
   reset:bool = false (id: 10);
 }
 
-/// The bytes of a declared view file from the requested offset; total is the
-/// file's size in bytes.
-table CardViewContent {
-  bytes:[ubyte] (id: 0, required);
-  total:uint64 (id: 1);
-}
-
 table ViewSaveResult {
   view_id:string (id: 0, required);
   view_rev:uint64 = null (id: 1);
@@ -1276,7 +1270,6 @@ union ReplyPayload {
   VersionComments = 47,
   RunCategoryDeleteResult = 48,
   RunFileReferences = 49,
-  CardViewContent = 50,
 }
 
 // ---- Notifications -----------------------------------------------------------

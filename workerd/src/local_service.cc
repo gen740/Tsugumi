@@ -29,7 +29,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           auto& source = *request.spawn;
           WorkerSpawn spawn;
           spawn.worker_binary = source.worker_binary;
-          spawn.path = source.path;
           spawn.closure = source.closure;
           spawn.shared_vm = source.shared_vm;
           if (!source.secrets.empty()) {

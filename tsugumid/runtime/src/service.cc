@@ -2776,6 +2776,7 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
     auto card = path_from_key(key);
     const auto* node = doc->resolution->find(card);
     if (!node || node->kind != CardType::Code) {
+      set_card_views(card, {});
       cached->second = card_views_note(std::move(card), {});
       server_->broadcast(*cached->second);
       continue;
@@ -2802,10 +2803,17 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
         // A definition without realized views clears the previous list.
       }
       if (stop.stop_requested()) return;
-      auto note = card_views_note(std::move(card), std::move(views));
-      mutation_lane_->submit([this, key, stop, note = std::move(note)] {
+      std::vector<DeclaredView> files;
+      files.reserve(views.size());
+      for (const auto& view : views) files.push_back({*view.name, *view.blob});
+      auto note = card_views_note(card, std::move(views));
+      mutation_lane_->submit([this, key, stop, card = std::move(card),
+                              files = std::move(files),
+                              note = std::move(note)]() mutable {
         if (stop.stop_requested()) return;
         card_views_.at(key) = note;
+        // CardViewRead serves exactly the list this notification sends.
+        set_card_views(card, std::move(files));
         server_->broadcast(note);
       });
     });

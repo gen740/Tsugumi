@@ -75,11 +75,6 @@ export interface NotificationEvent {
   value: NotificationT['value'] | LiveDisplayUpdate
 }
 
-interface CardViewChunk {
-  bytes: Uint8Array<ArrayBuffer>
-  total: bigint
-}
-
 export const uuid = (): string =>
   typeof crypto !== 'undefined' && 'randomUUID' in crypto
     ? crypto.randomUUID()
@@ -150,7 +145,7 @@ export class RPCClient {
   }
 
   private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<{
-    valueType: R.ReplyPayload; value: ReplyT['value'] | CardViewChunk
+    valueType: R.ReplyPayload; value: ReplyT['value']
   }> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
@@ -158,10 +153,6 @@ export class RPCClient {
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
     const type = wire.valueType()
-    if (type === R.ReplyPayload.CardViewContent) {
-      const content = wire.value(new R.CardViewContent()) as R.CardViewContent
-      return { valueType: type, value: { bytes: content.bytesArray()?.slice() ?? new Uint8Array(), total: content.total() } }
-    }
     if (type === R.ReplyPayload.LogSlice) {
       const slice = wire.value(new R.LogSlice()) as R.LogSlice
       return new ReplyT(type, new R.LogSliceT(
@@ -308,19 +299,18 @@ export class RPCClient {
     const decoder = new TextDecoder()
     const parts: string[] = []
     let offset = 0n
-    let total: bigint | undefined
-    do {
+    for (;;) {
       signal.throwIfAborted()
-      const request = new R.CardViewReadRequestT(cardPath(card), name, offset)
-      const part = await this.call<CardViewChunk>(RequestPayload.CardViewReadRequest, request)
+      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset })
+      const page = await this.call<R.FileContentT>(RequestPayload.CardViewReadRequest, request)
       signal.throwIfAborted()
-      total ??= part.total
-      offset += BigInt(part.bytes.byteLength)
-      if (part.total !== total || offset > total || (offset < total && !part.bytes.byteLength))
+      const next = page.nextOffset ?? offset
+      if (!page.eof && next <= offset)
         throw new RPCError('protocol', L('ビューの内容を最後まで読み込めませんでした。'))
-      parts.push(decoder.decode(part.bytes, { stream: offset < total }))
-    } while (offset < total)
-    return parts.join('')
+      parts.push(decoder.decode(Uint8Array.from(page.bytes), { stream: !page.eof }))
+      if (page.eof) return parts.join('')
+      offset = next
+    }
   }
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {
     return this.call<R.AckT>(

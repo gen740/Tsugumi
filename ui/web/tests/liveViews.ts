@@ -60,8 +60,12 @@ const wire: Transport = { close() {}, async call(bytes) {
   const read = value as R.CardViewReadRequestT
   requests.push(read)
   const offset = Number(read.offset)
-  const part = new R.CardViewContentT([...source.subarray(offset, offset + 2)], BigInt(source.length))
-  return frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.CardViewContent, part)))
+  const bytes = [...source.subarray(offset, offset + 2)]
+  const part = Object.assign(new R.FileContentT(), {
+    name: read.name, hash: '/nix/store/view', sizeBytes: BigInt(source.length), offset: BigInt(offset),
+    nextOffset: BigInt(offset + bytes.length), bytes, eof: offset + bytes.length >= source.length,
+  })
+  return frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.FileContent, part)))
 } }
 const client = new RPCClient(wire)
 live.client = client
