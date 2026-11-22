@@ -10,7 +10,7 @@ def add_worker(graph, name, package, actions, *, outputs=STRING_OUTPUT, **settin
     package.mkdir(parents=True)
     (package / "scenario.json").write_text(json.dumps({"actions": actions}))
     return graph.card(
-        name, {"type": "code", "language": "bash", "sandbox": False, "recordIO": True, **settings},
+        name, {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True, **settings},
         outputs=outputs, manifest={"run": {"package": str(package)}},
     )
 

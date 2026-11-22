@@ -10,7 +10,9 @@
 #include <cstdint>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
+#include <mutex>
 #include <optional>
 #include <string>
 #include <utility>
@@ -116,10 +118,18 @@ class LocalExecutionService final : public ExecutionService {
   auto run(const ExecutionRequest& request) -> ExecutionResult;
   // Ends every worker before the build cache is cleared.
   auto clear() -> void;
+  auto invalidate(const std::string& card, const std::string& reason) -> void;
 
  private:
   Service& service_;
   workerd::LocalWorkers workers_;
+  std::mutex secrets_mutex_;
+  std::string secrets_salt_;
+  std::map<std::string, std::string> secret_versions_;
+#ifdef __linux__
+  std::mutex closure_mutex_;
+  std::map<std::string, std::vector<std::string>> worker_closures_;
+#endif
 };
 
 }  // namespace tsugumi

@@ -63,6 +63,7 @@ pid_t spawn(const Spec& spec) {
     kOpSetgid = 2,
     kOpSetuid = 3,
     kOpExecve = 4,
+    kOpCgroup = 5,
   };
   if (pid == 0) {
     ::close(err_pipe[0]);
@@ -78,8 +79,7 @@ pid_t spawn(const Spec& spec) {
       size_t written = 0;
       while (written < sizeof ce) {
         ssize_t count =
-            ::write(err_pipe[1],
-                    reinterpret_cast<const char*>(&ce) + written,
+            ::write(err_pipe[1], reinterpret_cast<const char*>(&ce) + written,
                     sizeof ce - written);
         if (count < 0 && errno == EINTR) continue;
         if (count <= 0) break;
@@ -133,6 +133,16 @@ pid_t spawn(const Spec& spec) {
     for (int fd = 3; fd < (max > 0 ? max : 65536); ++fd)
       if (!keep(fd)) ::close(fd);
 #endif
+    if (!spec.cgroup_procs.empty()) {
+      const int fd = ::open(spec.cgroup_procs.c_str(), O_WRONLY | O_CLOEXEC);
+      if (fd < 0) fail(kOpCgroup);
+      ssize_t count;
+      do {
+        count = ::write(fd, "0", 1);
+      } while (count < 0 && errno == EINTR);
+      if (count != 1) fail(kOpCgroup);
+      ::close(fd);
+    }
     if (!spec.cwd.empty() && ::chdir(spec.cwd.c_str()) != 0) fail(kOpChdir);
     if (spec.gid && ::setgid(*spec.gid) != 0) fail(kOpSetgid);
     if (spec.uid && ::setuid(*spec.uid) != 0) fail(kOpSetuid);
@@ -144,8 +154,7 @@ pid_t spawn(const Spec& spec) {
   ChildError child_err{};
   size_t got = 0;
   while (got < sizeof child_err) {
-    ssize_t n = ::read(err_pipe[0],
-                       reinterpret_cast<char*>(&child_err) + got,
+    ssize_t n = ::read(err_pipe[0], reinterpret_cast<char*>(&child_err) + got,
                        sizeof child_err - got);
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0) break;
@@ -165,6 +174,10 @@ pid_t spawn(const Spec& spec) {
         break;
       case kOpSetuid:
         op_name = "setuid";
+        break;
+      case kOpCgroup:
+        op_name = "join Card cgroup";
+        op_path = spec.cgroup_procs.c_str();
         break;
       case kOpExecve:
         op_name = "execve";
@@ -271,12 +284,13 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     if (flush_at) {
       const auto left = std::chrono::ceil<std::chrono::milliseconds>(
           *flush_at - std::chrono::steady_clock::now());
-      timeout_ms = static_cast<int>(
-          std::clamp<int64_t>(left.count(), 0, timeout_ms));
+      timeout_ms =
+          static_cast<int>(std::clamp<int64_t>(left.count(), 0, timeout_ms));
     }
     ::poll(fds, 2, timeout_ms);
     char buf[8192];
-    if (out_open && (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+    if (out_open &&
+        (fds[0].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
       ssize_t r = ::read(out_pipe[0], buf, sizeof buf);
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0)
@@ -284,7 +298,8 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
       else
         res.out.append(buf, static_cast<size_t>(r));
     }
-    if (err_open && (fds[1].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
+    if (err_open &&
+        (fds[1].revents & (POLLIN | POLLHUP | POLLERR | POLLNVAL))) {
       ssize_t r = ::read(err_pipe[0], buf, sizeof buf);
       if (r < 0 && errno == EINTR) {
       } else if (r <= 0) {

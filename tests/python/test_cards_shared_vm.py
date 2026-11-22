@@ -1,4 +1,4 @@
-"""Code Card behaviour in the real environment (TSUGUMI_TEST_CONTAINER=1; the
+"""Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM):
 backpressure stalls, the shell step contract, deadlines and cancellation,
 worker reuse, isolation, Nix upstream references, stages and caching, and
@@ -25,8 +25,8 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
 
-pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
-                                reason="needs the container environment (TSUGUMI_TEST_CONTAINER=1)")
+pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
+                                reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 
 
@@ -151,7 +151,7 @@ def proc_count(env, pattern: str) -> int:
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_cancel_ends_every_descendant(env, sandbox):
     defs = {"trigger": {"type": "trigger"},
-            "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719 & echo descendants-ready; wait", sandbox=sandbox)}
+            "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719 & echo descendants-ready; wait", sandbox={"filesystem": sandbox})}
     c = load(env, defs, [card("start", "trigger"), card("hang", "hang")], [])
     run_id = start_run(c, "start")
     try:
@@ -180,15 +180,48 @@ def test_isolation(env):
              "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
     open_fs = ("set +e; fail=0; "
                "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
+               "[ ! -e /proc/1/root/control/server.ready ] || { echo 'control visible through proc'; fail=1; }; "
                "(read -r x < /control/server.ready) 2>/dev/null && { echo 'token readable'; fail=1; }; "
-               "[ \"$UID\" = 65534 ] || { echo \"uid $UID\"; fail=1; }; "
+               "[ \"$UID\" != 65534 ] || { echo \"uid $UID\"; fail=1; }; "
                "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
-    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox=False)}
+    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False})}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
     run_id, st = run_and_wait(c, "start")
     detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
               for k in ("probe", "open")}
     assert st.state == RunState.succeeded, detail
+
+
+def test_card_limits_are_delegated_and_released(env):
+    terminal_probe = (
+        'root=/sys/fs/cgroup/tsugumi/$TSUGUMI_PROJECT_ID; found=0; '
+        'for group in "$root"/tsugumi-card-*; do '
+        '[ -d "$group" ] || continue; '
+        'printf "card-limits %s / %s\\n" "$(<"$group/cpu.max")" "$(<"$group/memory.max")"; '
+        'found=1; done; [ "$found" = 1 ] || echo no-card-cgroup'
+    )
+    limits = {"limits": {"cpu": 0.5, "memoryMiB": 32}}
+    resident = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
+                    sandbox=limits, reuseWorker=True)
+    connection = load(env, {"limited": resident}, [card("limited", "limited")], [])
+    _, status = run_and_wait(connection, "limited")
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    assert "card-limits 500000 1000000 / 33554432" in env.exec(terminal_probe)
+
+    oom = bash(
+        'buffer=x; for ((i = 0; i < 27; ++i)); do buffer="$buffer$buffer"; done; '
+        'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
+        sandbox=limits, reuseWorker=True, timeoutSeconds=60,
+    )
+    # The old resident must be gone before running the replacement. Keep reuse
+    # enabled so no unused standby worker can hide a leaked cgroup.
+    connection = load(env, {"limited": oom}, [card("limited", "limited")], [])
+    assert "no-card-cgroup" in env.exec(terminal_probe).splitlines()
+    run_id, status = run_and_wait(connection, "limited")
+    assert status.state == RunState.failed
+    invocation, = connection.call("RunInvocationsRequest", runId=run_id, card=path("limited")).records
+    assert invocation.failure.kind == FailureKind.worker_failed
+    assert "no-card-cgroup" in env.exec(terminal_probe).splitlines()
 
 
 def test_nix_connected_exports(env):

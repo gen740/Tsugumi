@@ -45,6 +45,10 @@ auto failure(R::ErrorCode code, std::string message) -> R::MessageT {
   return reply(std::move(error));
 }
 auto parse_spec(std::string_view bytes) -> std::unique_ptr<R::JobSpecT> {
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(bytes.data()),
+                                 bytes.size());
+  if (!verifier.VerifyBuffer<R::JobSpec>())
+    throw Error(R::ErrorCode::Invalid, "invalid remote JobSpec");
   return std::unique_ptr<R::JobSpecT>(
       flatbuffers::GetRoot<R::JobSpec>(bytes.data())->UnPack());
 }
@@ -66,12 +70,6 @@ auto validate_secret_names(const R::JobSpecT& spec) -> void {
     if (!valid || !seen.insert(name).second)
       throw Error(R::ErrorCode::Invalid, "invalid Card secret name");
   }
-}
-auto clear_secret(std::string& value) -> void {
-  volatile char* bytes = value.data();
-  for (size_t i = 0; i < value.size(); ++i) bytes[i] = 0;
-  value.clear();
-  value.shrink_to_fit();
 }
 auto terminal(R::JobState state) -> bool {
   return state == R::JobState::Succeeded || state == R::JobState::Failed ||

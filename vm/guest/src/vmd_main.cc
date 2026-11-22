@@ -576,7 +576,13 @@ auto start_project(const G::StartT& request) -> G::ReplyT {
   std::string rpc = rpc_dir(id);
   if (auto error = prepare(rpc, 0700); !error.empty()) return failure(error);
   std::string cg = cgroup_dir(id);
-  fs::create_directories(cg);
+  fs::create_directories(cg + "/core");
+  // The core and terminals run in a leaf. The empty parent delegates the
+  // controllers and process migration to the project for its Card leaves.
+  if (!write_file(cg + "/cgroup.subtree_control", "+cpu +memory") ||
+      ::chown(cg.c_str(), pr.uid, pr.uid) != 0 ||
+      ::chown((cg + "/cgroup.procs").c_str(), pr.uid, pr.uid) != 0)
+    return failure(system_error("delegate Card cgroups", cg));
   // The control folder is the project's: a link there is never followed by
   // root.
   std::string log_path = c + "/tsugumid.log";
@@ -627,6 +633,7 @@ auto start_project(const G::StartT& request) -> G::ReplyT {
   for (const auto& origin : request.origins)
     args.argv.insert(args.argv.end(), {"--allow-origin", origin});
   args.env = project_env(id);
+  args.env.push_back("TSUGUMI_CARD_CGROUP_ROOT=" + cg);
   if (request.rpc_trace) args.env.emplace_back("TSUGUMI_RPC_TRACE=1");
   args.env.emplace_back("TSUGUMI_EXECUTION_BROKER=vsock:1027");
   args.env.emplace_back(
@@ -657,8 +664,8 @@ auto start_project(const G::StartT& request) -> G::ReplyT {
     end_ready_watch(pr);
     return failure(system_error("clone", id));
   }
-  if (!write_file(cg + "/cgroup.procs", std::to_string(pid))) {
-    const auto error = system_error("write", cg + "/cgroup.procs");
+  if (!write_file(cg + "/core/cgroup.procs", std::to_string(pid))) {
+    const auto error = system_error("write", cg + "/core/cgroup.procs");
     // The child inherited both pipe ends, so closing ours alone cannot wake
     // its read. Stop it without releasing it into an unconfigured cgroup.
     ::kill(pid, SIGKILL);
@@ -709,7 +716,12 @@ auto forget_project(const std::string& id) -> G::ReplyT {
   if (error) return failure(error.message());
   fs::remove_all(kScratch + "/" + id, error);
   if (error) return failure(error.message());
-  if (::rmdir(cgroup_dir(id).c_str()) != 0 && errno != ENOENT)
+  const auto cg = cgroup_dir(id);
+  if (fs::exists(cg))
+    for (const auto& leaf : fs::directory_iterator(cg))
+      if (leaf.is_directory() && ::rmdir(leaf.path().c_str()) != 0)
+        return failure(system_error("rmdir", leaf.path().string()));
+  if (::rmdir(cg.c_str()) != 0 && errno != ENOENT)
     return failure(system_error("rmdir", cgroup_dir(id)));
   projects.erase(id);
   return {};
@@ -802,7 +814,7 @@ void shell(int conn, uint64_t request_id, const G::OpenTerminalT& request) {
   std::vector<std::string> ns_paths;
   for (const char* ns : {"ipc", "uts", "pid", "mnt"})
     ns_paths.push_back("/proc/" + std::to_string(target) + "/ns/" + ns);
-  std::string procs = cgroup_dir(id) + "/cgroup.procs";
+  std::string procs = cgroup_dir(id) + "/core/cgroup.procs";
   std::vector<std::string> env = project_env(id);
   env.push_back("TERM=xterm-256color");
   env.push_back(
@@ -945,7 +957,8 @@ bool wait_for_empty_cgroup(const std::string& id) {
     const auto size = ::pread(fd, state, sizeof state, 0);
     if (size < 0 && errno == EINTR) continue;
     if (size <= 0) break;
-    if (std::string_view(state, static_cast<size_t>(size)).starts_with("populated 0\n")) {
+    if (std::string_view(state, static_cast<size_t>(size))
+            .starts_with("populated 0\n")) {
       empty = true;
       break;
     }
@@ -998,7 +1011,8 @@ void shutdown_vm() {
   // The reaper may collect this child; the marker is managed by the script.
   bool drained = true;
   for (const auto& id : ids) drained = wait_for_empty_cgroup(id) && drained;
-  if (!drained) logf("cannot verify that project cgroups drained; keeping dirty marker");
+  if (!drained)
+    logf("cannot verify that project cgroups drained; keeping dirty marker");
   const bool cache_stopped = stop_rosetta_cache();
   if (!cache_stopped) logf("Rosetta AOT: keeping the dirty marker");
   const auto child = drained && cache_stopped ? ::fork() : -1;
@@ -1374,6 +1388,10 @@ int main(int argc, char** argv) {
   sigaddset(&blocked, SIGCHLD);
   ::pthread_sigmask(SIG_BLOCK, &blocked, nullptr);
   fs::create_directories("/sys/fs/cgroup/tsugumi");
+  if (!write_file("/sys/fs/cgroup/cgroup.subtree_control", "+cpu +memory") ||
+      !write_file("/sys/fs/cgroup/tsugumi/cgroup.subtree_control",
+                  "+cpu +memory"))
+    die("enable CPU and memory isolation for Cards");
   fs::create_directories("/run/tsugumi");
   fs::create_directories(opt.host);
   prepare_project_roots();

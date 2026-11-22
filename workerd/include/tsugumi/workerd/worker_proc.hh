@@ -1,14 +1,14 @@
 // Owner side of one tsugumi-worker process.
 #pragma once
 
-#include "tsugumi/rpc/trace.hh"
-
 #include <sys/types.h>
 
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <filesystem>
 #include <functional>
+#include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
@@ -16,6 +16,7 @@
 #include <thread>
 #include <vector>
 
+#include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/text.hh"
 #include "tsugumi/workerd/values.hh"
 
@@ -31,16 +32,27 @@ struct WorkerProgram {
   std::string views;
 };
 
+struct WorkerSecrets {
+  std::vector<std::pair<std::string, std::string>> values;
+  ~WorkerSecrets();
+};
+
 struct WorkerSpawn {
   std::string worker_binary;
   std::string bash;
   std::string store_path = "/nix/store";
   WorkerProgram program;
+  std::string path;
+  std::vector<std::string> closure;
+  // Remote supervision knows this leaf and cleans it on interruption.
+  std::filesystem::path cgroup;
+  bool shared_vm = false;
+  std::shared_ptr<WorkerSecrets> secrets;
   // The worker's own folder: work/, tmp/, out/, home/, inputs/, and
   // scripts/ for preRun / a bash run / postRun. Created with the worker
   // and removed when it ends, so it lives as long as the worker.
   std::string scratch;
-  bool sandbox = true;
+  SandboxOptions sandbox;
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
   // never project data roots. Local inputs use inputs_dir().
   std::vector<std::string> ro_paths;
@@ -53,10 +65,12 @@ struct WorkerSpawn {
   // Experimental, per Card: outside network (otherwise the worker has its
   // own network namespace with nothing in it) and folders of the Mac.
   bool network = false;
+  bool gui = false;
   struct Bind {
     std::string source;
     std::string target;
     bool write = false;
+    std::string name;
   };
   std::vector<Bind> binds;
   std::optional<uid_t> uid;
@@ -71,10 +85,15 @@ struct WorkerOutcome {
 // Whether a Card worker runs as its own uid on the host (folders it writes are
 // then handed to that uid when tsugumid is root): not under bubblewrap, whose
 // user namespace maps the Card's uid to tsugumid's own.
+auto worker_has_bwrap() -> bool;
+auto worker_limits_available() -> bool;
+auto worker_gui_available() -> bool;
+auto remove_card_cgroup(const std::filesystem::path& path) -> void;
 bool worker_uid_on_host();
 
 class WorkerProc {
   trace::Link trace_link_;
+
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;
@@ -89,6 +108,7 @@ class WorkerProc {
     std::string scratch;
     uint64_t call_id = 0;
     uint64_t lease = 0;
+    bool read_only_inputs = false;
     std::function<void()> clear;
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
@@ -99,12 +119,10 @@ class WorkerProc {
 
   // Sends one call and waits for its result. On cancel or deadline the worker
   // gets WorkerCancel, then the process group is killed after one second.
-  // Once the frame is sent it is cleared, and `sent` runs: the call's Card
-  // secrets then live only in the worker's process.
   WorkerOutcome call(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
       std::optional<std::chrono::steady_clock::time_point> deadline,
-      const DisplaySink& display, const std::function<void()>& sent = {});
+      const DisplaySink& display);
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
@@ -121,8 +139,9 @@ class WorkerProc {
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
   std::string out_dir() const { return scratch_ + "/out"; }
   std::string inputs_dir() const { return scratch_ + "/inputs"; }
-  // Empties work/, tmp/ and the invocation input/output staging areas.
+  // Empties tmp/ and the invocation input/output staging areas.
   void clear_scratch();
+  auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
@@ -138,6 +157,9 @@ class WorkerProc {
   int err_fd_ = -1;
   bool alive_ = false;
   std::string scratch_;
+  std::filesystem::path cgroup_;
+  bool read_only_inputs_ = false;
+  bool x11_mounted_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;

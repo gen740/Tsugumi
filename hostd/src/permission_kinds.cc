@@ -14,8 +14,11 @@ auto PermissionKinds(const std::string& language)
     result.kinds.push_back(std::move(kind));
   };
   add("network", "ネットワークへのアクセス", "Access the network", "network");
-  add("sandbox_off", "隔離（sandbox）なしで実行",
-      "Run without sandbox isolation", "shield.slash");
+  add("sandbox_off", "ファイルシステムの隔離を解除",
+      "Disable filesystem isolation", "shield.slash");
+  add("sandbox_options", "プロセスの隔離や上限を緩和",
+      "Relax process isolation or resource limits", "shield.slash");
+  add("gui", "GUI へのアクセス", "Access the GUI", "macwindow");
   add("host_folder_read", "このマシンのフォルダを読む",
       "Read folders on this machine", "folder");
   add("host_folder_write", "このマシンのフォルダに書く",

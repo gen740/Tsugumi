@@ -1,4 +1,4 @@
-"""The app's one shared VM with several projects (TSUGUMI_TEST_CONTAINER=1):
+"""The app's one shared VM with several projects (TSUGUMI_TEST_SHARED_VM=1):
 one Nix store for all, separate users,
 views and processes per project, and stopping one project never stops
 another's run."""
@@ -16,7 +16,7 @@ from conftest import SharedVM, VMEnv, write_project
 from harness.host import HostConnection
 from projects import card
 from projects import run_and_wait, start_run, wait_for_log, wait_run, write
-from test_cards_container import bash, log
+from test_cards_shared_vm import bash, log
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.Host.EventPayload import EventPayload
@@ -24,8 +24,8 @@ from Tsugumi.Trace.CoreTraceRequest import CoreTraceRequestT
 from Tsugumi.Trace.Mode import Mode
 
 pytestmark = pytest.mark.skipif(
-    os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
-    reason="needs the shared VM (TSUGUMI_TEST_CONTAINER=1)")
+    os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
+    reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 
 def project(root, script, name):
@@ -136,7 +136,7 @@ in
   run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
 }
 ''')
-    from test_cards_container import NUM
+    from test_cards_shared_vm import NUM
     from projects import put
     root = tmp_path / "P"
     write(root, {"trigger": {"type": "trigger"}, "one": {"type": "code", "language": "cpp", "_outputs": NUM, "_nix": nix}},

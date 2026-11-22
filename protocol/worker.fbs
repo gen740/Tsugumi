@@ -48,6 +48,9 @@ table WorkerFailure { failure:Tsugumi.Data.Failure (id: 0, required); }
 
 table WorkerCancel {}
 
+// A private launch frame sent before the first call when the Card uses secrets.
+table WorkerStart { environment:[EnvVar] (required); }
+
 table WorkerDisplay { display:Tsugumi.Data.Display (id: 0, required); }
 
 union WorkerPayload {
@@ -56,6 +59,7 @@ union WorkerPayload {
   WorkerFailure = 3,
   WorkerCancel = 4,
   WorkerDisplay = 5,
+  WorkerStart = 6,
 }
 
 table WorkerMessage {

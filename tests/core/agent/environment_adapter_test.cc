@@ -209,25 +209,25 @@ TEST(EnvironmentAdapterTest,
       project / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"nested"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
         "\"path\":" +
-            Quote(data.string()) + "}]}");
+            Quote(data.string()) + "}]}}");
   Write(project / "definitions/nested/_card.json", R"({"type":"subgraph","external":"x"})");
   Write(
       project / "externals/x/tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"b"}],"connections":[]}})");
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
         "\"path\":" +
-            Quote(data.string()) + ",\"write\":true}]}");
+            Quote(data.string()) + ",\"write\":true}]}}");
   Write(project / "definitions/unused/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"chat\","
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"chat\","
         "\"path\":" +
-            Quote(chat.string()) + ",\"write\":true}]}");
+            Quote(chat.string()) + ",\"write\":true}]}}");
   Write(project / "externals/unused/definitions/ignored/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":"
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":"
         "\"ignored\",\"path\":" +
-            Quote(chat.string()) + ",\"write\":true}]}");
+            Quote(chat.string()) + ",\"write\":true}]}}");
   AuthorizationDouble authorization;
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
@@ -269,9 +269,9 @@ TEST(EnvironmentAdapterTest,
   EXPECT_EQ(helper->launches, 1);
   EXPECT_EQ(helper->signals, 0);
   Write(project / "externals/x/definitions/b/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
         "\"path\":" +
-            Quote(data.string()) + ",\"write\":true}]}");
+            Quote(data.string()) + ",\"write\":true}]}}");
   // A guest keeps the folders of its start: any other set starts it again.
   input.action = H::EnvironmentAction::RemoveFolders;
   input.folders = {chat.string()};
@@ -389,9 +389,9 @@ TEST(EnvironmentAdapterTest,
       project / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   Write(project / "definitions/a/_card.json",
-        "{\"type\":\"code\",\"executionService\":\"local\",\"hostFolders\":[{\"name\":\"data\","
+        "{\"type\":\"code\",\"executionService\":\"local\",\"grants\":{\"hostPaths\":[{\"name\":\"data\","
         "\"path\":" +
-            Quote(data.string()) + "}]}");
+            Quote(data.string()) + "}]}}");
   auto helper = std::make_shared<HelperDouble>();
   helper->guest = true;
   helper->change_requirements = true;

@@ -73,6 +73,60 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
   return {reuse && alive, {}};
 }
 
+auto stage_input(const Value& value, std::span<const stdfs::path> roots,
+                 const stdfs::path& directory, bool read_only,
+                 const std::atomic<bool>& cancel,
+                 const fs::TransferProgress& progress) -> Value {
+  const auto source = path_value(value);
+  if (!source)
+    throw Failed(FailureKind::output_invalid, "file input has no path");
+  for (const auto& root : roots) {
+    const auto relative =
+        stdfs::path(*source).lexically_normal().lexically_relative(root);
+    if (!fs::valid_relative_path(relative.generic_string())) continue;
+    const auto check_cancel = [&] {
+      if (cancel.load())
+        throw Failed(FailureKind::cancelled, "staging inputs cancelled");
+    };
+    const auto stage = [&](const stdfs::path& from, const stdfs::path& to) {
+      check_cancel();
+      if (read_only)
+        if (const auto size = fs::link_beneath(root, from, to)) {
+          if (progress) progress(from, *size, *size);
+          return;
+        }
+      const auto total = stdfs::file_size(root / from);
+      uint64_t done = 0;
+      if (progress) progress(from, 0, total);
+      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
+        check_cancel();
+        done += chunk.size();
+        if (progress) progress(from, done, total);
+      });
+    };
+    const auto destination = directory / relative.filename();
+    if (value.kind == PortKind::File) {
+      stage(relative, destination);
+    } else {
+      const auto entries = fs::list_beneath(root, relative);
+      if (!entries.links.empty() || !entries.special.empty())
+        throw Failed(FailureKind::output_invalid,
+                     "Directory input contains a link or special file");
+      stdfs::create_directories(destination);
+      for (const auto& dir : entries.directories) {
+        check_cancel();
+        stdfs::create_directories(destination / dir);
+      }
+      for (const auto& file : entries.files)
+        stage(relative / file, destination / file);
+    }
+    check_cancel();
+    return with_path(value, destination.string());
+  }
+  throw Failed(FailureKind::output_invalid,
+               "file input is outside the run's folders: " + *source);
+}
+
 auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
                     std::span<const types::PortType> ports)
     -> std::vector<Value> {
@@ -197,6 +251,13 @@ auto run_invocation(const ReleaseWorker& release_worker,
     release_worker(std::move(lease.worker), disposition.keep,
                    disposition.reason);
   };
+  const auto discard_outputs = [&] {
+    result.outputs.clear();
+    result.out_alias.reset();
+    if (invocation.output_directory.empty()) return;
+    std::error_code error;
+    stdfs::remove_all(invocation.output_directory, error);
+  };
   try {
     const bool local = invocation.delivery == OutputDelivery::local_paths;
     const bool needs_out = std::ranges::any_of(
@@ -223,22 +284,9 @@ auto run_invocation(const ReleaseWorker& release_worker,
         invocation.stage_inputs ? staged : invocation.inputs;
     const auto params = invocation.prepare_params ? invocation.prepare_params()
                                                   : invocation.params;
-    std::vector<std::pair<std::string, std::string>> environment{
-        {"PATH", invocation.path},
-        {"HOME", worker.work_dir()},
-        {"LANG", "C.UTF-8"},
-        {"TSUGUMI_RUN_ID", invocation.run_id},
-        {"TSUGUMI_CARD", path_key(invocation.card)},
-        {"TSUGUMI_INVOCATION", std::to_string(invocation.number)},
-    };
-    // Keep the local environment order too (observable to a native Card).
-    if (local && params.json)
+    std::vector<std::pair<std::string, std::string>> environment;
+    if (params.json)
       environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
-    environment.emplace_back("TSUGUMI_WORKER", invocation.worker_binary);
-    if (!local && params.json)
-      environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
-    environment.insert(environment.end(), invocation.environment.begin(),
-                       invocation.environment.end());
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (invocation.timeout_ms)
       deadline = std::chrono::steady_clock::now() +
@@ -250,8 +298,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
         params.bfbs, params.root, params.bytes, invocation.outputs,
         worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
         environment, invocation.timeout_ms);
-    for (auto& value : environment) clear_secret(value.second);
-    environment.clear();
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");
@@ -259,15 +305,11 @@ auto run_invocation(const ReleaseWorker& release_worker,
     if (!local) input_directory.emplace(invocation.input_directory, "remote");
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
-    auto outcome =
-        worker.call(std::move(frame), id, invocation.cancel, deadline,
-                    invocation.display, invocation.on_call_sent);
+    auto outcome = worker.call(std::move(frame), id, invocation.cancel,
+                               deadline, invocation.display);
     result.failure = std::move(outcome.failure);
     between_calls = true;
-    if (invocation.stop_before_outputs)
-      worker.terminate();
-    else
-      worker.set_logs(nullptr);
+    worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
     if (!result.failure) {
       try {
@@ -301,6 +343,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
         }
       }
     }
+    if (result.failure) discard_outputs();
     try {
       release();
     } catch (...) {
@@ -308,6 +351,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
       return result;
     }
   } catch (...) {
+    discard_outputs();
     try {
       if (lease.worker) release();
     } catch (...) {

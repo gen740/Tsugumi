@@ -53,8 +53,8 @@ auto pin_directory(int parent, const char* name,
 }
 
 auto clear_directory(int source, const std::filesystem::path& path,
-                     const std::function<void(int, const char*)>& recover)
-    -> void {
+                     const std::function<void(int, const char*)>& recover,
+                     std::string_view preserved_entry = {}) -> void {
   struct stat status{};
   if (::fstat(source, &status) != 0) failed("fstat", path);
   // Unlinking a read-only file is allowed, but requires write/search permission
@@ -90,7 +90,7 @@ auto clear_directory(int source, const std::filesystem::path& path,
       break;
     }
     const std::string name = entry->d_name;
-    if (name == "." || name == "..") continue;
+    if (name == "." || name == ".." || name == preserved_entry) continue;
     const auto child_path = path / name;
     const int child = pin_directory(source, name.c_str(), recover);
     int flags = 0;
@@ -314,12 +314,12 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
 }  // namespace
 
 auto clear_staging(const std::filesystem::path& path,
-                   const std::function<void(int, const char*)>& recover)
-    -> void {
+                   const std::function<void(int, const char*)>& recover,
+                   std::string_view preserved_entry) -> void {
   const int directory = pin_directory(AT_FDCWD, path.c_str(), recover);
   if (directory < 0) failed("open", path);
   try {
-    clear_directory(directory, path, recover);
+    clear_directory(directory, path, recover, preserved_entry);
   } catch (...) {
     ::close(directory);
     throw;

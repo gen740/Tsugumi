@@ -2,11 +2,13 @@
 
 #include <cstdint>
 #include <memory>
+#include <span>
 #include <stdexcept>
 #include <string>
 #include <string_view>
 
 #include "tsugumi/protocol/remote_worker_generated.h"
+#include "tsugumi/workerd/frame.hh"
 
 namespace tsugumi::workerd {
 namespace R = Tsugumi::RemoteWorker;
@@ -16,7 +18,7 @@ inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
 // The largest live log slice one status reply carries.
 inline constexpr uint32_t kLogChunkBytes = 256 << 10;
-inline constexpr uint32_t kContract = 11;
+inline constexpr uint32_t kContract = 12;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;
@@ -45,7 +47,6 @@ auto validate_log_limit(const R::JobSpecT& spec) -> void;
 // unique and at most 256.
 auto validate_secret_names(const R::JobSpecT& spec) -> void;
 // Overwrites and releases a buffer that held a Card secret value.
-auto clear_secret(std::string& value) -> void;
 // The job's Card secrets travel from the listener to its invocation through
 // this inherited pipe descriptor, as one frame holding a CardSecrets reply.
 inline constexpr int kSecretChannelFd = 6;

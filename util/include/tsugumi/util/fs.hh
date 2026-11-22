@@ -74,6 +74,10 @@ auto copy_beneath(const stdfs::path& root, const stdfs::path& rel,
                   const stdfs::path& destination,
                   const std::function<void(std::string_view)>& on_chunk)
     -> uint64_t;
+// Links the validated regular inode on Linux. Returns nullopt if linking is
+// unavailable, so callers can use the same checked sparse copy path.
+auto link_beneath(const stdfs::path& root, const stdfs::path& rel,
+                  const stdfs::path& destination) -> std::optional<uint64_t>;
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
 

@@ -24,7 +24,7 @@ def write_project(root, cards, connections):
     for name in cards:
         file = root / 'definitions' / name / '_card.json'
         definition = json.loads(file.read_text())
-        definition['sandbox'] = True
+        definition["sandbox"] = {"filesystem": True}
         file.write_text(json.dumps(definition))
 
 

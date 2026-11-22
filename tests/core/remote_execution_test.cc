@@ -13,7 +13,7 @@ TEST(RemoteExecutionCapabilities,
   node.path = {"work"};
   node.settings.execution_service = "worker";
   node.settings.system = "aarch64-linux";
-  node.settings.execution_resources = ExecutionResources{500, 256u << 20};
+  node.settings.sandbox.limits = ExecutionResources{500, 256u << 20};
   RemoteTarget cached;
   cached.id = "worker";
   cached.available = true;
@@ -44,6 +44,7 @@ TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
   RemoteTarget local;
   local.id = "local";
   local.available = true;
+  local.namespace_isolation = true;
   RemoteTarget remote;
   remote.id = "remote";
   remote.grade = 10;
@@ -61,7 +62,9 @@ TEST(RemoteExecutionCapabilities, AutoRefusesUnavailableMatchesWithHostReason) {
   EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
   remote.available = false;
   local.grade = 10;
-  EXPECT_FALSE(Service::execution_diagnostic(node, {local, remote}));
+  const auto local_diagnostic =
+      Service::execution_diagnostic(node, {local, remote});
+  EXPECT_FALSE(local_diagnostic && local_diagnostic->error);
 }
 
 TEST(RemoteExecutionLifetime,
@@ -106,7 +109,8 @@ TEST(RemoteExecutionLifetime,
           invocation.execution_service = "unreachable-worker";
           invocation.execution_job_id = crypto::sha256_hex(id);
           invocation.execution_state = RemoteExecutionState::running;
-          History::put_remote_job(db, {invocation, std::string(64, 'a'), "spec"});
+          History::put_remote_job(db,
+                                  {invocation, std::string(64, 'a'), "spec"});
         }
         History::put_status(db, invocation);
       }

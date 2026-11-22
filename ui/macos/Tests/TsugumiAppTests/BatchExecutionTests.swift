@@ -50,7 +50,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   let directory = try SyncTests.project()
   defer { try? FileManager.default.removeItem(at: directory) }
   let card = directory.appendingPathComponent("definitions/a")
-  try Data(#"{"type":"code","language":"bash","sandbox":false,"recordIO":true}"#.utf8)
+  try Data(#"{"type":"code","language":"bash","sandbox":{"filesystem":false},"recordIO":true}"#.utf8)
     .write(to: card.appendingPathComponent("_card.json"))
   try Data("table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;".utf8)
     .write(to: card.appendingPathComponent("_outputs.fbs"))

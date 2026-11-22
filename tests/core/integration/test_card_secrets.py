@@ -1,5 +1,5 @@
 """Card secrets: a Card declares names, hostd holds the values, and the Card's
-process receives them as environment variables for one invocation only.
+process receives them as environment variables at launch.
 
 The value must never reach what Tsugumi writes: the project (documents, run
 history and its WAL), derivations, run scratch, control files and the daemon's
@@ -58,7 +58,7 @@ def broker(monkeypatch):
             thread = threading.Thread(target=server.serve_forever, kwargs={"poll_interval": 0.02})
             thread.start()
             try:
-                yield asked
+                yield asked, values
             finally:
                 server.shutdown()
                 thread.join()
@@ -85,7 +85,7 @@ def test_secret_reaches_the_process_and_no_record(core_factory, broker, tmp_path
     c = daemon.connect()
     run_id, status = run_and_wait(c, "use")
     assert status.state == RunState.succeeded, log(c, run_id, "use", 2)
-    assert broker == [["database_password"]]
+    assert broker[0] == [["database_password"]]
     record = c.call("RunRecordRequest", runId=run_id, card=path("use"))
     assert [text(name) for name in record.record.summary.secrets] == ["database_password"]
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
@@ -119,10 +119,9 @@ def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_pat
 @pytest.mark.parametrize("settings,message", [
     ({"secrets": ["Database"]}, "secrets entries"),
     ({"secrets": ["token", "token"]}, "duplicate secret"),
-    ({"secrets": ["token"], "reuseWorker": True}, "reuseWorker"),
 ])
 def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path, settings, message):
-    """Names follow one rule, and a Card with secrets keeps no resident worker."""
+    """Secret names follow the same rule as the worker launch channel."""
     root = tmp_path / "p"
     write(root, {"use": {"type": "code", "language": "bash", "_outputs": NUM,
                          "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}},
@@ -131,3 +130,25 @@ def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path
     assert not validation.valid
     assert any(message in text(d.message) for d in validation.diagnostics), \
         [text(d.message) for d in validation.diagnostics]
+
+
+def test_secret_rotation_retires_resident(core_factory, broker, tmp_path):
+    root = tmp_path / "p"
+    definition = bash(
+        'test -n "$database_password"; '
+        'n=0; if test -f "$HOME/count"; then read -r n < "$HOME/count"; fi; '
+        'n=$((n+1)); echo "$n" > "$HOME/count"; '
+        """printf '{"out":{"value":%s}}' "$n" > "$TSUGUMI_OUTPUT"; """
+        """printf '{"text":"%s|%s"}' "$n" "${#database_password}" > "$TSUGUMI_REPORT" """,
+        secrets=["database_password"], reuseWorker=True)
+    write(root, {"use": definition}, [card("use", "use")], [])
+    client = core_factory(project_root=root).connect()
+    for count, rotates in ((1, False), (2, False), (1, True)):
+        if rotates:
+            broker[1]["database_password"] = SENTINEL + "-rotated"
+        run_id, status = run_and_wait(client, "use")
+        assert status.state == RunState.succeeded, log(client, run_id, "use", 2)
+        invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
+        assert invocation.workerReused == (count == 2)
+        record = client.call("RunRecordRequest", runId=run_id, card=path("use")).record
+        assert text(record.display.value.text) == f'{count}|{len(broker[1]["database_password"])}'

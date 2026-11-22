@@ -95,7 +95,7 @@ def test_a_failed_notebook_sends_no_downstream_result(tmp_path, problem):
 @extra_demo_runs
 @pytest.mark.parametrize('ending',['failure','cancel','project_stop'])
 def test_project_owns_notebook_process_tree(tmp_path,ending):
-    if os.environ.get('TSUGUMI_TEST_CONTAINER')=='1':
+    if os.environ.get('TSUGUMI_TEST_SHARED_VM')=='1':
         pytest.skip('Host process identity assertion; VM lifecycle has separate core tests')
     def edit(root):
         (root/'definitions/notebook/src/notebook.py').write_text('''import marimo

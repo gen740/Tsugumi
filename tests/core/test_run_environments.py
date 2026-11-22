@@ -140,7 +140,7 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     for name in ["a", "b"]:
-        graph.card(name, {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "start"}]},
+        graph.card(name, {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "inputs": [{"name": "start"}]},
                    outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}})
         graph.connect("start", "out", name, "start")
     graph.save(client)
@@ -160,7 +160,7 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     latest = client.call("RunLatestInvocationsRequest", runId=first).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in latest}
     assert ids == {"start": None, "a": original_id, "b": original_id}
-    graph.card("b", {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "start"}]},
+    graph.card("b", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "inputs": [{"name": "start"}]},
                outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}, "preRun": "true"})
     graph.save(client)
     second = run(client, "start")
@@ -356,7 +356,7 @@ def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_pa
         jq.chmod(0o755)
         check = f'test "$DEFINITION_SHELL" = {version} && test "$(jq)" = {version} || exit 42\n'
         body = check + 'printf \'{"out":{"value":"%s"}}\' "$(jq)" > "$TSUGUMI_OUTPUT"'
-        graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True, "reuseWorker": True},
+        graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True, "reuseWorker": True},
                    outputs=STRING_OUTPUT,
                    plan={"closure": [str(tools)]},
                    manifest={"shell": str(shell), "path": str(tools), "run": {"bash": body},

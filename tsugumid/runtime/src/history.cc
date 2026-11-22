@@ -116,7 +116,7 @@ void detail_into(const std::string& text, InvocationSummaryData& s) {
   s.execution_system = d.execution_system->value_or("");
   const auto cpu = d.execution_cpu_millis->value_or(0);
   const auto memory = d.execution_memory_bytes->value_or(0);
-  if (cpu > 0 && cpu <= UINT32_MAX && memory > 0)
+  if ((cpu || memory) && cpu <= UINT32_MAX)
     s.execution_resources =
         ExecutionResources{static_cast<uint32_t>(cpu), memory};
   const auto state = d.execution_state->value_or(-1);
@@ -1112,21 +1112,21 @@ std::vector<LogEnd> History::append_log(sql::Db& db, const std::string& run_id,
     return st.step() ? LogPosition{st.u64(0), st.u64(1)} : LogPosition{};
   };
   auto r0 = load(
-                 "SELECT run_off + length(data), run_lf + lf_count FROM logs "
-                 "WHERE run_id=? AND stream=? ORDER BY run_off DESC LIMIT 1",
-                 false, false);
+      "SELECT run_off + length(data), run_lf + lf_count FROM logs "
+      "WHERE run_id=? AND stream=? ORDER BY run_off DESC LIMIT 1",
+      false, false);
   LogPosition c0, i0;
   if (!card.empty()) {
     c0 = load(
-              "SELECT card_off + length(data), card_lf + lf_count FROM logs "
-              "WHERE run_id=? AND card=? AND stream=? "
-              "ORDER BY card_off DESC LIMIT 1",
-              true, false);
+        "SELECT card_off + length(data), card_lf + lf_count FROM logs "
+        "WHERE run_id=? AND card=? AND stream=? "
+        "ORDER BY card_off DESC LIMIT 1",
+        true, false);
     i0 = load(
-              "SELECT inv_off + length(data), inv_lf + lf_count FROM logs "
-              "WHERE run_id=? AND card=? AND invocation=? AND stream=? "
-              "ORDER BY inv_off DESC LIMIT 1",
-              true, true);
+        "SELECT inv_off + length(data), inv_lf + lf_count FROM logs "
+        "WHERE run_id=? AND card=? AND invocation=? AND stream=? "
+        "ORDER BY inv_off DESC LIMIT 1",
+        true, true);
   }
   auto insert = db.prepare(
       "INSERT INTO logs(run_id, card, invocation, stream, run_off, "
@@ -1747,7 +1747,8 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
         first = false;
       }
       if (o != buf_start + buf.size())
-        throw Failed(FailureKind::persistence_failed, "discontinuous log chunks");
+        throw Failed(FailureKind::persistence_failed,
+                     "discontinuous log chunks");
       buf += d;
     }
   }

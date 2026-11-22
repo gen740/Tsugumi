@@ -12,6 +12,7 @@ struct WorkerCandidate {
   std::string_view id;
   uint64_t grade;
   bool free;
+  bool supported = true;
 };
 struct WorkerSelection {
   bool matches = false;
@@ -27,12 +28,13 @@ inline auto select_worker(std::span<const WorkerCandidate> workers,
   const bool keep_resident =
       !resident.empty() &&
       std::any_of(workers.begin(), workers.end(), [&](const auto& worker) {
-        return worker.id == resident &&
+        return worker.supported && worker.id == resident &&
                (service == "auto" || service == worker.id) &&
                (!condition || condition->matches(worker.grade));
       });
   for (size_t i = 0; i < workers.size(); ++i) {
     const auto& worker = workers[i];
+    if (!worker.supported) continue;
     if (service != "auto" && service != worker.id) continue;
     if (keep_resident && resident != worker.id) continue;
     if (condition && !condition->matches(worker.grade)) continue;

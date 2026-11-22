@@ -27,7 +27,9 @@ auto Spawn(std::vector<std::string> argv) -> bool {
   for (auto& a : argv) args.push_back(a.data());
   args.push_back(nullptr);
   pid_t pid = 0;
-  if (::posix_spawnp(&pid, args[0], nullptr, nullptr, args.data(), environ) != 0) return false;
+  if (::posix_spawnp(&pid, args[0], nullptr, nullptr, args.data(), environ) !=
+      0)
+    return false;
   std::thread([pid] {
     int status = 0;
     ::waitpid(pid, &status, 0);
@@ -43,9 +45,11 @@ auto Listing(const std::filesystem::path& dir) -> H::FolderListingT {
     throw Failure("invalid_request", "Not a folder: " + dir.string());
   H::FolderListingT out;
   out.path = real.string();
-  if (real.has_parent_path() && real.parent_path() != real) out.parent = real.parent_path().string();
+  if (real.has_parent_path() && real.parent_path() != real)
+    out.parent = real.parent_path().string();
   out.project = f::is_regular_file(real / "tsugumi.json", error);
-  for (const auto& entry : f::directory_iterator(real, f::directory_options::skip_permission_denied, error)) {
+  for (const auto& entry : f::directory_iterator(
+           real, f::directory_options::skip_permission_denied, error)) {
     const auto name = entry.path().filename().string();
     std::error_code e;
     if (name.starts_with('.') || !entry.is_directory(e)) continue;
@@ -60,8 +64,10 @@ auto Listing(const std::filesystem::path& dir) -> H::FolderListingT {
 }
 }  // namespace
 
-WebPages::WebPages(TransportServer* host, TransportServer* agent, std::string user_token,
-                   std::function<void(const std::string&)> publish, WebHome home)
+WebPages::WebPages(TransportServer* host, TransportServer* agent,
+                   std::string user_token,
+                   std::function<void(const std::string&)> publish,
+                   WebHome home)
     : host_(host),
       agent_(agent),
       user_token_(std::move(user_token)),
@@ -72,8 +78,10 @@ WebPages::~WebPages() { Stop(); }
 
 auto WebPages::Handles(H::RequestPayload type) -> bool {
   return type == H::RequestPayload::HostPageRequest ||
-         type == H::RequestPayload::HostHomeRequest || type == H::RequestPayload::HostRevealRequest ||
-         type == H::RequestPayload::HostFolderListRequest || type == H::RequestPayload::HostFolderCreateRequest;
+         type == H::RequestPayload::HostHomeRequest ||
+         type == H::RequestPayload::HostRevealRequest ||
+         type == H::RequestPayload::HostFolderListRequest ||
+         type == H::RequestPayload::HostFolderCreateRequest;
 }
 
 auto WebPages::Stop() -> void {
@@ -85,12 +93,15 @@ auto WebPages::Stop() -> void {
   if (edge) edge->stop();
 }
 
-auto WebPages::Serve(const std::filesystem::path& root, int port, bool port_chosen) -> void {
+auto WebPages::Serve(const std::filesystem::path& root, int port,
+                     bool port_chosen) -> void {
   std::lock_guard lock(mutex_);
   if (edge_) return;
   struct stat st{};
-  if (root.empty() || ::stat((root / "index.html").c_str(), &st) != 0 || !S_ISREG(st.st_mode))
-    throw Failure("invalid_request", "The Web UI folder has no index.html: " + root.string());
+  if (root.empty() || ::stat((root / "index.html").c_str(), &st) != 0 ||
+      !S_ISREG(st.st_mode))
+    throw Failure("invalid_request",
+                  "The Web UI folder has no index.html: " + root.string());
   WebEdgeOptions options;
   options.root = root;
   options.port = port;
@@ -119,15 +130,18 @@ auto WebPages::OpenBrowser(const std::string& project) -> bool {
 #ifdef __APPLE__
   std::vector<std::string> argv = {"open", url};
 #else
-  std::vector<std::string> argv = std::getenv("WSL_DISTRO_NAME")
-                                      ? std::vector<std::string>{"rundll32.exe", "url.dll,FileProtocolHandler", url}
-                                      : std::vector<std::string>{"xdg-open", url};
+  std::vector<std::string> argv =
+      std::getenv("WSL_DISTRO_NAME")
+          ? std::vector<std::string>{"rundll32.exe",
+                                     "url.dll,FileProtocolHandler", url}
+          : std::vector<std::string>{"xdg-open", url};
 #endif
   Spawn(std::move(argv));
   return true;
 }
 
-auto WebPages::Tell(const PageId& page, const std::string& project, const std::string& card) -> void {
+auto WebPages::Tell(const PageId& page, const std::string& project,
+                    const std::string& card) -> void {
   H::PageShowT show;
   show.project = project;
   show.card = card;
@@ -135,7 +149,8 @@ auto WebPages::Tell(const PageId& page, const std::string& project, const std::s
   host_->reply(page.first, wire::HostEvent(std::move(show)));
 }
 
-auto WebPages::Show(const std::string& project, const std::string& card, bool browser) -> Shown {
+auto WebPages::Show(const std::string& project, const std::string& card,
+                    bool browser) -> Shown {
   {
     std::lock_guard lock(mutex_);
     // Home: any page will do.
@@ -162,10 +177,13 @@ auto WebPages::PageUrl(const std::string& project) -> std::string {
 
 auto WebPages::Disconnected(ConnId connection) -> void {
   std::lock_guard lock(mutex_);
-  std::erase_if(pages_, [&](const auto& entry) { return entry.first.first == connection; });
+  std::erase_if(pages_, [&](const auto& entry) {
+    return entry.first.first == connection;
+  });
 }
 
-auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::string {
+auto WebPages::Handle(const RequestIn& request, const H::Request& r)
+    -> std::string {
   namespace f = std::filesystem;
   if (r.value_as_HostHomeRequest()) {
     const auto* home = std::getenv("HOME");
@@ -173,12 +191,14 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
     H::HostHomeT result;
     result.home = home ? home : "/";
     // Where demo copies go (TSUGUMI_PROJECTS_DIR for checks).
-    result.documents = projects ? projects : (f::path(result.home) / "Documents" / "Tsugumi").string();
+    result.documents =
+        projects ? projects
+                 : (f::path(result.home) / "Documents" / "Tsugumi").string();
     result.repo = home_.demos.parent_path().string();
     result.vm = home_.vm;
     // /host/<name> needs bubblewrap: on a Mac, the shared VM.
 #ifdef __APPLE__
-    result.host_folders = home_.vm;
+    result.host_folders = true;
 #else
     result.host_folders = true;
 #endif
@@ -202,32 +222,40 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
 #else
     Spawn({"xdg-open", path.parent_path().string()});
 #endif
-    return wire::HostReply(request.request_id, Tsugumi::Service::AcknowledgementT{});
+    return wire::HostReply(request.request_id,
+                           Tsugumi::Service::AcknowledgementT{});
   }
   if (const auto* list = r.value_as_HostFolderListRequest()) {
     const auto* home = std::getenv("HOME");
-    const auto path = list->path() && list->path()->size() ? list->path()->str() : std::string(home ? home : "/");
+    const auto path = list->path() && list->path()->size()
+                          ? list->path()->str()
+                          : std::string(home ? home : "/");
     return wire::HostReply(request.request_id, Listing(path));
   }
   if (const auto* create = r.value_as_HostFolderCreateRequest()) {
     auto name = create->name()->str();
     std::replace(name.begin(), name.end(), '/', '-');
     std::replace(name.begin(), name.end(), '\\', '-');
-    if (name.empty() || name == "." || name == "..") throw Failure("invalid_request", "Invalid folder name");
+    if (name.empty() || name == "." || name == "..")
+      throw Failure("invalid_request", "Invalid folder name");
     const auto dir = f::path(create->parent()->str()) / name;
     std::error_code error;
     if (!f::create_directory(dir, error))
-      throw Failure("invalid_request", "Cannot create " + dir.string() + (error ? ": " + error.message() : ": it exists"));
+      throw Failure("invalid_request",
+                    "Cannot create " + dir.string() +
+                        (error ? ": " + error.message() : ": it exists"));
     return wire::HostReply(request.request_id, Listing(dir));
   }
   const auto* report = r.value_as_HostPageRequest();
-  const auto project = report->project() && !report->closed() ? report->project()->str() : "";
+  const auto project =
+      report->project() && !report->closed() ? report->project()->str() : "";
   const PageId id{request.conn, report->page() ? report->page()->str() : ""};
   std::string closed;
   {
     std::lock_guard lock(mutex_);
     const auto found = pages_.find(id);
-    if (found != pages_.end() && !found->second.project.empty() && found->second.project != project)
+    if (found != pages_.end() && !found->second.project.empty() &&
+        found->second.project != project)
       closed = found->second.project;
     if (report->closed()) {
       if (found != pages_.end()) pages_.erase(found);
@@ -246,7 +274,8 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r) -> std::str
     event.project = closed;
     publish_(wire::HostEvent(std::move(event)));
   }
-  return wire::HostReply(request.request_id, Tsugumi::Service::AcknowledgementT{});
+  return wire::HostReply(request.request_id,
+                         Tsugumi::Service::AcknowledgementT{});
 }
 
 }  // namespace tsugumi::host

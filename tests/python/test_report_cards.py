@@ -85,11 +85,9 @@ stopifnot(readLines(file.path(params$tsugumi$paths$folder, "data.txt")) == "file
     rendered = read_pages(client, 'ArtifactReadRequest', artifactId=artifact, member='index.html', page_bytes=262144)
     assert b'Total: 12' in rendered
     assert b'data:image/png;base64,' in rendered and b'data:image/svg+xml' in rendered
-    summary = client.call('RunRecordRequest', runId=run, card=path('report')).record.summary
     metadata = json.loads(read_pages(client, 'ArtifactReadRequest', artifactId=artifact,
                                     member='metadata.json', page_bytes=262144))
-    assert metadata == {'source': 'report.' + extension, 'run_id': run, 'card': 'report',
-                        'invocation': summary.invocation}
+    assert metadata == {'source': 'report.' + extension}
     if extension == 'Rmd':
         check_report_after_edit(root, client, artifact, rendered)
 
@@ -207,7 +205,7 @@ def test_report_cancel_reaps_renderer_children(project):
     client = connect()
     run = start_run(client, 'start')
     wait_for_log(client, run, 'report', 2, lambda log: 'report-sleeping' in text(log.text or b""))
-    pid = child_pid() if os.environ.get('TSUGUMI_TEST_CONTAINER') != '1' else None
+    pid = child_pid() if os.environ.get('TSUGUMI_TEST_SHARED_VM') != '1' else None
     client.call('RunCancelRequest', runId=run)
     assert wait_run(client, run).state == RunState.cancelled
     assert not client.call('ArtifactListRequest', runId=run).artifacts

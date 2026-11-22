@@ -16,6 +16,16 @@ std::vector<std::string> NixStore::substituters() {
   return urls;
 }
 
+auto NixStore::closure(const std::string& path) -> std::vector<std::string> {
+  auto store = nix::openStore();
+  nix::StorePathSet closure;
+  store->computeFSClosure(store->parseStorePath(path), closure);
+  std::vector<std::string> paths;
+  for (const auto& member : closure)
+    paths.push_back(store->printStorePath(member));
+  return paths;
+}
+
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)
     -> std::vector<std::map<std::string, uint64_t>> {
   auto store = nix::openStore();
