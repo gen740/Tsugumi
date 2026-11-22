@@ -226,7 +226,7 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
            const std::function<void(LineChunk)>& on_stderr,
            std::optional<size_t> stderr_line_limit,
-           std::chrono::milliseconds grace) {
+           std::chrono::milliseconds grace, LogFraming framing) {
   int out_pipe[2] = {-1, -1};
   int err_pipe[2] = {-1, -1};
   if (::pipe(out_pipe) != 0) throw std::runtime_error("pipe failed");
@@ -250,6 +250,8 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
   }
   ::close(out_pipe[1]);
   ::close(err_pipe[1]);
+  const bool framed = framing == LogFraming::stdout_size_prefixed;
+  if (framed) std::swap(out_pipe[0], err_pipe[0]);
   Result res;
   std::exception_ptr log_error;
   const auto deliver = [&](LineChunk chunk) {
@@ -272,6 +274,34 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     lines.clear();
     line_bytes = 0;
     flush_at.reset();
+  };
+  const auto collect = [&](std::string line) {
+    line_bytes += line.size();
+    lines.push_back(std::move(line));
+    if (!flush_at)
+      flush_at = std::chrono::steady_clock::now() + kStderrFlushInterval;
+  };
+  const auto collect_frames = [&](std::string_view bytes) {
+    pending.append(bytes);
+    size_t at = 0;
+    constexpr size_t header_bytes = sizeof(uint32_t);
+    while (pending.size() - at >= header_bytes) {
+      const auto* header =
+          reinterpret_cast<const unsigned char*>(pending.data() + at);
+      uint32_t size = 0;
+      for (size_t i = 0; i < header_bytes; ++i)
+        size |= static_cast<uint32_t>(header[i]) << (i * 8);
+      const size_t total = header_bytes + static_cast<size_t>(size);
+      if (stderr_line_limit && total > *stderr_line_limit) {
+        truncated = true;
+        std::string{}.swap(pending);
+        return;
+      }
+      if (total > pending.size() - at) break;
+      collect(pending.substr(at, total));
+      at += total;
+    }
+    pending.erase(0, at);
   };
   bool out_open = true;
   bool err_open = true;
@@ -306,6 +336,10 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
         err_open = false;
       } else if (on_stderr && !log_error && !truncated) {
         std::string_view remaining(buf, static_cast<size_t>(r));
+        if (framed) {
+          collect_frames(remaining);
+          remaining = {};
+        }
         while (!remaining.empty()) {
           const auto newline = remaining.find('\n');
           const auto fragment = remaining.substr(
@@ -322,15 +356,12 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
             continue;
           }
           if (pending.empty()) {
-            lines.emplace_back(fragment);
+            collect(std::string(fragment));
           } else {
             pending.append(fragment);
-            lines.push_back(std::move(pending));
+            collect(std::move(pending));
             pending.clear();
           }
-          line_bytes += lines.back().size();
-          if (!flush_at)
-            flush_at = std::chrono::steady_clock::now() + kStderrFlushInterval;
         }
         if (truncated || line_bytes >= kStderrFlushBytes) flush();
       }
@@ -358,10 +389,12 @@ Result run(const Spec& spec_in, const std::atomic<bool>* cancel,
     }
   }
   if (!pending.empty()) {
-    lines.push_back(std::move(pending));
-    line_bytes += lines.back().size();
+    if (framed)
+      truncated = true;
+    else
+      collect(std::move(pending));
   }
-  if (!lines.empty() && !log_error) flush();
+  if ((!lines.empty() || (framed && !pending.empty())) && !log_error) flush();
   ::close(out_pipe[0]);
   ::close(err_pipe[0]);
   res.status = wait(pid);

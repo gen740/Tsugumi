@@ -59,6 +59,18 @@ namespace tsugumi {
 
 namespace {
 
+namespace E = Tsugumi::NixEvaluator;
+
+auto write_build_log(std::string_view line, bool truncated) -> void {
+  flatbuffers::FlatBufferBuilder builder;
+  const auto text = truncated ? flatbuffers::Offset<flatbuffers::String>{}
+                              : builder.CreateString(line);
+  builder.FinishSizePrefixed(E::CreateBuildLog(builder, text, truncated));
+  nix::writeFull(STDOUT_FILENO,
+                 {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                  builder.GetSize()});
+}
+
 // Observe below Nix's allow-list, including negative lookups and directory
 // enumeration. Keep observations for the entire EvalState: cached imports and
 // lazy nixpkgs values can otherwise hide reads on subsequent evaluations.
@@ -338,19 +350,11 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
       nix::settings.getWorkerSettings().maxBuildJobs.set(argv[3], false);
     if (*argv[4])
       nix::settings.getLocalSettings().buildCores.set(argv[4], false);
-    // A JSON string retains embedded newlines in a single log entry. The
-    // parent can discard an oversized frame without trying to decode it.
     nix::logger = std::make_unique<NixLogSink>(
         [truncated = false](const std::string& line) mutable {
           if (truncated) return;
-          if (line.size() >= kInvocationLogLimitBytes) {
-            nix::writeFull(STDERR_FILENO, "null\n");
-            truncated = true;
-            return;
-          }
-          auto frame = nlohmann::json(line).dump();
-          frame += '\n';
-          nix::writeFull(STDERR_FILENO, frame);
+          truncated = line.size() >= kInvocationLogLimitBytes;
+          write_build_log(line, truncated);
         });
     auto store = nix::openStore();
     store->buildPaths({nix::DerivedPath::Built{
@@ -364,7 +368,7 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
     nix::logger->log(nix::lvlError, diagnostic);
     // Keep the build diagnostic available even if the history log filled up.
     if (diagnostic.size() < kInvocationLogLimitBytes)
-      nix::writeFull(STDOUT_FILENO, diagnostic);
+      nix::writeFull(STDERR_FILENO, diagnostic);
     return 1;
   }
 }
@@ -808,32 +812,28 @@ struct EvaluationState {
         [&](proc::LineChunk chunk) {
           if (!c.log) return;
           std::vector<std::string> output;
-          for (const auto& line : chunk.lines) {
-            if (line == "null\n") {
-              chunk.truncated = true;
-              break;
-            }
-            if (line.starts_with('"')) {
-              auto entry = nlohmann::json::parse(line, nullptr, false);
-              if (auto* text = entry.get_ptr<std::string*>()) {
-                output.push_back(std::move(*text));
-                continue;
-              }
-            }
-            // Keep diagnostics printed before the child installs its logger.
-            output.push_back(tsugumi::text::replace_invalid_utf8(line));
+          for (const auto& frame : chunk.lines) {
+            const auto* start = reinterpret_cast<const uint8_t*>(frame.data());
+            flatbuffers::Verifier verifier(start, frame.size());
+            if (!verifier.VerifySizePrefixedBuffer<E::BuildLog>(nullptr))
+              throw std::runtime_error("invalid Nix build log frame");
+            const auto* log =
+                flatbuffers::GetSizePrefixedRoot<E::BuildLog>(start);
+            if (log->truncated()) chunk.truncated = true;
+            if (log->line()) output.push_back(log->line()->str());
           }
           c.log({output, chunk.truncated});
         },
-        kInvocationLogLimitBytes);
+        kInvocationLogLimitBytes + 64, std::chrono::seconds(1),
+        proc::LogFraming::stdout_size_prefixed);
     if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
     if (result.timed_out)
       throw NixInterrupted(true, "Nix exceeded buildTimeoutSeconds");
     if (!proc::exited_ok(result.status))
-      throw std::runtime_error(result.out.empty()
-                                   ? "Nix build failed: " +
-                                         proc::describe(result.status)
-                                   : result.out);
+      throw std::runtime_error(
+          result.out.empty()
+              ? "Nix build failed: " + proc::describe(result.status)
+              : tsugumi::text::replace_invalid_utf8(result.out));
   }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
@@ -913,8 +913,6 @@ struct EvaluationState {
     return false;
   }
 };
-
-namespace E = Tsugumi::NixEvaluator;
 
 template <class Table>
 auto receive(nix::Source& source) -> typename Table::NativeTableType {

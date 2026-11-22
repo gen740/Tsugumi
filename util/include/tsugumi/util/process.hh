@@ -48,6 +48,8 @@ struct Result {
   std::string out;  // stdout (captured)
 };
 
+enum class LogFraming { stderr_lines, stdout_size_prefixed };
+
 // Runs a command to completion. Complete stderr lines are delivered in order,
 // collected across pipe reads: a delivery waits at most a short interval after
 // its first line, so the number of deliveries does not follow how the OS
@@ -56,12 +58,15 @@ struct Result {
 // limit, an oversized line ends delivery after sending the accepted prefix
 // with truncated=true. The pipe is still drained and the child reaped.
 // Cancellation and deadline terminate the whole process group (TERM, then
-// KILL after `grace`).
+// KILL after `grace`). With stdout_size_prefixed, stdout carries records
+// prefixed by a little-endian uint32 size and stderr is captured as
+// diagnostics.
 Result run(const Spec& spec, const std::atomic<bool>* cancel,
            std::optional<std::chrono::steady_clock::time_point> deadline,
            const std::function<void(LineChunk)>& on_stderr,
            std::optional<size_t> stderr_line_limit = std::nullopt,
-           std::chrono::milliseconds grace = std::chrono::milliseconds(1000));
+           std::chrono::milliseconds grace = std::chrono::milliseconds(1000),
+           LogFraming framing = LogFraming::stderr_lines);
 
 bool exited_ok(int status);
 std::string describe(int status);

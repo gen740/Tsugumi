@@ -57,9 +57,8 @@ def run(input):
         ("exit 23", RunState.failed, False),
         ("exec sleep infinity", RunState.cancelled, False),
         (
-            # Quotes expand to two bytes in the pipe's JSON string. Exercise
-            # the reader's bound on a record before it reaches the log budget.
-            r'''{ head -c $((65 * 1024 * 1024)) /dev/zero | tr '\0' '"'; echo; } >&2; touch "$out"''',
+            # One oversized record reaches the build client's frame limit.
+            r'''{ head -c $((129 * 1024 * 1024)) /dev/zero | tr '\0' '"'; echo; } >&2; touch "$out"''',
             RunState.succeeded,
             True,
         ),
