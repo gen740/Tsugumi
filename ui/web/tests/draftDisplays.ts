@@ -1,7 +1,5 @@
-// A Draft implemented becomes a Card that sends its results, and the session
-// asks for them at once: the frames of the Agent's Cards open while they run.
+// Only open live viewers subscribe to displays.
 import assert from 'node:assert/strict'
-import { parse } from '../shared/json'
 import * as R from '../shared/gen/tsugumi/rpc'
 
 const page = globalThis as Record<string, unknown>
@@ -28,27 +26,17 @@ const session = () => {
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }
 
-{
-  const { s, asked, apply } = session()
-  assert.equal(s.kind('a'), 'draft')
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code","language":"python"}')] }))
-  assert.equal(s.kind('a'), 'code')
-  assert.deepEqual(asked, [['a']], 'the Draft that became code asks for its displays')
-}
+const { s, asked, apply } = session()
+apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code","language":"python"}')] }))
+assert.equal(s.kind('a'), 'code')
+assert.deepEqual(asked, [], 'the canvas does not subscribe when a Draft becomes code')
 
-// Nothing changed about which Cards send results: nothing is asked again.
-{
-  const { asked, apply } = session()
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"draft"}')] }))
-  assert.deepEqual(asked, [])
-}
+const closeA = s.observeDisplay('a')
+const closeSecondA = s.observeDisplay('a')
+const closeB = s.observeDisplay('nested/b')
+closeA()
+closeB()
+closeSecondA()
+assert.deepEqual(asked, [['a'], ['a', 'nested/b'], ['a'], []])
 
-// A Card that stops being one (code back to a Draft) is left out at once as well.
-{
-  const { s, asked, apply } = session()
-  s.confirmedDefinitions.set('a', parse('{"type":"code","language":"python"}'))
-  apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"draft"}')] }))
-  assert.deepEqual(asked, [[]])
-}
-
-console.log('draft displays: passed')
+console.log('live display subscriptions: passed')

@@ -1,5 +1,6 @@
 // Bundles the browser UI into dist/public (hostd serves it) with esbuild.
 import * as esbuild from 'esbuild'
+import { buildDisplayModules } from './build-display-modules.mjs'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -28,12 +29,6 @@ const viewer = path.join(root, '..', 'shared', 'modules')
 const playerData = path.join(preparePlayer(), 'player-data')
 const copy = () => {
   fs.copyFileSync(path.join(root, 'src', 'index.html'), path.join(out, 'public', 'index.html'))
-  fs.mkdirSync(path.join(out, 'public', 'modules'), { recursive: true })
-  const script = fs.readFileSync(path.join(viewer, 'viewer.js'), 'utf8')
-  if (script.includes('</script')) throw new Error('viewer.js cannot be inlined: it contains </script')
-  const page = fs.readFileSync(path.join(viewer, 'viewer.html'), 'utf8').replace('<script src="viewer.js"></script>', () => `<script>\n${script}</script>`)
-  if (!page.includes(script)) throw new Error('viewer.html has no <script src="viewer.js"></script> to inline')
-  fs.writeFileSync(path.join(out, 'public', 'modules', 'viewer.html'), page)
   fs.copyFileSync(path.join(root, '../..', 'docs', 'assets', 'tsugumi-icon.svg'), path.join(out, 'public', 'icon.svg'))
   fs.rmSync(path.join(out, 'public', 'player-data'), { recursive: true, force: true })
   fs.cpSync(playerData, path.join(out, 'public', 'player-data'), {
@@ -47,6 +42,7 @@ const copy = () => {
   }
 }
 copy()
+await buildDisplayModules(viewer, path.join(root, 'node_modules'), path.join(out, 'public', 'modules'))
 
 const client = {
   entryPoints: { app: path.join(root, 'src', 'main.tsx') },

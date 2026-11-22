@@ -37,37 +37,5 @@
       "width": 760,
       "height": 600
     }
-  ],
-  "displays": {
-    "trials": {
-      "x": 60,
-      "y": 130,
-      "width": 760,
-      "height": 400
-    },
-    "pool": {
-      "x": 1120,
-      "y": -430,
-      "width": 680,
-      "height": 440
-    },
-    "funnel": {
-      "x": 1120,
-      "y": 170,
-      "width": 560,
-      "height": 440
-    },
-    "moderator": {
-      "x": 1840,
-      "y": -430,
-      "width": 640,
-      "height": 430
-    },
-    "sensitivity": {
-      "x": 1840,
-      "y": 170,
-      "width": 860,
-      "height": 420
-    }
-  }
+  ]
 }

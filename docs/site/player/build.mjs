@@ -326,7 +326,7 @@ export function buildDemo(entry, root, portsOf, narrations, recorded) {
   for (const c of cards) delete c.boundary
   return {
     id: entry.id, title: entry.title, description: entry.description, tags: entry.tags ?? [], flow, draftOnly,
-    cards, wires, notes, frames: layout.displays ?? {}, run, steps, final, outputs,
+    cards, wires, notes, run, steps, final, outputs,
     intro: narration?.intro ?? entry.description ?? '', finale: narration?.finale ?? '',
   }
 }

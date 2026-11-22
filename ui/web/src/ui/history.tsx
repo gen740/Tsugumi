@@ -10,7 +10,7 @@ import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Sectio
 import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
-import { DisplayContent } from './display'
+import { DisplayView } from './moduleViewer'
 import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
@@ -454,9 +454,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
 /** A Card's output display enlarged in its own window. */
 export function VisualizationWindow({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
   useObserve(session)
-  useEffect(() => {
-    void session.refreshVisibleDisplays()
-  }, [session])
+  useEffect(() => session.observeDisplay(cardKey), [session, cardKey])
   const d = session.displays.get(cardKey)
   return (
     <div className="col fill pad16 gap8">
@@ -466,7 +464,7 @@ export function VisualizationWindow({ session, cardKey }: { session: ProjectSess
         <span className="spacer" />
         <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
       </div>
-      <div className="flex1 min0 col"><DisplayContent display={d} large /></div>
+      <div className="flex1 min0 col"><DisplayView display={d} emptyNote={session.noResultNote(cardKey)} /></div>
     </div>
   )
 }

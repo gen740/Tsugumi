@@ -528,7 +528,6 @@ export function WireLayer({ wires, animate = false, zoom = 1, width, height }: {
     carried: { color: fade('orange', 0.8), width: w + 0.4 },
     active: { color: 'var(--orange)', width: w + 0.6, dash: anyActive ? '8 6' : undefined },
     selected: { color: 'var(--accent)', width: w + 1.4 },
-    display: { color: fade('purple', 0.75), width: Math.max(1, w - 0.2), dash: '5 4' },
   }
   return (
     <svg className="cv-wires" width={Math.max(1, width)} height={Math.max(1, height)} aria-hidden>

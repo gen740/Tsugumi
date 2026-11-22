@@ -42,6 +42,7 @@ buildNpmPackage {
         (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ]
       ++ lib.optionals (!typecheckOnly) [
+        ../ui/web/scripts/build-display-modules.mjs
         ../ui/web/scripts/build.mjs
         ../ui/web/scripts/build-client.sh
         ../ui/web/third-party

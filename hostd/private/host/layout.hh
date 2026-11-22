@@ -88,7 +88,6 @@ struct Scene {
   bool snap = false;
   std::vector<Card> cards;
   std::vector<Wire> wires;
-  std::vector<Box> frames;
   std::vector<Box> notes;
   Bar inputs;
   Bar outputs;
@@ -108,13 +107,12 @@ struct PortOrder {
 
 struct Proposal {
   std::vector<Place> cards;
-  std::vector<Place> frames;
   std::vector<Place> notes;
   // Only the Cards whose order changes.
   std::vector<PortOrder> port_orders;
 };
 
-// Places the Cards, output frames and notes, gives ports the order that
+// Places the Cards and notes, gives ports the order that
 // crosses fewer wires, and places the Cards once more for that order. The bars
 // are taken to follow the Cards.
 auto arrange(const Scene& scene) -> Proposal;
@@ -130,18 +128,17 @@ auto untangle(const Scene& scene, const std::vector<std::string>& around)
 
 // A layered drawing of the graph, the way a person lays one out by hand: wires
 // that can be straight are, what comes after a split in the graph stays in its
-// own column, gaps follow the real size of each Card, and output frames and
-// notes go in free room near what they belong to. Positions of the scene are
-// not read.
+// own column, gaps follow the real size of each Card, and notes go in free room
+// near what they belong to. Positions of the scene are not read.
 auto place(const Scene& scene) -> Proposal;
 
-// Fill only missing places, using the same free-room search as frames/notes.
+// Fill only missing places, using the same free-room search as notes.
 // Scene cards with an id in missing have no saved position; all others stay
 // put.
 auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
     -> Proposal;
 
-// Where the canvas draws each wire (its points), given the Cards and frames in
+// Where the canvas draws each wire (its points), given the Cards in
 // its way: a wire going along the flow whose curve touches no Card stays that
 // curve (sampled), any other takes the cheapest path on a grid of lines beside
 // the Cards. The same search as the clients' WireRouter, whose routes it must

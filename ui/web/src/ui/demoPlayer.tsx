@@ -9,10 +9,10 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
 import { createRoot } from 'react-dom/client'
 import { pathToScreen, WireStyle } from '../model/canvas'
 import {
-  applicableStages, Camera, CardGeometry, CardNodeData, displayLink, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
+  applicableStages, Camera, CardGeometry, CardNodeData, fitCamera, mergeStageStatus, ParamData, PortData, Pt, Rect, Stage, StageItem, stageParts,
   isDraftWire, StageProgress, StageStatus, union, WireRouter,
 } from '../model/canvasKit'
-import { cardState, displaySummary, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
+import { cardState, formatDuration, KIND_ICON, KIND_LABEL } from '../model/session'
 import { permissionInfo, PermissionKind } from '../model/permissions'
 import { D } from '../wire/rpc'
 import { CardNodeView, drive, gridStyle, WireDraw, WireLayer } from './cardNode'
@@ -63,7 +63,6 @@ export interface DemoData {
   cards: CardDoc[]
   wires: WireDoc[]
   notes: NoteDoc[]
-  frames: Record<string, Partial<Rect> & { hidden?: boolean }>
   run?: { id: string; state: string; date: string; host: string; sandbox: string; commit: string; totalMs: number; realOrder: boolean }
   steps: StepDoc[]
   final: Record<string, FinalState>
@@ -171,17 +170,6 @@ function finishedStages(f: FinalState): StageItem[] {
   })
 }
 
-const resultText = (o: Output | undefined): string | undefined => {
-  if (!o) return undefined
-  if (o.type === 'plot') return o.title || L('折れ線 {0} 系列', o.series.length)
-  if (o.type === 'module') return L('モジュール {0}', o.name)
-  const value = o.type === 'text' ? { kind: o.markdown ? 'markdown' : 'text', text: o.text }
-    : o.type === 'table' ? { kind: 'table', columns: o.columns, rows: Array(o.totalRows) }
-    : o.type === 'points' ? { kind: 'points', x: Array(o.count) }
-    : { ...o, kind: o.type }
-  return displaySummary({ value } as Parameters<typeof displaySummary>[0])
-}
-
 /** Where a Card is in the replay. */
 function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' | 'running' | 'after' {
   const idx = stepOf.get(id)
@@ -191,10 +179,9 @@ function phaseOf(stepOf: Map<string, number>, id: string, fr: Frame): 'before' |
 }
 
 export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc, fr: Frame): CardNodeData {
-  const out = data.outputs[c.id]
   const base: CardNodeData = {
     title: c.id, kind: c.kind, symbol: c.symbol, summary: c.summary, inputs: c.inputs, outputs: c.outputs, params: c.params, invocation: 0n,
-    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, hasDisplay: !!out, permissions: c.permissions, untitled: c.untitled,
+    runContinues: fr.mode === 'playing', errors: [], warnings: [], collapsed: false, permissions: c.permissions, untitled: c.untitled,
   }
   const f = data.final[c.id]
   const phase = phaseOf(stepOf, c.id, fr)
@@ -202,7 +189,7 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
   const composite = c.kind === 'subgraph'
   if (phase === 'after') {
     const stage: StageProgress | undefined = c.kind === 'code' ? { items: finishedStages(f), workerReused: false } : undefined
-    return { ...base, state: D.CardState[f.state], invocation: composite ? 0n : BigInt(f.count), stage, result: resultText(out) }
+    return { ...base, state: D.CardState[f.state], invocation: composite ? 0n : BigInt(f.count), stage }
   }
   const shown = fr.sub === 0 ? 1 : Math.max(1, Math.ceil((f.count * (fr.tick + 1)) / LOOP_TICKS))
   const done = finishedStages(f)
@@ -212,7 +199,6 @@ export function nodeData(data: DemoData, stepOf: Map<string, number>, c: CardDoc
   } : undefined
   return {
     ...base, state: c.kind === 'code' && fr.sub === 0 ? D.CardState.preparing : D.CardState.running, invocation: composite ? 0n : BigInt(shown), stage,
-    result: fr.sub >= 1 ? resultText(out) : undefined,
   }
 }
 
@@ -272,7 +258,7 @@ function PlotView({ plot }: { plot: Extract<Output, { type: 'plot' }> }) {
   )
 }
 
-/** A Card's result, in the classes of ui/web/src/ui/display.tsx. */
+/** A recorded result in the demo's Card inspector. */
 function OutputView({ output, base, zoom, large = false }: { output: Output; base: string; zoom: number; large?: boolean }) {
   const size = (v: number) => v * zoom
   switch (output.type) {
@@ -312,8 +298,8 @@ function OutputView({ output, base, zoom, large = false }: { output: Output; bas
 interface Placed { doc: CardDoc; node: CardNodeData; geometry: CardGeometry }
 
 /** `view` draws a still at that size, fitted (or with its camera) and without the zoom controls (player/svg.mjs renders one per frame). */
-export function Canvas({ data, frame, base, compact, selected, onSelect, motion, view, children }: {
-  data: DemoData; frame: Frame; base: string; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
+export function Canvas({ data, frame, compact, selected, onSelect, motion, view, children }: {
+  data: DemoData; frame: Frame; compact: boolean; selected?: string; onSelect: (id: string | undefined) => void; motion: boolean
   view?: { width: number; height: number; camera?: Camera }; children?: React.ReactNode
 }) {
   const ref = useRef<HTMLDivElement>(null)
@@ -342,19 +328,8 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
   const byId = new Map(placed.map((p) => [p.doc.id, p]))
   const rectOf = (p: Placed): Rect => ({ x: p.doc.x, y: p.doc.y, ...p.geometry.size })
 
-  // The saved place of a Card's output frame, or beside the Card (Scene.frameRect).
-  const frames = placed.flatMap((p) => {
-    if (!data.outputs[p.doc.id]) return []
-    const f = data.frames[p.doc.id]
-    if (f?.hidden) return []
-    const width = f?.width ?? 320, height = f?.height ?? 170
-    const r: Rect = data.flow === 'topToBottom'
-      ? { x: f?.x ?? p.doc.x + p.geometry.size.width + 40, y: f?.y ?? p.doc.y, width, height }
-      : { x: f?.x ?? p.doc.x, y: f?.y ?? p.doc.y + p.geometry.height + 30, width, height }
-    return [{ p, r }]
-  })
   const notes = compact ? [] : data.notes
-  const box = [...placed.map(rectOf), ...frames.map((f) => f.r), ...notes].reduce<Rect | null>((u, r) => {
+  const box = [...placed.map(rectOf), ...notes].reduce<Rect | null>((u, r) => {
     const rect = { x: r.x, y: r.y, width: r.width, height: r.height }
     return u ? union(u, rect) : rect
   }, null)
@@ -380,7 +355,7 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
   }, [boxKey, size.width, size.height])
 
   const z = camera.zoom
-  const router = new WireRouter(data.flow, [...placed.map(rectOf), ...frames.map((f) => f.r)])
+  const router = new WireRouter(data.flow, placed.map(rectOf))
   const point = (id: string, port: string, output: boolean): Pt => {
     const p = byId.get(id)
     if (!p) return { x: 0, y: 0 }
@@ -393,15 +368,6 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
     style: wireStyle(data, stepOf, w, frame),
     dotted: isDraftWire((id) => byId.get(id)?.doc.kind, w.from, w.to),
   }))
-  const shownFrames = frames.filter(({ p }) => {
-    const phase = phaseOf(stepOf, p.doc.id, frame)
-    return phase === 'after' || (phase === 'running' && frame.sub >= 1)
-  })
-  for (const { p, r } of shownFrames) {
-    const o = p.geometry.outlineRect
-    const link = displayLink({ x: p.doc.x + o.x, y: p.doc.y + o.y, width: o.width, height: o.height }, r)
-    draws.push({ d: pathToScreen(link, camera), style: 'display' })
-  }
   const screen = (r: { x: number; y: number }) => ({ left: Math.round((r.x * z + camera.x) * 2) / 2, top: Math.round((r.y * z + camera.y) * 2) / 2 })
   const zoomTo = (nz: number) => {
     adjusted.current = true
@@ -430,19 +396,6 @@ export function Canvas({ data, frame, base, compact, selected, onSelect, motion,
         </div>
       ))}
       <WireLayer wires={draws} animate={motion} zoom={z} width={size.width} height={size.height} />
-      {shownFrames.map(({ p, r }) => {
-        const inv = data.final[p.doc.id]?.count
-        return (
-          <div key={p.doc.id} className="cv-frame tp-frame" style={{ position: 'absolute', ...screen(r), width: r.width * z, height: r.height * z, padding: 8 * z, borderRadius: 8 * z, gap: 4 * z }}>
-            <div className="cv-frame-header secondary" style={{ gap: 6 * z }}>
-              <Icon name="chart.xyaxis.line" size={10 * z} style={{ color: 'var(--purple)' }} />
-              <span className="cv-ellipsis" style={{ fontSize: 10 * z, fontWeight: 700, color: 'var(--label)' }}>{p.doc.id}</span>
-              {data.run && <span className="mono-digits nowrap" style={{ fontSize: 9 * z }}>{L('Run {0} · 実行 #{1}', data.run.id.slice(0, 6), inv ?? 1)}</span>}
-            </div>
-            <div className="cv-frame-body"><OutputView output={data.outputs[p.doc.id]} base={base} zoom={z} /></div>
-          </div>
-        )
-      })}
       {placed.map(({ doc, node }) => (
         <CardNodeView key={doc.id} data={node} flow={data.flow} zoom={z} selected={selected === doc.id}
           style={{ position: 'absolute', ...screen(doc) }}
@@ -682,13 +635,13 @@ function Player({ host, url, compact, autoplay }: { host: HTMLElement; url: stri
   if (compact) {
     return (
       <div className="tp-root tp-compact" role="img" aria-label={L('{0} の Canvas{1}', data.title, data.draftOnly ? '（Draft）' : '')}>
-        <Canvas data={data} frame={frame} base={base} compact selected={undefined} onSelect={() => undefined} motion={motion} />
+        <Canvas data={data} frame={frame} compact selected={undefined} onSelect={() => undefined} motion={motion} />
       </div>
     )
   }
   return (
     <div className="tp-root tp-full">
-      <Canvas data={data} frame={frame} base={base} compact={false} selected={selected} onSelect={setSelected} motion={motion}>
+      <Canvas data={data} frame={frame} compact={false} selected={selected} onSelect={setSelected} motion={motion}>
         <div className="tp-top"><RunControl data={data} frame={frame} playing={playing} onRun={replay.play} onStop={replay.reset} /></div>
         {card && <SidePanel data={data} card={card} reached={reached} base={base} onClose={() => setSelected(undefined)} />}
       </Canvas>

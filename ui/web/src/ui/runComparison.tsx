@@ -1,10 +1,11 @@
 import { useEffect, useState } from 'react'
 import { useObserve } from '../model/observable'
 import { ComparedCard, ComparedField, ComparedMember, ComparedRow, Difference, batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay } from '../model/runComparison'
-import { ProjectSession, cardState, errorText, formatDuration, formatMillis, recordedDisplay, runState } from '../model/session'
+import { ProjectSession, cardState, errorText, formatDuration, formatMillis, runState } from '../model/session'
 import { R, RPCClient, s, segs } from '../wire/rpc'
 import { Button, Empty, Select, Spinner } from './controls'
-import { DisplayContent } from './display'
+import { DisplayView } from './moduleViewer'
+import { useRecordedDisplays } from './recordedDisplays'
 import { L } from '../i18n'
 import { environmentChange } from '../model/environments'
 import { EnvironmentComparison, EnvironmentReadScope } from './environments'
@@ -52,7 +53,7 @@ export function RunComparisonView({ session, runs, initial, onClose }: { session
           <RunScopes left={a} right={b} displayPath={(p) => session.displayPath(p)} />
           <VersionDifference from={from} to={to} diff={diff} error={diffError} />
           {!rows.length && <Empty title={L('記録がありません')} icon="tray" />}
-          {rows.map(row => <ComparedMembers key={row.card} rpc={session.rpc!} left={left} right={right} row={row}>{(shown, choice) => <ComparedCardView row={shown} choice={choice} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}:${String(shown.left?.summary.invocation ?? '')}:${String(shown.right?.summary.invocation ?? '')}`} session={session} left={{ run: left, id: s((shown.left?.record?.record?.summary ?? shown.left?.summary)?.environmentId) }} right={{ run: right, id: s((shown.right?.record?.record?.summary ?? shown.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />}</ComparedMembers>)}
+          {rows.map(row => <ComparedMembers key={row.card} rpc={session.rpc!} left={left} right={right} row={row}>{(shown, choice) => <ComparedCardView row={shown} choice={choice} displayRuns={{ rpc: session.rpc!, left, right, latest: row }} environmentSection={<EnvironmentComparison key={`${left}:${right}:${row.card}:${String(shown.left?.summary.invocation ?? '')}:${String(shown.right?.summary.invocation ?? '')}`} session={session} left={{ run: left, id: s((shown.left?.record?.record?.summary ?? shown.left?.summary)?.environmentId) }} right={{ run: right, id: s((shown.right?.record?.record?.summary ?? shown.right?.summary)?.environmentId) }} />} displayPath={(p) => session.displayPath(p)} />}</ComparedMembers>)}
         </>}
     </div>
   </div></EnvironmentReadScope>
@@ -148,9 +149,14 @@ export function ComparedMembers({ rpc, left, right, row, children }: { rpc: Pick
   return <>{children(shown ?? row, choice)}</>
 }
 
-export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection, choice }: { row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode; choice?: React.ReactNode }) {
+export function ComparedCardView({ row, displayPath = p => p.join('/'), environmentSection, choice, displayRuns }: {
+  row: ComparedRow; displayPath?: (p: string[]) => string; environmentSection?: React.ReactNode; choice?: React.ReactNode;
+  displayRuns?: { rpc: RPCClient; left: string; right: string; latest: ComparedRow }
+}) {
   const a = row.left?.record, b = row.right?.record
-  const leftDisplay = a?.record?.display ? recordedDisplay(a.record.display) : undefined, rightDisplay = b?.record?.display ? recordedDisplay(b.record.display) : undefined
+  const left = useRecordedDisplays(displayRuns?.rpc, displayRuns?.left, row.card, displayRuns ? displayRuns.latest.left?.record : a)
+  const right = useRecordedDisplays(displayRuns?.rpc, displayRuns?.right, row.card, displayRuns ? displayRuns.latest.right?.record : b)
+  const leftDisplay = left.display, rightDisplay = right.display
   const statusChanged = row.left?.summary.state !== row.right?.summary.state || row.left?.summary.durationMs !== row.right?.summary.durationMs
   const displayChanged = !sameDisplay(leftDisplay, rightDisplay)
   return <details className="comparison-card" open>
@@ -162,9 +168,10 @@ export function ComparedCardView({ row, displayPath = p => p.join('/'), environm
     <ComparedFields title={L('パラメータ')} fields={comparedParams(a, b)} />
     <ComparedFields title={L('入力')} fields={comparedValues('inputs', a, b)} />
     <ComparedFields title={L('出力')} fields={comparedValues('outputs', a, b)} />
+    <div className="comparison-pair"><div>{left.control}</div><div>{right.control}</div></div>
     {(leftDisplay || rightDisplay) && <section><h4>{L('表示')} {displayChanged && <span className="caption">· {L('相違あり')}</span>}</h4><div className={`comparison-pair${displayChanged ? ' changed' : ''}`}>
-      <div className="comparison-display" style={{ height: leftDisplay && ['image', 'points', 'module'].includes(leftDisplay.value.kind) ? 400 : undefined }}>{leftDisplay ? <DisplayContent display={leftDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
-      <div className="comparison-display" style={{ height: rightDisplay && ['image', 'points', 'module'].includes(rightDisplay.value.kind) ? 400 : undefined }}>{rightDisplay ? <DisplayContent display={rightDisplay} large /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
+      <div className="comparison-display">{leftDisplay ? <DisplayView display={leftDisplay} /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
+      <div className="comparison-display">{rightDisplay ? <DisplayView display={rightDisplay} /> : <Empty small title={L('表示の記録がありません')} icon="chart.xyaxis.line" />}</div>
     </div></section>}
   </details>
 }

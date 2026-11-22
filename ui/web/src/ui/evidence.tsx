@@ -6,14 +6,15 @@ import { L } from '../i18n'
 import { app } from '../model/app'
 import { canvasFor } from '../model/canvas'
 import { Evidence, evidenceExists, isEvidence, parseEvidence } from '../model/evidence'
-import { ProjectSession, cardState, key, recordedDisplay, runState } from '../model/session'
+import { ProjectSession, cardState, key, runState } from '../model/session'
 import { WorkflowTab } from '../model/workspace'
-import { D, R, s, segs } from '../wire/rpc'
+import { D, R, RPCClient, s, segs } from '../wire/rpc'
 import { Markdown } from './markdown'
 import { openWorkflowWindow } from './actions'
 import { describeValue } from '../wire/flatjson'
 import { Button, download } from './controls'
-import { DisplayContent } from './display'
+import { DisplayView } from './moduleViewer'
+import { useRecordedDisplays } from './recordedDisplays'
 
 export const EvidenceContext = createContext<{ session: ProjectSession; tab?: WorkflowTab } | undefined>(undefined)
 const streamOf = (t: Evidence) => ({ stdout: D.LogStream.standard_output, stderr: D.LogStream.standard_error, build: D.LogStream.build, journal: D.LogStream.journal })[t.stream ?? 'stdout']
@@ -111,12 +112,11 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
         const r = await rpc.record(t.run!, t.card, t.invocation ?? null)
         const record = r.record
         const summary = record?.summary ?? r.status
-        const display = record?.display ? recordedDisplay(record.display) : undefined
         return <>
           {runMark(r.run) && <p>{runMark(r.run)}</p>}
           <h3>{session.displayPath(t.card)} · #{String(record?.summary?.invocation ?? t.invocation ?? '')}</h3>
           {summary && <><p>{cardState(summary.state).label}</p><Markdown text={s(summary.failure?.diagnostic)} /></>}
-          {display && <div style={{ height: 360, display: 'flex' }}><DisplayContent display={display} large /></div>}
+          <EvidenceDisplays rpc={rpc} run={t.run!} card={key(t.card)} record={r} exact={t.invocation !== undefined} />
           {record && [[L('入力'), record.inputs], [L('出力'), record.outputs]].map(([label, values], i) => <section key={i}>
             <h4>{label as string}</h4>
             {(values as D.NamedValueT[]).map((v, j) => <pre key={j} className="selectable wrap-pre">{describeValue({ name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId), filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, fileDeleted: v.fileDeleted, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs })}</pre>)}
@@ -131,4 +131,15 @@ export function EvidenceView({ session, href }: { session: ProjectSession; href:
     return () => { alive = false }
   }, [session, href, session.recordingRevision])
   return <div className="scroll pad16"><h2>{L('根拠の記録')}</h2><p className="caption selectable">{href}</p>{body}</div>
+}
+
+
+function EvidenceDisplays({ rpc, run, card, record, exact }: {
+  rpc: RPCClient; run: string; card: string; record: R.RecordResultT; exact: boolean
+}) {
+  const { display, control } = useRecordedDisplays(rpc, run, card, record, exact)
+  return <>
+    {control}
+    {display && <div style={{ height: 360, display: 'flex' }}><DisplayView display={display} /></div>}
+  </>
 }

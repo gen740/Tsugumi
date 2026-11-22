@@ -253,8 +253,6 @@ struct CardNodeData: Equatable {
   var errors: [String] = []
   var warnings: [String] = []
   var collapsed = false
-  /// The Card's result has a frame on the canvas (display anchor).
-  var hasDisplay = false
   /// What it may do beyond computing (network, no sandbox, Mac folders).
   var permissions: [CardPermission] = []
   /// A Draft being written on the canvas: the Card opens up for it.
@@ -375,7 +373,7 @@ struct CardGeometry {
     summary = d.summary != nil && !d.isRouting && d.kind != .trigger && !d.isDraft
     params = d.params.count
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    result = d.hasDisplay
+    result = d.result != nil
     stages = d.kind == .code
     self.flow = flow
     shape = CardShape(d.kind)
@@ -860,7 +858,6 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
 
   static func dismantleNSView(_ view: Container, coordinator: ()) {
     view.settle?.cancel()
-    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] = nil
   }
 
   func updateNSView(_ view: Container, context: Context) {
@@ -875,9 +872,6 @@ struct CanvasPanHost<Content: View>: NSViewRepresentable {
     let c = session.cameras[scope] ?? (40, 40, 1)
     view.now = CanvasCamera(x: c.x, y: c.y, zoom: c.zoom)
     view.place()
-    // What is in view, for the pictures of displays to be made in that order.
-    ModuleThumbnails.shared.viewports[ObjectIdentifier(view)] =
-      CGRect(x: -c.x / c.zoom, y: -c.y / c.zoom, width: view.bounds.width / c.zoom, height: view.bounds.height / c.zoom)
     view.settle?.cancel()
     guard view.now != view.base else { return }
     let (scale, dx, dy) = view.shift
@@ -1580,7 +1574,7 @@ struct ParamFieldView: View {
 
 /// A wire as drawn (screen units).
 struct WireDraw {
-  enum Style { case normal, carried, active, selected, display }
+  enum Style { case normal, carried, active, selected }
   var path: Path
   var style: Style
   /// A wire to or from a Draft is dotted, whatever its style.
@@ -2077,8 +2071,6 @@ struct WireLayer: View {
                                                                              dash: wire.dotted ? dots : anyActive ? Self.dash : [], dashPhase: phase))
           case .selected:
             ctx.stroke(wire.path, with: .color(.accentColor), style: StrokeStyle(lineWidth: width(w + 1.4), lineCap: .round, lineJoin: .round, dash: wire.dotted ? Self.dotSelected : []))
-          case .display:
-            ctx.stroke(wire.path, with: .color(.purple.opacity(0.75)), style: StrokeStyle(lineWidth: max(1, w - 0.2), lineCap: .round, dash: [5, 4]))
           }
           if let count = wire.countLabel, let at = wire.countAt {
             let label = ctx.resolve(Text(verbatim: count).font(.system(size: 11, weight: .medium, design: .monospaced)))
@@ -2094,44 +2086,6 @@ struct WireLayer: View {
     }
     .allowsHitTesting(false)
   }
-}
-
-/// Path (world units) from a Card's display anchor to its output frame.
-/// The ends of the link between a Card and its result frame: on the edges
-/// that face each other (where the two are closest), each in the middle of
-/// the stretch the two share, or toward the other when they share none.
-/// Returns the points and whether the link runs across (left/right).
-func displayLinkEnds(card: CGRect, frame: CGRect) -> (a: CGPoint, b: CGPoint, horizontal: Bool) {
-  let gx = max(frame.minX - card.maxX, card.minX - frame.maxX)
-  let gy = max(frame.minY - card.maxY, card.minY - frame.maxY)
-  func clamp(_ v: CGFloat, _ lo: CGFloat, _ hi: CGFloat) -> CGFloat { lo > hi ? (lo + hi) / 2 : min(max(v, lo), hi) }
-  if gx >= gy {
-    let right = frame.midX >= card.midX
-    let lo = max(card.minY, frame.minY), hi = min(card.maxY, frame.maxY)
-    let ay = lo <= hi ? (lo + hi) / 2 : clamp(frame.midY, card.minY + 10, card.maxY - 10)
-    let by = lo <= hi ? (lo + hi) / 2 : clamp(card.midY, frame.minY + 10, frame.maxY - 10)
-    return (CGPoint(x: right ? card.maxX : card.minX, y: ay), CGPoint(x: right ? frame.minX : frame.maxX, y: by), true)
-  }
-  let down = frame.midY >= card.midY
-  let lo = max(card.minX, frame.minX), hi = min(card.maxX, frame.maxX)
-  let ax = lo <= hi ? (lo + hi) / 2 : clamp(frame.midX, card.minX + 10, card.maxX - 10)
-  let bx = lo <= hi ? (lo + hi) / 2 : clamp(card.midX, frame.minX + 10, frame.maxX - 10)
-  return (CGPoint(x: ax, y: down ? card.maxY : card.minY), CGPoint(x: bx, y: down ? frame.minY : frame.maxY), false)
-}
-
-/// The link itself: a short curve leaving and entering straight.
-func displayLink(card: CGRect, frame: CGRect) -> Path {
-  let (a, b, horizontal) = displayLinkEnds(card: card, frame: frame)
-  var p = Path()
-  p.move(to: a)
-  if horizontal {
-    let dx = (b.x - a.x) / 2
-    p.addCurve(to: b, control1: CGPoint(x: a.x + dx, y: a.y), control2: CGPoint(x: b.x - dx, y: b.y))
-  } else {
-    let dy = (b.y - a.y) / 2
-    p.addCurve(to: b, control1: CGPoint(x: a.x, y: a.y + dy), control2: CGPoint(x: b.x, y: b.y - dy))
-  }
-  return p
 }
 
 // MARK: - Self-contained canvas (previews)
@@ -2334,7 +2288,7 @@ enum PreviewSamples {
     let gate = CardNodeData(title: String(localized: "偶数？"), kind: .branch, summary: nil,
                             inputs: [port("value"), port("condition")], outputs: [port("a"), port("b")])
     let out = CardNodeData(title: String(localized: "結果"), kind: .code, summary: nil,
-                           inputs: [port("in")], outputs: [], result: "[27, 82, 41, …]", state: .succeeded, invocation: 1, hasDisplay: true)
+                           inputs: [port("in")], outputs: [], state: .succeeded, invocation: 1)
     return [
       CanvasItem(id: "input", data: input, origin: CGPoint(x: 0, y: 0)),
       CanvasItem(id: "step", data: step, origin: CGPoint(x: 0, y: 150)),

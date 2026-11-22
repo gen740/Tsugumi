@@ -41,43 +41,5 @@
       "width": 700,
       "height": 600
     }
-  ],
-  "displays": {
-    "load": {
-      "x": 100,
-      "y": 180,
-      "width": 640,
-      "height": 360
-    },
-    "fit": {
-      "x": 1000,
-      "y": -340,
-      "width": 860,
-      "height": 490
-    },
-    "forecast": {
-      "x": 1000,
-      "y": 410,
-      "width": 860,
-      "height": 460
-    },
-    "check": {
-      "x": 2460,
-      "y": -1000,
-      "width": 780,
-      "height": 360
-    },
-    "phase": {
-      "x": 2460,
-      "y": -580,
-      "width": 820,
-      "height": 420
-    },
-    "scores": {
-      "x": 2200,
-      "y": 340,
-      "width": 1100,
-      "height": 230
-    }
-  }
+  ]
 }

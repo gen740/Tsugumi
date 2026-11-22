@@ -127,8 +127,6 @@ export interface CardNodeData {
   errors: string[]
   warnings: string[]
   collapsed: boolean
-  /** The Card's result has a frame on the canvas (display anchor). */
-  hasDisplay: boolean
   /** What it may do beyond computing (network, no sandbox, host folders). */
   permissions?: PermissionKind[]
   /** A Draft being written on the canvas: the Card opens up for it. */
@@ -217,7 +215,7 @@ export class CardGeometry {
     this.summary = d.summary !== undefined && !isRouting(d) && d.kind !== 'trigger' && !this.draft
     this.params = d.params.length
     // Rows are reserved by kind, so a run never makes a Card grow or shrink.
-    this.result = d.hasDisplay
+    this.result = d.result !== undefined
     this.stages = d.kind === 'code'
     this.shape = shapeOf(d.kind)
     this.grid = d.portGrid
@@ -985,39 +983,6 @@ export function bezier(a: Pt, c1: Pt, c2: Pt, b: Pt, t: number): Pt {
 export const union = (a: Rect, b: Rect): Rect => {
   const x = Math.min(a.x, b.x), y = Math.min(a.y, b.y)
   return { x, y, width: Math.max(a.x + a.width, b.x + b.width) - x, height: Math.max(a.y + a.height, b.y + b.height) - y }
-}
-
-/** The ends of the link between a Card and its result frame: on the edges
- *  that face each other, each in the middle of the stretch the two share. */
-export function displayLink(card: Rect, frame: Rect): string {
-  const cMaxX = card.x + card.width, cMaxY = card.y + card.height, fMaxX = frame.x + frame.width, fMaxY = frame.y + frame.height
-  const gx = Math.max(frame.x - cMaxX, card.x - fMaxX)
-  const gy = Math.max(frame.y - cMaxY, card.y - fMaxY)
-  const clamp = (v: number, lo: number, hi: number) => (lo > hi ? (lo + hi) / 2 : Math.min(Math.max(v, lo), hi))
-  let a: Pt, b: Pt, horizontal: boolean
-  if (gx >= gy) {
-    const right = frame.x + frame.width / 2 >= card.x + card.width / 2
-    const lo = Math.max(card.y, frame.y), hi = Math.min(cMaxY, fMaxY)
-    const ay = lo <= hi ? (lo + hi) / 2 : clamp(frame.y + frame.height / 2, card.y + 10, cMaxY - 10)
-    const by = lo <= hi ? (lo + hi) / 2 : clamp(card.y + card.height / 2, frame.y + 10, fMaxY - 10)
-    a = { x: right ? cMaxX : card.x, y: ay }
-    b = { x: right ? frame.x : fMaxX, y: by }
-    horizontal = true
-  } else {
-    const down = frame.y + frame.height / 2 >= card.y + card.height / 2
-    const lo = Math.max(card.x, frame.x), hi = Math.min(cMaxX, fMaxX)
-    const ax = lo <= hi ? (lo + hi) / 2 : clamp(frame.x + frame.width / 2, card.x + 10, cMaxX - 10)
-    const bx = lo <= hi ? (lo + hi) / 2 : clamp(card.x + card.width / 2, frame.x + 10, fMaxX - 10)
-    a = { x: ax, y: down ? cMaxY : card.y }
-    b = { x: bx, y: down ? frame.y : fMaxY }
-    horizontal = false
-  }
-  if (horizontal) {
-    const dx = (b.x - a.x) / 2
-    return `M${a.x},${a.y}C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`
-  }
-  const dy = (b.y - a.y) / 2
-  return `M${a.x},${a.y}C${a.x},${a.y + dy} ${b.x},${b.y - dy} ${b.x},${b.y}`
 }
 
 // ---- Camera ------------------------------------------------------------------------

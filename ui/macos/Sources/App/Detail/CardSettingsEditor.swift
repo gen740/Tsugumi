@@ -671,13 +671,6 @@ private struct GeneralCategory: View {
             .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
           if model.kind == .code {
-            Picker("グラフの更新", selection: string("displayMode", fallback: "update")) {
-              Text("更新（実行中は薄く表示）").tag("update")
-              Text("ライブ（実行中も追う）").tag("live")
-            }
-            .help("更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。")
-          }
-          if model.kind == .code {
             timeoutField("buildTimeoutSeconds", label: "ビルドの期限（秒）")
             executionSettings
             toggle("reuseWorker", label: "worker の状態を残す", fallback: false)

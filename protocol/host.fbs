@@ -259,14 +259,14 @@ table ProjectLayout {
   scene:LayoutScene;
 }
 table ProjectMove {
-  project_path:string; cards:[string]; notes:[string]; frames:[string];
+  project_path:string; cards:[string]; notes:[string];
   dx:double; dy:double; snap:double; scene:LayoutScene;
 }
 table ProjectDocument { path:string (required); present:bool = true; json:string; }
 // Raw editors refuse every stale revision, including unrelated changes.
 table ProjectReplaceDocuments { expected_rev:ulong; documents:[ProjectDocument]; }
 enum ProjectSelectionAction:ubyte { Place, Delete, DeleteDefinitions, DisconnectInputs, DisconnectOutputs, RemoveConnections }
-table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; frames:[string]; connections_json:string; x:double; y:double; scene:LayoutScene; }
+table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; connections_json:string; x:double; y:double; }
 table ProjectReload { expected_rev:ulong; approved_permissions:[string]; }
 union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload }
 table ProjectOperateRequest {
@@ -373,30 +373,13 @@ table LayoutWire {
   to_port:string (id: 3, required);
 }
 
-/// An output frame (`id` is its Card's) or a note, where it is drawn now.
+/// A note, where it is drawn now.
 table LayoutBox {
   id:string (id: 0, required);
   x:double (id: 1);
   y:double (id: 2);
   width:double (id: 3);
   height:double (id: 4);
-}
-
-/// A rectangle in Card-local coordinates. Anchors multiply the measured Card
-/// width/height; x/y are world-unit offsets. Clients only transform coordinates.
-table DisplayGeometry {
-  anchor_x:double;
-  anchor_y:double;
-  x:double;
-  y:double;
-  width:double;
-  height:double;
-}
-/// -> DisplayGeometries. Host-owned default output-frame geometry for both flows.
-table DisplayGeometryRequest {}
-table DisplayGeometries {
-  top_to_bottom:DisplayGeometry (required);
-  left_to_right:DisplayGeometry (required);
 }
 
 /// One port of a Card in Card and the inner Card it goes to or comes from.
@@ -418,18 +401,16 @@ table LayoutBar {
 table LayoutScene {
   /// "topToBottom" or "leftToRight".
   flow:string (id: 0, required);
-  /// The grid's spacing (frames, notes and layers go on it; 20 when 0).
+  /// The grid's spacing (notes and layers go on it; 20 when 0).
   grid:double (id: 1);
   /// The grid is on: Cards are placed on it.
   snap:bool (id: 2);
   cards:[LayoutCard] (id: 3);
   wires:[LayoutWire] (id: 4);
-  /// The output frames shown.
-  frames:[LayoutBox] (id: 5);
-  notes:[LayoutBox] (id: 6);
+  notes:[LayoutBox] (id: 5);
   /// Inside a Card in Card only.
-  inputs:LayoutBar (id: 7);
-  outputs:LayoutBar (id: 8);
+  inputs:LayoutBar (id: 6);
+  outputs:LayoutBar (id: 7);
 }
 
 
@@ -540,7 +521,7 @@ union RequestPayload {
   ProjectOperateRequest,
 
   ModelSelectionRequest,
-  DemoListRequest, DemoReadRequest, VersionNoteRequest, DisplayGeometryRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
+  DemoListRequest, DemoReadRequest, VersionNoteRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
   CardSecretListRequest, CardSecretSetRequest,
@@ -556,7 +537,7 @@ union ReplyPayload {
   LayoutValidated, VersionCanvas,
   FileFormatResult, VersionDiff:Tsugumi.RPC.VersionDiff, VersionGraph:Tsugumi.RPC.VersionGraph,
   PermissionKinds,
-  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, DisplayGeometries, Identifier, InputTypes, HostActivity,
+  ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
   CardSecretList,
   RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
