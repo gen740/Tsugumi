@@ -18,7 +18,8 @@ table JobSpec {
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   network:bool;
-  r_params_environment:bool;
+  // Reserve this contract 12 slot. The R SDK reads the parameter buffer.
+  r_params_environment:bool (deprecated);
   // Core recording policy for combined build/stdout/stderr JSONL bytes.
   log_limit_bytes:ulong;
   // Names of the Card secrets the Card's process receives. Their values are
