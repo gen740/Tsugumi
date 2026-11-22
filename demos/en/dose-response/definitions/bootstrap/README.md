@@ -1,0 +1,5 @@
+---
+description: Confidence intervals of the EC50 and the Hill slope
+---
+
+Finds 95% intervals for the EC50 and the Hill slope by residual bootstrap (residuals redrawn with replacement and refitted). Shows whether the true values fall inside, and when an interval leaves the measured range, warns that the concentration range does not bracket the EC50.

@@ -1,27 +1,33 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "age_min",
+      "type": "uint64",
+      "data": {
+        "uint64": 0
+      }
+    },
+    {
+      "name": "age_max",
+      "type": "uint64",
+      "data": {
+        "uint64": 120
+      }
+    },
+    {
+      "name": "ecog_max",
+      "type": "uint64",
+      "data": {
+        "uint64": 3
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "lung"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "cohort",
-  "params": [
-    {
-      "name": "age_min",
-      "type": "uint64",
-      "data": 0
-    },
-    {
-      "name": "age_max",
-      "type": "uint64",
-      "data": 120
-    },
-    {
-      "name": "ecog_max",
-      "type": "uint64",
-      "data": 3
-    }
-  ]
+  "artifactOutput": "cohort"
 }

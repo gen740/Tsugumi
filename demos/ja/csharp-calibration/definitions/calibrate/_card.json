@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "numbers"
-    }
-  ],
   "params": [
     {
       "name": "factor",
       "type": "double",
-      "data": 1.6
+      "data": {
+        "double": 1.6
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "numbers"
     }
   ]
 }

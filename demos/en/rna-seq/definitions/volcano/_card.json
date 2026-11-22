@@ -1,32 +1,38 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "results"
-    }
-  ],
   "params": [
     {
       "name": "fdr",
       "type": "double",
-      "data": 0.05
+      "data": {
+        "double": 0.05
+      }
     },
     {
       "name": "lfc",
       "type": "double",
-      "data": 1.0
+      "data": {
+        "double": 1.0
+      }
     },
     {
       "name": "known",
       "type": "string[]",
-      "data": [
-        "FKBP5",
-        "DUSP1",
-        "TSC22D3",
-        "KLF15",
-        "PER1",
-        "CRISPLD2"
-      ]
+      "data": {
+        "strings": [
+          "FKBP5",
+          "DUSP1",
+          "TSC22D3",
+          "KLF15",
+          "PER1",
+          "CRISPLD2"
+        ]
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "results"
     }
   ]
 }

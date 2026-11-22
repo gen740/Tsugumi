@@ -1,5 +1,14 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "fdr",
+      "type": "double",
+      "data": {
+        "double": 0.05
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "deseq2"
@@ -9,12 +18,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "agreement",
-  "params": [
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": 0.05
-    }
-  ]
+  "artifactOutput": "agreement"
 }

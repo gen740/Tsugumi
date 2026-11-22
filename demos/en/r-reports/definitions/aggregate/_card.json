@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "start"
-    }
-  ],
   "params": [
     {
       "name": "scale",
       "type": "double",
-      "data": 1.0
+      "data": {
+        "double": 1.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "start"
     }
   ]
 }

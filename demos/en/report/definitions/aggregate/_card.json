@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "csv"
-    }
-  ],
   "params": [
     {
       "name": "fail_on_purpose",
       "type": "bool",
-      "data": false
+      "data": {
+        "bool": false
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "csv"
     }
   ],
   "recordIO": true

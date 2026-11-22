@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "lat_min",
       "type": "double",
-      "data": 37.5
+      "data": {
+        "double": 37.5
+      }
     },
     {
       "name": "lat_max",
       "type": "double",
-      "data": 39.5
+      "data": {
+        "double": 39.5
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "measurement"
-    }
-  ],
   "params": [
     {
       "name": "early_time",
       "type": "double",
-      "data": 5e-05
+      "data": {
+        "double": 0.00005
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "measurement"
     }
   ]
 }

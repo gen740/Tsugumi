@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "section"
-    }
-  ],
   "params": [
     {
       "name": "mc",
       "type": "double",
-      "data": 4.5
+      "data": {
+        "double": 4.5
+      }
     },
     {
       "name": "bin_width",
       "type": "double",
-      "data": 0.1
+      "data": {
+        "double": 0.1
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "section"
     }
   ]
 }

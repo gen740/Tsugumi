@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "input"
-    }
-  ],
   "params": [
     {
       "name": "percentile",
       "type": "double",
-      "data": 99.5
+      "data": {
+        "double": 99.5
+      }
     },
     {
       "name": "q",
       "type": "double",
-      "data": 10
+      "data": {
+        "double": 10.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "input"
     }
   ]
 }

@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "c",
       "type": "double",
-      "data": 0.1
+      "data": {
+        "double": 0.1
+      }
     },
     {
       "name": "max_iter",
       "type": "uint64",
-      "data": 300
+      "data": {
+        "uint64": 300
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

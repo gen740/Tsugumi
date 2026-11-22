@@ -1,0 +1,5 @@
+---
+description: Make an RGB image
+---
+
+Assign the three band images, at the same coordinates and size, to R, G and B and make a PNG stretched with asinh (the stretch's percentile 99.5 and q=10 are parameters). No exposure correction. Record the display conditions and the hash of the input, and show the PNG.

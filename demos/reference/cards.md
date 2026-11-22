@@ -7,13 +7,12 @@ Read this guide with `demo_read reference/cards.md`. The [SDK guides and starter
 ## Implementing a Draft
 
 One project_edit can replace a Draft's definition, add its sources and rebind its wire ends atomically. Existing
-_meta.json description, content and context stay as written. The host requires a nonempty description, and context
-when the original Draft has a description or content; an empty field can be filled with a guarded metadata edit.
-Context records what the person asked and what the Draft says. fill_context is a project_save convenience;
-project_edit writes the context field itself. Boundary endpoints in tsugumi.json are editable in the same way.
+README.md description and body stay as written. Add a one-line description if it is empty.
+Replace the README with a guarded whole-file text edit when it needs a description. Boundary
+entries in tsugumi.json have `name`, `card` and `port` fields.
 
-For example, plan starts with _card.json {"type":"draft"} and _meta.json
-{"description":"Make a greeting","content":"Return hello."}, with no context or source files. Its incoming wire is
+For example, plan starts with _card.json {"type":"draft"} and a README.md with
+`description: Make a greeting` in the front matter and `Return hello.` in its body. Its incoming wire is
 start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field:
 
@@ -39,21 +38,6 @@ arguments implement plan and retain its intent text and every unrelated project 
             }
           ]
         }
-      }
-    },
-    {
-      "file_path": "definitions/plan/_meta.json",
-      "selector": [
-        {
-          "field": "context"
-        }
-      ],
-      "old_value": {
-        "present": false
-      },
-      "new_value": {
-        "present": true,
-        "value": "The Draft asks for a greeting."
       }
     },
     {

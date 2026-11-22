@@ -1,0 +1,5 @@
+---
+description: 全体と層ごとの相関を計算する
+---
+
+param の stratify（species / sex / island）で層に分け、全体と各層の Pearson の r、95% 信頼区間、回帰の傾きを表にする。r の符号が全体と逆の層に印を付ける。

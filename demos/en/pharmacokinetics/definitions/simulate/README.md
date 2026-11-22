@@ -1,0 +1,5 @@
+---
+description: Solve the differential equation numerically
+---
+
+Solves a one-compartment oral model with solve_ivp, split at each dose, and plots the concentration over time for the dosing plans side by side (you can zoom and read values). A teaching model of a made-up drug, not dosing guidance.

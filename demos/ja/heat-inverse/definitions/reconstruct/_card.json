@@ -1,23 +1,27 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "lambda",
+      "type": "double",
+      "data": {
+        "double": 0.0
+      }
+    },
+    {
+      "name": "too_far_factor",
+      "type": "double",
+      "data": {
+        "double": 100.0
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "measurement"
     },
     {
       "name": "choice"
-    }
-  ],
-  "params": [
-    {
-      "name": "lambda",
-      "type": "double",
-      "data": 0.0
-    },
-    {
-      "name": "too_far_factor",
-      "type": "double",
-      "data": 100.0
     }
   ]
 }

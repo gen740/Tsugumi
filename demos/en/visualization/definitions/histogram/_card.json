@@ -1,88 +1,118 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "kind",
+      "type": "string",
+      "data": {
+        "string": "histogram"
+      }
+    },
+    {
+      "name": "data_path",
+      "type": "string",
+      "data": {
+        "string": ""
+      }
+    },
+    {
+      "name": "file",
+      "type": "string",
+      "data": {
+        "string": "data.csv"
+      }
+    },
+    {
+      "name": "x",
+      "type": "string",
+      "data": {
+        "string": "y"
+      }
+    },
+    {
+      "name": "y",
+      "type": "string",
+      "data": {
+        "string": "y"
+      }
+    },
+    {
+      "name": "series",
+      "type": "string",
+      "data": {
+        "string": ""
+      }
+    },
+    {
+      "name": "title",
+      "type": "string",
+      "data": {
+        "string": "Histogram"
+      }
+    },
+    {
+      "name": "x_label",
+      "type": "string",
+      "data": {
+        "string": ""
+      }
+    },
+    {
+      "name": "y_label",
+      "type": "string",
+      "data": {
+        "string": ""
+      }
+    },
+    {
+      "name": "width",
+      "type": "double",
+      "data": {
+        "double": 7.0
+      }
+    },
+    {
+      "name": "height",
+      "type": "double",
+      "data": {
+        "double": 4.0
+      }
+    },
+    {
+      "name": "dpi",
+      "type": "uint64",
+      "data": {
+        "uint64": 120
+      }
+    },
+    {
+      "name": "theme",
+      "type": "string",
+      "data": {
+        "string": "light"
+      }
+    },
+    {
+      "name": "max_points",
+      "type": "uint64",
+      "data": {
+        "uint64": 5000
+      }
+    },
+    {
+      "name": "sample_every",
+      "type": "uint64",
+      "data": {
+        "uint64": 1
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "data"
     }
   ],
   "recordIO": true,
-  "params": [
-    {
-      "name": "kind",
-      "type": "string",
-      "data": "histogram"
-    },
-    {
-      "name": "data_path",
-      "type": "string",
-      "data": ""
-    },
-    {
-      "name": "file",
-      "type": "string",
-      "data": "data.csv"
-    },
-    {
-      "name": "x",
-      "type": "string",
-      "data": "y"
-    },
-    {
-      "name": "y",
-      "type": "string",
-      "data": "y"
-    },
-    {
-      "name": "series",
-      "type": "string",
-      "data": ""
-    },
-    {
-      "name": "title",
-      "type": "string",
-      "data": "Histogram"
-    },
-    {
-      "name": "x_label",
-      "type": "string",
-      "data": ""
-    },
-    {
-      "name": "y_label",
-      "type": "string",
-      "data": ""
-    },
-    {
-      "name": "width",
-      "type": "double",
-      "data": 7
-    },
-    {
-      "name": "height",
-      "type": "double",
-      "data": 4
-    },
-    {
-      "name": "dpi",
-      "type": "uint64",
-      "data": 120
-    },
-    {
-      "name": "theme",
-      "type": "string",
-      "data": "light"
-    },
-    {
-      "name": "max_points",
-      "type": "uint64",
-      "data": 5000
-    },
-    {
-      "name": "sample_every",
-      "type": "uint64",
-      "data": 1
-    }
-  ],
   "retainArtifact": true,
   "artifactOutput": "figure"
 }

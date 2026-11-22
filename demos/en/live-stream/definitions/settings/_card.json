@@ -4,27 +4,37 @@
     {
       "name": "seed",
       "type": "uint64",
-      "data": 7
+      "data": {
+        "uint64": 7
+      }
     },
     {
       "name": "samples",
       "type": "uint64",
-      "data": 200
+      "data": {
+        "uint64": 200
+      }
     },
     {
       "name": "interval_ms",
       "type": "uint64",
-      "data": 100
+      "data": {
+        "uint64": 100
+      }
     },
     {
       "name": "index",
       "type": "uint64",
-      "data": 0
+      "data": {
+        "uint64": 0
+      }
     },
     {
       "name": "value",
       "type": "double",
-      "data": 0.0
+      "data": {
+        "double": 0.0
+      }
     }
   ]
 }

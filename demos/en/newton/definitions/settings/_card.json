@@ -4,27 +4,35 @@
     {
       "name": "coeffs",
       "type": "double[]",
-      "data": [
-        1.0,
-        0.0,
-        0.0,
-        -1.0
-      ]
+      "data": {
+        "doubles": [
+          1.0,
+          0.0,
+          0.0,
+          -1.0
+        ]
+      }
     },
     {
       "name": "damping",
       "type": "double",
-      "data": 1.0
+      "data": {
+        "double": 1.0
+      }
     },
     {
       "name": "tolerance",
       "type": "double",
-      "data": 1e-12
+      "data": {
+        "double": 0.000000000001
+      }
     },
     {
       "name": "max_iter",
       "type": "uint64",
-      "data": 60
+      "data": {
+        "uint64": 60
+      }
     }
   ]
 }

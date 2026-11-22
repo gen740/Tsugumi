@@ -1,25 +1,31 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "window_days",
       "type": "double",
-      "data": 1.0
+      "data": {
+        "double": 1.0
+      }
     },
     {
       "name": "period_min",
       "type": "double",
-      "data": 1.0
+      "data": {
+        "double": 1.0
+      }
     },
     {
       "name": "period_max",
       "type": "double",
-      "data": 10.0
+      "data": {
+        "double": 10.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

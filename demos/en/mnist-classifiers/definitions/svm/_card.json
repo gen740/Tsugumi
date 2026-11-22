@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "c",
       "type": "double",
-      "data": 5.0
+      "data": {
+        "double": 5.0
+      }
     },
     {
       "name": "gamma",
       "type": "double",
-      "data": 0.02
+      "data": {
+        "double": 0.02
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

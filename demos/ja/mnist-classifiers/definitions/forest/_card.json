@@ -1,25 +1,31 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "trees",
       "type": "uint64",
-      "data": 100
+      "data": {
+        "uint64": 100
+      }
     },
     {
       "name": "max_depth",
       "type": "uint64",
-      "data": 20
+      "data": {
+        "uint64": 20
+      }
     },
     {
       "name": "seed",
       "type": "uint64",
-      "data": 0
+      "data": {
+        "uint64": 0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

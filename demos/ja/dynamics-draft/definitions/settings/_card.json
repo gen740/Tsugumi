@@ -4,12 +4,16 @@
     {
       "name": "size",
       "type": "uint64",
-      "data": 480
+      "data": {
+        "uint64": 480
+      }
     },
     {
       "name": "seed",
       "type": "uint64",
-      "data": 7
+      "data": {
+        "uint64": 7
+      }
     }
   ]
 }

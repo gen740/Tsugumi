@@ -1,0 +1,5 @@
+---
+description: Whiten and band-pass
+---
+
+Whitens H1 and L1 with a PSD from Welch's method over 4-second segments, and applies a band-pass from f_low to f_high Hz (the pass band is a parameter). Shows the waveform around the event as a line chart, and passes the whitened series on.

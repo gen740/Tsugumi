@@ -1,25 +1,31 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "input"
-    }
-  ],
   "params": [
     {
       "name": "min_ev",
       "type": "double",
-      "data": 300
+      "data": {
+        "double": 300.0
+      }
     },
     {
       "name": "max_ev",
       "type": "double",
-      "data": 8000
+      "data": {
+        "double": 8000.0
+      }
     },
     {
       "name": "bin_ev",
       "type": "double",
-      "data": 20
+      "data": {
+        "double": 20.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "input"
     }
   ]
 }

@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "start"
-    }
-  ],
   "params": [
     {
       "name": "value",
       "type": "int64",
-      "data": 21
+      "data": {
+        "int64": 21
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "start"
     }
   ]
 }

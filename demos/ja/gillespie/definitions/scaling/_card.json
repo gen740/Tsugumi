@@ -1,32 +1,36 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "settings"
-    }
-  ],
   "params": [
     {
       "name": "volumes",
       "type": "double[]",
-      "data": [
-        0.05,
-        0.1,
-        0.3,
-        1,
-        3,
-        10,
-        30
-      ]
+      "data": {
+        "doubles": [
+          0.05,
+          0.1,
+          0.3,
+          1.0,
+          3.0,
+          10.0,
+          30.0
+        ]
+      }
     },
     {
       "name": "shown_volumes",
       "type": "double[]",
-      "data": [
-        0.1,
-        1,
-        10
-      ]
+      "data": {
+        "doubles": [
+          0.1,
+          1.0,
+          10.0
+        ]
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "settings"
     }
   ]
 }

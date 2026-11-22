@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "problem"
-    }
-  ],
   "params": [
     {
       "name": "offset",
       "type": "double",
-      "data": 0.001
+      "data": {
+        "double": 0.001
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "problem"
     }
   ]
 }

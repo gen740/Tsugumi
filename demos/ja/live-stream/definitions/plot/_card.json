@@ -1,17 +1,19 @@
 {
   "type": "code",
-  "maxRuns": 100000,
+  "params": [
+    {
+      "name": "window",
+      "type": "uint64",
+      "data": {
+        "uint64": 60
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "sample"
     }
   ],
-  "params": [
-    {
-      "name": "window",
-      "type": "uint64",
-      "data": 60
-    }
-  ],
+  "maxRuns": 100000,
   "reuseWorker": true
 }

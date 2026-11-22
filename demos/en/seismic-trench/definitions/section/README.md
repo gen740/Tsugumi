@@ -1,0 +1,5 @@
+---
+description: Section of a band of latitude
+---
+
+Cuts out the hypocentres in a band of latitude (lat_min to lat_max, parameters) and shows, in one image, a map of the epicentres and a longitude–depth section (the subducting Pacific plate). Passes the hypocentres cut out on.

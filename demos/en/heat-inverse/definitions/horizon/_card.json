@@ -1,22 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "measurement"
-    }
-  ],
   "params": [
     {
       "name": "times",
       "type": "double[]",
-      "data": [
-        0.0002,
-        0.0005,
-        0.002,
-        0.005,
-        0.02,
-        0.05
-      ]
+      "data": {
+        "doubles": [
+          0.0002,
+          0.0005,
+          0.002,
+          0.005,
+          0.02,
+          0.05
+        ]
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "measurement"
     }
   ]
 }

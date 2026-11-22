@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "start"
-    }
-  ],
   "params": [
     {
       "name": "offset",
       "type": "double",
-      "data": 0
+      "data": {
+        "double": 0.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "start"
     }
   ],
   "recordIO": true
