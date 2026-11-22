@@ -57,8 +57,8 @@ auto log_test() -> void {
   const auto build = sample.append(LogStream::build, "build");
   const auto error = sample.append(LogStream::standard_error, "\n");
   expect(build && error, "sample entries omitted");
-  const auto build_size = build->size() + 1;
-  const auto error_size = error->size() + 1;
+  const auto build_size = build->size();
+  const auto error_size = error->size();
   InvocationLog maximum(build_size + error_size);
   expect(maximum.append(LogStream::build, "build").has_value(),
          "build entry omitted");
@@ -71,10 +71,11 @@ auto log_test() -> void {
   expect(!maximum.append(LogStream::journal, "journal"),
          "wrote an entry after truncation");
 
-  InvocationLog escaped(error_size - 1);
+  InvocationLog short_frame(error_size - 1);
   expect(
-      !escaped.append(LogStream::standard_error, "\n") && escaped.truncated(),
-      "budget did not account for JSON escaping and the line ending");
+      !short_frame.append(LogStream::standard_error, "\n") &&
+          short_frame.truncated(),
+      "budget did not account for the complete size-prefixed entry");
 
   InvocationLog combined(build_size + error_size - 1);
   expect(combined.append(LogStream::build, "build").has_value(),
