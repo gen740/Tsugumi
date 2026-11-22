@@ -1,10 +1,10 @@
 # Card ABI 9 cutover lanes
 
-Branch each lane from the shared-contract commit. File ownership starts there.
-Send changes outside your lane to the file owner. The lead owns
+Branch each lane from the shared contracts with `origin/main` merged through
+#422. Send changes outside your lane to the file owner. The lead owns
 `protocol/**`, `cmake/protocol.cmake`, the Swift FlatBuffers plugin,
-`docs/Protocol.md`, and `tests/core/test_rpc_schema.py`. The lead integrates
-the lanes and merges `origin/main` after #422 lands.
+`docs/dev/abi9-lanes.md`, `docs/Protocol.md`, and
+`tests/core/test_rpc_schema.py`. The lead integrates the lanes.
 
 ## Shared contracts
 
@@ -12,6 +12,8 @@ the lanes and merges `origin/main` after #422 lands.
 | --- | --- |
 | Card ↔ worker | [`card_abi.h`](../../protocol/include/tsugumi/card_abi.h) declares version 9 and `tsugumi_main(const tsugumi_call*, tsugumi_bytes*)`. [`card.fbs`](../../protocol/card.fbs) defines `CardInput{inputs:[CardPort], params:[ubyte]}`, `CardPort{name, kind, bytes}`, and `CardResult{outputs:[CardPort], failure:CardFailure}` with `CardFailure{kind, message, source, line, cell}`. Return 0 for a result, including an encoded failure. |
 | Worker ↔ core | [`worker.fbs`](../../protocol/worker.fbs) defines `WorkerCall{inputs, params, outputs, deadline_ms}`. Each input carries `FlatBufferData{schema_bfbs, root_type, bytes}`; output declarations are `Data.Port`. `WorkerStart.environment` carries launch secrets. The terminal frame is `WorkerResult{outputs:[WorkerOutput{name, bytes, forwarded_from}]}` or `WorkerFailure{failure:Data.Failure}`. Remote worker contract is 13. |
+| Card definition → core → host | Card definitions have no `language` field. `InputTypes` returns resolved ports and FlatBuffers schema, with neither a language selector nor host `DescribeInput`. `FileFormatRequest{path, text}` selects JSON or Nix by extension. `FormatLanguage` is gone. SDK-specific types and code generation belong to the kit. |
+| Host ↔ UI and Agent | [`host.fbs`](../../protocol/host.fbs) lists `TemplateEntry{store, name}` via `TemplateListRequest`. `ProjectTemplateCopy` takes the store and name and copies a graph with fresh Card IDs. `TemplateAdd` is a project operation for the versioned `templates/` store. `HostTemplateAddRequest` writes to the host support folder's `templates/` store. Both accept a folder or a public HTTPS Git repository, ref, and subdirectory. |
 | Card → worker → core | The ABI effect is `int (*send)(void* host, const char* view, const uint8_t* bytes, size_t size)`. It remains valid for the process lifetime, including after a call returns. The private frame is `WorkerDisplay{view, bytes}` with `call_id = 0`. The worker's relay hands off `WorkerDisplayData{view, bytes}` through `WorkerProc::DisplaySink`. |
 | Definition → core → UI | A Card explicitly declares `views = [ { name; type = "dawn"\|"html"; blob; } ]` and can concatenate `sdk.views`. The RPC sends a full `CardViewsUpdated{card, views:[Data.CardView{name, type, blob}]}` through the project subscription. `blob` is the immutable store path to one file. `type` is a string. The list is available before a run, and an empty list clears previous declarations for the Card. |
 | Core → UI | `DisplayUpdated{display:Data.Display{card, run_id, view, bytes}}`. The core stamps the Card and active run; `run_id` is absent between runs. `DisplayRunStateChanged{card, run_id, state}` carries `started` or `ended`. Use [`data.fbs`](../../protocol/data.fbs) and [`tsugumi.fbs`](../../protocol/tsugumi.fbs). The queue keeps the latest pending data per Card and view. Preserve control message order. |
@@ -30,14 +32,18 @@ payloads, or `ModuleRead` request.
 
 - Own `flake.nix`, `flake.lock`, `nix/**` except the Web files below,
   `CMakeLists.txt`, `cmake/**` except `cmake/protocol.cmake`, `sdk/**`,
-  `workerd/cmake/*install*.cmake`, `pack/**`,
+  `workerd/cmake/*install*.cmake`, `hostd/cmake/host.cmake`, `pack/**`,
   `tsugumid/runtime/src/{daemon.cc,nix.cc,nix.hh,nix_eval.cc,nix_eval.hh}`,
   `hostd/src/{main.cc,environment_native.cc}`, `hostd/tools/build-macos.sh`,
-  `cli/src/launch.cc`, `tests/core/doubles/nix_eval.cc`, the three Nix
-  evaluation tests listed below, `tests/tools/check_boundaries.py`,
-  `tests/ci/**`, `tests/static/{test_ci_selection,test_marimo_bindings}.py`,
-  and SDK-only tests outside the docs/demos lane.
-  Request the `nix_dir` field change from the owner of `service.hh`.
+  `cli/src/launch.cc`, `cli/package-{linux,macos}.sh`,
+  `tests/core/doubles/nix_eval.cc`, the three Nix evaluation tests listed
+  below, `tests/tools/check_boundaries.py`, `tests/ci/**`,
+  `tests/static/{test_ci_selection,test_marimo_bindings}.py`, and SDK-only
+  tests outside the docs/demos lane. Coordinate the `nix_dir` field change
+  in `tsugumid/runtime/src/service.hh` with the tsugumid lane.
+- Keep the host's nixfmt and template-import Git available in the packages.
+  Coordinate bundled resources with the Mac UI lane. Keep Card evaluation
+  language-independent and use the kit's builders.
 - Supply the declared `CardView` fields without name lookup, implicit
   passthru merging, or source inspection. Put the ordered views list, run
   derivations, and the worker when needed in the build plan closure.
@@ -47,12 +53,12 @@ payloads, or `ModuleRead` request.
   shared `workerd/include/tsugumi/workerd/card_plan.hh` used by the worker
   lane. Use the pkgs-taking kit entry and test the vendored ABI files against
   the canonical files before pinning kit.
-- Accept when `test_definition_evaluation.py`, `test_run_lists.py`, and
-  `test_run_environments.py` cover derivation and labelled-list runs, lazy
-  exports, third-party builder binding, an empty or explicit views list,
-  closure contents, and rejected Bash or removed attributes. Verify that the
-  foreign guest and remote job use the worker from the plan and that the kit
-  checks pass on macOS and Linux.
+- Accept when `tests/core/integration/test_definition_evaluation.py` and
+  `tests/core/{test_run_lists,test_run_environments}.py` cover derivation and
+  labelled-list runs, lazy exports, third-party builder binding, an empty or
+  explicit views list, closure contents, and rejected Bash or removed
+  attributes. Verify that the foreign guest and remote job use the worker
+  from the plan and that the kit checks pass on macOS and Linux.
 
 ### Worker
 
@@ -65,7 +71,8 @@ payloads, or `ModuleRead` request.
   process-lifetime reader and hand the opaque frame to `DisplaySink`.
   Coordinate remote streaming and sink lifetime with tsugumid. Deliver
   post-return data through the live channel. Use launch-fixed directories
-  and `WorkerStart` for secrets.
+  and `WorkerStart` for secrets. Use the binary parameter payload for local
+  and remote workers.
 - Accept when a v9 Card runs and v8 and invalid results fail cleanly,
   an encoded failure retains source position, and an unknown stale call ID
   leaves the worker serving. Exercise cancellation from Card threads,
@@ -75,11 +82,18 @@ payloads, or `ModuleRead` request.
 
 ### tsugumid
 
-- Own all other files in `tsugumid/runtime/**`, `hostd/src/service.cc`,
-  `hostd/agent/**`, and the project subscription, history, run, and
-  remote-recovery tests and fixtures under `tests/core/**` and
-  `tests/fixtures/service-contract.json`. Worker and Nix test files named in
-  their lanes stay with those owners.
+- Own `tsugumid/document/**`, all other files in `tsugumid/runtime/**`,
+  `hostd/src/{service,templates,project_operations,agent_exclude,input_types,format}.cc`,
+  the corresponding private headers, and `hostd/agent/**`. Own the project
+  subscription, history, run, remote-recovery, and Host and Agent tests and
+  fixtures under `tests/core/**`, `tests/fixtures/service-contract.json`,
+  and `tests/static/test_generated_shared.py`.
+  Worker, Nix evaluation, and shared-contract files named above stay with
+  their owners.
+- Preserve host ownership of template listing, copying, and Git import.
+  Project stores participate in project versioning. Agent `template_list`
+  and `template_copy` respect project access, and `template_add` and
+  `template_import` require approval.
 - Consume the Nix view list and `DisplaySink`. Publish
   `CardViewsUpdated` on visibility and definition changes, stamp
   `DisplayUpdated` using the active run at arrival, and publish
@@ -95,8 +109,8 @@ payloads, or `ModuleRead` request.
 
 - Own `ui/web/**`, `ui/linux/**`, `ui/shared/modules/**`,
   `ui/shared/i18n/en.json`, and `nix/{web.nix,web-checks.nix,linux-ui-check.nix}`.
-  Coordinate shared
-  viewer or localization edits requested by the Mac lane.
+  Coordinate shared viewer or localization edits requested by the Mac lane.
+  Keep the Web template picker and its tests on the Host RPCs.
 - Consume generated TypeScript `CardViewsUpdated`, `DisplayUpdated`,
   and `DisplayRunStateChanged`. The Web host reads declared HTML files
   through the platform store access path and the browser hosts them in a
@@ -110,6 +124,9 @@ payloads, or `ModuleRead` request.
 
 - Own `ui/macos/**` and `client/swift/**` except the lead's FlatBuffers
   plugin. Coordinate via the Web owner for shared viewer and strings files.
+  Keep `TemplatePicker.swift` and `SessionEditing.swift` on the Host RPCs.
+  Coordinate the bundled Git and nixfmt resources with the Nix evaluation
+  lane.
 - Consume the same three notifications in the generated Swift types.
   Load the declared HTML through the platform store access path and keep it
   inside an isolated WebKit frame. Use the same MessagePort contract as Web.
@@ -121,8 +138,13 @@ payloads, or `ModuleRead` request.
 ### Docs/demos
 
 - Own `docs/**` except this lane file and the generated `docs/Protocol.md`,
-  `demos/**`, `tests/python/test_demo*.py`, and `tests/python/test_demos.py`.
+  `demos/**`, `tests/python/test_demo*.py`, and `tests/fixtures/card-templates/**`.
   Coordinate the demo player with Web when shared viewer behavior changes.
+- Use language-free Card definitions. Document the Project and Host template
+  stores. The examples ship in the kit, and `tests/fixtures/card-templates/`
+  holds test inputs formerly under `ui/shared/templates/`. Coordinate any
+  fixture changes with the Nix evaluation lane's SDK tests and the tsugumid
+  lane's generated-file check.
 - Document and use the explicit `views` list, ABI 9 `CardInput` and
   `CardResult`, and the kit's `card::display::send(...)` interface. Port
   both Japanese and English demos for all eight SDKs, including Drafts.
