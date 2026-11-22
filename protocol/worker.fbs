@@ -5,6 +5,7 @@
 // A call ends with exactly one WorkerResult or WorkerFailure. WorkerDisplay
 // uses call_id 0 and is independent of calls.
 
+include "card.fbs";
 include "worker_types.fbs";
 
 namespace Tsugumi.Worker;
@@ -15,24 +16,29 @@ table EnvVar {
   value:string (id: 1, required, trace_secret);
 }
 
-table WorkerInput {
+// A declared output: the worker checks only names, kinds and presence.
+table WorkerPort {
   name:string (id: 0, required);
   kind:Tsugumi.Data.PortKind (id: 1);
-  value:Tsugumi.Data.FlatBufferData (id: 2, required);
+  required:bool (id: 2);
 }
 
+// The worker never opens input, params or output bytes.
 table WorkerCall {
-  inputs:[WorkerInput] (id: 0, required);
-  params:Tsugumi.Data.FlatBufferData (id: 1, required);
-  outputs:[Tsugumi.Data.Port] (id: 2, required);
+  inputs:[Tsugumi.Card.CardPort] (id: 0, required);
+  params:[ubyte] (id: 1, required);
+  outputs:[WorkerPort] (id: 2, required);
   // Remaining time in milliseconds. Omitted means no deadline.
   deadline_ms:uint64 = null (id: 3);
 }
 
+// bytes for a FlatBuffer output, path for a Path output. forwarded_from names
+// the input whose path the Card returned unchanged.
 table WorkerOutput {
   name:string (id: 0, required);
-  bytes:[ubyte] (id: 1, required);
-  forwarded_from:string (id: 2);
+  bytes:[ubyte] (id: 1);
+  path:string (id: 2);
+  forwarded_from:string (id: 3);
 }
 
 table WorkerResult { outputs:[WorkerOutput] (id: 0, required); }

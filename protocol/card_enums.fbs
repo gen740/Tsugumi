@@ -1,0 +1,48 @@
+// Enums of the Card ABI. card.fbs includes only this file.
+// Values are explicit and never reused. Value 0 is a reserved "invalid"
+// marker, so an omitted field is detected instead of silently meaning something.
+
+namespace Tsugumi.Data;
+
+enum FailureKind : ushort {
+  unspecified = 0,
+  invalid_request = 1,
+  protocol_mismatch = 2,
+  unauthenticated = 3,
+  permission_denied = 4,
+  not_found = 5,
+  invalid_path = 6,
+  invalid_range = 7,
+  invalid_cursor = 8,
+  revision_conflict = 9,
+  hash_conflict = 10,
+  external_change = 11,
+  operation_conflict = 12,
+  busy = 13,
+  timeout = 14,
+  resource_limit = 15,
+  invalid_document = 16,
+  validation_failed = 17,
+  input_missing = 18,
+  execution_limit = 19,
+  cancelled = 20,
+  interrupted = 21,
+  nix_failed = 22,
+  worker_failed = 23,
+  output_invalid = 24,
+  persistence_failed = 25,
+  integrity_error = 26,
+  recording_disabled = 27,
+  unsupported = 28,
+  internal_error = 29,
+  type_mismatch = 30,
+  /// A save from a model widens Card permissions (network, sandbox off, host
+  /// folders) the user has not approved: one `permission` argument each.
+  approval_required = 31,
+  value_conflict = 32,
+  source_changed = 33,
+}
+
+/// Path: a regular file or a directory, decided at run time. FlatBuffer: one
+/// buffer whose root is the port's type.
+enum PortKind : ubyte { unspecified = 0, Path = 1, FlatBuffer = 2 }

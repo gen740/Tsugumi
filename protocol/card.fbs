@@ -1,16 +1,21 @@
 // FlatBuffer payloads of the ABI 9 Card entry point.
-include "tsugumi_enums.fbs";
+include "card_enums.fbs";
 
 namespace Tsugumi.Card;
 
 table CardPort {
   name:string (id: 0, required);
   kind:Tsugumi.Data.PortKind (id: 1);
-  // A FlatBuffer of the port's declared type, including File and Directory.
+  // FlatBuffer port: one buffer whose root is the port's type. Empty for Path.
   bytes:[ubyte] (id: 2);
+  // Path port: a regular file or a directory. In CardInput, the staged
+  // absolute path. In CardResult, a path under the call's working directory
+  // (relative to it, or absolute), or an input path returned unchanged.
+  path:string (id: 3);
 }
 
 table CardInput {
+  // Only connected inputs that arrived; an unconnected input is absent.
   inputs:[CardPort] (id: 0);
   // A FlatBuffer of the generated parameters.Params table.
   params:[ubyte] (id: 1);

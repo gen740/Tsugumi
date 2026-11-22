@@ -26,7 +26,7 @@ table JobSpec {
   // never part of the spec: they arrive in a JobSecretsRequest just before the
   // process starts and are kept only in memory.
   secrets:[string];
-  // Output budget for new File and Directory outputs (forwards do not count).
+  // Output budget for new Path outputs (forwards do not count).
   output_limit_bytes:ulong = 68719476736;
   output_limit_entries:ulong = 1000;
 }
@@ -70,7 +70,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract. Writers explicitly send contract 13.
+  // Zero means no advertised contract. Writers explicitly send contract 14.
   worker_contract:uint;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
