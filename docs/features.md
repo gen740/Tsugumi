@@ -22,7 +22,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 ### Display results and keep files
 
 - **Plot data with editable code.** Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. For example, plot a numeric column as a histogram and inspect the actual bins kept with the figure. [Visualisation templates](Visualization.md)
-- **Watch a running figure or show a value.** Try the Live Stream demo and select **Live (follow while running)** under **Card settings → General → Chart updates** to follow incoming revisions. Use a Bash Card to log a typed input and show it as text or an explicitly selected Markdown string, as the `result` Card of the marimo demo does. [Chart updates](Usage.md#chart-updates) · [Bash displays](CardGuide.md#bash)
+- **Watch a running figure or show a value.** Right-click the Card in the Live Stream demo and choose **Open Display** to follow incoming revisions. Use a Bash Card to log a typed input and show it as text or an explicitly selected Markdown string, as the `result` Card of the marimo demo does. [Live displays](Usage.md#live-displays) · [Bash displays](CardGuide.md#bash)
 - **Run a notebook or render a report.** Add a marimo notebook to run committed cells once and return typed results. Use an R Markdown or Quarto Card to render a parameterised HTML report from an upstream value. [marimo notebooks](Marimo.md) · [R Markdown and Quarto](Reports.md)
 - **Keep a result for later.** In **Ports**, keep a File or Directory output as an artifact. Open its saved files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
 
@@ -201,7 +201,7 @@ A Card declares the names of the credentials it needs (`"secrets": ["database_pa
 
 ## 7. Visualisation
 
-Use the [visualisation templates](Visualization.md), [marimo notebooks](Marimo.md) or [R reports](Reports.md). Authors of custom views use [Card-owned web views](CardGuide.md#card-owned-web-views); users control [chart updates](Usage.md#chart-updates).
+Use the [visualisation templates](Visualization.md), [marimo notebooks](Marimo.md) or [R reports](Reports.md). Authors of custom views use [Card-owned web views](CardGuide.md#card-owned-web-views); open [live displays](Usage.md#live-displays) from the Card menu.
 
 ## 8. UI (the workbench)
 

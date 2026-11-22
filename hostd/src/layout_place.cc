@@ -1,11 +1,11 @@
-// Placing a scope's Cards, output frames and notes (see layout.hh).
+// Placing a scope's Cards and notes (see layout.hh).
 //
 // The graph is drawn in layers along the flow. Wires against the flow are set
 // aside, each node gets a layer, wires that pass a layer get a point in it,
 // the order in each layer is the one with the fewest crossings found, and the
 // positions across the flow are those that bend the wires least (a network
 // simplex). Graphs that have nothing to do with each other are laid out apart,
-// then frames and notes take the free room nearest to what they belong to.
+// then notes take the free room nearest to what they belong to.
 #include <algorithm>
 #include <climits>
 #include <cmath>
@@ -23,11 +23,9 @@ constexpr double kSideGap = 40;
 constexpr double kLayerGap = 30;
 // Room a wire passing a layer keeps from the Cards and wires beside it.
 constexpr double kLaneGap = 30;
-// Room around frames and notes, and around wires they sit next to.
+// Room around notes, and around wires they sit next to.
 constexpr double kBoxGap = 20;
 constexpr double kWireRoom = 12;
-// What a frame on the other side of its Card costs (it may be free and near).
-constexpr double kFrameOtherSide = 400;
 // How much a straight wire counts: a long wire bending is the worst to read.
 constexpr int kWeightFeedback = 1;
 constexpr int kWeightNear = 4;
@@ -44,10 +42,8 @@ constexpr double kInfinity = std::numeric_limits<double>::infinity();
 struct Node {
   int card = -1;  // index in the scene, -1 otherwise
   bool bar = false;
-  double across = 0;        // size across the flow
-  double along = 0;         // size along it
-  double frame_across = 0;  // the output frame that goes with it (0: none)
-  double frame_along = 0;
+  double across = 0;           // size across the flow
+  double along = 0;            // size along it
   std::vector<double> inputs;  // where its ports are across the flow
   std::vector<double> outputs;
   int rank = 0;
@@ -155,10 +151,9 @@ auto sorted_unique(std::vector<double> list) -> std::vector<double> {
   return list;
 }
 
-// The free place for a box nearest `near` that grows the drawing the least,
-// on the side frames open to (right of a Card when the flow runs down).
+// The free place for a box nearest `near` that grows the drawing the least.
 auto place_box(double across_size, double along_size, const FlowRect& near,
-               bool frame, const std::vector<FlowRect>& obstacles,
+               const std::vector<FlowRect>& obstacles,
                const std::vector<Line>& lines, double grid) -> FlowRect {
   std::vector<double> across_at = {
       ceil_to(near.across + near.across_size + kBoxGap, grid),
@@ -207,15 +202,8 @@ auto place_box(double across_size, double along_size, const FlowRect& near,
         growth =
             u.across_size - box->across_size + (u.along_size - box->along_size);
       }
-      // A frame opens to one side of its Card and stays level with it if it
-      // can; a note has no Card and goes towards where the flow ends.
-      const double side =
-          frame ? (c + across_size / 2 < near.across + near.across_size / 2
-                       ? kFrameOtherSide
-                       : 0) +
-                      0.1 * std::abs(a - near.along)
-                : -0.01 * a + 0.001 * c;
-      const double cost = 2 * (gap_across + gap_along) + growth + side;
+      const double cost =
+          2 * (gap_across + gap_along) + growth - 0.01 * a + 0.001 * c;
       if (cost < best_cost - 1e-9) {
         best_cost = cost;
         best = r;
@@ -685,11 +673,8 @@ class Layered {
         const auto& a = n_[l[k]];
         const auto& b = n_[l[k + 1]];
         const bool lane = a.across == 0 || b.across == 0;
-        // A Card keeps the room for its frame beside it.
-        const double frame =
-            a.frame_across > 0 ? a.frame_across + kBoxGap + grid_ : 0;
-        const double room = std::ceil(
-            (a.across + frame + (lane ? kLaneGap : kSideGap)) / unit - 1e-9);
+        const double room =
+            std::ceil((a.across + (lane ? kLaneGap : kSideGap)) / unit - 1e-9);
         arcs.push_back(
             {index[l[k]], index[l[k + 1]], static_cast<long long>(room), 0});
       }
@@ -779,45 +764,18 @@ class Layered {
     }
   }
 
-  // Positions along the flow: each layer just past the one before it, and
-  // past the frames of earlier layers that reach it.
+  // Positions along the flow: each layer just past the one before it.
   auto assign_along() -> void {
-    struct Reach {
-      double lo;
-      double hi;
-      double end;
-    };
     double at = 0;
-    std::vector<Reach> reach;
-    for (const auto& l : layers_) {
+    for (const auto& layer : layers_) {
       double size = 0;
       bool any = false;
-      for (const int id : l) {
-        if (n_[id].card < 0) continue;
-        size = std::max(size, n_[id].along);
+      for (const int id : layer) {
+        auto& node = n_[id];
+        node.layer_at = at;
+        if (node.card < 0) continue;
+        size = std::max(size, node.along);
         any = true;
-      }
-      for (const int id : l) {
-        const auto& v = n_[id];
-        if (v.card < 0) continue;
-        const double spans[2][2] = {
-            {v.at, v.at + v.across},
-            {v.at + v.across + kBoxGap,
-             v.at + v.across + kBoxGap + v.frame_across}};
-        for (int s = 0; s < (v.frame_across > 0 ? 2 : 1); s++) {
-          for (const auto& r : reach) {
-            if (spans[s][0] < r.hi + kBoxGap && r.lo < spans[s][1] + kBoxGap)
-              at = std::max(at, ceil_to(r.end + kBoxGap, grid_));
-          }
-        }
-      }
-      for (const int id : l) {
-        auto& v = n_[id];
-        v.layer_at = at;
-        if (v.frame_across > 0)
-          reach.push_back({v.at + v.across + kBoxGap,
-                           v.at + v.across + kBoxGap + v.frame_across,
-                           at + v.frame_along});
       }
       if (any) at = ceil_to(at + size + kLayerGap, grid_);
     }
@@ -860,15 +818,8 @@ class Layered {
   std::vector<Chain> chains_;
 };
 
-struct FramePlace {
-  int card;     // index in the scene
-  size_t rect;  // index in the block's room
-};
-
-// One graph with its output frames.
 struct Block {
   std::vector<int> list;
-  std::vector<FramePlace> frames;
   std::vector<FlowRect> room;
   std::vector<Line> lines;
   FlowRect box;
@@ -889,22 +840,13 @@ auto place(const Scene& scene) -> Proposal {
       if (list[i].name == name) return static_cast<int>(i);
     return 0;
   };
-  auto frame_of = [&](const std::string& id) -> const Box* {
-    for (const auto& f : scene.frames)
-      if (f.id == id) return &f;
-    return nullptr;
-  };
-
   std::vector<Node> nodes;
   for (size_t i = 0; i < scene.cards.size(); i++) {
     const auto& c = scene.cards[i];
-    const Box* frame = frame_of(c.id);
     Node n;
     n.card = static_cast<int>(i);
     n.across = vertical ? c.width : c.height;
     n.along = vertical ? c.height : c.width;
-    n.frame_across = frame ? (vertical ? frame->width : frame->height) : 0;
-    n.frame_along = frame ? (vertical ? frame->height : frame->width) : 0;
     for (const auto& p : c.inputs) n.inputs.push_back(vertical ? p.x : p.y);
     for (const auto& p : c.outputs) n.outputs.push_back(vertical ? p.x : p.y);
     nodes.push_back(std::move(n));
@@ -1008,7 +950,7 @@ auto place(const Scene& scene) -> Proposal {
                     nodes[i].along};
   };
 
-  // Each graph with its output frames, nearest the start of the flow first.
+  // Each graph, nearest the start of the flow first.
   std::vector<Block> blocks;
   for (auto& list : members) {
     std::vector<Edge> graph_edges;
@@ -1024,20 +966,6 @@ auto place(const Scene& scene) -> Proposal {
     for (const int i : cards) b.room.push_back(card_rect(i));
     const auto bars = bar_rects(b.room);
     b.room.insert(b.room.end(), bars.begin(), bars.end());
-    std::vector<int> owners;
-    for (const int i : cards)
-      if (nodes[i].frame_across > 0) owners.push_back(i);
-    std::stable_sort(owners.begin(), owners.end(), [&](int x, int y) {
-      return nodes[x].rank != nodes[y].rank ? nodes[x].rank < nodes[y].rank
-                                            : nodes[x].order < nodes[y].order;
-    });
-    for (const int i : owners) {
-      const Box& frame = *frame_of(scene.cards[nodes[i].card].id);
-      b.frames.push_back({nodes[i].card, b.room.size()});
-      b.room.push_back(place_box(vertical ? frame.width : frame.height,
-                                 vertical ? frame.height : frame.width,
-                                 card_rect(i), true, b.room, b.lines, grid));
-    }
     b.box = b.room[0];
     for (const auto& r : b.room) b.box = union_rect(b.box, r);
     b.list = list;
@@ -1095,19 +1023,15 @@ auto place(const Scene& scene) -> Proposal {
   for (const auto& note : scene.notes) {
     FlowRect box = room.empty() ? FlowRect{} : room[0];
     for (const auto& r : room) box = union_rect(box, r);
-    const auto r = place_box(vertical ? note.width : note.height,
-                             vertical ? note.height : note.width, box, false,
-                             room, lines, grid);
+    const auto r =
+        place_box(vertical ? note.width : note.height,
+                  vertical ? note.height : note.width, box, room, lines, grid);
     room.push_back(r);
     out.notes.push_back(at(note.id, r.across, r.along));
   }
   for (const auto& n : nodes)
     if (n.card >= 0)
       out.cards.push_back(at(scene.cards[n.card].id, n.at, n.layer_at));
-  for (const auto& b : blocks)
-    for (const auto& f : b.frames)
-      out.frames.push_back(at(scene.cards[f.card].id, b.room[f.rect].across,
-                              b.room[f.rect].along));
   return out;
 }
 
@@ -1128,9 +1052,8 @@ auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
       room.push_back(r);
       placed.emplace_back(c.id, r);
     }
-  for (const auto& list : {scene.frames, scene.notes})
-    for (const auto& b : list)
-      room.push_back(rect(b.x, b.y, b.width, b.height));
+  for (const auto& b : scene.notes)
+    room.push_back(rect(b.x, b.y, b.width, b.height));
   Proposal out;
   auto pending = missing;
   while (!pending.empty()) {
@@ -1162,8 +1085,8 @@ auto place_missing(const Scene& scene, const std::vector<std::string>& missing)
       for (const auto& r : room) near = union_rect(*near, r);
     }
     const auto r = place_box(vertical ? c->width : c->height,
-                             vertical ? c->height : c->width, *near, false,
-                             room, {}, scene.snap ? scene.grid : 1);
+                             vertical ? c->height : c->width, *near, room, {},
+                             scene.snap ? scene.grid : 1);
     room.push_back(r);
     placed.emplace_back(id, r);
     out.cards.push_back(

@@ -22,7 +22,7 @@ function node(dir: string, id: string): CardNodeData {
   const typed = fs.existsSync(fbs)
     ? [...(/table Outputs\s*\{([^}]*)\}/.exec(fs.readFileSync(fbs, 'utf8').replace(/\/\*.*?\*\//gs, ''))?.[1] ?? '').matchAll(/(\w+)\s*:/g)].map((m) => ({ name: m[1] }))
     : []
-  const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, hasDisplay: false, title: id }
+  const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
     return { ...blank, kind: 'subgraph', inputs: Object.keys(b.inputs ?? {}).map((name) => ({ name })), outputs: Object.keys(b.outputs ?? {}).map((name) => ({ name })) }
@@ -73,8 +73,7 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   }
   const datas = new Map(ids.map((id) => {
     const d = node(dir, id)
-    const frame = layout.displays?.[id]
-    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, hasDisplay: !!frame && frame.hidden !== true, portGrid: grid }]
+    return [id, { ...d, collapsed: layout.cards?.[id]?.collapsed ?? false, portGrid: grid }]
   }))
   const geos = new Map(ids.map((id) => [id, new CardGeometry(datas.get(id)!, flow!)]))
   const cardRect = (id: string): Rect => ({ ...place(id), ...geos.get(id)!.size })
@@ -83,15 +82,6 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
     return { x: o.x + q.x, y: o.y + q.y }
   }
   const obstacles = ids.map(cardRect)
-  for (const id of ids) {
-    const f = layout.displays?.[id]
-    if (!f || f.hidden === true) continue
-    const o = place(id), g = geos.get(id)!
-    const width = f.width ?? 320, height = f.height ?? 170
-    obstacles.push(flow === 'topToBottom'
-      ? { x: f.x ?? o.x + g.size.width + 40, y: f.y ?? o.y, width, height }
-      : { x: f.x ?? o.x, y: f.y ?? o.y + g.height + 30, width, height })
-  }
   const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${c.from.card}.${c.from.port}>${c.to.card}.${c.to.port}` }))
   const bi = Object.entries<{ card: string; port: string }>(project.boundary?.inputs ?? {}), bo = Object.entries<{ card: string; port: string }>(project.boundary?.outputs ?? {})
   if (bi.length || bo.length) {

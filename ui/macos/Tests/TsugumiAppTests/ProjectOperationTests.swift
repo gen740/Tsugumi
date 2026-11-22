@@ -546,7 +546,7 @@ extension ProjectOperationTests {
     let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"draft"}"#) }, layout: initial)
     let marquee = CGRect(x: -100, y: -100, width: 1000, height: 1000)
     let items = s.marqueeItems(marquee, in: [])
-    #expect(items.cards == ["a"] && items.notes == ["note"] && items.frames == ["b"])
+    #expect(items.cards == ["a"] && items.notes == ["note"])
     let inverse = Tsugumi_Host_ProjectEditsT()
     let old = try JSONValue.parse(initial)
     var moved = old
@@ -554,13 +554,12 @@ extension ProjectOperationTests {
     var notes = try #require(moved["notes"]?.array)
     notes[0]["x"] = .number("130")
     moved["notes"] = .array(notes)
-    moved["displays"]?["b"]?["x"] = .number("430")
     inverse.edits = [s.jsonEdit("layout.json", old: moved, new: old)]
     s.operateProject = { request in
       let reply = self.delta(s.rev, request.opId, "unused")
       reply.projectJson = nil
       if let move = request.body?.value as? Tsugumi_Host_ProjectMoveT {
-        #expect(move.cards == ["a"] && move.notes == ["note"] && move.frames == ["b"])
+        #expect(move.cards == ["a"] && move.notes == ["note"])
         #expect(move.dx == 30 && move.dy == 0)
         reply.layoutJson = moved.serialized()
         return self.result(reply, inverse: inverse)
@@ -571,8 +570,8 @@ extension ProjectOperationTests {
       reply.layoutJson = initial
       return self.result(reply, inverse: Tsugumi_Host_ProjectEditsT())
     }
-    await s.moveSelection(cards: items.cards, notes: items.notes, frames: items.frames, by: CGSize(width: 30, height: 0), snap: nil).value
-    #expect(s.position("a").x == 30 && s.displayRect("b").minX == 430)
+    await s.moveSelection(cards: items.cards, notes: items.notes, by: CGSize(width: 30, height: 0), snap: nil).value
+    #expect(s.position("a").x == 30)
     #expect(s.note("note")?["x"]?.double == 130 && s.position("b").x == 3000)
     #expect(s.undoStack.count == 1)
     await s.undo()
@@ -581,39 +580,39 @@ extension ProjectOperationTests {
     s.operateProject = { request in
       let delete = try #require(request.body?.value as? Tsugumi_Host_ProjectSelectionT)
       #expect(delete.action == .delete)
-      #expect(delete.cards == ["a"] && delete.notes == ["note"] && delete.frames == ["b"])
+      #expect(delete.cards == ["a"] && delete.notes == ["note"])
       let d = self.delta(s.rev, request.opId, "unused")
       d.projectJson = #"{"canvas":{"cards":[{"id":"b"},{"id":"c"}],"connections":[]}}"#
-      d.layoutJson = #"{"cards":{"b":{"x":3000,"y":0}},"displays":{"b":{"x":400,"y":400,"width":300,"height":200,"hidden":true}}}"#
+      d.layoutJson = #"{"cards":{"b":{"x":3000,"y":0}}}"#
       d.definitionsRemoved = ["a"]
       return self.result(d, inverse: Tsugumi_Host_ProjectEditsT())
     }
-    s.deleteSelection(cards: items.cards, notes: items.notes, frames: items.frames, in: [])
+    s.deleteSelection(cards: items.cards, notes: items.notes, in: [])
     await s.save()
     #expect(s.instance("a") == nil && s.note("note") == nil)
-    #expect(s.instance("b") != nil && s.displayFrame("b")?["hidden"]?.bool == true)
+    #expect(s.instance("b") != nil)
 
     let tab = WorkflowTab(scope: [])
     tab.selection = items.cards
     tab.selectedNotes = items.notes
-    tab.selectedFrames = items.frames
     tab.selection = ["b"]
-    #expect(tab.selectedNotes.isEmpty && tab.selectedFrames.isEmpty)
+    #expect(tab.selectedNotes.isEmpty)
     tab.selectedNotes = ["note"]
     tab.enter(["another"])
     #expect(!tab.hasSelection)
   }
 
-  @Test func anAgentRenameKeepsTheCardResultFrameAndGroup() throws {
+  @Test func anAgentRenameKeepsTheOpenCardResultAndGroup() throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let layout = #"{"cards":{"a":{"x":700,"y":500}},"displays":{"a":{"x":400,"y":300,"width":300,"height":200}},"groups":[{"id":"group","cards":["a","b"]}]}"#
+    let layout = #"{"cards":{"a":{"x":700,"y":500}},"groups":[{"id":"group","cards":["a","b"]}]}"#
     let s = try offlineSession(dir, cards: [("a", #"{"type":"code","language":"bash"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
     let display = Tsugumi_Data_DisplayT()
     display.card = cardPath(["a"])
     display.runId = "run-a"; display.invocation = 1
     let value = Tsugumi_Data_DisplayTextT(); value.text = "output"
     display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytext)
+    s.openDisplayViewer(UUID(), card: "a")
     s.applyDisplay(display)
     let before = try #require(s.displays["a"]?.identity)
     let renamed = delta(0, "rename", "unused")
@@ -629,7 +628,6 @@ extension ProjectOperationTests {
     s.applyDelta(renamed)
     #expect(s.nodeData("a").title == s.nodeData("b").title)
     #expect(s.displays["a"]?.identity == before && s.displays["b"] == nil)
-    #expect(s.displayFrame("a") != nil && s.displayFrame("b") == nil)
     #expect(s.position("a") == CGPoint(x: 700, y: 500))
     #expect(Set(s.groups(in: []).first?["cards"]?.array?.compactMap(\.string) ?? []) == ["a", "b"])
   }

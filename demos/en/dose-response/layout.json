@@ -37,37 +37,5 @@
       "width": 620,
       "height": 440
     }
-  ],
-  "displays": {
-    "generate": {
-      "x": 160,
-      "y": 200,
-      "width": 520,
-      "height": 340
-    },
-    "fit": {
-      "x": 940,
-      "y": 200,
-      "width": 520,
-      "height": 340
-    },
-    "bootstrap": {
-      "x": 1520,
-      "y": 200,
-      "width": 640,
-      "height": 400
-    },
-    "compare": {
-      "x": 2180,
-      "y": 200,
-      "width": 640,
-      "height": 340
-    },
-    "range": {
-      "x": 940,
-      "y": 840,
-      "width": 640,
-      "height": 380
-    }
-  }
+  ]
 }

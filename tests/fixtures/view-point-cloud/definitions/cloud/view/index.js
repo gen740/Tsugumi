@@ -1,7 +1,8 @@
 // Standard WebGPU only. Pointer input never leaves the frame or needs a worker.
 let canvas, device, context, pipeline, uniform, bind, buffer, count = 0
-let yaw = 0.6, pitch = 0.3, geometry, dragging, visible = true
-export async function initialise(root, data, size) {
+let yaw = 0.6, pitch = 0.3, geometry, dragging
+export default async function mount(root, data) {
+  const size = () => ({ width: root.clientWidth, height: root.clientHeight, pixelRatio: devicePixelRatio })
   if (!navigator.gpu) throw new Error('WebGPU is unavailable in this web view')
   const adapter = await navigator.gpu.requestAdapter()
   if (!adapter) throw new Error('WebGPU has no available adapter')
@@ -40,32 +41,33 @@ export async function initialise(root, data, size) {
     pitch += (e.clientY - dragging[1]) * 0.01
     dragging = [e.clientX, e.clientY]; draw()
   }
-  geometry = size
-  await update(data)
-  resize(size)
+  geometry = size()
+  update(data)
+  resize(geometry)
+  root.addEventListener('tsugumi:data', event => update(event.detail))
+  new ResizeObserver(() => resize(size())).observe(root)
 }
-export async function update({ config, blobs }) {
+function update({ config, blobs }) {
+  const { count: nextCount } = JSON.parse(config)
   const bytes = blobs.points
-  if (!bytes || bytes.byteLength !== config.count * 12) throw new Error('Expected float32 XYZ triples')
+  if (!bytes || bytes.byteLength !== nextCount * 12) throw new Error('Expected float32 XYZ triples')
   buffer?.destroy()
   buffer = device.createBuffer({ size: Math.max(4, bytes.byteLength), usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST })
   device.queue.writeBuffer(buffer, 0, bytes)
-  count = config.count
+  count = nextCount
   draw()
 }
-export function resize(size) {
-  geometry = size; visible = size.visible
+function resize(size) {
+  geometry = size
   canvas.width = Math.max(1, Math.round(size.width * size.pixelRatio))
   canvas.height = Math.max(1, Math.round(size.height * size.pixelRatio))
   draw()
 }
 function draw() {
-  if (!device || !buffer || !visible) return
+  if (!device || !buffer) return
   device.queue.writeBuffer(uniform, 0, new Float32Array([yaw, pitch, geometry.width / Math.max(1, geometry.height), 0]))
   const encoder = device.createCommandEncoder()
   const pass = encoder.beginRenderPass({ colorAttachments: [{ view: context.getCurrentTexture().createView(), clearValue: [0.03, 0.04, 0.07, 1], loadOp: 'clear', storeOp: 'store' }] })
   pass.setPipeline(pipeline); pass.setBindGroup(0, bind); pass.setVertexBuffer(0, buffer); pass.draw(count); pass.end()
   device.queue.submit([encoder.finish()])
 }
-export async function snapshot() { draw(); await device.queue.onSubmittedWorkDone(); return canvas.toDataURL('image/png') }
-export function dispose() { buffer?.destroy(); uniform?.destroy(); device?.destroy(); canvas?.remove() }

@@ -271,7 +271,7 @@ TEST(ProjectOperations,
 namespace tsugumi::host {
 namespace {
 TEST(ProjectOperationLayout,
-     UsesMeasurementsButKeepsCurrentPositionsAndFrameSizes) {
+     UsesMeasurementsButKeepsCurrentPositions) {
   const std::string project =
       R"({"canvas":{"cards":[{"id":"a"}],"connections":[]}})";
   H::LayoutSceneT scene;
@@ -283,13 +283,6 @@ TEST(ProjectOperationLayout,
   card->width = 120;
   card->height = 60;
   scene.cards.push_back(std::move(card));
-  auto frame = std::make_unique<H::LayoutBoxT>();
-  frame->id = "a";
-  frame->x = 1020;
-  frame->y = 1000;
-  frame->width = 320;
-  frame->height = 170;
-  scene.frames.push_back(std::move(frame));
   const auto untouched = ArrangeProjectLayout(
       project, R"({"cards":{"a":{"x":10,"y":20}}})", {}, true, &scene);
   const auto position =
@@ -301,10 +294,6 @@ TEST(ProjectOperationLayout,
       R"({"cards":{"a":{"x":10,"y":20}},"boundary":{"inputs":{"x":33,"y":44}}})",
       {}, false, &scene);
   const auto layout = json::Object(arranged);
-  const auto rectangle =
-      json::Object(json::Object(layout.at("displays")).at("a"));
-  EXPECT_DOUBLE_EQ(std::stod(rectangle.at("width")), 320);
-  EXPECT_DOUBLE_EQ(std::stod(rectangle.at("height")), 170);
   EXPECT_FALSE(layout.contains("boundary"));
 }
 }  // namespace
@@ -949,22 +938,19 @@ TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
 TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   TransformationProject project;
   project.files["layout.json"] =
-      R"({"notes":[{"id":"n","text":"note","x":0,"y":0}],"groups":[{"id":"g","cards":["a","sub"]}],"displays":{"a":{"x":5,"y":6,"width":100,"height":100}}})";
+      R"({"notes":[{"id":"n","text":"note","x":0,"y":0}],"groups":[{"id":"g","cards":["a","sub"]}]})";
   const auto before = project.files;
   H::ProjectSelectionT body;
   body.action = H::ProjectSelectionAction::Delete;
   body.cards = {"sub"};
   body.notes = {"n"};
-  body.frames = {"a"};
   const auto undo = project.Apply(body);
   EXPECT_EQ(project.saves, 1);
   EXPECT_FALSE(project.files.contains(
       "externals/inner/externals/deep/definitions/c/raw.bin"));
   const auto layout = json::Object(project.files.at("layout.json"));
   EXPECT_TRUE(json::Array(layout.at("notes")).empty());
-  EXPECT_EQ(json::Get(json::Object(json::Object(layout.at("displays")).at("a")),
-                      "hidden"),
-            "true");
+  EXPECT_FALSE(layout.contains("displays"));
   EXPECT_EQ(
       json::Array(
           json::Object(json::Array(layout.at("groups")).front()).at("cards"))

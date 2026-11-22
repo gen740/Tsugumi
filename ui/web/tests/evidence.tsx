@@ -46,9 +46,9 @@ assert.match(html, /href="https:\/\/example.com"/)
 assert.doesNotMatch(html, /href="card:/)
 console.log('evidence links: passed')
 
-// An evidence result is decoded from its own record, never the latest canvas display.
-const { recordedDisplay } = await import('../src/model/session')
-const { DisplayContent } = await import('../src/ui/display')
+// An evidence result is decoded from its own record, independent of the live viewer.
+const { displayModule, recordedDisplay } = await import('../src/model/session')
+const { DisplayView } = await import('../src/ui/moduleViewer')
 const D = await import('../shared/gen/tsugumi/data')
 const recorded = Object.assign(new D.DisplayT(), {
   runId: run, invocation: 2n, revision: 7n, valueType: D.DisplayValue.DisplayTable,
@@ -58,7 +58,8 @@ const snapshot = recordedDisplay(recorded)!
 assert.equal(snapshot.runId, run)
 assert.equal(snapshot.invocation, 2n)
 assert.equal(snapshot.revision, 7n)
-assert.match(renderToStaticMarkup(<DisplayContent display={snapshot} large />), /157471/)
+assert.equal(JSON.parse(displayModule(snapshot.value)!.config).rows[0][1], '157471')
+assert.match(renderToStaticMarkup(<DisplayView display={snapshot} />), /\/modules\/viewer.html/)
 assert.equal(recordedDisplay(new D.DisplayT())?.value.kind, 'unavailable')
 
 const report = 'Read only: [source](card:outer/inner?file=src%2Fmain.py&lines=12-18) uses a clock.\n\nUnrelated prose.\n\nRun and observed: [other](card:b?file=main.cc&lines=1-3) differs.'
