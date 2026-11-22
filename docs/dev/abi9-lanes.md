@@ -142,13 +142,11 @@ payloads, or `ModuleRead` request.
 ### Docs/demos
 
 - Own `docs/**` except this lane file and the generated `docs/Protocol.md`,
-  `demos/**`, `tests/python/test_demo*.py`, and `tests/fixtures/card-templates/**`.
+  `demos/**` and `tests/python/test_demo*.py`.
   Coordinate the demo player with Web when shared viewer behavior changes.
 - Use language-free Card definitions. Document the Project and Host template
-  stores. The examples ship in the kit, and `tests/fixtures/card-templates/`
-  holds test inputs formerly under `ui/shared/templates/`. Coordinate any
-  fixture changes with the Nix evaluation lane's SDK tests and the tsugumid
-  lane's generated-file check.
+  stores. The examples and language starters ship in the kit; the core tests
+  the template stores with opaque fixture trees.
 - Document and use the explicit `views` list, ABI 9 `CardInput` and
   `CardResult`, and the kit's `card::display::send(...)` interface. Port
   both Japanese and English demos for all eight SDKs, including Drafts.
