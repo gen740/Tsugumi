@@ -240,11 +240,9 @@ NixEvaluator& NixRunner::evaluator() {
       throw std::runtime_error("cannot read the Card evaluator in " +
                                nix_dir_.string());
     std::vector<std::string> allowed{nix_dir_.string()};
-    for (const auto* folder : {"kit", "flake-parts"}) {
-      std::error_code ec;
-      const auto path = stdfs::canonical(nix_dir_ / folder, ec);
-      if (!ec) allowed.push_back(path.string());
-    }
+    std::error_code ec;
+    const auto kit = stdfs::canonical(nix_dir_ / "kit", ec);
+    if (!ec) allowed.push_back(kit.string());
     allowed.push_back(eval_dir_.string());
     evaluator_ =
         std::make_unique<NixEvaluator>(std::move(*entry), std::move(allowed));

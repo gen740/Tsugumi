@@ -1,5 +1,4 @@
 set(TSUGUMI_KIT_DIR "$ENV{TSUGUMI_KIT_DIR}" CACHE PATH "Pinned Tsugumi kit source")
-set(TSUGUMI_FLAKE_PARTS_DIR "$ENV{TSUGUMI_FLAKE_PARTS_DIR}" CACHE PATH "Pinned flake-parts source")
 
 # Use the same layout beside installed programs and in the CMake build tree.
 set(TSUGUMI_CARD_NIX_OUTPUT share/tsugumi/nix)
@@ -15,8 +14,8 @@ function(tsugumi_card_nix_files directory)
   endforeach()
 endfunction()
 
-tsugumi_card_nix_files("" nix/card-entry.nix nix/kit-entry.nix)
-foreach(binding "kit;TSUGUMI_KIT_DIR" "flake-parts;TSUGUMI_FLAKE_PARTS_DIR")
+tsugumi_card_nix_files("" nix/card-entry.nix)
+foreach(binding "kit;TSUGUMI_KIT_DIR")
   list(GET binding 0 name)
   list(GET binding 1 source)
   if(${source})

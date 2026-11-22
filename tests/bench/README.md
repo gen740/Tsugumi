@@ -39,9 +39,9 @@ OS caches and worker prefetch remain in effect: "first" does not mean a cold
 machine or an empty store. Local runs precede remote runs.
 
 For another build tree, set `TSUGUMI_BUILD_DIR` before starting Python. The harness
-also accepts `TSUGUMID`, `TSUGUMI_WORKER`, `TSUGUMI_SDK_DIR`, and
+also accepts `TSUGUMID`, `TSUGUMI_WORKER`, `TSUGUMI_NIX_DIR`, and
 `TSUGUMI_PY_BINDINGS` (normally `$TSUGUMI_BUILD_DIR/generated/python`). Bindings,
-daemon, SDK and worker must match this checkout. `TSUGUMI_WORKER` selects the
+daemon, Card evaluator and worker must match this checkout. `TSUGUMI_WORKER` selects the
 harness's `--worker` fallback; a worker supplied by a Card's built environment
 still follows the normal product selection rules.
 

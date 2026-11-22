@@ -19,7 +19,7 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
   client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src workerd \
   protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
-  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/kit-entry.nix nix/worker.nix \
+  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/worker.nix \
   third-party \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
@@ -48,7 +48,6 @@ cat >> "$stage/tsugumi/flake.nix" <<'NIX'
           tsugumid = pkgs.callPackage ./nix/core.nix {
             hosq = inputs.hosq;
             kitSource = inputs.tsugumi-kit;
-            flakePartsSource = inputs.flake-parts;
             cardNixpkgs = {
               rev = inputs.nixpkgs.rev;
               narHash = inputs.nixpkgs.narHash;

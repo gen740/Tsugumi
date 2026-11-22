@@ -159,7 +159,7 @@ def serve_requests(peer):
                     # check) have no Origin; browsers still need an allowed one.
                     arguments = [os.environ["TSUGUMID"], "--scratch-dir", str(mounts["control"] / "scratch"),
                                  "--run-scratch-dir", str(mounts["control"].resolve() / "run-scratch"), "--project", str(mounts["project"]), "--control-dir", str(mounts["control"]),
-                                 "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--sdk-dir", os.environ["TSUGUMI_SDK_DIR"]]
+                                 "--unix", str(sockets / key), "--listen", "127.0.0.1:0", "--allow-missing-origin", "--worker", os.environ["TSUGUMI_WORKER"], "--nix-dir", os.environ["TSUGUMI_NIX_DIR"]]
                     for origin in request.origins or []:
                         arguments.extend(["--allow-origin", text(origin)])
                     environment = dict(os.environ, TSUGUMI_EXECUTION_BROKER=broker_endpoint, TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE=str(mounts["control"] / "execution-broker-capability"))

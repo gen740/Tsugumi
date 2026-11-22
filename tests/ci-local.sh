@@ -33,7 +33,7 @@ linux_job() {
   step "Build or fetch the native runtime, tests and Web CLI"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link .#cli
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-core --out-link build-ci
-  local web system sdk_python
+  local web system demo_python
   system=$(system_name)
   web=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 '.#web^out' --no-link --print-out-paths)
   export TSUGUMI_WEB_DIST="$web/share/tsugumi/ui/web/dist"
@@ -44,8 +44,10 @@ linux_job() {
   step "Core integration tests with the real host environment"
   bash tests/ci/run-suite.sh host "$system"
   step "Python tests"
-  sdk_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
-  bash tests/ci/run-suite.sh sdk "$system" "$sdk_python/bin/python3"
+  bash tests/ci/run-suite.sh kit "$system"
+  # TODO(ABI 9): the demo runs skip until the demos are ported (docs/Demos.md).
+  demo_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
+  bash tests/ci/run-suite.sh demos "$system" "$demo_python/bin/python3"
   bash tests/ci/run-suite.sh adapters "$system"
   step "Web UI typecheck and behavior contracts"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 --no-link \
@@ -96,6 +98,8 @@ mac_job() {
   bash tests/ci/run-suite.sh core "$system"
   step "Card isolation on a Mac host (Seatbelt)"
   bash tests/ci/run-suite.sh host "$system"
+  step "Card kit checks and the vendored ABI comparison"
+  bash tests/ci/run-suite.sh kit "$system"
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-runtime --out-link build-ci
   nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-mock --out-link build-ci-mock
   export TSUGUMI_MOCK_DAEMON="$root/build-ci-mock/libexec/tsugumi-tests/tsugumid-mock"

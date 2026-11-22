@@ -18,7 +18,6 @@
   cardNixpkgs,
   hosq,
   kitSource,
-  flakePartsSource,
   nixfmt,
   git,
   withFormatters ? true,
@@ -65,7 +64,6 @@ clangStdenv.mkDerivation {
       "-DTSUGUMI_TEMPLATE_GIT=${git}/bin/git"
       "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
       "-DTSUGUMI_KIT_DIR=${kitSource}"
-      "-DTSUGUMI_FLAKE_PARTS_DIR=${flakePartsSource}"
       "-DHOSQ_INCLUDE_DIR=${hosq}/include"
       "-DTSUGUMI_BUILD_TESTS=OFF"
       "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
@@ -78,7 +76,6 @@ clangStdenv.mkDerivation {
   # What the dev shell's own CMake configuration needs of the above.
   passthru.devEnv = {
     TSUGUMI_KIT_DIR = "${kitSource}";
-    TSUGUMI_FLAKE_PARTS_DIR = "${flakePartsSource}";
     TSUGUMI_FORMAT_NIX = "${nixfmt}/bin/nixfmt";
     TSUGUMI_FLATBUFFERS_SOURCE = "${flatbuffers.src}";
     TSUGUMI_CACERT = "${cacert}/etc/ssl/certs/ca-bundle.crt";

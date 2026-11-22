@@ -21,7 +21,6 @@ in
       core = pkgs.callPackage ../core.nix {
         inherit cardNixpkgs hosq;
         kitSource = inputs.tsugumi-kit;
-        flakePartsSource = inputs.flake-parts;
       };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {

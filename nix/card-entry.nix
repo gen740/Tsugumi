@@ -19,11 +19,8 @@ pkgs:
 let
   # upstream.json names folders of this evaluator and is read only here.
   up = builtins.fromJSON (builtins.readFile upstream);
-  builders = import (nixDir + "/kit-entry.nix") {
-    inherit pkgs;
-    kit = nixDir + "/kit";
-    flakeParts = nixDir + "/flake-parts";
-  };
+  # The kit's SDK set built with this Card's pkgs.
+  builders = import (nixDir + "/kit") { inherit pkgs; };
   sdkFor =
     g: definitionDir:
     let
@@ -42,7 +39,7 @@ let
         _: value:
         if builtins.isFunction value then
           bind value
-        else if builtins.isAttrs value then
+        else if builtins.isAttrs value && !pkgs.lib.isDerivation value then
           bindBuilders value
         else
           value

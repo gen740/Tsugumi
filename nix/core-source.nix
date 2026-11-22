@@ -1,4 +1,8 @@
-{ lib }:
+# extra: further paths of a package that builds its own targets in this tree.
+{
+  lib,
+  extra ? [ ],
+}:
 lib.fileset.toSource {
   root = ../.;
   fileset = lib.fileset.unions (
@@ -25,7 +29,6 @@ lib.fileset.toSource {
       ../cli/CMakeLists.txt
       ../cli/src
       ../nix/card-entry.nix
-      ../nix/kit-entry.nix
       ../nix/worker.nix
       # Documentation tooling does not affect the native runtime.
       ../protocol/CMakeLists.txt

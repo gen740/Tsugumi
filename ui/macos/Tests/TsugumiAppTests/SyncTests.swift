@@ -32,7 +32,7 @@ import TsugumiTestSupport
                            "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
                            "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
-                           "--sdk-dir", env["TSUGUMI_SDK_DIR"] ?? SyncTests.root.appendingPathComponent("sdk").path,
+                           "--nix-dir", env["TSUGUMI_NIX_DIR"] ?? build.appendingPathComponent("share/tsugumi/nix").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice
       process.standardError = FileHandle.nullDevice
