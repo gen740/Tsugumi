@@ -531,17 +531,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   auto saved_group(const NodeRt& node, const SavedInputGroup& saved,
                    uint64_t activation) -> TokenGroup {
     const auto* port = node.node->input(saved.port);
-    if (!port || !port->type)
-      throw Failed(FailureKind::type_mismatch,
+    if (!port || !port->resolved())
+      throw Failed(FailureKind::input_missing,
                    "saved input no longer matches " + saved.port);
     TokenGroup group{saved.port, saved.execution_list, {}, ++token_seq_};
     group.partial_result = true;
     group.saved_input = true;
     group.saved_partial_result = saved.partial_result;
     for (const auto& value : saved.values) {
-      if (value.kind != port->kind || !value.type ||
-          !types::compatible(*port->type, *value.type))
-        throw Failed(FailureKind::type_mismatch,
+      if (value.kind != port->kind)
+        throw Failed(FailureKind::input_missing,
                      "saved input no longer matches " + saved.port);
       if (value.kind != PortKind::FlatBuffer) {
         const auto path = path_value(value);
@@ -587,8 +586,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     node.last_failure = failure;
   }
 
-  // Queue one complete saved group per external port. Required groups are
-  // from the same saved activation, unless eachInput consumes them separately.
+  // Queue one complete saved group per external port. A Merge can replay
+  // groups from different activations because it consumes them separately.
   void seed_saved(NodeRt& node, const std::set<std::string>& outside) {
     try {
       const auto last = svc_.history().read([&](sql::Db& db) {
@@ -597,7 +596,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       if (!last) throw missing_saved_inputs(*node.node);
       for (const auto& port : outside) {
         std::optional<History::LastInput> one;
-        if (node.node->settings.any_mode)
+        if (node.node->kind == CardType::Merge)
           one = svc_.history().read([&](sql::Db& db) {
             return History::last_port_input(db, node.node->path, port);
           });
@@ -649,14 +648,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             return History::last_input(db, n.node->path);
           });
           if (!last) throw missing_saved_inputs(*n.node);
-          for (const auto& port : n.node->inputs)
-            if (!port.optional &&
-                std::ranges::find(last->groups, port.name,
-                                  &SavedInputGroup::port) == last->groups.end())
-              throw Failed(FailureKind::input_missing,
-                           "the saved inputs have no value for " + port.name);
+          if (n.node->kind != CardType::Merge)
+            for (const auto& [port, _] : n.queues)
+              if (std::ranges::find(last->groups, port, &SavedInputGroup::port) ==
+                  last->groups.end())
+                throw Failed(FailureKind::input_missing,
+                             "the saved inputs have no value for " + port);
           for (const auto& group : last->groups)
-            w.groups.push_back(saved_group(n, group, last->invocation));
+            if (n.queues.contains(group.port))
+              w.groups.push_back(saved_group(n, group, last->invocation));
+          if (w.groups.empty()) throw missing_saved_inputs(*n.node);
           w.from_saved = true;
           n.saved_inputs = true;
         } catch (const Failed& failure) {
@@ -667,7 +668,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return w;
     }
     if (n.queues.empty()) return std::nullopt;
-    if (n.node->settings.any_mode) {
+    if (n.node->kind == CardType::Merge) {
       std::deque<TokenGroup>* best = nullptr;
       for (auto& [_, queue] : n.queues)
         if (!queue.empty() && (!best || queue.front().seq < best->front().seq))
@@ -779,7 +780,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         continue;
       if (n.start && !n.start_fired) return true;
       if (n.queues.empty()) continue;
-      if (n.node->settings.any_mode) {
+      if (n.node->kind == CardType::Merge) {
         for (auto& [_, q] : n.queues)
           if (!q.empty()) return true;
       } else {
@@ -1545,7 +1546,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   }
 
   // Save all groups from the latest activation. A per-port snapshot lets an
-  // eachInput join reuse the last arrival on each outside port independently.
+  // Merge reuse the last arrival on each outside port independently.
   auto save_last_inputs(
       const Node& node, uint64_t inv,
       const std::vector<SavedInputGroup>& inputs,
@@ -1923,15 +1924,17 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                        "merge consumes exactly one arrival");
         const Value& v = in.front();
         const auto& out = node.outputs.front();
-        if (!out.type)
+        if (!out.resolved())
           throw Failed(FailureKind::output_invalid,
                        "merge: the output type is not resolved");
-        std::string err;
-        auto bytes =
-            types::wrap_in_union(*out.type, v.name, *v.type, v.bytes, &err);
-        if (!bytes) throw Failed(FailureKind::output_invalid, "merge: " + err);
-        p.outputs.push_back(
-            {"out", PortKind::FlatBuffer, out.type, std::move(*bytes), {}});
+        auto value = v;
+        value.name = out.name;
+        value.type = out.type;
+        value.artifact_id.reset();
+        value.recorded_path.reset();
+        if (!node.merge_tags.empty())
+          value.bytes = types::wrap_in_union(node.merge_tags.at(v.name), v.bytes);
+        p.outputs.push_back(std::move(value));
         break;
       }
       default:
@@ -2336,36 +2339,29 @@ struct PlanEdges {
   std::vector<std::vector<const Edge*>> outgoing;
 };
 
-// A connected required port waits when all its suppliers are waiting.
+// Cards waiting for a Draft propagate that wait downstream. A Merge waits
+// only when none of its connected inputs can supply an arrival.
 auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
     -> std::set<size_t> {
   std::set<size_t> waits;
   std::vector<size_t> waiting;
+  std::vector<size_t> remaining(res.nodes.size());
   for (size_t i = 0; i < res.nodes.size(); ++i) {
-    if (res.nodes[i].kind != CardType::Draft) continue;
-    waits.insert(i);
-    waiting.push_back(i);
-  }
-  if (waiting.empty()) return waits;
-
-  std::vector<std::map<std::string, size_t>> remaining(res.nodes.size());
-  for (size_t i = 0; i < res.nodes.size(); ++i) {
-    if (res.nodes[i].is_virtual || waits.contains(i)) continue;
-    for (const auto& p : res.nodes[i].inputs) {
-      if (p.optional) continue;
-      if (const auto port = res.incoming[i].find(p.name);
-          port != res.incoming[i].end())
-        remaining[i].try_emplace(p.name, port->second.size());
+    if (res.nodes[i].kind == CardType::Draft) {
+      waits.insert(i);
+      waiting.push_back(i);
+    } else if (res.nodes[i].kind == CardType::Merge) {
+      remaining[i] = edges.incoming[i].size();
+    } else {
+      remaining[i] = 1;
     }
   }
   for (size_t i = 0; i < waiting.size(); ++i) {
     for (const auto* edge : edges.outgoing[waiting[i]]) {
-      if (waits.contains(edge->to)) continue;
-      auto& ports = remaining[edge->to];
-      if (const auto port = ports.find(edge->to_port);
-          port != ports.end() && --port->second == 0) {
-        waits.insert(edge->to);
-        waiting.push_back(edge->to);
+      const auto to = edge->to;
+      if (!waits.contains(to) && --remaining[to] == 0) {
+        waits.insert(to);
+        waiting.push_back(to);
       }
     }
   }
@@ -2453,7 +2449,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
     starts.push_back(t);
   }
   // A Draft is not implemented yet: it does not run, nor do the Cards that
-  // need its outputs (a required input fed only by Drafts or by Cards waiting
+  // need its outputs (a connected input fed by a Draft or by a Card waiting
   // on one). Everything else runs as usual; a Card started on its own keeps
   // its saved inputs.
   const auto waits = find_draft_waiting(res, edges);
@@ -2486,7 +2482,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   std::set<size_t> given(starts.begin(), starts.end());
   given.insert(seeds.begin(), seeds.end());
   for (size_t i : targets) {
-    if (res.nodes[i].settings.any_mode || given.count(i)) continue;
+    if (res.nodes[i].kind == CardType::Merge || given.count(i)) continue;
     std::set<std::string> fed, saved;
     for (const auto* edge : edges.incoming[i]) {
       if (targets.count(edge->from))

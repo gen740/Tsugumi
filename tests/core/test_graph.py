@@ -10,11 +10,10 @@ NUMBER = 'namespace t; table Number { value:ulong; } table Outputs { out:Number 
 FLAG = 'namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;'
 
 
-def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }', each_input=False):
+def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }'):
     return {
         "type": "code", "sandbox": {"filesystem": False},
-        "trigger": "eachInput" if each_input else "allInputs",
-        "inputs": [{"name": name.rstrip("?"), "optional": name.endswith("?")} for name in inputs],
+        "inputs": [{"name": name} for name in inputs],
         "_outputs": outputs, "_nix": "{ pkgs, inputs, params }: " + body,
     }
 
@@ -39,35 +38,44 @@ def test_one_output_feeds_distinct_inputs_once(core_factory, project, destinatio
                                 [conn("source", "out", "sink", "left"),
                                  conn("source", "out", "sink", destination)])
 
-    assert ("duplicate_wire" in codes(resolved["sink"])) == (destination == "left")
+    assert ("multiple_input_wires" in codes(resolved["sink"])) == (destination == "left")
     if destination == "right":
         assert {text(p.name): text(p.rootType) for p in resolved["sink"].inputs} == {
             "left": "t.Number", "right": "t.Number",
         }
 
 
-@pytest.mark.parametrize("fields,compatible", [
-    ("x:int; s:string;", True),
-    ("x:long; s:string;", False),
-    ("s:string; x:int;", False),
-], ids=["different-namespace-same-fields", "different-field-type", "different-field-order"])
-def test_one_input_accepts_only_structurally_compatible_values(core_factory, project, fields, compatible):
-    """Two sources can share an input only when their value structures agree."""
-    def schema(namespace, members):
-        return f"namespace {namespace}; table Value {{ {members} }} table Outputs {{ out:Value; }} root_type Outputs;"
-
+@pytest.mark.parametrize("second", [NUMBER, FLAG], ids=["same-type", "different-type"])
+def test_second_source_is_a_wiring_error_regardless_of_type(core_factory, project, second):
     _, resolved = inspect_graph(core_factory, project, {
-        "one": code(outputs=schema("one", "x:int; s:string;")),
-        "two": code(outputs=schema("two", fields)), "sink": code(["in"]),
-    }, [conn("one", "out", "sink", "in"), conn("two", "out", "sink", "in")])
+        "one": code(), "two": code(outputs=second), "sink": code(["in", "unconnected"]),
+    }, [conn("one", "out", "sink", "in"),
+        conn("two", "out" if second == NUMBER else "flag", "sink", "in")])
 
-    assert ("type_mismatch" not in codes(resolved["sink"])) == compatible
+    sink = resolved["sink"]
+    assert codes(sink) == {"multiple_input_wires"}
+    assert "Merge Card" in text(sink.diagnostics[0].message)
+    assert text(sink.inputs[0].rootType) == "t.Number"
+    assert sink.inputs[1].rootType is None
+
+
+def test_merge_reports_distinct_member_names_on_inherited_ports(core_factory, project):
+    _, resolved = inspect_graph(core_factory, project, {
+        "one": code(), "two": code(outputs=FLAG),
+        "merge": {"type": "merge", "inputs": [{"name": n} for n in ("a", "b", "c", "unused")]},
+        "fork": {"type": "fork"}, "sink": code(["in"]),
+    }, [conn("one", "out", "merge", "a"), conn("one", "out", "merge", "b"),
+        conn("two", "flag", "merge", "c"), conn("merge", "out", "fork", "value"),
+        conn("fork", "a", "sink", "in")])
+
+    for port in [resolved["merge"].outputs[0], resolved["fork"].inputs[0], resolved["sink"].inputs[0]]:
+        assert [text(name) for name in port.mergeMemberTypes] == ["Number", "Flag"]
 
 
 @pytest.mark.parametrize("schema", [
     "namespace t; table Value { value:int; }",
-    'attribute "tsugumi"; table File { path:string; } table Outputs { file:File (tsugumi:"file"); } root_type Outputs;',
-], ids=["missing-output-catalog", "file-without-string-value"])
+    'attribute "tsugumi"; table File { path:string; } table Outputs { file:File (tsugumi:"path"); } root_type Outputs;',
+], ids=["missing-output-catalog", "path-with-nonstring-field"])
 def test_invalid_output_types_are_reported_to_the_client(core_factory, project, schema):
     """A Card with an invalid output catalog exposes a diagnostic to its client."""
     _, resolved = inspect_graph(core_factory, project, {"source": code(outputs=schema)}, [])
@@ -89,11 +97,10 @@ def test_port_types_flow_through_branch(core_factory, project):
     assert not codes(resolved["sink"])
 
 
-def assert_reference(node, name, target, valid=True):
+def assert_reference(node, name, target):
     ref, = node.nixReferences
     assert text(ref.name) == name
     assert [text(segment) for segment in ref.target.segments] == target
-    assert ref.valid == valid
 
 
 def test_fork_outputs_carry_the_value_type(core_factory, project):
@@ -108,7 +115,6 @@ def test_fork_outputs_carry_the_value_type(core_factory, project):
     assert [text(p.name) for p in resolved["pair"].outputs] == ["a", "b"]
     assert [text(p.name) for p in resolved["three"].outputs] == ["x", "y", "z"]
     assert {text(p.rootType) for p in resolved["three"].outputs} == {"t.Number"}
-    assert not any(p.optional for p in resolved["three"].outputs)
     assert not codes(resolved["three"]) and not codes(resolved["sink"])
     assert [text(p.name) for p in resolved["broken"].outputs] == ["x"]
     assert codes(resolved["broken"]) == {"invalid_setting"}
@@ -135,53 +141,15 @@ def test_nix_exports_follow_the_connected_code_origin(core_factory, project, bui
     assert_reference(resolved["sink"], "data", ["source"])
 
 
-@pytest.mark.parametrize("reference", [False, True], ids=["ordinary-data", "nix-export-reference"])
-def test_ambiguous_producer_is_rejected_only_for_nix_exports(core_factory, project, reference):
-    """Multiple compatible data producers remain valid until a Card asks for their exports."""
-    body = '{ run = inputs.data.command; }' if reference else '{ run = "true"; }'
-    _, resolved = inspect_graph(core_factory, project,
-                                {"first": code(), "second": code(), "sink": code(["data"], body=body)},
-                                [conn("first", "out", "sink", "data"), conn("second", "out", "sink", "data")])
-    diagnostics = codes(resolved["sink"])
-    if reference:
-        assert diagnostics == {"nix_reference_ambiguous"}
-        assert resolved["sink"].nixReferences and not any(ref.valid for ref in resolved["sink"].nixReferences)
-    else:
-        assert not diagnostics
-        assert not resolved["sink"].nixReferences
-
-
-def test_nix_export_producer_must_run_before_every_trigger(core_factory, project):
-    """An each-input Card can start from either input, so neither producer is guaranteed."""
+def test_nix_export_producer_must_run_before_every_merge_arrival(core_factory, project):
     _, resolved = inspect_graph(core_factory, project, {
         "first": code(), "second": code(),
-        "sink": code(["left?", "right?"], each_input=True, body='{ run = inputs.left.command; }'),
-    }, [conn("first", "out", "sink", "left"), conn("second", "out", "sink", "right")])
-    assert codes(resolved["sink"]) == {"nix_reference_not_guaranteed"}
-    assert_reference(resolved["sink"], "left", ["first"], valid=False)
-
-
-@pytest.mark.parametrize("expression,valid", [
-    ('{ run = "${inputs.data.command}"; }', True),
-    ('{ run = "${inputs.ghost.command}"; }', False),
-    ('{ run = inputs.local.source.command; }', False),
-    ('{ run = inputs.upstream.source.command; }', False),
-    ('{ /* inputs.ghost.command */ run = "true"; exports.text = "inputs.ghost"; }', None),
-], ids=["interpolation", "unknown-port", "removed-local", "removed-upstream", "comments-and-text"])
-def test_only_executable_connected_nix_references_are_validated(core_factory, project, expression, valid):
-    """Reference checks distinguish executable Nix code from comments and literal text."""
-    _, resolved = inspect_graph(core_factory, project,
-                                {"source": code(), "result": code(["data"], body=expression)},
-                                [conn("source", "out", "result", "data")])
-    node = resolved["result"]
-    if valid is True:
-        assert not codes(node)
-        assert_reference(node, "data", ["source"])
-    elif valid is False:
-        assert codes(node) == {"nix_reference_unknown"}
-    else:
-        assert not codes(node)
-        assert not node.nixReferences
+        "join": {"type": "merge", "inputs": [{"name": "left"}, {"name": "right"}]},
+        "sink": code(["data"], body='{ run = inputs.data.command; }'),
+    }, [conn("first", "out", "join", "left"), conn("second", "out", "join", "right"),
+        conn("join", "out", "sink", "data")])
+    assert not codes(resolved["sink"])
+    assert not resolved["sink"].nixReferences
 
 
 @pytest.mark.parametrize("name", ["tsugumi", "sources"])
@@ -217,15 +185,15 @@ def test_nested_cards_keep_their_types_references_and_run_boundaries(core_factor
         assert {"/".join(text(segment) for segment in target.segments) for target in plan.targets} == expected
 
 
-def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, project):
+def test_nix_reference_inventory_depends_on_wires_not_source_text(core_factory, project):
     client, resolved = inspect_graph(core_factory, project,
                                     {"source": code(), "result": code(["data"], body='{ run = inputs.data.command; }')},
                                     [conn("source", "out", "result", "data")])
     assert_reference(resolved["result"], "data", ["source"])
-    for body, expected in [
-        ('{ run = inputs.data.command; exports.again = inputs.data; }', [("data", True)]),
-        ('{ run = inputs.ghost.command; }', [("ghost", False)]),
-        ('{ /* inputs.data */ run = "true"; exports.note = "inputs.ghost"; }', []),
+    for body in [
+        '{ run = inputs.data.command; exports.again = inputs.data; }',
+        '{ run = inputs.ghost.command; }',
+        '{ /* inputs.data */ run = "true"; exports.note = "inputs.ghost"; }',
     ]:
         snap = client.call("ProjectInspectRequest")
         client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[
@@ -234,4 +202,5 @@ def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, projec
                    bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
         snap = client.call("ProjectInspectRequest")
         result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
-        assert [(text(r.name), r.valid) for r in result.nixReferences] == expected
+        assert not codes(result)
+        assert_reference(result, "data", ["source"])

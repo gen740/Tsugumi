@@ -496,32 +496,28 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
                    for row in latest.records)
 
 
-def test_each_input_code_consumes_one_complete_batch_per_arrival(core_factory, project, tmp_path):
+def test_code_waits_for_connected_inputs_and_omits_unconnected_inputs(core_factory, project, tmp_path):
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", [10, 20])
     producer(graph, "right", [30, 40, 50])
     graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
-                        "trigger": "eachInput", "maxRuns": 2,
-                        "inputs": [{"name": "left", "optional": True}, {"name": "right", "optional": True}]},
+                        "inputs": [{"name": name} for name in ("left", "right", "unconnected")]},
                outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path, [1])))
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right").save(client)
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     rows = invocation_page(client, run_id, "work").records
-    assert len(rows) == 5
-    assert {row.batchActivation for row in rows} == {1, 2}
-    arrivals = {}
+    assert len(rows) == 6
+    assert {row.batchActivation for row in rows} == {1}
     for row in rows:
         record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=row.invocation).record
-        value, = record.inputs
-        port = text(value.name)
-        item = recorded_input_json(client, tmp_path / "decode", run_id, "work", invocation=row.invocation, port=port)
-        arrivals.setdefault(row.batchActivation, []).append((port, item["value"]))
-    assert sorted(arrivals.values()) == [[("left", 10), ("left", 20)], [("right", 30), ("right", 40), ("right", 50)]]
-    for activation, members in arrivals.items():
-        assert [row.batchIndex for row in rows if row.batchActivation == activation] == list(range(1, len(members) + 1))
+        assert {text(value.name) for value in record.inputs} == {"left", "right"}
+
+    rerun = run(client, "work", propagate=False)
+    assert wait_run(client, rerun).state == RunState.succeeded
+    assert len(invocation_page(client, rerun, "work").records) == 6
 
 
 def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, project, tmp_path):

@@ -48,12 +48,12 @@ auto Present(const Resolution& graph, const CardPath& card,
         b, b.CreateString(end.port),
         end.source ? wire::path(b, end.source->path) : 0,
         end.source ? b.CreateString(end.source_port) : 0,
-        end.type ? wire::port(b, *end.type) : 0));
-  const auto result = Tsugumi::RPC::CreateInputTypesResult(
-      b, 3, b.CreateVector(ends));
+        end.type ? wire::resolved_port(b, *end.type) : 0));
+  const auto result =
+      Tsugumi::RPC::CreateInputTypesResult(b, 3, b.CreateVector(ends));
   b.Finish(result);
   return host::InputTypes(*flatbuffers::GetRoot<Tsugumi::RPC::InputTypesResult>(
-                              b.GetBufferPointer()));
+      b.GetBufferPointer()));
 }
 TEST(InputTypes, PlainWireSchemasAndRouting) {
   const auto graph = Graph(
@@ -64,9 +64,9 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
-        R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"file"); } root_type Outputs;)"},
+        R"(attribute "tsugumi"; table Outputs { out:string (tsugumi:"path"); } root_type Outputs;)"},
        {"definitions/dest/_card.json",
-        R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
+        R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing"}]})"}});
   const auto result = Present(*graph, {"dest"});
   ASSERT_EQ(result.inputs.size(), 3u);
   EXPECT_EQ(result.rev, 3u);
@@ -84,9 +84,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
-  EXPECT_EQ(result.inputs[1]->kind, "file");
-  EXPECT_NE(result.inputs[1]->definition.find("value:string"),
-            std::string::npos);
+  EXPECT_EQ(result.inputs[1]->kind, "path");
   EXPECT_EQ(result.inputs[2]->state, "no_source");
   EXPECT_FALSE(result.inputs[2]->source_card);
   EXPECT_TRUE(result.inputs[2]->definition.empty());
@@ -124,8 +122,10 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
           {"from":{"card":"container","port":"out"},"to":{"card":"dest","port":"data"}}])",
       {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
-       {"definitions/dest/_card.json", R"({"type":"code","inputs":[{"name":"data"}]})"},
-       {"definitions/container/_card.json", R"({"type":"subgraph","external":"outer"})"},
+       {"definitions/dest/_card.json",
+        R"({"type":"code","inputs":[{"name":"data"}]})"},
+       {"definitions/container/_card.json",
+        R"({"type":"subgraph","external":"outer"})"},
        {"externals/outer/tsugumi.json",
         R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"in"}},"outputs":{"out":{"card":"inner","port":"out"}}}})"},
        {"externals/outer/definitions/inner/_card.json",
@@ -141,8 +141,7 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_NE(ends[0].type, nullptr);
   EXPECT_EQ(ends[0].source->path, (CardPath{"container", "inner", "leaf"}));
   ASSERT_TRUE(ends[0].type->type);
-  EXPECT_TRUE(types::compatible(*ends[0].type->type,
-                                *graph->find({"src"})->output("out")->type));
+  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
   const auto boundary = input_types(*graph, {"container"}, "out");
   ASSERT_EQ(boundary.size(), 1u);
   EXPECT_EQ(boundary[0].type->type, ends[0].type->type);
@@ -178,11 +177,10 @@ TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
     ASSERT_EQ(ends.size(), 1u);
     ASSERT_TRUE(ends[0].type->type) << card;
     EXPECT_EQ(ends[0].type->type, graph->find({card})->output(port)->type);
-    EXPECT_FALSE(
-        Present(*graph, {card}, port).inputs[0]->definition.empty());
+    EXPECT_FALSE(Present(*graph, {card}, port).inputs[0]->definition.empty());
   }
 }
-TEST(InputTypes, CompatibleProducersUseTheDestinationCodeContract) {
+TEST(InputTypes, SecondWireLeavesOnlyTheFirstProducer) {
   const auto graph = Graph(
       R"([{"id":"first"},{"id":"second"},{"id":"dest"}])",
       R"([{"from":{"card":"first","port":"out"},"to":{"card":"dest","port":"in"}},
@@ -195,15 +193,64 @@ TEST(InputTypes, CompatibleProducersUseTheDestinationCodeContract) {
        {"definitions/second/_outputs.fbs",
         "table Second { value:int; } table Outputs { out:Second; } root_type "
         "Outputs;"},
-       {"definitions/dest/_card.json", R"({"type":"code","inputs":[{"name":"in"}]})"}});
+       {"definitions/dest/_card.json",
+        R"({"type":"code","inputs":[{"name":"in"}]})"}});
   const auto ends = input_types(*graph, {"dest"});
-  ASSERT_EQ(ends.size(), 2u);
+  ASSERT_EQ(ends.size(), 1u);
+  EXPECT_EQ(ends[0].source->path, (CardPath{"first"}));
   EXPECT_EQ(ends[0].type, graph->find({"dest"})->input("in"));
-  EXPECT_EQ(ends[1].type, ends[0].type);
-  const auto descriptions = Present(*graph, {"dest"});
-  EXPECT_EQ(descriptions.inputs[0]->definition,
-            descriptions.inputs[1]->definition);
+  EXPECT_EQ(ends[0].type->type, graph->find({"first"})->output("out")->type);
 }
+TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
+  std::string error;
+  const auto first = types::compile("table Value { x:int; }", "Value", &error);
+  const auto second =
+      types::compile("table Value { x:long; }", "Value", &error);
+  ASSERT_TRUE(first && second) << error;
+  const types::PortType a{"a", types::PortKind::FlatBuffer, true, *first};
+  const types::PortType b{"b", types::PortKind::FlatBuffer, false, *second};
+  const types::PortType c{"c", types::PortKind::FlatBuffer, false, *first};
+  const types::PortType path{"path", types::PortKind::Path, false, nullptr};
+  const types::PortType unconnected{"unused", types::PortKind::FlatBuffer,
+                                    false, nullptr};
+  const auto same = types::merged_type({&a, &c}, &error);
+  ASSERT_TRUE(same) << error;
+  EXPECT_EQ(same->type, *first);
+  EXPECT_TRUE(same->tags.empty());
+
+  const auto mixed = types::merged_type({&a, &b, &c}, &error);
+  ASSERT_TRUE(mixed) << error;
+  EXPECT_EQ(mixed->tags.at("a"), mixed->tags.at("c"));
+  EXPECT_NE(mixed->tags.at("a"), mixed->tags.at("b"));
+  const types::PortType merged{"merged", types::PortKind::FlatBuffer, false,
+                               mixed->type};
+  const auto catalog =
+      types::card_catalog({a, merged, unconnected, path}, /*inputs=*/true);
+  std::string root;
+  ASSERT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
+  EXPECT_EQ(root, "inputs.Inputs");
+  EXPECT_NE(catalog.find("table ValueBox2"), std::string::npos);
+  EXPECT_NE(catalog.find(
+                "nested_flatbuffer: \"inputs.merged.tsugumi.merge.t1.Value\""),
+            std::string::npos);
+  EXPECT_NE(catalog.find("path:string (id: 2, tsugumi: \"path\")"),
+            std::string::npos);
+  EXPECT_EQ(catalog.find("unused:"), std::string::npos);
+  EXPECT_EQ(catalog.find("required"), std::string::npos);
+
+  const std::string bytes{"\xff\x00\xf1", 3};
+  const auto wrapped = types::wrap_in_union(mixed->tags.at("b"), bytes);
+  const auto* value = flatbuffers::GetRoot<flatbuffers::Table>(wrapped.data());
+  EXPECT_EQ(value->GetField<uint8_t>(4, 0), mixed->tags.at("b"));
+  const auto* box = value->GetPointer<const flatbuffers::Table*>(6);
+  ASSERT_NE(box, nullptr);
+  const auto* nested = box->GetPointer<const flatbuffers::Vector<uint8_t>*>(4);
+  ASSERT_NE(nested, nullptr);
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(nested->data()),
+                             nested->size()),
+            bytes);
+}
+
 TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   std::string schema = "table Large {\n";
   for (int i = 0; i < 5000; ++i)
@@ -214,8 +261,7 @@ TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"draft","port":""}}])",
       {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs",
-        schema +
-            "table Outputs { out:Large; } root_type Outputs;"}});
+        schema + "table Outputs { out:Large; } root_type Outputs;"}});
   const auto presented = Present(*graph, {"draft"});
   ASSERT_EQ(presented.inputs.size(), 1u);
   const auto& definition = presented.inputs[0]->definition;

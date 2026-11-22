@@ -50,11 +50,28 @@ Off<flatbuffers::Vector<Off<D::Diagnostic>>> diagnostics(
   return b.CreateVector(v);
 }
 
+auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port> {
+  const auto name = b.CreateString(port.name);
+  Off<flatbuffers::Vector<uint8_t>> bfbs;
+  Off<flatbuffers::String> root;
+  if (port.type) {
+    bfbs = b.CreateVector(
+        reinterpret_cast<const uint8_t*>(port.type->bfbs.data()),
+        port.type->bfbs.size());
+    root = b.CreateString(port.type->root_type);
+  }
+  auto members = port.merge_member_types.empty()
+                     ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
+                     : b.CreateVectorOfStrings(port.merge_member_types);
+  return D::CreatePort(b, name, port.kind, bfbs, root, 0,
+                       port.execution_shape, members);
+}
+
 Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
   std::vector<Off<D::Port>> ins;
   std::vector<Off<D::Port>> outs;
-  for (const auto& p : n.inputs) ins.push_back(port(b, p));
-  for (const auto& p : n.outputs) outs.push_back(port(b, p));
+  for (const auto& p : n.inputs) ins.push_back(resolved_port(b, p));
+  for (const auto& p : n.outputs) outs.push_back(resolved_port(b, p));
   auto diags = n.diags;
   diags.insert(diags.end(), n.exec_diags.begin(), n.exec_diags.end());
   for (auto& d : diags)
@@ -62,7 +79,7 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
   std::vector<Off<R::CardNixReference>> refs;
   for (const auto& ref : n.nix_references)
     refs.push_back(R::CreateCardNixReference(
-        b, path(b, ref.target), b.CreateString(ref.name), ref.valid));
+        b, path(b, ref.target), b.CreateString(ref.name)));
   return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins),
                                b.CreateVector(outs), diagnostics(b, diags),
                                b.CreateVector(refs));

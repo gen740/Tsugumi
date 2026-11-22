@@ -85,7 +85,6 @@ struct ParamDef {
 
 struct InputDef {
   Opt<"name", v::String> name;
-  Opt<"optional", v::Bool> optional;
 };
 
 // A Fork's output port; other Cards' outputs come from their schema.
@@ -135,9 +134,6 @@ struct CardDefinition {
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
   Opt<"outputs", v::Array<Obj<OutputDef>>> outputs;  // a Fork's
-  // When the Card runs: "allInputs" (every required input has a value, the
-  // default) or "eachInput" (once per arriving value).
-  Opt<"trigger", v::String> trigger;
   Opt<"maxRuns", v::Uint64> max_runs;
   Opt<"timeoutSeconds", Json> timeout_seconds;  // positive integer or null
   Opt<"buildTimeoutSeconds", Json>

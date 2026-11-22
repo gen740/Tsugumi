@@ -1,5 +1,5 @@
 """Scheduler behaviour with builtin Cards only (no Nix): consumption order of
-all/any inputs, non-firing optional outputs, maxRuns, no lost or duplicated
+joined inputs, unselected Branch outputs, maxRuns, no lost or duplicated
 tokens, subgraph runs through their boundary, and per-path history."""
 
 from __future__ import annotations
@@ -103,8 +103,7 @@ def test_direct_fanout_reaches_each_input_once(env, tmp_path):
     assert st.state == RunState.succeeded
     values = inputs(c, tmp_path / "decode", run_id, "out")
     assert len(values) == 2  # one per arrival, none lost or repeated
-    kinds = [value["value_type"] for value in values]
-    assert sorted(kinds) == ["a", "b"]
+    assert values == [{"text": "hello"}, {"text": "hello"}]
 
 
 def test_all_takes_one_value_per_input_and_optional_output_does_not_fire(env):
@@ -288,21 +287,8 @@ def test_run_from_one_branch_without_saved_values_says_so(env):
     assert states(c, run_id, "yes") == [CardState.blocked]
 
 
-def test_a_saved_value_never_goes_ahead_of_the_new_one_on_a_shared_port(env, tmp_path):
-    """A running input source takes precedence over a saved value on the same port."""
-    defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
-    c = env(FAN_CARDS + [card("other", "other")],
-            FAN_CONNS + [conn("other", "msg", "gate", "value")], defs)
-    _, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    set_param(c, "words", "text", "changed")
-    run_id, st = run_and_wait(c, "words")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    assert inputs(c, tmp_path / "decode", run_id, "yes") == [{"text": "changed"}]
-
-
-def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env, tmp_path):
-    """An `any` Card takes values as they arrive, so nothing is added to them."""
+def test_run_into_merge_consumes_only_what_arrives(env, tmp_path):
+    """A Merge takes values as they arrive, so nothing is added to them."""
     defs = {**FAN_DEFS, "other": dict(BASE_DEFS["msg"])}
     c = env([card("start", "trigger"), card("words", "words"), card("other", "other"),
              card("join", "merge"), card("out", "sink")],
@@ -314,7 +300,7 @@ def test_run_from_one_branch_of_an_any_card_consumes_only_what_arrives(env, tmp_
     run_id, st = run_and_wait(c, "words")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     assert states(c, run_id, "join") == [CardState.succeeded]
-    assert inputs(c, tmp_path / "decode", run_id, "out") == [{"value_type": "a", "value": {"text": "changed"}}]
+    assert inputs(c, tmp_path / "decode", run_id, "out") == [{"text": "changed"}]
 
 
 def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
@@ -351,7 +337,7 @@ def test_start_wired_to_input_and_drafts_leave_only_their_dependents_out(env):
 
 
 def test_merges_nested_several_levels_deep(env, tmp_path):
-    """Nested merge values preserve their union names through four graph levels."""
+    """Single-input Merges preserve the original value through four graph levels."""
     cards = [card("start", "trigger"), card("src", "msg"), card("out", "sink")]
     conns = [conn("start", "out", "src", "start")]
     prev = ("src", "msg")
@@ -364,7 +350,4 @@ def test_merges_nested_several_levels_deep(env, tmp_path):
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
     out = inputs(c, tmp_path / "decode", run_id, "out")[0]
-    for _ in range(4):
-        assert out["value_type"] == "a"
-        out = out["value"]
     assert out == {"text": "hello"}
