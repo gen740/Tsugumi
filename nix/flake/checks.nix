@@ -5,12 +5,7 @@
 { ... }:
 {
   perSystem =
-    {
-      pkgs,
-      lib,
-      config,
-      ...
-    }:
+    { pkgs, config, ... }:
     let
       inherit (config.packages) web;
       # Reuse the installed production host archives and compile only the
@@ -25,13 +20,6 @@
         web = pkgs.callPackage ../web-checks.nix {
           inherit web operationDriver;
         };
-      }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        # The display part; CI also runs the full check with a host.
-        linux-ui = pkgs.runCommand "tsugumi-gtk-display-check" { } ''
-          ${lib.getExe config.packages.linux-ui-check} --no-host
-          touch $out
-        '';
       };
       formatter = pkgs.treefmt.withConfig {
         runtimeInputs = [
