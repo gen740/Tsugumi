@@ -17,16 +17,13 @@
 
 namespace tsugumi::workerd {
 
-// Preserve the existing carriers' output semantics until storage handover is
-// unified. Local forwards original input paths and defers validation to core;
-// transferred results copy forwarded inputs and use relative transport paths.
+// Local forwards keep original input paths. Transferred results use
+// job-relative paths.
 enum class OutputDelivery { local_paths, transferred_files };
 
 struct InvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-  // Worker-visible out path and its caller-visible destination.
-  std::optional<std::pair<std::string, std::string>> out_alias;
 };
 
 struct InvocationParameters {
@@ -41,7 +38,7 @@ struct Invocation {
   std::vector<types::PortType> outputs;
   InvocationParameters params;
   std::filesystem::path output_directory;
-  std::optional<std::pair<uid_t, gid_t>> output_owner;
+  fs::OutputBudget output_budget;
   OutputDelivery delivery = OutputDelivery::local_paths;
   // The remote input snapshot root. Local input copies are made by
   // stage_inputs.
@@ -83,13 +80,15 @@ auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
 
 // Output transfer can fail after a successful ABI call. Transfer failures
 // preserve resident reuse.
-auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
-                   std::span<const Value> original_inputs, int output_root,
-                   const std::string& output_alias,
-                   const std::filesystem::path& input_directory,
-                   const std::filesystem::path& destination,
-                   OutputDelivery delivery, const std::atomic<bool>& cancel,
-                   const fs::TransferProgress& progress = {}) -> void;
+auto stage_outputs(
+    std::span<Value> outputs, std::span<const Value> inputs,
+    std::span<const Value> original_inputs,
+    std::span<const std::pair<std::string, std::string>> forwards,
+    int work_root, const std::filesystem::path& work_path,
+    const std::filesystem::path& input_directory,
+    const std::filesystem::path& destination, OutputDelivery delivery,
+    const std::atomic<bool>& cancel, const fs::TransferProgress& progress = {},
+    fs::OutputBudget budget = {}) -> void;
 
 using ReleaseWorker =
     std::function<void(std::unique_ptr<WorkerProc>, bool, const std::string&)>;

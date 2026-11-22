@@ -462,6 +462,9 @@ auto Journal::import_results(std::string_view job) -> std::string {
       listing.files.size() > 65536)
     throw std::runtime_error("unsupported or excessive result entries");
   R::ResultManifestT manifest;
+  // Staging applies the Card output budget. Leave room for the independently
+  // bounded worker reply, environment metadata and captured log.
+  constexpr uint64_t kMaxResult = kMaxBlob + (64ull << 20);
   uint64_t total = 0;
   for (const auto& name : listing.files) {
     const stdfs::path relative(name);
@@ -473,8 +476,8 @@ auto Journal::import_results(std::string_view job) -> std::string {
         throw std::runtime_error("result component too long");
     const auto file = results / relative;
     const auto size = stdfs::file_size(file);
-    if (size > kMaxBlob - total)
-      throw std::runtime_error("result exceeds 64 GiB");
+    if (size > kMaxBlob || size > kMaxResult - total)
+      throw std::runtime_error("remote result exceeds the transfer limit");
     total += size;
     const auto digest = file_digest(file);
     if (name == "worker.fb") {

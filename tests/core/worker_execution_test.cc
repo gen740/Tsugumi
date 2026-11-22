@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 #include <unistd.h>
 
+#include <fstream>
+
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -16,14 +18,14 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
   auto SetUp() -> void override {
     root_ = stdfs::canonical(stdfs::temp_directory_path()) /
             ("tsugumi-delivery-" + crypto::uuid4());
-    stdfs::create_directories(root_ / "worker/out");
+    stdfs::create_directories(root_ / "worker/work");
     stdfs::create_directories(root_ / "worker/inputs");
     std::string error;
     const auto compiled =
         types::compile("table Path { value:string; }", "Path", &error);
     ASSERT_TRUE(compiled) << error;
     type_ = *compiled;
-    output_ = ::open((root_ / "worker/out").c_str(),
+    output_ = ::open((root_ / "worker/work").c_str(),
                      O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     input_ = ::open((root_ / "worker/inputs").c_str(),
                     O_RDONLY | O_DIRECTORY | O_CLOEXEC);
@@ -46,14 +48,14 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
   }
   auto stage(WorkerOutcome& outcome, PortKind kind,
              const std::vector<Value>& inputs = {},
-             const std::vector<Value>& original = {}) -> void {
+             const std::vector<Value>& original = {},
+             fs::OutputBudget budget = {}) -> void {
     const std::atomic<bool> cancel{false};
     const std::vector<types::PortType> ports{{"result", kind, false, type_}};
     auto outputs = accept_outputs(outcome.outputs, ports);
-    stage_outputs(outputs, inputs, original, output_,
-                  (root_ / "worker/out").string(),
-                  root_ / "worker/inputs", root_ / "result/files/out",
-                  GetParam(), cancel);
+    stage_outputs(outputs, inputs, original, outcome.forwards, output_,
+                  (root_ / "worker/work").string(), root_ / "worker/inputs",
+                  root_ / "result/files/out", GetParam(), cancel, {}, budget);
     for (size_t i = 0; i < outputs.size(); ++i)
       outcome.outputs[i].second = std::move(outputs[i].bytes);
   }
@@ -64,40 +66,39 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
 };
 
 TEST_P(WorkerDelivery, CopiesOnlyDeclaredFiles) {
-  fs::write_atomic(root_ / "worker/out/declared", "declared");
-  fs::write_atomic(root_ / "worker/out/unused", "unused");
+  fs::write_atomic(root_ / "worker/work/declared", "declared");
+  fs::write_atomic(root_ / "worker/work/unused", "unused");
   const auto produced =
-      value("result", PortKind::File, root_ / "worker/out/declared");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
+      value("result", PortKind::File, root_ / "worker/work/declared");
+  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
   stage(outcome, PortKind::File);
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/declared"), "declared");
   EXPECT_FALSE(stdfs::exists(root_ / "result/files/out/unused"));
   const auto result = path_value(
       Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
   EXPECT_EQ(result, GetParam() == OutputDelivery::local_paths
-                        ? (root_ / "worker/out/declared").string()
+                        ? (root_ / "result/files/out/declared").string()
                         : "out/declared");
 }
 
-TEST_P(WorkerDelivery, CopiesDeclaredDirectoryAndMaterializesInternalLinks) {
-  fs::write_atomic(root_ / "worker/out/tree/nested/file", "directory");
-  stdfs::create_directories(root_ / "worker/out/tree/empty");
-  stdfs::create_symlink("nested/file", root_ / "worker/out/tree/link");
+TEST_P(WorkerDelivery, CopiesOnlyRegularDirectoryContents) {
+  fs::write_atomic(root_ / "worker/work/tree/nested/file", "directory");
+  stdfs::create_directories(root_ / "worker/work/tree/empty");
   const auto produced =
-      value("result", PortKind::Directory, root_ / "worker/out/tree");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
+      value("result", PortKind::Directory, root_ / "worker/work/tree");
+  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
   stage(outcome, PortKind::Directory);
-  EXPECT_EQ(fs::read_file(root_ / "result/files/out/tree/link"), "directory");
-  EXPECT_FALSE(stdfs::is_symlink(root_ / "result/files/out/tree/link"));
+  EXPECT_EQ(fs::read_file(root_ / "result/files/out/tree/nested/file"),
+            "directory");
   EXPECT_TRUE(stdfs::is_directory(root_ / "result/files/out/tree/empty"));
 }
 
 TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
   fs::write_atomic(root_ / "outside", "private");
-  stdfs::create_symlink(root_ / "outside", root_ / "worker/out/link");
+  stdfs::create_symlink(root_ / "outside", root_ / "worker/work/link");
   const auto produced =
-      value("result", PortKind::File, root_ / "worker/out/link");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}};
+      value("result", PortKind::File, root_ / "worker/work/link");
+  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
   EXPECT_THROW(stage(outcome, PortKind::File), Failed);
   EXPECT_FALSE(outcome.failure);
   EXPECT_FALSE(stdfs::exists(root_ / "result/files/out/link"));
@@ -109,8 +110,9 @@ TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
       value("input", PortKind::File, root_ / "worker/inputs/inputs/0/file");
   const auto original =
       value("input", PortKind::File, root_ / "recorded/original");
-  WorkerOutcome outcome{{{"result", staged.bytes}}, {}};
-  stage(outcome, PortKind::File, {staged}, {original});
+  WorkerOutcome outcome{{{"result", staged.bytes}}, {}, {}};
+  outcome.forwards.emplace_back("result", "input");
+  stage(outcome, PortKind::File, {staged}, {original}, {0, 0});
   const auto delivered = path_value(
       Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
   ASSERT_TRUE(delivered);
@@ -123,8 +125,40 @@ TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
   }
 }
 
+TEST_P(WorkerDelivery, DefaultBudgetRejectsSparseFileOver64GiB) {
+  const auto file = root_ / "worker/work/large";
+  fs::write_atomic(file, "");
+  stdfs::resize_file(file, (64ull << 30) + 1);
+  const auto produced = value("result", PortKind::File, file);
+  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
+  try {
+    stage(outcome, PortKind::File);
+    FAIL() << "accepted an oversized sparse file";
+  } catch (const Failed& error) {
+    EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
+    EXPECT_NE(std::string_view(error.what()).find("byte budget"),
+              std::string_view::npos);
+  }
+}
+
+TEST_P(WorkerDelivery, DefaultBudgetRejectsMoreThan1000Entries) {
+  const auto dir = root_ / "worker/work/many";
+  stdfs::create_directory(dir);
+  for (unsigned i = 0; i < 1000; ++i) std::ofstream(dir / std::to_string(i));
+  const auto produced = value("result", PortKind::Directory, dir);
+  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
+  try {
+    stage(outcome, PortKind::Directory);
+    FAIL() << "accepted an oversized directory";
+  } catch (const Failed& error) {
+    EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
+    EXPECT_NE(std::string_view(error.what()).find("entry budget"),
+              std::string_view::npos);
+  }
+}
+
 TEST_P(WorkerDelivery, InvalidOutputIsRejectedBeforeTransfer) {
-  WorkerOutcome outcome{{{"unknown", "invalid buffer"}}, {}};
+  WorkerOutcome outcome{{{"unknown", "invalid buffer"}}, {}, {}};
   EXPECT_THROW(stage(outcome, PortKind::File), Failed);
 }
 

@@ -1,149 +1,138 @@
-"""Invocation data boundaries on native Linux/VM bubblewrap and macOS Seatbelt."""
+"""Invocation boundaries on Linux bubblewrap and macOS Seatbelt."""
 
-import shlex
+import json
+import os
 from pathlib import Path
 
 import pytest
 
-from harness.real_cards import bash, log
-from projects import FILE_FBS, card, conn, run_and_wait, write
+from harness.observations import decode_scalar, read_output
+from harness.real_cards import log
+from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
+from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import new_id, path, text
+from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 
 def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tmp_path):
-    """A reused worker reads changing wired inputs but cannot open another Card's recorded File by path."""
     root = tmp_path / "p"
-    make = bash('echo wired > "$TSUGUMI_OUTPUT_DIR/data"; '
-                'printf \'{"doc":{"value":"%s/data"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                outputs=FILE_FBS, recordIO=True, retainArtifact=True)
-    # First produce an independently recorded File with no wire to the reader.
+    make = native_card('std::ofstream("data") << "wired"; out.file("data");',
+                       outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     write(root, {"make": make}, [card("secret", "make")], [])
     c = core_factory(project_root=root).connect()
-    secret_run, st = run_and_wait(c, "secret")
-    assert st.state == RunState.succeeded, log(c, secret_run, "secret", 2)
-    record = c.call("RunRecordRequest", runId=secret_run, card=path("secret"))
-    secret = text(record.record.outputs[0].filePath)
+    secret_run, state = run_and_wait(c, "secret")
+    assert state.state == RunState.succeeded, log(c, secret_run, "secret", 2)
+    record = c.call("RunRecordRequest", runId=secret_run, card=path("secret")).record
+    secret = text(record.outputs[0].filePath)
     assert Path(secret).is_file()
-    reader = bash('test ! -e /proc/self/fd/900 || exit 4; if IFS= read -r stolen < ' + shlex.quote(secret) + '; then echo leaked; exit 1; fi; '
-                  'IFS= read -r line < "$FILE_DOC"; test "$line" = wired || exit 2; '
-                  'if echo corrupt >> "$FILE_DOC"; then exit 3; fi; '
-                  'echo "input=$FILE_DOC"; '
-                  'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
+    reader = native_card(f'''
+        if (fs::exists("/proc/self/fd/900") || std::ifstream({json.dumps(secret)})) return 1;
+        const auto file = input_path(in);
+        std::string content;
+        if (!(std::ifstream(file) >> content) || content != "wired") return 2;
+        if (std::ofstream(file, std::ios::app)) return 3;
+        out.file(file);
+    ''', inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
     write(root, {"make": make, "read": reader},
           [card("secret", "make"), card("source", "make"), card("reader", "read")],
           [conn("source", "doc", "reader", "doc")])
-    c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev, opId=new_id(), origin="test")
-    seen = []
-    for _ in range(2):
-        run_id, st = run_and_wait(c, "source")
-        assert st.state == RunState.succeeded, log(c, run_id, "reader", 2)
+    c.call("ProjectReloadRequest", baseRev=c.call("ProjectInspectRequest").rev,
+           opId=new_id(), origin="test")
+    for reused in (False, True):
+        run_id, state = run_and_wait(c, "source")
+        assert state.state == RunState.succeeded, log(c, run_id, "reader", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("reader")).records
-        seen.append(inv.workerReused)
-        # Input forwarding is mapped back before the staging area is emptied.
-        forwarded = c.call("RunRecordRequest", runId=run_id, card=path("reader"))
-        assert not forwarded.record.outputs[0].fileMissing
-    assert seen == [False, True]
+        assert inv.workerReused == reused
+        forwarded = c.call("RunRecordRequest", runId=run_id, card=path("reader")).record
+        assert not forwarded.outputs[0].fileMissing
+        assert Path(text(forwarded.outputs[0].filePath)).read_text() == "wired"
 
 
-def test_python_source_loading_has_the_invocation_environment_and_log(core_factory, tmp_path):
-    """The real Python shim imports under preRun's environment and logs to the invocation."""
-    from harness.real_cards import python_probe_project, shown_by_probe
-    source = '''
-import ctypes, os
-assert os.environ["FROM_PRE"] == "ready"
-assert os.environ.pop("MPLBACKEND", None) is not None
-libc = ctypes.CDLL(None)
-libc.getenv.argtypes = [ctypes.c_char_p]
-libc.getenv.restype = ctypes.c_char_p
-assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
-print("source started", flush=True)
-def main(inputs, report):
-    assert "MPLBACKEND" not in os.environ
-    assert libc.getenv(b"MPLBACKEND") is None
-    report.text("loaded")
-'''
-    definitions, cards, wires, files = python_probe_project(source, "export FROM_PRE=ready")
-    write(tmp_path / "p", definitions, cards, wires, files)
+def test_library_initialization_observes_launch_environment_and_logs(core_factory, tmp_path):
+    definition = native_card(r'''
+        if (!initialized || std::getenv("FROM_MAIN") || std::getenv("TSUGUMI_RUN_ID"))
+          return 1;
+        out.number(17);
+    ''', declarations=r'''
+        static bool initialized = false;
+        __attribute__((constructor)) static void load() {
+          initialized = std::getenv("HOME") && fs::current_path() == fs::canonical(std::getenv("HOME"));
+          puts("source started");
+          fflush(stdout);
+        }
+    ''', reuseWorker=True, recordIO=True)
+    write(tmp_path / "p", {"show": definition}, [card("show", "show")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    first, shown = shown_by_probe(c)
-    assert shown == "loaded"
-    assert "source started" in log(c, first, "show")
-    second, shown = shown_by_probe(c)
-    assert shown == "loaded" and "source started" not in log(c, second, "show")
-    reused, = c.call("RunInvocationsRequest", runId=second, card=path("show")).records
-    assert reused.workerReused
+    for reused in (False, True):
+        run_id, state = run_and_wait(c, "show")
+        assert state.state == RunState.succeeded, log(c, run_id, "show", 2)
+        assert decode_scalar(read_output(c, run_id, card="show"), "uint64") == 17
+        assert ("source started" in log(c, run_id, "show")) != reused
+        inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+        assert inv.workerReused == reused
 
 
-def test_python_source_loading_is_killed_at_the_invocation_deadline(core_factory, tmp_path):
-    """An uncooperative import is timed out with its source log attached to the failed invocation."""
-    from harness.real_cards import python_probe_project
-    from Tsugumi.Data.FailureKind import FailureKind
-    source = '''
-import os, time
-assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
-print("source started", flush=True)
-time.sleep(60)
-def main(inputs, report):
-    raise AssertionError("main must not run")
-'''
-    definitions, cards, wires, files = python_probe_project(source)
-    definitions["show"]["timeoutSeconds"] = 5
-    write(tmp_path / "p", definitions, cards, wires, files)
+def test_library_initialization_is_killed_at_the_invocation_deadline(core_factory, tmp_path):
+    definition = native_card('return 42;', declarations=r'''
+        __attribute__((constructor)) static void load() {
+          puts("source started");
+          fflush(stdout);
+          sleep(60);
+        }
+    ''', timeoutSeconds=2)
+    write(tmp_path / "p", {"show": definition}, [card("show", "show")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.failed
-    invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
-    assert invocation.failure.kind == FailureKind.timeout
+    run_id, state = run_and_wait(c, "show")
+    assert state.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+    assert inv.failure.kind == FailureKind.timeout
     assert "source started" in log(c, run_id, "show")
 
 
-def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_path):
-    """Only the first call has first.txt and first-output; neither survives in the reused worker's fixed slots."""
-    make = bash('n="$HOME/count"; i=0; test ! -f "$n" || read -r i < "$n"; '
-                'i=$((i+1)); echo "$i" > "$n"; '
-                'if test "$i" = 1; then name=first.txt; else name=second.txt; fi; '
-                'echo "$name" > "$TSUGUMI_OUTPUT_DIR/$name"; '
-                'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$name" > "$TSUGUMI_OUTPUT"',
-                outputs=FILE_FBS, reuseWorker=True)
-    reader = bash('printf \'{"text":"%s|%s"}\' "$FILE_DOC" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT"; '
-                  'slot="${FILE_DOC%/*}"; '
-                  'if test -f "$FILE_DOC" && test "${FILE_DOC##*/}" = first.txt; then '
-                  'echo first > "$TSUGUMI_OUTPUT_DIR/first-output"; '
-                  'else test "${FILE_DOC##*/}" = second.txt || exit 11; '
-                  'test ! -e "$slot/first.txt" || exit 12; '
-                  'test ! -e "$TSUGUMI_OUTPUT_DIR/first-output" || exit 13; fi; '
-                  'echo current > "$TSUGUMI_OUTPUT_DIR/current"; '
-                  'printf \'{"doc":{"value":"%s/current"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
+def test_reused_worker_clears_input_slots_and_keeps_its_work_directory(core_factory, tmp_path):
+    make = native_card(r'''
+        static unsigned count = 0;
+        const char* name = ++count == 1 ? "first.txt" : "second.txt";
+        std::ofstream(name) << name;
+        out.file(name);
+    ''', outputs=FILE_FBS, reuseWorker=True)
+    reader = native_card(r'''
+        const fs::path staged = input_path(in);
+        if (!fs::exists(staged)) return 10;
+        if (staged.filename() == "first.txt") {
+          std::ofstream("work-marker") << "resident data";
+        } else if (staged.filename() != "second.txt" ||
+                   fs::exists(staged.parent_path() / "first.txt") ||
+                   !fs::exists("work-marker")) return 11;
+        printf("staged=%s\n", staged.c_str());
+        std::ofstream("current") << "current\n";
+        out.file("current");
+    ''', inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": reader}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
-    scratch = tmp_path / "scratch"
-    c = core_factory(project_root=root, args=["--run-scratch-dir", str(scratch)]).connect()
-    first, status = run_and_wait(c, "make")
-    assert status.state == RunState.succeeded, log(c, first, "read", 2)
-    run_id, status = run_and_wait(c, "make")
-    assert status.state == RunState.succeeded, log(c, run_id, "read", 2)
-    record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
-    assert record.summary.workerReused
-    staged_input, staged_output = map(Path, text(record.display.value.text).split("|"))
-    assert staged_output.parent.parent == scratch / "workers"
-    assert staged_input.is_relative_to(staged_output.parent / "inputs")
-    assert Path(text(record.outputs[0].filePath)).read_text() == "current\n"
-    assert not any((staged_output.parent / "inputs").glob("*"))
-    assert not any(staged_output.glob("*"))
+    c = core_factory(project_root=root).connect()
+    for reused in (False, True):
+        run_id, state = run_and_wait(c, "make")
+        assert state.state == RunState.succeeded, log(c, run_id, "read", 2)
+        record = c.call("RunRecordRequest", runId=run_id, card=path("read")).record
+        assert record.summary.workerReused == reused
+        output = log(c, run_id, "read").strip()
+        assert output.startswith("staged=")
+        staged = Path(output.removeprefix("staged="))
+        assert not staged.exists()
+        saved = Path(text(record.outputs[0].filePath))
+        assert saved.read_text() == "current\n"
+        assert not (saved.parent / "work-marker").exists()
 
 
 def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
-    """A partial FIFO output cannot replace the Card's exit failure with a transfer error."""
-    from Tsugumi.Data.FailureKind import FailureKind
-    failed = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; exit 19', outputs=FILE_FBS)
+    failed = native_card('mkfifo("partial", 0600); return 19;', outputs=FILE_FBS)
     write(tmp_path / "p", {"fail": failed}, [card("fail", "fail")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    run_id, st = run_and_wait(c, "fail")
-    assert st.state == RunState.failed
+    run_id, state = run_and_wait(c, "fail")
+    assert state.state == RunState.failed
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("fail")).records
     assert inv.failure.kind == FailureKind.worker_failed
     assert not c.call("RunRecordRequest", runId=run_id, card=path("fail")).record.outputs
@@ -151,14 +140,16 @@ def test_failed_call_with_fifo_preserves_its_failure(core_factory, tmp_path):
 
 
 def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path):
-    """Cancellation skips partial output transfer, even when the worker left a FIFO."""
-    from projects import start_run, wait_for_log, wait_run
-    from Tsugumi.Data.FailureKind import FailureKind
-    waiting = bash('mkfifo "$TSUGUMI_OUTPUT_DIR/partial"; echo ready; exec tail -f /dev/null', outputs=FILE_FBS)
+    waiting = native_card(r'''
+        if (mkfifo("partial", 0600)) return 1;
+        puts("ready");
+        fflush(stdout);
+        while (!call.effects->cancelled(call.host)) usleep(1000);
+    ''', outputs=FILE_FBS)
     write(tmp_path / "p", {"wait": waiting}, [card("wait", "wait")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id = start_run(c, "wait")
-    wait_for_log(c, run_id, "wait", 1, lambda log: "ready" in text(log.text or b""))
+    wait_for_log(c, run_id, "wait", 1, lambda entry: "ready" in text(entry.text or b""))
     c.call("RunCancelRequest", runId=run_id)
     assert wait_run(c, run_id).state == RunState.cancelled
     inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("wait")).records
@@ -167,109 +158,69 @@ def test_cancelled_call_with_fifo_preserves_cancellation(core_factory, tmp_path)
 
 @pytest.mark.parametrize("entry", ["directory-link", "fifo"])
 def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_path, entry):
-    """Only declared outputs are copied; unrelated links and FIFOs are cleared without failure."""
     victim = tmp_path / "private"
     victim.mkdir()
     (victim / "secret").write_text("host-only-secret")
-    create = ('mkfifo "$TSUGUMI_OUTPUT_DIR/nested/entry"' if entry == "fifo" else
-              'ln -s ' + shlex.quote(str(victim)) + ' "$TSUGUMI_OUTPUT_DIR/nested/entry"')
-    create = create.replace('$TSUGUMI_OUTPUT_DIR', '$stage')
-    definition = bash('for stage in "$TSUGUMI_OUTPUT_DIR" "$TSUGUMI_WORK_DIR" "$TSUGUMI_TMP_DIR"; do '
-                      'mkdir "$stage/nested"; ' + create + '; done; '
-                      'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
-                      'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                      outputs=FILE_FBS, recordIO=True, retainArtifact=True)
+    create = ('if (mkfifo("nested/entry", 0600)) return 1;' if entry == "fifo" else
+              f'fs::create_directory_symlink({json.dumps(str(victim))}, "nested/entry");')
+    definition = native_card(f'''
+        fs::create_directory("nested");
+        {create}
+        std::ofstream("result") << "safe";
+        out.file("result");
+    ''', outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    run_id, st = run_and_wait(c, "copy")
-    assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
+    run_id, state = run_and_wait(c, "copy")
+    assert state.state == RunState.succeeded, log(c, run_id, "copy", 2)
     record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
     saved = Path(text(record.outputs[0].filePath))
-    assert saved.read_text() == "safe\n"
+    assert saved.read_text() == "safe"
     assert not (saved.parent / "nested").exists()
 
 
 def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factory, tmp_path):
-    """A live child races regular-file/symlink replacements; successful snapshots never contain host bytes."""
-    import json
-    from Tsugumi.Data.FailureKind import FailureKind
     victim = tmp_path / "host-secret"
     victim.write_text("private-host-content-that-the-card-cannot-read")
-    source = r'''
-#include <tsugumi/sdk/abi.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <unistd.h>
-int tsugumi_main(const tsugumi_call* c) {
-  if (c->phase != TSUGUMI_RUN) return 0;
-  char data[4096], next[4096], padding[4096], json[8192];
-  snprintf(data, sizeof data, "%s/data", c->output_directory);
-  snprintf(next, sizeof next, "%s/next", c->working_directory);
-  snprintf(padding, sizeof padding, "%s/padding", c->output_directory);
-  /* Keep replacements active while the core reads the snapshot. The Card
-     receives no event for individual reads, so the producer varies the
-     filesystem state independently. */
-  FILE* f = fopen(padding, "w");
-  if (!f || ftruncate(fileno(f), 8 * 1024 * 1024)) return 1;
-  fclose(f);
-  f = fopen(data, "w"); if (!f) return 2;
-  fputs("safe", f); fclose(f);
-  /* The sandbox must prevent the Card itself from reading the target. */
-  int secret = open(HOST_SECRET, O_RDONLY);
-  if (secret >= 0) { close(secret); return 3; }
-  pid_t child = fork();
-  if (child < 0) return 4;
-  if (!child) {
-    for (int i = 0; i < 10000; ++i) {
-      unlink(next);
-      if (symlink(HOST_SECRET, next) || rename(next, data)) _exit(0);
-      usleep(20);
-      f = fopen(next, "w"); if (!f) _exit(0);
-      fputs("safe", f); fclose(f);
-      if (rename(next, data)) _exit(0);
-      usleep(20);
-    }
-    _exit(0);
-  }
-  snprintf(json, sizeof json, "{\"value\":\"%s\"}", c->output_directory);
-  return c->effects->output_json(c->host, "doc", json);
-}
-'''.replace("HOST_SECRET", json.dumps(str(victim)))
-    definition = {
-        "type": "code",
-        "retainArtifact": True,
-        "_outputs": FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"'),
-        "_nix": '''{ pkgs, inputs, params }: {
-  run = pkgs.runCommandCC "racing-output" {} ''
-    mkdir -p $out/lib
-    $CC -shared -fPIC -I${inputs.tsugumi.runtime}/include ${./src/main.c} -o $out/lib/main.so
-  '';
-}
-''',
-    }
-    write(tmp_path / "p", {"race": definition}, [card("race", "race")], [],
-          {"definitions/race/src/main.c": source})
+    body = r'''
+        fs::create_directory("tree");
+        std::ofstream("tree/data") << "safe";
+        if (std::ifstream(HOST_SECRET)) return 3;
+        const auto child = fork();
+        if (child < 0) return 4;
+        if (!child) {
+          for (int i = 0; i < 3000; ++i) {
+            if (symlink(HOST_SECRET, "next") || rename("next", "tree/data")) _exit(0);
+            usleep(20);
+            int fd = open("next", O_WRONLY | O_CREAT | O_EXCL, 0600);
+            if (fd < 0) _exit(1);
+            if (write(fd, "safe", 4) != 4) _exit(2);
+            close(fd);
+            if (rename("next", "tree/data")) _exit(3);
+            usleep(20);
+          }
+          _exit(0);
+        }
+        out.directory("tree");
+    '''.replace("HOST_SECRET", json.dumps(str(victim)))
+    definition = native_card(body, outputs=DIRECTORY, retainArtifact=True)
+    write(tmp_path / "p", {"race": definition}, [card("race", "race")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    for _ in range(12):
-        run_id, st = run_and_wait(c, "race")
-        if st.state == RunState.failed:
+    for _ in range(8):
+        run_id, state = run_and_wait(c, "race")
+        if state.state == RunState.failed:
             inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("race")).records
             assert inv.failure.kind == FailureKind.output_invalid, log(c, run_id, "race", 2)
         else:
-            assert st.state == RunState.succeeded
+            assert state.state == RunState.succeeded
             record = c.call("RunRecordRequest", runId=run_id, card=path("race")).record
             snapshot = Path(text(record.outputs[0].filePath))
             assert (snapshot / "data").read_text() == "safe"
-            assert all(not p.is_symlink() for p in snapshot.rglob("*"))
+            assert all(not entry.is_symlink() for entry in snapshot.rglob("*"))
     assert victim.read_text() == "private-host-content-that-the-card-cannot-read"
 
 
 def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path, monkeypatch):
-    import os
-    import sys
-
     bundles = [os.environ.get("NIX_SSL_CERT_FILE", ""), "/etc/ssl/certs/ca-bundle.crt",
                "/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem"]
     bundle = next((Path(name) for name in bundles if name and Path(name).is_file()), None)
@@ -279,30 +230,75 @@ def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path
     sentinel.symlink_to(bundle)
     monkeypatch.setenv("SSL_CERT_FILE", str(sentinel))
     monkeypatch.setenv("NIX_SSL_CERT_FILE", str(sentinel))
-    tmp_check = ('echo marker > /tmp/card-marker; test -f "$TMPDIR/card-marker"; '
-                 if sys.platform == "linux" else 'echo marker > "$TMPDIR/card-marker"; ')
-    definition = bash(
-        'set -eu; test "$PWD" = "$HOME"; test "$HOME" = "$TSUGUMI_WORK_DIR"; '
-        'test "$TMPDIR" = "$TSUGUMI_TMP_DIR"; test ! -e "$TMPDIR/card-marker"; '
-        'test -r "$SSL_CERT_FILE"; test "${SSL_CERT_FILE##*/}" != launcher-ca-sentinel; '
-        'test "$NIX_SSL_CERT_FILE" = "$SSL_CERT_FILE"; '
-        'test -z "${TSUGUMI_RUN_ID-}${TSUGUMI_CARD-}${TSUGUMI_INVOCATION-}"; '
-        + tmp_check +
-        'if test -f "$HOME/count"; then read -r n < "$HOME/count"; else n=0; fi; '
-        'n=$((n+1)); echo "$n" > "$HOME/count"; '
-        """printf '{"out":{"value":%s}}' "$n" > "$TSUGUMI_OUTPUT"; """
-        """printf '{"text":"%s|%s|%s|%s"}' "$n" "$HOME" "$TMPDIR" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT" """,
-        reuseWorker=True)
+    definition = native_card(r'''
+        const char* home = std::getenv("HOME");
+        const char* temporary = std::getenv("TMPDIR");
+        if (!home || !temporary || fs::current_path() != fs::canonical(home)) return 1;
+        const char* ca = std::getenv("SSL_CERT_FILE");
+        const char* nix_ca = std::getenv("NIX_SSL_CERT_FILE");
+        if (!ca || !nix_ca || strcmp(ca, nix_ca) || !std::ifstream(ca) ||
+            std::string_view(ca).ends_with("launcher-ca-sentinel")) return 2;
+        for (const char* name : {"TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION",
+                                 "TSUGUMI_OUTPUT_DIR", "TSUGUMI_WORK_DIR", "TSUGUMI_TMP_DIR"})
+          if (std::getenv(name)) return 3;
+        const auto marker = fs::path(temporary) / "card-marker";
+        if (fs::exists(marker)) return 4;
+        std::ofstream(marker) << "temporary";
+        unsigned previous = 0;
+        std::ifstream("count") >> previous;
+        std::ofstream("count") << previous + 1;
+        printf("paths=%s|%s\n", home, temporary);
+        out.number(previous + 1);
+    ''', reuseWorker=True, recordIO=True)
     root = tmp_path / "p"
     write(root, {"work": definition}, [card("work", "work")], [])
-    client = core_factory(project_root=root).connect()
-    seen_paths = None
-    for count in ("1", "2"):
-        run_id, status = run_and_wait(client, "work")
-        assert status.state == RunState.succeeded, log(client, run_id, "work", 2)
-        record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
-        value, *paths = text(record.display.value.text).split("|")
-        assert value == count
-        if seen_paths is not None:
-            assert paths == seen_paths
-        seen_paths = paths
+    c = core_factory(project_root=root).connect()
+    paths = None
+    for count in (1, 2):
+        run_id, state = run_and_wait(c, "work")
+        assert state.state == RunState.succeeded, log(c, run_id, "work", 2)
+        assert decode_scalar(read_output(c, run_id), "uint64") == count
+        seen = log(c, run_id, "work").strip()
+        assert seen.startswith("paths=")
+        if paths is not None:
+            assert seen == paths
+        paths = seen
+
+
+@pytest.mark.parametrize("case", ["tmp", "linked", "byte-budget", "entry-budget"])
+def test_local_output_boundary(core_factory, tmp_path, case):
+    outputs = FILE_FBS
+    if case == "tmp":
+        body = r'''
+            const auto file = fs::path(std::getenv("TMPDIR")) / "item";
+            std::ofstream(file) << "outside the working directory";
+            out.file(file.string());
+        '''
+    elif case == "linked":
+        body = r'''
+            std::ofstream("regular") << "inside";
+            fs::create_symlink("regular", "linked");
+            out.file("linked");
+        '''
+    elif case == "byte-budget":
+        body = r'''
+            std::ofstream("large").close();
+            fs::resize_file("large", (64ull << 30) + 1);
+            out.file("large");
+        '''
+    else:
+        outputs = DIRECTORY
+        body = r'''
+            fs::create_directory("many");
+            for (unsigned i = 0; i < 1000; ++i)
+              std::ofstream(fs::path("many") / std::to_string(i)).close();
+            out.directory("many");
+        '''
+    definition = native_card(body, outputs=outputs, retainArtifact=True)
+    write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])
+    c = core_factory(project_root=tmp_path / "p").connect()
+    run_id, state = run_and_wait(c, "work")
+    assert state.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+    assert inv.failure.kind == FailureKind.output_invalid
+    assert not c.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts

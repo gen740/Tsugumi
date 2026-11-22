@@ -16,6 +16,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/system.hh"
+#include "tsugumi/workerd/card_plan.hh"
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
@@ -169,39 +170,25 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
                 const fs::TransferProgress& progress, Secrets secrets)
     -> workerd::InvocationResult {
-  schema::CardManifest manifest;
-  if (schema::decode(env.manifest, manifest))
-    throw Failed(FailureKind::nix_failed, "invalid remote Card manifest");
-  const auto* single = schema::get(manifest.run);
-  const auto* runs = schema::get(manifest.runs);
+  schema::CardPlan plan;
+  if (schema::decode_card_plan(env.plan, plan))
+    throw Failed(FailureKind::nix_failed, "invalid remote Card build plan");
   const auto index = *invocation.implementation_index;
-  const schema::ManifestRun* run = nullptr;
-  if (single && !runs && index == 1) run = single;
-  if (!single && runs && index > 0 && index <= runs->size())
-    run = &runs->at(index - 1);
-  const auto* shell = schema::get(manifest.shell);
-  const auto* path = schema::get(manifest.path);
-  const auto* worker_binary = run ? schema::get(run->worker) : nullptr;
-  if (!run || !shell || !shell->starts_with("/nix/store/") || !path ||
-      !worker_binary || !worker_binary->starts_with("/nix/store/"))
+  const auto& runs = *schema::get(plan.runs);
+  const auto* worker_binary = schema::get(plan.worker);
+  if (index == 0 || index > runs.size() || !worker_binary ||
+      !worker_binary->starts_with("/nix/store/") ||
+      !runs.at(index - 1).starts_with("/nix/store/"))
     throw Failed(FailureKind::nix_failed,
-                 "remote Card manifest lacks a pinned shell or worker");
+                 "remote Card build plan lacks a package or worker");
   WorkerSpawn spawn;
   spawn.worker_binary = *worker_binary;
-  spawn.bash = *shell;
-  spawn.path = *path;
+  spawn.package = runs.at(index - 1);
   spawn.secrets = std::move(secrets);
   spawn.closure = env.closure;
   spawn.cgroup = group;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
-  spawn.program.package = *run->package;
-  spawn.program.bash = *run->bash;
-  if (spawn.program.package.has_value() == spawn.program.bash.has_value())
-    throw Failed(FailureKind::nix_failed,
-                 "remote Card manifest must contain one package or Bash body");
-  spawn.program.pre_run = manifest.pre_run->value_or("");
-  spawn.program.post_run = manifest.post_run->value_or("");
   spawn.sandbox = {job.filesystem,
                    job.pid,
                    job.ipc,
@@ -355,9 +342,8 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         job->build_timeout_ms);
     auto secrets =
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
-    outcome = run_worker(
-        *call, *job, invocation, input, directory, store, group, environment,
-        log, progress, std::move(secrets));
+    outcome = run_worker(*call, *job, invocation, input, directory, store,
+                         group, environment, log, progress, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
