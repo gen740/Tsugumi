@@ -22,10 +22,16 @@ auto ProjectEndpoint(ServerOptions& options) -> void {
         r->value_type() > R::RequestPayload::MAX)
       return std::nullopt;
     const auto* hello = r->value_as_SessionHelloRequest();
+    // Neither trace records the display path: view visibility and view file
+    // reads stay out of it like the live display notifications, and their
+    // replies follow the request.
+    const auto type = r->value_type();
+    const bool display = type == R::RequestPayload::ViewSetVisibleRequest ||
+                         type == R::RequestPayload::CardViewReadRequest;
     return FrameInfo{
         *m->request_id(), hello != nullptr,
         hello ? trace::ClientName(hello->client()) : nullptr,
-        r->value_type() != R::RequestPayload::CoreTraceRequest &&
+        !display && type != R::RequestPayload::CoreTraceRequest &&
             (!hello || hello->client() != Tsugumi::Trace::Client::Trace)};
   };
   options.codec.completed = [](std::string_view bytes) {
