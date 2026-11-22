@@ -160,7 +160,7 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_NE(ends[0].type, nullptr);
   EXPECT_EQ(ends[0].source->path, (CardPath{"container", "inner", "leaf"}));
   ASSERT_TRUE(ends[0].type->type);
-  EXPECT_EQ(ends[0].type->type, graph->find({"src"})->output("out")->type);
+  EXPECT_EQ(ends[0].type->type, ends[0].source->output("out")->type);
   const auto boundary = input_types(*graph, {"container"}, "out");
   ASSERT_EQ(boundary.size(), 1u);
   EXPECT_EQ(boundary[0].type->type, ends[0].type->type);
@@ -168,6 +168,8 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_EQ(inputs.size(), 1u);
   EXPECT_EQ(inputs[0].source->path, (CardPath{"src"}));
   EXPECT_EQ(inputs[0].port, "in");
+  ASSERT_NE(inputs[0].type, nullptr);
+  EXPECT_EQ(inputs[0].type->type, inputs[0].source->output("out")->type);
 }
 TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
   const auto graph = Graph(
