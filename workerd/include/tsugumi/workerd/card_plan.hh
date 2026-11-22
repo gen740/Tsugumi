@@ -5,10 +5,11 @@
 
 namespace tsugumi::schema {
 
+// Fields in the order Nix's JSON emits them (sorted), which decoding follows.
 struct CardView {
+  t::String<"blob"> blob;
   t::String<"name"> name;
   t::String<"type"> type;
-  t::String<"blob"> blob;
 };
 
 struct CardPlan {

@@ -2,6 +2,7 @@
 
 import pytest
 
+from harness.fixtures import mock_plan
 from harness.scenario import Project
 from tsugumi_client import RpcFailure, path, text
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -49,10 +50,9 @@ def test_declared_view_is_served_in_pages(project, tmp_path, core_factory):
     package = tmp_path / "package"
     package.mkdir()
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"type": "code"}, plan={"product": {
-        "runs": [str(package)],
-        "views": [{"name": "page", "type": "html", "blob": str(blob)}],
-    }}).save(client)
+    Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
+                          plan=mock_plan([str(package)], views=[
+                              {"blob": str(blob), "name": "page", "type": "html"}])).save(client)
     opened = client.open()
     client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
                 cards=[path("work")])

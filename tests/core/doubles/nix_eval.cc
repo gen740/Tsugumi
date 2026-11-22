@@ -35,6 +35,11 @@ struct BuildPlan {
   schema::Opt<"labels", schema::v::Array<schema::v::String>> labels;
 };
 
+struct ViewsOnlyPlan {
+  schema::Opt<"runs", schema::v::Array<schema::v::String>> runs;
+  schema::Opt<"views", schema::v::Array<schema::Obj<schema::CardView>>> views;
+};
+
 auto check_interrupted(const NixCall& call) -> void {
   if (call.cancel.stop_requested())
     throw NixInterrupted(false, "mock build cancelled");
@@ -59,11 +64,14 @@ auto plan_text(const BuildPlan& plan, const NixCall& call, NixResult& result)
   if (auto error = schema::decode_card_plan(schema::text(*value), product))
     throw std::runtime_error("mock Card plan is invalid: " + error->message);
   if (call.views_only) {
-    product.runs->value().clear();
-    product.worker->reset();
+    // The view-only plan has no runs and no worker.
+    ViewsOnlyPlan views_only;
+    views_only.runs = product.runs;
+    views_only.runs->value().clear();
+    views_only.views = std::move(product.views);
     result.execution_list = true;
     result.implementation_count = 0;
-    return schema::encode(product);
+    return schema::encode(views_only);
   }
   result.execution_list =
       schema::get(plan.execution_list) && *schema::get(plan.execution_list);
