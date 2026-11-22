@@ -251,6 +251,32 @@ TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
             bytes);
 }
 
+TEST(InputTypes, CatalogKeepsDeclarationOrderAndNestedBufferReferences) {
+  const auto parsed = types::parse_catalog(
+      R"(namespace Other;
+table Outputs { unrelated:string; }
+namespace Sample;
+table Inner { value:long; }
+table Outer { raw:[ubyte] (nested_flatbuffer: "Inner"); }
+table Outputs { first:Outer (id: 1); second:Inner (id: 0); }
+root_type Outputs;)",
+      "_outputs.fbs");
+  ASSERT_TRUE(parsed.errors.empty());
+  ASSERT_EQ(parsed.ports.size(), 2u);
+  EXPECT_EQ(parsed.ports[0].name, "first");
+  EXPECT_EQ(parsed.ports[1].name, "second");
+  const auto catalog = types::card_catalog(parsed.ports, /*inputs=*/false);
+  EXPECT_NE(catalog.find("first:outputs.first.Sample.Outer (id: 0)"),
+            std::string::npos);
+  EXPECT_NE(catalog.find("second:outputs.second.Sample.Inner (id: 1)"),
+            std::string::npos);
+  EXPECT_NE(catalog.find("nested_flatbuffer: \"outputs.first.Sample.Inner\""),
+            std::string::npos);
+  std::string root;
+  std::string error;
+  EXPECT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
+}
+
 TEST(InputTypes, LargeDefinitionAndModelResultAreNeverClipped) {
   std::string schema = "table Large {\n";
   for (int i = 0; i < 5000; ++i)

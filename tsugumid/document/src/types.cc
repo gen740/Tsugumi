@@ -44,6 +44,12 @@ auto serialize_schema(flatbuffers::Parser& parser) -> void {
   // INT64_MAX unless their bit representation is supplied explicitly.
   for (auto* object : parser.structs_.vec)
     for (auto* field : object->fields.vec) {
+      if (const auto* nested = field->nested_flatbuffer) {
+        auto* attribute = field->attributes.Lookup("nested_flatbuffer");
+        restore.values.emplace_back(&attribute->constant, attribute->constant);
+        attribute->constant =
+            nested->defined_namespace->GetFullyQualifiedName(nested->name);
+      }
       if (field->value.type.base_type != flatbuffers::BASE_TYPE_ULONG ||
           field->IsOptional())
         continue;
@@ -396,6 +402,55 @@ std::vector<Tok> tokens(const std::string& s) {
   return out;
 }
 
+struct CatalogFieldDecl {
+  std::string name;
+  size_t field;
+  size_t semi;
+};
+
+auto catalog_fields(std::string_view text, const std::vector<Tok>& tok,
+                    const flatbuffers::StructDef& catalog)
+    -> std::vector<CatalogFieldDecl> {
+  const auto full =
+      catalog.defined_namespace->GetFullyQualifiedName(catalog.name);
+  const auto dot = full.rfind('.');
+  const auto catalog_namespace = dot == std::string::npos
+                                     ? std::string_view{}
+                                     : std::string_view(full).substr(0, dot);
+  const auto value = [&](size_t i) {
+    return text.substr(tok[i].begin, tok[i].end - tok[i].begin);
+  };
+  std::string current_namespace;
+  size_t depth = 0;
+  for (size_t i = 0; i + 2 < tok.size(); ++i) {
+    if (tok[i].punct == '{') ++depth;
+    if (tok[i].punct == '}') --depth;
+    if (depth != 0) continue;
+    if (value(i) == "namespace") {
+      current_namespace.clear();
+      while (i + 1 < tok.size() && tok[++i].punct != ';')
+        current_namespace += value(i);
+      continue;
+    }
+    if (value(i) != "table" || value(i + 1) != catalog.name ||
+        current_namespace != catalog_namespace)
+      continue;
+    size_t body = i + 2;
+    while (body < tok.size() && tok[body].punct != '{') ++body;
+    std::vector<CatalogFieldDecl> fields;
+    for (size_t field = body + 1;
+         field < tok.size() && tok[field].punct != '}';) {
+      size_t semi = field + 1;
+      while (semi < tok.size() && tok[semi].punct != ';') ++semi;
+      if (semi == tok.size()) break;
+      fields.push_back({std::string(value(field)), field, semi});
+      field = semi + 1;
+    }
+    return fields;
+  }
+  return {};
+}
+
 }  // namespace
 
 std::optional<std::string> set_catalog_port(const std::string& fbs_text,
@@ -432,55 +487,20 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
                   ? type->name
                   : type->defined_namespace->GetFullyQualifiedName(type->name);
   }
-  // The catalog's body, then the port's declaration in it.
   const auto& s = fbs_text;
-  auto t = tokens(s);
-  auto text_of = [&](const Tok& k) {
-    return s.substr(k.begin, k.end - k.begin);
-  };
-  size_t body = 0;
-  size_t body_end = 0;
-  for (size_t i = 0; i + 2 < t.size(); ++i) {
-    if (!t[i].punct && text_of(t[i]) == "table" && !t[i + 1].punct &&
-        text_of(t[i + 1]) == catalog->name) {
-      size_t j = i + 2;
-      while (j < t.size() && t[j].punct != '{') ++j;  // attributes of the table
-      body = j + 1;
-      int depth = 1;
-      for (size_t k = body; k < t.size(); ++k) {
-        if (t[k].punct == '{') ++depth;
-        if (t[k].punct == '}' && --depth == 0) {
-          body_end = k;
-          break;
-        }
-      }
-      break;
-    }
-  }
-  if (!body_end) {
-    *error = "table " + catalog->name + " not found";
-    return std::nullopt;
-  }
-  size_t field = 0;
-  size_t semi = 0;
-  bool at_start = true;
-  for (size_t i = body; i < body_end; ++i) {
-    if (at_start && !t[i].punct && text_of(t[i]) == port && i + 1 < body_end &&
-        t[i + 1].punct == ':') {
-      field = i;
-      for (size_t k = i; k < body_end; ++k)
-        if (t[k].punct == ';') {
-          semi = k;
-          break;
-        }
-      break;
-    }
-    at_start = t[i].punct == ';';
-  }
-  if (!semi) {
+  const auto t = tokens(s);
+  const auto fields = catalog_fields(s, t, *catalog);
+  const auto declaration =
+      std::ranges::find(fields, port, &CatalogFieldDecl::name);
+  if (declaration == fields.end()) {
     *error = "port " + port + " not found in table " + catalog->name;
     return std::nullopt;
   }
+  const auto field = declaration->field;
+  const auto semi = declaration->semi;
+  auto text_of = [&](const Tok& k) {
+    return std::string_view(s).substr(k.begin, k.end - k.begin);
+  };
   // Attributes kept as written, except tsugumi.
   std::vector<std::string> attrs;
   for (size_t i = field; i < semi; ++i) {
@@ -537,7 +557,24 @@ CatalogResult parse_catalog(const std::string& fbs_text,
     r.errors.push_back(filename + ": the catalog root must be a table");
     return r;
   }
-  for (const auto* field : catalog->fields.vec) {
+  // With explicit IDs, FlatBuffers sorts fields by ID. Read the catalog's
+  // declaration order from the source before assigning new IDs to the ports.
+  const auto declarations =
+      catalog_fields(fbs_text, tokens(fbs_text), *catalog);
+  auto fields = catalog->fields.vec;
+  if (!declarations.empty()) {
+    fields.clear();
+    for (const auto& decl : declarations) {
+      auto* field = catalog->fields.Lookup(decl.name);
+      if (!field) {
+        r.errors.push_back(filename + ": cannot locate catalog field " +
+                           decl.name);
+        return r;
+      }
+      fields.push_back(field);
+    }
+  }
+  for (const auto* field : fields) {
     if (field->value.type.base_type == flatbuffers::BASE_TYPE_UTYPE) continue;
     PortType port;
     port.name = field->name;
