@@ -17,7 +17,7 @@ Choose **New Project** on Home and select a destination. A new folder is created
 
 | Where | What is there |
 | --- | --- |
-| Centre (Canvas) | Cards, wires and the outputs' displays |
+| Centre (Canvas) | Cards, wires and notes |
 | Right (chat) | Requests and questions to the Agent (the thrush) |
 | Left (sidebar) | The hierarchy of Workflows and the list of Cards |
 | Bottom (panel) | The run's state, logs and the timeline |
@@ -59,9 +59,12 @@ Use the bottom **Timeline** to see which steps ran. Select a Card there to inspe
 
 A thick wire carries a batch of values. Its count shows how many items are in that batch. Connect it to a Collect Card to pass one vector or Directory to the next step. [Run lists and Collect](features.md#run-lists-and-collect)
 
-## Chart updates
+## Live displays
 
-Open **Card settings → General → Chart updates**. The default **Update** shows the previous chart dimmed while the Card or an upstream Card is running. Choose **Live** to follow new chart revisions while the Card is running. Try both settings with the **Live Stream** demo. The Card must emit successive chart updates for the live setting to show changes.
+Right-click a Code Card and choose **Open Display**. The window can be opened
+before the first run and follows new display data as they arrive. Try it with
+the **Live Stream** demo. Compare Runs and chat evidence can also open retained
+displays.
 
 ## Project terminal
 
@@ -126,7 +129,7 @@ An interrupted conversation stays interrupted when opened, refreshed, reconnecte
 
 ### Canvas presentation
 
-Card, output-frame and note positions change when you move them, choose **Arrange**,
+Card and note positions change when you move them, choose **Arrange**,
 or ask the Agent to change the layout. Showing the Agent's saves or run outputs
 never rearranges the canvas. A new Card is placed when it is created.
 

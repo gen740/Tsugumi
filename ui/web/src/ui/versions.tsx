@@ -80,7 +80,7 @@ function miniMapCardData(c: MiniMapCard): CardNodeData {
   const ports = (n: number) => Array.from({ length: n }, (_, i) => ({ name: `p${i}` }))
   return {
     title: c.id, kind: c.kind, inputs: ports(c.kind === 'merge' ? c.fan : 1), outputs: ports(c.kind === 'fork' ? c.fan : 1), params: [],
-    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: c.collapsed, hasDisplay: false,
+    invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: c.collapsed,
   }
 }
 

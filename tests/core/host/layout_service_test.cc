@@ -89,7 +89,6 @@ auto SceneFixture(const ::tsugumi::json::Members& value) -> H::LayoutSceneT {
       result.push_back(std::move(box));
     }
   };
-  boxes("frames", scene.frames);
   boxes("notes", scene.notes);
   auto bar = [&](const auto& side, auto& result) {
     if (!value.contains(side)) return;
@@ -152,7 +151,6 @@ TEST(HostLayout, ScenesPreserveLayoutConstraints) {
       }
     };
     places(scene.cards, proposal.cards);
-    places(scene.frames, proposal.frames);
     places(scene.notes, proposal.notes);
     if (arrange) {
       for (size_t i = 0; i < occupied.size(); ++i)
@@ -218,11 +216,10 @@ TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
 
 TEST(HostLayout, SavingClientRemovesOnlyDeletedCardReferences) {
   const auto text =
-      R"({"cards":{"a":{"x":1,"y":2},"a/child":{"x":3,"y":4},"ab":{"x":5,"y":6}},"displays":{"a":{"x":1,"y":2,"width":3,"height":4}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"groups":[{"cards":["a","ab"],"outputs":[{"card":"a","port":"x"},{"card":"ab","port":"y"}]}]})";
+      R"({"cards":{"a":{"x":1,"y":2},"a/child":{"x":3,"y":4},"ab":{"x":5,"y":6}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"groups":[{"cards":["a","ab"],"outputs":[{"card":"a","port":"x"},{"card":"ab","port":"y"}]}]})";
   const auto result = ::tsugumi::json::Object(ValidateLayout(text, {"a"}));
   EXPECT_EQ(::tsugumi::json::Object(result.at("cards")).size(), 1u);
   EXPECT_TRUE(::tsugumi::json::Object(result.at("cards")).contains("ab"));
-  EXPECT_TRUE(::tsugumi::json::Object(result.at("displays")).empty());
   EXPECT_TRUE(::tsugumi::json::Object(result.at("boundaries")).empty());
   const auto group = ::tsugumi::json::Object(
       ::tsugumi::json::Array(result.at("groups")).at(0));
@@ -440,12 +437,12 @@ TEST(HostCardPlacement, APersonsDropIsSavedWithoutAddingDerivedPositions) {
 
 namespace tsugumi::host {
 namespace {
-TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
+TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsCardsAndNotes) {
   namespace json = ::tsugumi::json;
   const auto project =
       R"({"canvas":{"cards":[{"id":"far"},{"id":"near"},{"id":"new"}],"connections":[{"from":{"card":"near","port":"out"},"to":{"card":"new","port":"in"}}]}})";
   const auto layout =
-      R"({"cards":{"far":{"x":10000,"y":0},"near":{"x":0,"y":0}},"displays":{"near":{"x":340,"y":0,"width":400,"height":300}},"notes":[{"id":"n","text":"Keep me","x":0,"y":300,"width":300,"height":200}]})";
+      R"({"cards":{"far":{"x":10000,"y":0},"near":{"x":0,"y":0}},"notes":[{"id":"n","text":"Keep me","x":0,"y":300,"width":300,"height":200}]})";
   const auto completed = json::Object(CompleteLayout(project, layout));
   const auto positions = json::Object(completed.at("cards"));
   const auto p = json::Object(positions.at("new"));
@@ -454,60 +451,10 @@ TEST(HostCardPlacement, PlacesNearItsNeighbourAndAvoidsSavedFramesAndNotes) {
   auto disjoint = [&](double bx, double by, double w, double h) {
     return x + 320 <= bx || bx + w <= x || y + 270 <= by || by + h <= y;
   };
-  EXPECT_TRUE(disjoint(340, 0, 400, 300));
+  EXPECT_TRUE(disjoint(0, 0, 320, 270));
   EXPECT_TRUE(disjoint(0, 300, 300, 200));
-  EXPECT_EQ(completed.at("displays"), json::Object(layout).at("displays"));
-  EXPECT_EQ(completed.at("notes"), json::Object(layout).at("notes"));
-}
-}  // namespace
-}  // namespace tsugumi::host
-
-namespace tsugumi::host {
-namespace {
-TEST(HostCardPlacement, DefaultDisplayBlocksTheTemptingRightHandSlot) {
-  namespace json = ::tsugumi::json;
-  // Left and below are occupied. No display position is saved: both UIs
-  // nevertheless show the source's output to its right after a display call.
-  const auto project =
-      R"({"canvas":{"cards":[{"id":"source"},{"id":"left"},{"id":"below"},{"id":"new"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"new","port":"in"}}]}})";
-  const auto layout =
-      R"({"flow":"topToBottom","cards":{"source":{"x":0,"y":0},"left":{"x":-340,"y":0},"below":{"x":0,"y":300}}})";
-  const auto completed = json::Object(CompleteLayout(project, layout));
-  const auto positions = json::Object(completed.at("cards"));
-  const auto p = json::Object(positions.at("new"));
-  const auto x = std::stod(p.at("x")), y = std::stod(p.at("y"));
-  // Check expanded and folded source sizes, using the host geometry that the
-  // UIs transform by their measured Card dimensions.
-  const auto d = DefaultDisplayGeometry(true);
-  for (double card_width : {112., 220., 320.}) {
-    const auto fx = card_width * d.anchor_x + d.x;
-    EXPECT_TRUE(x + 320 <= fx || fx + d.width <= x || y + 270 <= d.y ||
-                d.y + d.height <= y)
-        << "new Card at " << x << ',' << y << " overlaps the default display";
-  }
   EXPECT_FALSE(completed.contains("displays"));
-  const auto old = json::Object(json::Object(layout).at("cards"));
-  for (const auto& [id, value] : old) EXPECT_EQ(positions.at(id), value);
-}
-}  // namespace
-}  // namespace tsugumi::host
-
-namespace tsugumi::host {
-namespace {
-TEST(HostCardPlacement, UnsavedFlowReservesEitherDefaultDisplay) {
-  namespace json = ::tsugumi::json;
-  const auto project =
-      R"({"canvas":{"cards":[{"id":"source"},{"id":"new"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"new","port":"in"}}]}})";
-  const auto completed = json::Object(
-      CompleteLayout(project, R"({"cards":{"source":{"x":0,"y":0}}})"));
-  const auto p = json::Object(json::Object(completed.at("cards")).at("new"));
-  const auto x = std::stod(p.at("x")), y = std::stod(p.at("y"));
-  for (bool vertical : {true, false}) {
-    const auto d = DefaultDisplayGeometry(vertical);
-    const auto fx = d.anchor_x * 220 + d.x, fy = d.anchor_y * 170 + d.y;
-    EXPECT_TRUE(x + 320 <= fx || fx + d.width <= x || y + 270 <= fy ||
-                fy + d.height <= y);
-  }
+  EXPECT_EQ(completed.at("notes"), json::Object(layout).at("notes"));
 }
 }  // namespace
 }  // namespace tsugumi::host
@@ -592,8 +539,6 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
        [](auto& s, double v) { s.cards[0]->inputs[0]->x = v; }},
       {"scene.cards[0].outputs[0].y",
        [](auto& s, double v) { s.cards[0]->outputs[0]->y = v; }},
-      {"scene.frames[0].width",
-       [](auto& s, double v) { s.frames[0]->width = v; }},
       {"scene.notes[0].height",
        [](auto& s, double v) { s.notes[0]->height = v; }},
       {"scene.inputs.x", [](auto& s, double v) { s.inputs->x = v; }},
@@ -615,7 +560,6 @@ TEST(HostLayout, NonFiniteMeasurementsNameTheirFields) {
       scene->cards.push_back(std::move(card));
       auto box = std::make_unique<H::LayoutBoxT>();
       box->id = "mnist";
-      scene->frames.push_back(std::make_unique<H::LayoutBoxT>(*box));
       scene->notes.push_back(std::move(box));
       scene->inputs = std::make_unique<H::LayoutBarT>();
       scene->outputs = std::make_unique<H::LayoutBarT>();

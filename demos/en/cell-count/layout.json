@@ -45,43 +45,5 @@
       "width": 640,
       "height": 510
     }
-  ],
-  "displays": {
-    "generate": {
-      "x": 320,
-      "y": 200,
-      "width": 620,
-      "height": 340
-    },
-    "preprocess": {
-      "x": 1160,
-      "y": 200,
-      "width": 780,
-      "height": 310
-    },
-    "segment": {
-      "x": 1980,
-      "y": 200,
-      "width": 780,
-      "height": 310
-    },
-    "score": {
-      "x": 2800,
-      "y": 200,
-      "width": 820,
-      "height": 480
-    },
-    "sweep": {
-      "x": 1160,
-      "y": 840,
-      "width": 820,
-      "height": 400
-    },
-    "real": {
-      "x": 320,
-      "y": 840,
-      "width": 640,
-      "height": 390
-    }
-  }
+  ]
 }

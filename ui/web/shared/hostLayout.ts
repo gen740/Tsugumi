@@ -9,7 +9,7 @@ export function sceneRequest(scene: LayoutScene): H.LayoutSceneT {
     scene.flow, scene.grid, scene.snap,
     scene.cards.map((c) => new H.LayoutCardT(c.id, c.x, c.y, c.width, c.height, ports(c.inputs), ports(c.outputs), c.reorderable)),
     scene.wires.map((w) => new H.LayoutWireT(w.from, w.fromPort, w.to, w.toPort)),
-    boxes(scene.frames), boxes(scene.notes), bar(scene.inputs) ?? null, bar(scene.outputs) ?? null,
+    boxes(scene.notes), bar(scene.inputs) ?? null, bar(scene.outputs) ?? null,
   )
 }
 

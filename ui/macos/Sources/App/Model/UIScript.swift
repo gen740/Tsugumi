@@ -183,8 +183,7 @@ final class UIScript {
           let items = s.marqueeItems(CGRect(x: min(x1, x2), y: min(y1, y2), width: abs(x2 - x1), height: abs(y2 - y1)), in: t.scope)
           t.selection = items.cards
           t.selectedNotes = items.notes
-          t.selectedFrames = items.frames
-          say("marquee cards=\(items.cards.count) notes=\(items.notes.count) frames=\(items.frames.count)")
+          say("marquee cards=\(items.cards.count) notes=\(items.notes.count)")
         }
       case "hoverversion":
         // Not `move`: SwiftUI's hover does not see a mouse event sent to a window in the back.

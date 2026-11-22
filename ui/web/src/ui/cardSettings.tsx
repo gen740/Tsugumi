@@ -773,13 +773,6 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
           {kind === 'code' && (
-            <Row label={L('グラフの更新')} help={L('更新: 最後のグラフを表示し、この Card か上流の Card が実行中のあいだは薄くします。新しい結果が届いたら置き換えます。ライブ: 実行中に届くグラフを、前のグラフを残したまま続けて置き換えます。')}>
-              <Select {...string('displayMode', 'update')} options={[
-                { value: 'update', label: L('更新（実行中は薄く表示）') }, { value: 'live', label: L('ライブ（実行中も追う）') },
-              ]} />
-            </Row>
-          )}
-          {kind === 'code' && (
             <>
               {timeoutField('buildTimeoutSeconds', L('ビルドの期限（秒）'))}
               <Row label={L('ワーカーの条件式')} help={L('x はワーカーの grade です。例: x > 1、x & 0x10 != 0。空欄はすべての値を許可します。')}>

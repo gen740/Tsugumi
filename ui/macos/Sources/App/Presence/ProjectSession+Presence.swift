@@ -85,20 +85,3 @@ extension ProjectSession {
     return h
   }
 }
-
-/// The output frame beside a Card, used by explicit layout requests.
-extension ProjectSession {
-  /// Output frame of a Card (world units): saved place, or beside the Card.
-  func displayRect(_ k: CardKey, origin: CGPoint? = nil) -> CGRect {
-    let o = origin ?? position(k)
-    let f = displayFrame(k)
-    let d = flow == .topToBottom ? displayGeometries?.topToBottom : displayGeometries?.leftToRight
-    let size = geometry(k).size
-    // Transform the host's Card-local rectangle using this window's measures.
-    return CGRect(x: f?["x"]?.double ?? (o.x + size.width * (d?.anchorX ?? 0) + (d?.x ?? 0)),
-                  y: f?["y"]?.double ?? (o.y + size.height * (d?.anchorY ?? 0) + (d?.y ?? 0)),
-                  width: f?["width"]?.double ?? d?.width ?? 0,
-                  height: f?["height"]?.double ?? d?.height ?? 0)
-  }
-
-}

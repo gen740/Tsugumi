@@ -97,14 +97,14 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   await new Promise<void>(resolve => setImmediate(resolve))
   const inside = new Scene(s, [outer])
   assert.ok(inside.boundary)
-  const bars = inside.wires.filter((w) => w.connection === undefined && w.style !== 'display')
+  const bars = inside.wires.filter((w) => w.connection === undefined)
   assert.equal(bars.length, 2)
   assert.ok(bars.every((w) => w.dotted))
 }
 
 {
   // Drawn: the dots replace the style's own dashes, and move while the value does.
-  const html = (style: 'normal' | 'carried' | 'active' | 'selected' | 'display', dotted?: boolean, animate = false) => renderToStaticMarkup(
+  const html = (style: 'normal' | 'carried' | 'active' | 'selected', dotted?: boolean, animate = false) => renderToStaticMarkup(
     <WireLayer wires={[{ d: 'M0,0L9,9', style, dotted }]} animate={animate} width={10} height={10} />)
   const dash = (markup: string) => /stroke-dasharray="([^"]*)"/.exec(markup)?.[1]
   const dots = dash(html('normal', true))!
@@ -122,6 +122,5 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   for (const style of ['normal', 'carried', 'selected'] as const) assert.equal(dash(html(style)), undefined, `${style}, not a Draft's`)
   assert.equal(dash(html('active', false, true)), '8 6', 'the moving dashes of other wires are as they were')
   assert.ok(html('active', true, true).includes('cv-wire-moving'))
-  assert.equal(dash(html('display')), '5 4', 'the link to a result frame is as it was')
 }
 console.log('draft wires: passed')

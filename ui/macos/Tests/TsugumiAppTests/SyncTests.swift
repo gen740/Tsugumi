@@ -236,26 +236,6 @@ import TsugumiTestSupport
   }
 }
 
-@MainActor @Test func defaultDisplayRectTransformsTheHostGeometry() throws {
-  let dir = try SyncTests.project()
-  defer { try? FileManager.default.removeItem(at: dir) }
-  let s = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
-  let d = Tsugumi_Host_DisplayGeometryT()
-  d.anchorX = 0.5; d.anchorY = 0.25
-  d.x = 71; d.y = 93; d.width = 411; d.height = 219
-  let geometries = Tsugumi_Host_DisplayGeometriesT()
-  geometries.topToBottom = d; geometries.leftToRight = d
-  s.displayGeometries = geometries
-  for flow in ["topToBottom", "leftToRight"] {
-    s.layout = try JSONValue.parse("{\"flow\":\"\(flow)\"}")
-    let k = key(["a"]), size = s.geometry(k).size
-    let rect = s.displayRect(k, origin: CGPoint(x: 10, y: 20))
-    #expect(rect == CGRect(x: 10 + size.width * 0.5 + 71,
-                           y: 20 + size.height * 0.25 + 93,
-                           width: 411, height: 219))
-  }
-}
-
 @MainActor @Test func reloadingSettingsKeepsTheExactWorkingText() {
   let edit = RevisionEdit()
   edit.reload(0)

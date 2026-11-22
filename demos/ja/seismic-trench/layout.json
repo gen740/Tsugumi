@@ -29,25 +29,5 @@
       "width": 560,
       "height": 380
     }
-  ],
-  "displays": {
-    "load": {
-      "x": 160,
-      "y": 200,
-      "width": 320,
-      "height": 170
-    },
-    "section": {
-      "x": 500,
-      "y": 200,
-      "width": 360,
-      "height": 300
-    },
-    "b_value": {
-      "x": 880,
-      "y": 200,
-      "width": 420,
-      "height": 360
-    }
-  }
+  ]
 }
