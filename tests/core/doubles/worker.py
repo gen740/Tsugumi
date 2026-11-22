@@ -23,6 +23,7 @@ import flatbuffers
 
 from Tsugumi.Data.Failure import FailureT
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerFailure import WorkerFailureT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
@@ -208,10 +209,12 @@ class Worker:
                 outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=scalar(action["type"], value))
             elif operation == "echo":
                 value = next(v for v in self.call.inputs if text(v.name) == action["input"])
-                outputs[action["port"]] = WorkerOutputT(
-                    name=action["port"], bytes=bytes(value.value.bytes),
-                    forwardedFrom=text(value.name) if value.kind in (1, 2) else None,
-                )
+                # A Path input is returned unchanged; a FlatBuffer one by its bytes.
+                if value.kind == PortKind.Path:
+                    outputs[action["port"]] = WorkerOutputT(
+                        name=action["port"], path=text(value.path), forwardedFrom=text(value.name))
+                else:
+                    outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=bytes(value.bytes))
             elif operation in ("file", "directory"):
                 destination = self.output_path(action["path"])
                 if operation == "file":
@@ -223,7 +226,7 @@ class Worker:
                         member = self.output_path(str(Path(action["path"]) / relative))
                         member.parent.mkdir(parents=True, exist_ok=True)
                         member.write_text(contents)
-                outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=scalar("string", str(destination)))
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], path=str(destination))
             elif operation == "symlink":
                 destination = self.output_path(action["path"])
                 destination.parent.mkdir(parents=True, exist_ok=True)

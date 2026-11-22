@@ -435,13 +435,13 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
            "table Outputs { msg:Msg (required); /* note */ other:Msg; }\nroot_type Outputs;\n")
     res = c.call("OutputTypesRequest", text=fbs)
     assert text(res.rootType) == "demo.Outputs" and len(bytes(res.bfbs)) > 0 and res.text is None
-    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # File
+    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # Path
     out = text(changed.text)
-    assert 'msg:Path (required, tsugumi: "file");' in out and "other:Msg;" in out and "// kept" in out
+    assert 'msg:Path (required, tsugumi: "path");' in out and "other:Msg;" in out and "// kept" in out
     assert 'attribute "tsugumi";' in out
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Missing")
     assert bad.text is None and bad.error
-    # A File port needs a string value: Msg has none.
+    # A Path port needs a string value: Msg has none.
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Msg", kind=1)
     assert bad.text is None and bad.error
 

@@ -18,7 +18,7 @@ inline constexpr uint64_t kMaxBlob = uint64_t{64} << 30;
 inline constexpr uint32_t kMaxSpec = 256 << 10;
 // The largest live log slice one status reply carries.
 inline constexpr uint32_t kLogChunkBytes = 256 << 10;
-inline constexpr uint32_t kContract = 13;
+inline constexpr uint32_t kContract = 14;
 
 struct Error : std::runtime_error {
   R::ErrorCode code;

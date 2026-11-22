@@ -32,9 +32,3 @@ table Port {
   /// Static execution shape when known without evaluating Nix.
   execution_shape:ExecutionShape (id: 6);
 }
-
-table FlatBufferData {
-  schema_bfbs:[ubyte] (id: 0, required);
-  root_type:string (id: 1, required);
-  bytes:[ubyte] (id: 2, required);
-}

@@ -17,13 +17,11 @@ from Tsugumi.Card.CardFailure import CardFailureT
 from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.FlatBufferData import FlatBufferDataT
-from Tsugumi.Data.Port import PortT
 from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerCancel import WorkerCancelT
-from Tsugumi.Worker.WorkerInput import WorkerInputT
+from Tsugumi.Worker.WorkerPort import WorkerPortT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerStart import WorkerStartT
@@ -102,22 +100,9 @@ def worker(package, *, startup=None, arguments=()):
                 print("worker exit", p.returncode, out, err)
 
 
-def wire_value(root, name, schema, payload):
-    source = root / f"{name}.fbs"
-    source.write_text(f"{schema} root_type {name};")
-    subprocess.run(
-        ["flatc", "--binary", "--schema", "-o", str(root), str(source)], check=True,
-    )
-    return FlatBufferDataT(
-        schemaBfbs=source.with_suffix(".bfbs").read_bytes(), rootType=name, bytes=payload,
-    )
-
-
-def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), params=None):
-    if params is None:
-        params = wire_value(tmp_path, "Params", "table Params {}", PARAMS)
+def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), params=PARAMS):
     call = WorkerCallT(inputs=list(inputs), outputs=list(outputs),
-                       params=params, deadlineMs=deadline)
+                       params=list(params), deadlineMs=deadline)
     send_message(data, WorkerMessageT(
         callId=call_id, valueType=WorkerPayload.WorkerCall, value=call,
     ))
@@ -141,10 +126,9 @@ def receive(data):
     return WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(full(size)))
 
 
-def test_worker_verifies_input_and_preserves_binary_parameters(tmp_path):
-    parameter = wire_value(tmp_path, "Params", "table Params {}", PARAMS)
-    reading = wire_value(tmp_path, "Reading", "table Reading {}", PARAMS[:4])
-    port = WorkerInputT(name="reading", kind=PortKind.FlatBuffer, value=reading)
+def test_worker_passes_inputs_unopened_and_preserves_binary_parameters(tmp_path):
+    # Not a FlatBuffer: the worker hands input bytes to the Card's SDK as they are.
+    port = CardPortT(name="reading", kind=PortKind.FlatBuffer, bytes=list(PARAMS[:4]))
     library(tmp_path, f'''
         #include <tsugumi/card_abi.h>
         #include <stdio.h>
@@ -172,12 +156,7 @@ def test_worker_verifies_input_and_preserves_binary_parameters(tmp_path):
         }}
     ''')
     with worker(tmp_path) as (p, data, _):
-        send_call(data, tmp_path, inputs=[port], params=parameter)
-        failure = receive(data)
-        assert failure.valueType == WorkerPayload.WorkerFailure
-        assert failure.value.failure.kind == FailureKind.type_mismatch
-        reading.bytes = PARAMS
-        send_call(data, tmp_path, 2, inputs=[port], params=parameter)
+        send_call(data, tmp_path, inputs=[port])
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
         assert p.stdout.read() == b"loaded\n"
@@ -258,18 +237,16 @@ def test_encoded_failure_preserves_source(tmp_path, kind):
         }
 
 
-@pytest.mark.parametrize("result", ["invalid", "missing", "unknown", "wrong-kind", "duplicate", "payload"])
+@pytest.mark.parametrize("result", ["invalid", "missing", "unknown", "wrong-kind", "duplicate", "path"])
 def test_invalid_results_fail_cleanly(tmp_path, result):
-    reading = wire_value(tmp_path, "Reading", "table Reading {}", PARAMS)
-    declaration = PortT(name="reading", kind=PortKind.FlatBuffer,
-                        schemaBfbs=reading.schemaBfbs, rootType=reading.rootType)
+    declaration = WorkerPortT(name="reading", kind=PortKind.FlatBuffer, required=True)
     output = CardPortT(name="reading", kind=PortKind.FlatBuffer, bytes=PARAMS)
     if result == "unknown":
         output.name = "extra"
     elif result == "wrong-kind":
-        output.kind = PortKind.File
-    elif result == "payload":
-        output.bytes = PARAMS[:4]
+        output.kind = PortKind.Path
+    elif result == "path":
+        output.path = "file"
     card = CardResultT(outputs={"missing": [], "duplicate": [output, output]}.get(result, [output]))
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
@@ -364,8 +341,8 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
 
 
 NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; table Directory { value:string; } '
-             'table Outputs { doc:Directory (required, tsugumi:"directory"); } '
+DIRECTORY = ('attribute "tsugumi"; '
+             'table Outputs { doc:string (required, tsugumi: "path"); } '
              'root_type Outputs;')
 
 
@@ -379,7 +356,7 @@ def card_package(body, *, declarations=""):
     sources = {
         "card_abi.h": (ROOT / "protocol/include/tsugumi/card_abi.h").read_text(),
         "card.fbs": (ROOT / "protocol/card.fbs").read_text(),
-        "tsugumi_enums.fbs": (ROOT / "protocol/tsugumi_enums.fbs").read_text(),
+        "card_enums.fbs": (ROOT / "protocol/card_enums.fbs").read_text(),
         "card.cc": _CARD_PREAMBLE + "\n" + declarations +
         "\nint run(const tsugumi_call& call, const C::CardInput& in, Result& out) {\n" +
         body + "\nreturn 0;\n}\n" + _CARD_ENTRY,
@@ -398,9 +375,9 @@ in pkgs.runCommandCC "abi9-native-card" {{
 }} ''
   cp ${{card_abi}} card_abi.h
   cp ${{card}} card.fbs
-  cp ${{tsugumi_enums}} tsugumi_enums.fbs
+  cp ${{card_enums}} card_enums.fbs
   cp ${{source}} card.cc
-  flatc --cpp --scoped-enums card.fbs tsugumi_enums.fbs
+  flatc --cpp --scoped-enums card.fbs card_enums.fbs
   mkdir -p "$out/lib"
   $CXX -std=c++20 -fPIC -shared -pthread card.cc -o "$out/lib/main.so"
 ''
@@ -460,20 +437,12 @@ struct Result {
     add(port, D::PortKind::FlatBuffer, payload, payload.EndTable(start));
   }
 
-  void path(const std::string& value, D::PortKind kind, const char* port = "doc") {
-    fb::FlatBufferBuilder payload;
-    const auto text = payload.CreateString(value);
-    const auto start = payload.StartTable();
-    payload.AddOffset(4, text);
-    add(port, kind, payload, payload.EndTable(start));
-  }
-
-  void file(const std::string& value, const char* port = "doc") {
-    path(value, D::PortKind::File, port);
-  }
-
-  void directory(const std::string& value, const char* port = "doc") {
-    path(value, D::PortKind::Directory, port);
+  // A Path output: a file or directory under the working directory, or an
+  // input path returned unchanged.
+  void path(const std::string& value, const char* port = "doc") {
+    ports.push_back(C::CreateCardPort(message, message.CreateString(port),
+                                      D::PortKind::Path, 0,
+                                      message.CreateString(value)));
   }
 
   void fail(D::FailureKind kind, const char* error) {
@@ -484,8 +453,7 @@ struct Result {
 std::string input_path(const C::CardInput& in, std::string_view name = "doc") {
   for (const auto* port : *in.inputs()) {
     if (port->name()->string_view() != name) continue;
-    const auto* value = fb::GetRoot<fb::Table>(port->bytes()->data());
-    return value->GetPointer<const fb::String*>(4)->str();
+    return port->path() ? port->path()->str() : std::string();
   }
   return {};
 }

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 from harness.scenario import STRING_OUTPUT, Project, run, wait_run
-from test_run_lists import abi9_card, mock_plan, scripted_implementations
+from test_run_lists import mock_plan, scripted_implementations
 from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, new_id, path, text
 
@@ -347,25 +347,33 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
         assert set(found) == expected
 
 
-def test_local_worker_uses_the_recorded_build_plan(core_factory, project):
+def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_path):
     """Each ABI 9 package and its declared view are in the recorded closure."""
+    from harness.daemon import ROOT
+    from harness.native_card import STATIC_RESULT_ENTRY, card_source
     from harness.observations import decode_scalar, read_output
+    from harness.values import encode_message
+    from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory().connect()
     graph = Project(project)
     inventories = []
+    abi_header = (ROOT / "protocol/include/tsugumi/card_abi.h").read_text()
     for version in ["first", "changed"]:
-        sources = abi9_card("""
-            auto run(const Card::Inputs&) -> Card::Output {
-              Card::Output output;
-              output.out.emplace().value = VERSION;
-              return output;
-            }""", builder='inputs.tsugumi.cppCard { src = ./.; cxxflags = [ '
-                            + json.dumps('-DVERSION="' + version + '"') + ' ]; }')
-        sources["default.nix"] = sources["default.nix"].replace(
-            '; in { run = package; }',
-            '; in { run = package; views = [{ name = "view"; type = "html"; blob = ./view.html; }]; }')
-        sources["view.html"] = "<p>Version " + version + "</p>"
+        message = encode_message(tmp_path / "encode", STRING_OUTPUT, {"value": version},
+                                 root_type="Value")
+        sources = {
+            "tsugumi/card_abi.h": abi_header,
+            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", PortKind.FlatBuffer, message)]),
+            "view.html": "<p>Version " + version + "</p>",
+            "default.nix": """{ pkgs, ... }: {
+              run = pkgs.runCommandCC "recorded-plan-card" { } ''
+                mkdir -p "$out/lib"
+                "$CC" -shared -fPIC -I${./.} ${./main.c} -o "$out/lib/main.so"
+              '';
+              views = [{ name = "view"; type = "html"; blob = ./view.html; }];
+            }""",
+        }
         graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
                             "reuseWorker": True}, outputs=STRING_OUTPUT, sources=sources).save(client)
         for _ in range(2):

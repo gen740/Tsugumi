@@ -1189,7 +1189,9 @@ table ArtifactInfo {
   card:Tsugumi.Data.CardPath (id: 2, required);
   invocation:uint64 = null (id: 3);
   output:string (id: 4, required);
-  kind:Tsugumi.Data.PortKind (id: 5);
+  /// A directory artifact has one member per file; a file artifact has one
+  /// member, its name.
+  directory:bool (id: 5);
   name:string (id: 6, required);
   members:[ArtifactMember] (id: 7, required);
 }

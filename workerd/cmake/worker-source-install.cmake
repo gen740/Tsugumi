@@ -2,6 +2,7 @@ tsugumi_card_nix_files(worker "${PROJECT_SOURCE_DIR}/nix/worker.nix")
 tsugumi_card_nix_files(worker/src src/native_main.cc)
 tsugumi_card_nix_files(worker/protocol
   "${TSUGUMI_PROTOCOL_DIR}/card.fbs"
+  "${TSUGUMI_PROTOCOL_DIR}/card_enums.fbs"
   "${TSUGUMI_PROTOCOL_DIR}/tsugumi_enums.fbs"
   "${TSUGUMI_PROTOCOL_DIR}/worker.fbs"
   "${TSUGUMI_PROTOCOL_DIR}/worker_types.fbs")

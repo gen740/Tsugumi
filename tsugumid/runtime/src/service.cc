@@ -303,12 +303,11 @@ auto Service::keep_file_value(
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
     -> Value {
   if (value.kind == PortKind::FlatBuffer) return value;
-  const auto source = path_value(value);
-  if (!source)
-    throw Failed(FailureKind::output_invalid, "file value has no path");
+  if (value.path.empty())
+    throw Failed(FailureKind::output_invalid, "Path value has no path");
   for (const auto& root : file_roots()) {
     const auto rel =
-        stdfs::path(*source).lexically_normal().lexically_relative(root);
+        stdfs::path(value.path).lexically_normal().lexically_relative(root);
     if (!fs::valid_relative_path(rel.generic_string())) continue;
     const auto check = [&] {
       if (stop.load())
@@ -327,26 +326,19 @@ auto Service::keep_file_value(
         if (progress) progress(from.generic_string(), done, total);
       });
     };
-    if (value.kind == PortKind::File)
-      copy(rel, destination);
-    else {
-      const auto listing = fs::list_beneath(root, rel);
-      if (!listing.links.empty() || !listing.special.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "kept directory contains a link or special file");
-      stdfs::create_directories(destination);
-      for (const auto& child : listing.directories) {
-        check();
-        stdfs::create_directories(destination / child);
-      }
-      for (const auto& child : listing.files)
-        copy(rel / child, destination / child);
+    try {
+      fs::copy_path_beneath(root, rel, destination, copy);
+    } catch (const fs::Error& error) {
+      throw Failed(FailureKind::output_invalid,
+                   std::string("kept path: ") + error.what());
     }
     check();
-    return with_path(value, destination.string());
+    auto kept = value;
+    kept.path = destination.string();
+    return kept;
   }
   throw Failed(FailureKind::output_invalid,
-               "file value is outside the run's folders: " + *source);
+               "Path value is outside the run's folders: " + value.path);
 }
 
 auto Service::invalidate_resident(const std::string& card) -> void {

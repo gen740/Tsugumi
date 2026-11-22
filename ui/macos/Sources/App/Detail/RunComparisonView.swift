@@ -143,7 +143,7 @@ struct ComparedRunField: Identifiable {
   static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
     guard let a, let b else { return a == nil && b == nil ? .same : .unknown }
     if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
-    if a.kind == .file {
+    if a.kind == .path {
       guard let x = a.fileContentHash, !x.isEmpty, let y = b.fileContentHash, !y.isEmpty else { return .unknown }
       return x == y ? .same : .changed
     }

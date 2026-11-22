@@ -262,7 +262,7 @@ auto clear_staging(const std::filesystem::path& path,
 
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
-                         bool directory, const std::atomic<bool>& cancel,
+                         const std::atomic<bool>& cancel,
                          const TransferProgress& progress, OutputBudget* budget)
     -> void {
   if (relative.empty() || relative.is_absolute())
@@ -279,10 +279,9 @@ auto copy_staging_output(int staging, const std::filesystem::path& relative,
   }
   const int source = parents.back().get();
   const auto st = status_of(source, relative);
-  if (directory ? !S_ISDIR(st.st_mode) : !S_ISREG(st.st_mode))
-    reject(
-        relative, entry_kind(st.st_mode),
-        directory ? "expected a Directory output" : "expected a File output");
+  if (!S_ISDIR(st.st_mode) && !S_ISREG(st.st_mode))
+    reject(relative, entry_kind(st.st_mode),
+           "expected a regular file or a directory");
   std::filesystem::create_directories(destination.parent_path());
   OutputBudget defaults;
   copy_entry(source, relative, destination, cancel, progress,

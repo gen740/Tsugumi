@@ -495,7 +495,7 @@ table InputType {
   port:string (required);
   source_card:Tsugumi.Data.CardPath;
   source_port:string;
-  /// value, file or directory; empty when unresolved.
+  /// value or path; empty when unresolved.
   kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);

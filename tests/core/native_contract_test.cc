@@ -3,7 +3,6 @@
 #include "native_main.cc"
 #undef main
 
-#include <flatbuffers/idl.h>
 #include <gtest/gtest.h>
 
 namespace {
@@ -13,27 +12,19 @@ class NativeContract : public testing::Test {
   flatbuffers::FlatBufferBuilder request_buffer;
   flatbuffers::FlatBufferBuilder card_buffer;
   flatbuffers::FlatBufferBuilder response;
-  flatbuffers::Parser parser;
-  D::FlatBufferDataT file;
   const W::WorkerCall* request = nullptr;
 
   void SetUp() override {
-    ASSERT_TRUE(parser.Parse(
-        "table File { value:string (required); } root_type File;"));
-    parser.Serialize();
-    file.root_type = "File";
-    file.schema_bfbs.assign(
-        parser.builder_.GetBufferPointer(),
-        parser.builder_.GetBufferPointer() + parser.builder_.GetSize());
     W::WorkerCallT call;
-    call.params = std::make_unique<D::FlatBufferDataT>();
-    for (const char* name : {"first", "second"}) {
-      auto port = std::make_unique<D::PortT>();
+    const std::pair<const char*, D::PortKind> ports[] = {
+        {"first", D::PortKind::Path},
+        {"second", D::PortKind::Path},
+        {"value", D::PortKind::FlatBuffer}};
+    for (const auto& [name, kind] : ports) {
+      auto port = std::make_unique<W::WorkerPortT>();
       port->name = name;
-      port->kind = D::PortKind::File;
-      port->optional = name == std::string_view("second");
-      port->root_type = file.root_type;
-      port->schema_bfbs = file.schema_bfbs;
+      port->kind = kind;
+      port->required = name == std::string_view("first");
       call.outputs.push_back(std::move(port));
     }
     request_buffer.Finish(W::WorkerCall::Pack(request_buffer, &call));
@@ -43,16 +34,18 @@ class NativeContract : public testing::Test {
 
   auto port(const char* name, std::string_view path)
       -> flatbuffers::Offset<C::CardPort> {
-    flatbuffers::FlatBufferBuilder payload;
-    const auto text = payload.CreateString(path);
-    const auto open = payload.StartTable();
-    payload.AddOffset(4, text);
-    payload.Finish(
-        flatbuffers::Offset<flatbuffers::Table>(payload.EndTable(open)));
-    const auto bytes =
-        card_buffer.CreateVector(payload.GetBufferPointer(), payload.GetSize());
     return C::CreateCardPort(card_buffer, card_buffer.CreateString(name),
-                             D::PortKind::File, bytes);
+                             D::PortKind::Path, 0,
+                             card_buffer.CreateString(path));
+  }
+
+  // Arbitrary bytes: the worker never opens a FlatBuffer output.
+  auto value(std::string_view bytes) -> flatbuffers::Offset<C::CardPort> {
+    return C::CreateCardPort(
+        card_buffer, card_buffer.CreateString("value"),
+        D::PortKind::FlatBuffer,
+        card_buffer.CreateVector(
+            reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()));
   }
 
   auto finish(const std::vector<flatbuffers::Offset<C::CardPort>>& ports)
@@ -61,34 +54,67 @@ class NativeContract : public testing::Test {
         C::CreateCardResult(card_buffer, card_buffer.CreateVector(ports)));
     return *flatbuffers::GetRoot<C::CardResult>(card_buffer.GetBufferPointer());
   }
+
+  auto outputs() const -> const flatbuffers::Vector<
+      flatbuffers::Offset<W::WorkerOutput>>* {
+    return W::GetWorkerMessage(response.GetBufferPointer())
+        ->value_as_WorkerResult()
+        ->outputs();
+  }
 };
 
 TEST_F(NativeContract, ValidRequiredAndAbsentOptionalComplete) {
   const auto& result = finish({port("first", "new/file")});
   EXPECT_FALSE(make_result(result, *request, {}, 1, response));
-  const auto* outputs = W::GetWorkerMessage(response.GetBufferPointer())
-                            ->value_as_WorkerResult()
-                            ->outputs();
-  ASSERT_EQ(outputs->size(), 1u);
-  EXPECT_EQ(outputs->Get(0)->name()->str(), "first");
-  EXPECT_EQ(outputs->Get(0)->forwarded_from(), nullptr);
+  ASSERT_EQ(outputs()->size(), 1u);
+  EXPECT_EQ(outputs()->Get(0)->name()->str(), "first");
+  EXPECT_EQ(outputs()->Get(0)->path()->str(), "new/file");
+  EXPECT_EQ(outputs()->Get(0)->bytes(), nullptr);
+  EXPECT_EQ(outputs()->Get(0)->forwarded_from(), nullptr);
 }
 
-TEST_F(NativeContract, MatchingFileReturnsInputPortName) {
+TEST_F(NativeContract, FlatBufferBytesPassUnopened) {
+  const std::string bytes("\x01\x02 not a table", 14);
+  const auto& result = finish({port("first", "a"), value(bytes)});
+  EXPECT_FALSE(make_result(result, *request, {}, 1, response));
+  ASSERT_EQ(outputs()->size(), 2u);
+  const auto* out = outputs()->Get(1)->bytes();
+  ASSERT_NE(out, nullptr);
+  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(out->data()),
+                             out->size()),
+            bytes);
+}
+
+TEST_F(NativeContract, MatchingPathReturnsInputPortName) {
   const auto& result = finish({port("first", "/staged/file")});
-  flatbuffers::FlatBufferBuilder names;
-  names.Finish(names.CreateString("input"));
-  const auto* input =
-      flatbuffers::GetRoot<flatbuffers::String>(names.GetBufferPointer());
-  EXPECT_FALSE(make_result(result, *request,
-                           {{{D::PortKind::File, "/staged/file"}, input}}, 1,
-                           response));
-  const auto* outputs = W::GetWorkerMessage(response.GetBufferPointer())
-                            ->value_as_WorkerResult()
-                            ->outputs();
-  ASSERT_EQ(outputs->size(), 1u);
-  ASSERT_NE(outputs->Get(0)->forwarded_from(), nullptr);
-  EXPECT_EQ(outputs->Get(0)->forwarded_from()->str(), "input");
+  EXPECT_FALSE(
+      make_result(result, *request, {{"/staged/file", "input"}}, 1, response));
+  ASSERT_EQ(outputs()->size(), 1u);
+  ASSERT_NE(outputs()->Get(0)->forwarded_from(), nullptr);
+  EXPECT_EQ(outputs()->Get(0)->forwarded_from()->str(), "input");
+}
+
+TEST_F(NativeContract, PathOutputNeedsAPathAndNoBytes) {
+  const auto rejected = [&](flatbuffers::Offset<C::CardPort> port) {
+    const auto failure = make_result(finish({port}), *request, {}, 1, response);
+    card_buffer.Clear();
+    return failure && failure->kind == D::FailureKind::output_invalid;
+  };
+  EXPECT_TRUE(rejected(C::CreateCardPort(
+      card_buffer, card_buffer.CreateString("first"), D::PortKind::Path)));
+  EXPECT_TRUE(rejected(C::CreateCardPort(
+      card_buffer, card_buffer.CreateString("first"), D::PortKind::Path,
+      card_buffer.CreateVector(std::vector<uint8_t>{1}),
+      card_buffer.CreateString("file"))));
+}
+
+TEST_F(NativeContract, WrongKindIsRejected) {
+  const auto& result = finish({C::CreateCardPort(
+      card_buffer, card_buffer.CreateString("first"), D::PortKind::FlatBuffer,
+      card_buffer.CreateVector(std::vector<uint8_t>{1}))});
+  const auto failure = make_result(result, *request, {}, 1, response);
+  ASSERT_TRUE(failure);
+  EXPECT_EQ(failure->kind, D::FailureKind::output_invalid);
 }
 
 TEST_F(NativeContract, RequiredOutputFailureIdentifiesThePort) {

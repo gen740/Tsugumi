@@ -66,7 +66,7 @@ def test_one_input_accepts_only_structurally_compatible_values(core_factory, pro
 
 @pytest.mark.parametrize("schema", [
     "namespace t; table Value { value:int; }",
-    'attribute "tsugumi"; table File { path:string; } table Outputs { file:File (tsugumi:"file"); } root_type Outputs;',
+    'attribute "tsugumi"; table File { path:string; } table Outputs { file:File (tsugumi: "path"); } root_type Outputs;',
 ], ids=["missing-output-catalog", "file-without-string-value"])
 def test_invalid_output_types_are_reported_to_the_client(core_factory, project, schema):
     """A Card with an invalid output catalog exposes a diagnostic to its client."""

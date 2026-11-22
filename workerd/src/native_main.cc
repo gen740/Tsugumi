@@ -3,7 +3,7 @@
 // after receiving the effects table.
 #include <dlfcn.h>
 #include <fcntl.h>
-#include <flatbuffers/reflection.h>
+#include <flatbuffers/flatbuffers.h>
 #include <signal.h>
 
 #include <algorithm>
@@ -135,34 +135,6 @@ auto load_card(const std::string& package, std::string& error)
 
 using Payload = flatbuffers::Vector<uint8_t>;
 
-struct MessageType {
-  const reflection::Schema* schema = nullptr;
-  const reflection::Object* root = nullptr;
-
-  MessageType(const Payload* bfbs, const flatbuffers::String* name) {
-    if (!bfbs || !name) return;
-    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
-    if (!reflection::VerifySchemaBuffer(verifier)) return;
-    schema = reflection::GetSchema(bfbs->data());
-    root = schema->objects()->LookupByKey(name->c_str());
-  }
-
-  auto verifies(const Payload* payload) const -> bool {
-    return root && !root->is_struct() && payload &&
-           flatbuffers::Verify(*schema, *root, payload->data(),
-                               payload->size());
-  }
-
-  // The File and Directory contracts carry the path in a string named value.
-  auto path(const Payload* payload) const -> const flatbuffers::String* {
-    const auto* field = root->fields()->LookupByKey("value");
-    if (!field || field->type()->base_type() != reflection::String)
-      return nullptr;
-    return flatbuffers::GetFieldS(*flatbuffers::GetAnyRoot(payload->data()),
-                                  *field);
-  }
-};
-
 auto aligned_payload(flatbuffers::FlatBufferBuilder& b, const Payload& data)
     -> flatbuffers::Offset<Payload> {
   b.ForceVectorAlignment(data.size(), sizeof(uint8_t),
@@ -200,48 +172,48 @@ auto card_failure(const C::CardFailure& value) -> Failure {
 }
 
 auto make_result(const C::CardResult& result, const W::WorkerCall& call,
-                 const std::map<std::pair<D::PortKind, std::string_view>,
-                                const flatbuffers::String*>& input_paths,
+                 const std::map<std::string_view, std::string_view>& input_paths,
                  uint64_t id, flatbuffers::FlatBufferBuilder& b)
     -> std::optional<Failure> {
   if (const auto* failure = result.failure()) return card_failure(*failure);
-  std::map<std::string_view, const D::Port*> missing;
+  std::map<std::string_view, const W::WorkerPort*> missing;
   for (const auto* port : *call.outputs())
     missing.emplace(port->name()->string_view(), port);
   std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
   if (const auto* ports = result.outputs()) {
     for (const auto* output : *ports) {
       const auto name = output->name()->string_view();
+      const auto invalid = [&](std::string message) {
+        return Failure{D::FailureKind::output_invalid, std::move(message),
+                       {{"port", std::string(name)}}};
+      };
       const auto found = missing.find(name);
       const auto* port = found == missing.end() ? nullptr : found->second;
       if (!port || output->kind() != port->kind())
-        return Failure{
-            D::FailureKind::output_invalid,
-            "unknown, duplicate, or wrong-kind output " + std::string(name),
-            {{"port", std::string(name)}}};
-      const auto* payload = output->bytes();
-      const MessageType type(port->schema_bfbs(), port->root_type());
-      if (!type.verifies(payload))
-        return Failure{
-            D::FailureKind::output_invalid,
-            "output " + std::string(name) + " does not match its type",
-            {{"port", std::string(name)}}};
-      flatbuffers::Offset<flatbuffers::String> forwarded;
-      if (port->kind() == D::PortKind::File ||
-          port->kind() == D::PortKind::Directory) {
-        const auto* path = type.path(payload);
-        if (!path || path->size() == 0)
-          return Failure{D::FailureKind::output_invalid,
-                         "output has no path",
-                         {{"port", std::string(name)}}};
-        if (const auto in =
-                input_paths.find({port->kind(), path->string_view()});
+        return invalid("unknown, duplicate, or wrong-kind output " +
+                       std::string(name));
+      flatbuffers::Offset<Payload> bytes;
+      flatbuffers::Offset<flatbuffers::String> path, forwarded;
+      if (port->kind() == D::PortKind::Path) {
+        const auto* value = output->path();
+        if (!value || value->size() == 0 ||
+            value->string_view().find('\0') != std::string_view::npos)
+          return invalid("output " + std::string(name) + " has no path");
+        if (output->bytes() && output->bytes()->size() != 0)
+          return invalid("Path output " + std::string(name) + " carries bytes");
+        path = b.CreateString(value->string_view());
+        if (const auto in = input_paths.find(value->string_view());
             in != input_paths.end())
-          forwarded = b.CreateString(in->second->string_view());
+          forwarded = b.CreateString(in->second);
+      } else {
+        if (output->path())
+          return invalid("FlatBuffer output " + std::string(name) +
+                         " carries a path");
+        if (const auto* value = output->bytes())
+          bytes = aligned_payload(b, *value);
       }
-      const auto bytes = aligned_payload(b, *payload);
-      outputs.push_back(
-          W::CreateWorkerOutput(b, b.CreateString(name), bytes, forwarded));
+      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name), bytes,
+                                              path, forwarded));
       missing.erase(found);
       if (b.GetSize() > kMaxFrame)
         return Failure{D::FailureKind::output_invalid,
@@ -249,7 +221,7 @@ auto make_result(const C::CardResult& result, const W::WorkerCall& call,
     }
   }
   for (const auto& [name, port] : missing)
-    if (!port->optional().value_or(false))
+    if (port->required())
       return Failure{D::FailureKind::output_invalid,
                      "required output " + std::string(name) + " is missing",
                      {{"port", std::string(name)}}};
@@ -275,32 +247,34 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      "the Card exceeded timeoutSeconds"};
     return std::nullopt;
   };
+  // The input and params bytes belong to the Card's SDK: they are copied
+  // aligned, never opened.
   flatbuffers::FlatBufferBuilder b;
   std::vector<flatbuffers::Offset<C::CardPort>> inputs;
-  std::map<std::pair<D::PortKind, std::string_view>, const flatbuffers::String*>
-      input_paths;
+  std::map<std::string_view, std::string_view> input_paths;
   for (const auto* input : *call.inputs()) {
-    const auto* value = input->value();
-    const MessageType type(value->schema_bfbs(), value->root_type());
-    if (!type.verifies(value->bytes()))
-      return Failure{
-          D::FailureKind::type_mismatch,
-          "input " + input->name()->str() + " does not match its type"};
-    if (input->kind() == D::PortKind::File ||
-        input->kind() == D::PortKind::Directory)
-      if (const auto* path = type.path(value->bytes()))
-        input_paths.emplace(std::pair{input->kind(), path->string_view()},
-                            input->name());
-    const auto bytes = aligned_payload(b, *value->bytes());
+    flatbuffers::Offset<Payload> bytes;
+    flatbuffers::Offset<flatbuffers::String> path;
+    const auto* location = input->path();
+    const auto* payload = input->bytes();
+    if (input->kind() == D::PortKind::Path && location &&
+        location->string_view().starts_with("/") &&
+        location->string_view().find('\0') == std::string_view::npos &&
+        (!payload || payload->size() == 0)) {
+      input_paths.emplace(location->string_view(), input->name()->string_view());
+      path = b.CreateString(location->string_view());
+    } else if (input->kind() == D::PortKind::FlatBuffer && !location) {
+      if (payload) bytes = aligned_payload(b, *payload);
+    } else {
+      return Failure{D::FailureKind::input_missing,
+                     "invalid Card input envelope",
+                     {{"port", input->name()->str()}}};
+    }
     inputs.push_back(C::CreateCardPort(
-        b, b.CreateString(input->name()->string_view()), input->kind(), bytes));
+        b, b.CreateString(input->name()->string_view()), input->kind(), bytes,
+        path));
   }
-  const auto* params = call.params();
-  const MessageType params_type(params->schema_bfbs(), params->root_type());
-  if (!params_type.verifies(params->bytes()))
-    return Failure{D::FailureKind::type_mismatch,
-                   "parameters do not match their type"};
-  const auto payload = aligned_payload(b, *params->bytes());
+  const auto payload = aligned_payload(b, *call.params());
   b.Finish(C::CreateCardInput(b, b.CreateVector(inputs), payload));
 
   if (auto failure = stop()) return failure;

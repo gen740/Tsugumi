@@ -40,6 +40,9 @@ std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset,
                                       uint64_t size);
 // SHA-256 (hex) of a file's content, read in parts.
 std::string sha256_file(const stdfs::path& p);
+// SHA-256 (hex) of a directory tree: every directory name and every regular
+// file's name and content hash, in sorted order. Links are hashed by name.
+std::string sha256_tree(const stdfs::path& p);
 void write_atomic(const stdfs::path& p, std::string_view data,
                   unsigned mode = 0644);
 void fsync_dir(const stdfs::path& dir);
@@ -80,6 +83,18 @@ auto link_beneath(const stdfs::path& root, const stdfs::path& rel,
                   const stdfs::path& destination) -> std::optional<uint64_t>;
 Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
                      size_t max_entries = SIZE_MAX);
+// Whether `rel` below root is a directory (true) or a regular file (false),
+// opened without following links. Anything else throws Error.
+bool directory_beneath(const stdfs::path& root, const stdfs::path& rel);
+// Copies one regular file, or a whole tree of directories and regular files,
+// from `rel` below root to `destination`, deciding which from lstat. Links and
+// special files in a tree throw Error. copy_file(from, to) copies one regular
+// file (`from` relative to root). Returns true for a directory.
+bool copy_path_beneath(
+    const stdfs::path& root, const stdfs::path& rel,
+    const stdfs::path& destination,
+    const std::function<void(const stdfs::path&, const stdfs::path&)>&
+        copy_file);
 
 // Exclusive advisory lock held for the lifetime of the object.
 class FileLock {

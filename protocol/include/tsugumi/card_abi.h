@@ -29,6 +29,10 @@ typedef struct tsugumi_effects {
   int64_t (*remaining_ms)(void* host);
 } tsugumi_effects;
 
+/* The payloads are FlatBuffers of card.fbs: `input` is a CardInput, the
+ * result a CardResult. A FlatBuffer port carries bytes the host never opens;
+ * a Path port carries a path to a regular file or a directory.
+ */
 typedef struct tsugumi_call {
   uint32_t abi_version; /* Checked before reading the rest of the layout. */
   tsugumi_bytes input;

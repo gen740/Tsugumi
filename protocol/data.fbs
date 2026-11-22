@@ -38,13 +38,13 @@ table NamedValue {
   /// SHA-256 (hex) of a recorded value's bytes, present on values read from
   /// the run history; it tells two values apart when inline_bytes is omitted.
   content_hash:string (id: 7);
-  /// Current location of the independently kept File / Directory content.
+  /// Current location of the independently kept Path content.
   /// Separate from the original recorded bytes, so copied projects retain
   /// the evidence's hash while reporting the content's actual location.
   file_path:string (id: 8);
   file_missing:bool (id: 9);
-  /// SHA-256 (hex) of a recorded File's content, independent of its storage
-  /// path. Kept with the record even when the file is no longer available.
+  /// SHA-256 (hex) of a recorded Path's file content, or tree:<hex> for a
+  /// directory. Kept with the record independently of the storage path.
   file_content_hash:string (id: 10);
   /// The run that owned this forwarded file no longer has its file record.
   file_deleted:bool (id: 11);

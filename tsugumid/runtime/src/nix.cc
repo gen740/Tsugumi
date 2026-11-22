@@ -344,9 +344,7 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
       return q + "\"";
     };
     auto kind_name = [](PortKind k) {
-      return k == PortKind::File        ? "file"
-             : k == PortKind::Directory ? "directory"
-                                        : "flatbuffer";
+      return k == PortKind::Path ? "path" : "flatbuffer";
     };
     auto list = [&](const std::vector<types::PortType>& ports,
                     const std::string& side) {

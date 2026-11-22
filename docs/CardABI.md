@@ -21,21 +21,36 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 | Schema | Fields |
 | --- | --- |
-| `CardPort` | `name`, `kind`, `bytes`: a FlatBuffer of the port's declared type, including File and Directory |
-| `CardInput` | `inputs`, `params`: a FlatBuffer of the generated `parameters.Params` table |
+| `CardPort` | `name`, `kind`, `bytes`, `path` |
+| `CardInput` | `inputs` for connected ports that arrived, and `params` as the generated `parameters.Params` buffer |
 | `CardResult` | `outputs`, `failure` |
 | `CardFailure` | `kind`, `message`, `source`, `line`, `cell` |
 
 `source` is relative to the Card definition and `line` is one-based. Both are optional.
 
-## File and Directory outputs
+`PortKind::FlatBuffer` carries the port's buffer in `bytes`. `PortKind::Path` carries a file or directory in `path` and leaves `bytes` empty. The core checks the fixed envelope, ABI version, frame and byte limits, and filesystem boundaries. The SDK interprets and verifies the input, parameter and output payloads against their schemas.
 
-- The Card creates the file or directory itself, under its working directory, and writes its path into the matching output.
-- There is no output directory, and the input carries no target path.
-- An output file is a regular file, not a link.
-  - Paths under `TMPDIR` and granted host paths are not accepted.
-  - A Directory output is a directory under the working directory that contains only regular files.
-- **Forward** is allowed. When a Card returns an input path unchanged, the original stored path is recorded and nothing is copied. A symlink that resolves to an input is rejected.
+## Path ports
+
+- A Path input carries its staged absolute path for the duration of the call.
+- A Card returns a new output as a relative or absolute path under its working directory. The worker determines at run time whether the path is a regular file or a directory. Directories may contain regular files and subdirectories. Symlinks and special files are rejected.
+- **Forwarding** returns a staged input path unchanged. The worker records the original stored path without copying it, both locally and remotely.
+
+## Built-in values
+
+Branch reads a condition buffer using this fixed layout.
+
+```fbs
+namespace tsugumi.builtin;
+table Condition { value:bool (id: 0); }
+```
+
+Collect emits the fixed table below. Each item preserves the member's name, kind, and opaque bytes or path in arrival order. Embedded paths refer to the original run data. Workers stage and remap paths carried by top-level Path ports.
+
+```fbs
+namespace tsugumi.builtin;
+table Collected { items:[Tsugumi.Card.CardPort] (id: 0); }
+```
 
 ## Collecting the result
 
@@ -64,13 +79,13 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
   | Run summary | Success or failure, the failure's details, timings and the versions used | Always recorded |
   | Logs | stdout and stderr | On or off |
   | Values | Input and output values | `recordIO` |
-  | Files and artifacts | File and Directory values, artifacts | `retainArtifact` |
+  | Files and artifacts | Path values and artifacts | `retainArtifact` |
 
 - Displays are not recorded. Nothing sent through `send` reaches history, traces, remote result files or exported apps. What to keep from views is decided after the views work.
 - Each category except the run summary can be turned on or off. The project sets the defaults, and each Card may override them per category.
 - The log size limit is a project setting.
 - A person can delete records from the history tree for each run and each category.
-- Structured data, such as FlatBuffers values, live in SQLite. File and Directory values and artifacts stay as files.
+- Structured data, such as FlatBuffers values, live in SQLite. Path values and artifacts stay in the filesystem.
 
 The cutover does not implement the per-category log setting yet. Logs are always recorded, up to 128 MiB per invocation.
 
@@ -107,7 +122,7 @@ int64_t (*remaining_ms)(void* host); /* -1: no deadline */
 ## Failures
 
 - A failure is returned in `CardResult.failure`, with return code 0.
-- An unknown kind or bad bytes become a fixed `CardFailure` kind.
+- The worker reports an invalid result envelope as a fixed failure. The SDK reports payload decoding errors.
 
 ## What the ABI does not have
 

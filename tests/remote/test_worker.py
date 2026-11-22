@@ -22,12 +22,11 @@ from harness import remote_worker as R
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.FlatBufferData import FlatBufferDataT
 from Tsugumi.Data.LogStream import LogStream
-from Tsugumi.Data.Port import PortT
 from Tsugumi.Data.PortKind import PortKind
-from Tsugumi.Worker.WorkerInput import WorkerInputT
-from test_worker_loading import PARAMS, card_package, wire_value
+from Tsugumi.Card.CardPort import CardPortT
+from Tsugumi.Worker.WorkerPort import WorkerPortT
+from test_worker_loading import PARAMS, card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
@@ -279,7 +278,7 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
 
     call = WorkerCallT(
         inputs=list(inputs), outputs=list(outputs),
-        params=wire_value(peer.root, "Params", "table Params {}", PARAMS),
+        params=list(PARAMS),
         deadlineMs=deadline_ms,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
@@ -393,26 +392,16 @@ read -r line < "$TEST_GATE"
     "forward-and-snapshot", "symlink", "byte-budget", "entry-budget", "configured-budget",
 ])
 def test_real_remote_output_boundary(worker, case):
-    from harness.observations import decode_scalar
-    from doubles.worker import scalar
-
     peer = worker
     job = "9" * 64
-    directory = case in ("symlink", "entry-budget")
-    kind = PortKind.Directory if directory else PortKind.File
-    compiled = wire_value(peer.root, "Path", "table Path { value:string; }",
-                          scalar("string", "inputs/0/original"))
     inputs, files = [], []
-    output = PortT(name="doc", kind=kind, schemaBfbs=compiled.schemaBfbs,
-                   rootType=compiled.rootType)
-    outputs = [output]
+    outputs = [WorkerPortT(name="doc", kind=PortKind.Path, required=True)]
     if case == "forward-and-snapshot":
         payload = b"original input bytes"
         digest = peer.upload(job, payload)
         files = [{"path": "inputs/0/original", "sha256": digest, "size": len(payload)}]
-        inputs = [WorkerInputT(name="doc", kind=PortKind.File, value=compiled)]
-        outputs.append(PortT(name="new_file", kind=PortKind.File,
-                             schemaBfbs=compiled.schemaBfbs, rootType=compiled.rootType))
+        inputs = [CardPortT(name="doc", kind=PortKind.Path, path="inputs/0/original")]
+        outputs.append(WorkerPortT(name="new_file", kind=PortKind.Path, required=True))
         body = """
           static const uint8_t latest[] = {0, 255, 128, 'v'};
           static const uint8_t superseded[] = {0, 0};
@@ -420,31 +409,31 @@ def test_real_remote_output_boundary(worker, case):
               call.effects->send(call.host, "unlisted", latest, sizeof(latest))) return 1;
           std::ofstream("new-file") << "snapshot";
           std::ofstream("unused") << "ignore";
-          out.file(input_path(in));
-          out.file("new-file", "new_file");
+          out.path(input_path(in));
+          out.path("new-file", "new_file");
         """
     elif case == "symlink":
         body = """
           fs::create_directory("tree");
           std::ofstream("tree/regular") << "data";
           fs::create_symlink("regular", "tree/link");
-          out.directory("tree");
+          out.path("tree");
         """
     elif case == "byte-budget":
         body = """
           std::ofstream("huge").close();
           fs::resize_file("huge", (64ull << 30) + 1);
-          out.file("huge");
+          out.path("huge");
         """
     elif case == "entry-budget":
         body = """
           fs::create_directory("tree");
           for (int i = 0; i < 1000; ++i)
             std::ofstream(fs::path("tree") / std::to_string(i)).close();
-          out.directory("tree");
+          out.path("tree");
         """
     else:
-        body = 'std::ofstream("file") << "four"; out.file("file");'
+        body = 'std::ofstream("file") << "four"; out.path("file");'
     budget = {"outputLimitBytes": 3, "outputLimitEntries": 1} if case == "configured-budget" else None
     spec = card_spec(peer, job, body, outputs=outputs, inputs=inputs, files=files, output_budget=budget)
     fingerprint = hashlib.sha256(spec).hexdigest()
@@ -476,9 +465,13 @@ def test_real_remote_output_boundary(worker, case):
             result_bytes(R.string(manifest.invocationResultSha256)))
         if case == "forward-and-snapshot":
             assert result.valueType == WorkerPayload.WorkerResult
-            assert {R.string(v.name): decode_scalar(bytes(v.bytes)) for v in result.value.outputs} == {
+            outputs = {R.string(v.name): v for v in result.value.outputs}
+            assert {name: R.string(v.path) for name, v in outputs.items()} == {
                 "doc": "inputs/0/original", "new_file": "out/new-file",
             }
+            # The writer names the forwarded input, as the local worker does.
+            assert R.string(outputs["doc"].forwardedFrom) == "doc"
+            assert outputs["new_file"].forwardedFrom is None
             assert result_bytes(entries["files/out/new-file"]) == b"snapshot"
             assert not any("original" in name or "unused" in name for name in entries)
         else:

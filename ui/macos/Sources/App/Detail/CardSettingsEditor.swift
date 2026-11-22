@@ -968,8 +968,8 @@ private struct ParamRow: View {
     let sweep = param["sweep"]?.array
     let sweepText = draft ?? JSONValue.array(sweep ?? []).serialized(pretty: false)
     let parsed = (try? JSONValue.parse(sweepText))?.array
-    let fileInput = model.kind == .input && name == "value" && type == "string" &&
-      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .file } ?? false)
+    let pathInput = model.kind == .input && name == "value" && type == "string" &&
+      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .path } ?? false)
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         if sweep != nil {
@@ -981,6 +981,15 @@ private struct ParamRow: View {
           Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
         } else {
           TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
+          if pathInput, let folder = model.session.definitionDir(model.cardKey) {
+            Menu("ファイルかフォルダを選択…") {
+              ForEach(pathChoices(model.session.sourcePaths, definitionDir: folder), id: \.self) { p in
+                Button(p) { set(.string(p)) }
+              }
+            }
+            .fixedSize()
+            .help("プロジェクトのファイルかフォルダを選びます。")
+          }
         }
         Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
           .guideTarget("param:\(name)")
@@ -997,7 +1006,7 @@ private struct ParamRow: View {
           if type.hasSuffix("[]") { Text("リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。") }
         }.font(.caption).foregroundStyle(.secondary)
       }
-      if fileInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
+      if pathInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
         Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
           .font(.caption).foregroundStyle(.secondary)
         if sweep == nil {
@@ -1094,11 +1103,11 @@ private struct PortsCategory: View {
           recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
           recordingOverride("recordIO", label: "入出力の値を記録")
           recordingOverride("retainArtifact", label: "出力ファイルと成果物を保持")
-          // Only File / Directory outputs can be kept as artifacts.
-          let keepable = (r?.outputs ?? []).filter { $0.kind == .file || $0.kind == .directory }
+          // Only Path outputs can be kept as artifacts.
+          let keepable = (r?.outputs ?? []).filter { $0.kind == .path }
           if keepable.isEmpty {
             LabeledContent("成果物にする出力") {
-              Text(r == nil ? "出力の型がまだ解決されていません" : "File / Directory の出力がないため、保持できる出力はありません")
+              Text(r == nil ? "出力の型がまだ解決されていません" : "Path の出力がないため、保持できる出力はありません")
                 .font(.callout).foregroundStyle(.secondary)
             }
           } else {
@@ -1107,7 +1116,7 @@ private struct PortsCategory: View {
               set: { model.definition?["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
               Text("なし").tag("")
               ForEach(keepable, id: \.name) { p in
-                Text("\(p.name)（\(p.kind == .file ? "File" : "Directory")）").tag(p.name)
+                Text(p.name).tag(p.name)
               }
             }
           }
@@ -1216,23 +1225,24 @@ private struct OutputPortsSection: View {
           Text(p.name).font(.body.monospaced()).frame(maxWidth: 120, alignment: .leading)
           TextField("用途", text: portNote(model, "outputs", p.name), prompt: Text("用途（何を出すか）"))
             .textFieldStyle(.roundedBorder).labelsHidden()
-          if types.isEmpty || model.outputsPath == nil {
-            Text((p.rootType ?? String(localized: "未解決")) + (p.optional ? String(localized: "（省略可）") : ""))
+          let selection = p.kind == .path ? "string" : p.rootType ?? ""
+          if model.outputsPath == nil {
+            Text((p.kind == .path ? "Path" : p.rootType ?? String(localized: "未解決")) +
+                 (p.optional ? String(localized: "（省略可）") : ""))
               .font(.caption).foregroundStyle(.secondary)
           } else {
-            Picker("型", selection: Binding(get: { p.rootType ?? "" }, set: { set(p.name, type: $0, kind: p.kind) })) {
-              if p.rootType == nil { Text("未解決").tag("") }
+            Picker("型", selection: Binding(get: { selection }, set: {
+              set(p.name, type: $0, kind: $0 == "string" ? .path : .flatbuffer)
+            })) {
+              if selection.isEmpty { Text("未解決").tag("").disabled(true) }
+              if p.kind != .path, let type = p.rootType, !types.contains(type) {
+                Text(short(type)).tag(type)
+              }
+              Text("Path").tag("string").help("Path の出力は、ファイルかフォルダ 1 つを渡します")
               ForEach(types, id: \.self) { Text(short($0)).tag($0).help($0) }
             }
             .labelsHidden().frame(maxWidth: 150)
             .help("_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）")
-            Picker("種類", selection: Binding(get: { p.kind }, set: { set(p.name, type: p.rootType ?? "", kind: $0) })) {
-              Text("値").tag(Tsugumi_Data_PortKind.flatbuffer)
-              Text("File").tag(Tsugumi_Data_PortKind.file)
-              Text("Directory").tag(Tsugumi_Data_PortKind.directory)
-            }
-            .labelsHidden().frame(maxWidth: 100)
-            .help("File / Directory は、型に文字列の value（パス）がある場合に選べます")
           }
         }
       }
@@ -1868,5 +1878,26 @@ struct FileNode: Identifiable, Hashable {
       FileNode(name: d, path: base + d + "/", children: tree(dirs[d]!, base: base + d + "/"))
     }
     return folders + leaves.sorted().map { FileNode(name: $0, path: base + $0, children: nil) }
+  }
+}
+
+/// Choices for an Input Card's Path source: every project file and folder of
+/// the Card's project, written as the core reads them (relative to the Card's
+/// definition folder, or project:<path> from the project root).
+func pathChoices(_ sourcePaths: [String], definitionDir: String) -> [String] {
+  let components = definitionDir.split(separator: "/")
+  guard components.count >= 2, components[components.count - 2] == "definitions" else { return [] }
+  let root = components.dropLast(2).map { $0 + "/" }.joined()
+  var paths = Set<String>()
+  for source in sourcePaths where source.hasPrefix(root) {
+    let rel = source.dropFirst(root.count)
+    // A nested project's files belong to that project.
+    let parts = rel.split(separator: "/")
+    if parts.isEmpty || parts[0] == "externals" { continue }
+    for n in 1...parts.count { paths.insert(root + parts[..<n].joined(separator: "/")) }
+  }
+  paths.remove(String(definitionDir.dropLast()))
+  return paths.sorted().map {
+    $0.hasPrefix(definitionDir) ? String($0.dropFirst(definitionDir.count)) : "project:" + $0.dropFirst(root.count)
   }
 }

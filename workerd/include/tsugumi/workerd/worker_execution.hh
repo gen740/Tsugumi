@@ -24,19 +24,16 @@ enum class OutputDelivery { local_paths, transferred_files };
 struct InvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-};
-
-struct InvocationParameters {
-  std::string bfbs;
-  std::string root;
-  std::string bytes;
+  // (output, input) pairs: a Path output that returns an input unchanged.
+  std::vector<std::pair<std::string, std::string>> forwards;
 };
 
 struct Invocation {
   // Borrowed for this synchronous invocation; never retained by the pool.
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
-  InvocationParameters params;
+  // The generated parameters buffer, passed to the Card unopened.
+  std::string params;
   std::filesystem::path output_directory;
   fs::OutputBudget output_budget;
   OutputDelivery delivery = OutputDelivery::local_paths;
@@ -49,7 +46,7 @@ struct Invocation {
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
   std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
-  std::function<InvocationParameters()> prepare_params;
+  std::function<std::string()> prepare_params;
   std::function<void(int64_t, int64_t)> on_timing;
   std::function<void(InvocationResult&)> validate;
   fs::TransferProgress transfer = {};
@@ -73,8 +70,9 @@ auto stage_input(const Value& value,
                  const std::atomic<bool>& cancel,
                  const fs::TransferProgress& progress) -> Value;
 
-// Admit bytes from a worker process before interpreting them as port values.
-auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
+// Admit the worker's outputs as port values by name, kind and presence. The
+// bytes are not opened.
+auto accept_outputs(std::vector<RawOutput> raw,
                     std::span<const types::PortType> ports)
     -> std::vector<Value>;
 

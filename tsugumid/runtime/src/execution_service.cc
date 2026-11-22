@@ -242,11 +242,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   workerd::Invocation invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
-  invocation.prepare_params = [&] {
-    const auto ptype = NixRunner::params_type(node);
-    return workerd::InvocationParameters{
-        ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node)};
-  };
+  invocation.prepare_params = [&] { return NixRunner::params_buffer(node); };
   invocation.output_directory = request.directory / "out";
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};

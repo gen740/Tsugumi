@@ -80,12 +80,12 @@ table Outputs { number:Number (required); }
 root_type Outputs;
 ```
 
-For a File output, the `value` parameter names a saved project source. A path such
+For a Path output, the `value` parameter names a saved project file or folder. A path such
 as `data/events.fits` is relative to the input Card's own definition folder;
 `project:definitions/shared/data/events.fits` explicitly uses the owning
 project's root to name a saved source in another Card. Inside an
 external project, these bases stay within that external project. Absolute paths
-and `..` components are rejected. The file is copied into the saved run before
+and `..` components are rejected. The file or folder is copied into the run before
 it is passed downstream, so later source edits do not change that run's file.
 
 ### The processing Card (Python)
@@ -188,14 +188,14 @@ The core prepares the Card's contract from its ports: `_inputs.fbs` from the con
 
 - An input port's value is a FlatBuffers message of the type its producer declared. An optional input can be absent.
 - Parameters are one `parameters.Params` message. A scalar parameter without a value is absent rather than zero.
-- The Card returns one value per output port it produces. A required port that is missing fails the call with `output_invalid`, and so does a value that does not match its port's type. Optional ports can be left out.
+- The Card returns one value per output port it produces. A missing required output fails the call with `output_invalid`. The SDK checks the payload against the port's type.
 - Numeric messages keep IEEE NaN, positive and negative infinity and signed zero.
 
 ### Building outputs
 
-File and Directory ports carry a path in the message's `value` field.
+A Path port carries the path directly.
 
-- **A new file or directory**: create it under the Card's working directory (a relative path such as `filtered.csv` is fine), finish writing and close it **before returning**, and put its path in the output's `value`. A Directory output holds regular files. Links, paths under `TMPDIR` and granted host paths are rejected as new outputs. There is no output directory handed to the Card.
+- **A new file or directory.** Create it under the Card's working directory, finish writing and close it **before returning**, then return its path. A relative path such as `filtered.csv` works. Directories may contain regular files and subdirectories. The worker rejects symlinks, paths under `TMPDIR` and granted host paths as new outputs.
 - **Forwarding an input**: return the input's path unchanged. Tsugumi records the stored original without copying it.
 
 The worker snapshots the new files after the call returns. Each call has limits on the total bytes and number of entries it outputs, set in the project's settings (64 GiB and 1,000 entries by default; forwarded inputs do not count). Exceeding them fails the call with `output_invalid`. [Run history](RunHistory.md#keep-and-open-artifacts) describes how outputs are kept.
@@ -417,11 +417,11 @@ The other types are built-in Cards with no code:
 | Type | Ports | Use |
 | --- | --- | --- |
 | `trigger` | out `out` | Where a whole run starts |
-| `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
-| `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
+| `input` | in `start` (optional), outs from `_outputs.fbs` | Passes on values or a project file or folder |
+| `branch` | ins `value`, `condition` (a [Condition buffer](CardABI.md#built-in-values)), outs `a` (true), `b` (false) | Sends to one side |
 | `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
 | `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
-| `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
+| `collect` | in `in`, out `out` | Sends a batch as one `Collected` buffer of opaque port envelopes |
 
 A Code Card can declare an input port and let the connection supply its type, for example to log any value it receives. Such a Card can print the value to stdout, which goes to its log, and send it to a `text` view.
 
@@ -436,10 +436,10 @@ Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 {"type": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
 ```
 
-### An input Card that hands on a project file
+### An input Card that passes on a project file or folder
 
-The file stays in the project; at run time it is copied into the run and the
-next Card receives its path.
+The editor has a picker for files and folders in the project. At run time the
+worker stages a copy and the next Card receives its path.
 
 `definitions/load/_card.json` (the path is relative to this Card's definition folder):
 
@@ -452,19 +452,17 @@ Use `project:definitions/shared/data/events.fits` for a saved source in another
 Card of the owning project.
 The same rules apply inside external projects: `project:` names that external
 project's root. Paths cannot be absolute or contain `..`, and must name a saved
-project source. The base never changes according to which file exists.
+project file or a folder containing saved sources. The base never changes according to which file exists.
 
-`_outputs.fbs` (a File port: one table whose only field is `value:string`):
+`_outputs.fbs` (a Path port):
 
 ```
 attribute "tsugumi";
-namespace data;
-table EventsFile { value:string; }
-table Outputs { events:EventsFile (required, tsugumi: "file"); }
+table Outputs { events:string (required, tsugumi: "path"); }
 root_type Outputs;
 ```
 
-The next Card reads the path from the port's `value`, for example `Path(input.events.value)` in Python.
+The next Card reads the path directly, for example `Path(input.events)` in Python.
 
 ### Code Card settings
 
@@ -543,9 +541,8 @@ An empty list yields an empty batch.
 
 Add a built-in `collect` after `score` to send one ordinary port value with an
 `items` vector, which the `summary` Card reads on its `results` port
-(`input.results.items`). Collect
-turns File or Directory batches into a Directory. The ordered `items` records
-contain each original name and a path relative to the Directory root.
+(`input.results.items`). Each item carries its name and kind, with the original
+bytes or path. See the fixed [Collected layout](CardABI.md#built-in-values).
 
 Refer to Nix exports as `inputs.<destination-port>`. Collect, Fork, Branch's
 `value` input and Workflow boundaries preserve a unique Code producer. Use a
@@ -582,17 +579,14 @@ in
 }
 ```
 
-The Card returns the store path as a plain string (a FlatBuffer table `{ path:string; }`, not a File
-port, whose new files must be created under the Card's working directory); every Card can read
-`/nix/store`. A long build step (a simulation) is fixed the same way with `pkgs.runCommand` or
-`stdenv.mkDerivation`.
+The Card returns the store location as data in a FlatBuffer table such as
+`{ path:string; }`. A long build step (a simulation) can use the same approach
+with `pkgs.runCommand` or `stdenv.mkDerivation`.
 
-### File and Directory outputs
+### Path outputs
 
-`demos/en/report/definitions/generate` (File) and `demos/en/report/definitions/render` (Directory):
-`attribute "tsugumi";`, the port marked `(required, tsugumi: "file")` or `(required, tsugumi:
-"directory")`, a table with `value:string`, and the files created under the Card's working
-directory before it returns ([Building outputs](#building-outputs)).
+Declare the output as `string (tsugumi: "path")` and create the file or directory
+under the Card's working directory before returning its path. See [Building outputs](#building-outputs).
 
 ### Reading a merge output
 

@@ -43,7 +43,7 @@
 namespace tsugumi {
 
 namespace W = Tsugumi::Worker;
-namespace D = Tsugumi::Data;
+namespace C = Tsugumi::Card;
 
 namespace {
 
@@ -919,13 +919,15 @@ auto WorkerProc::read_data() -> void {
                      &trace::kFlatBufferCodec);
       WorkerOutcome outcome;
       if (const auto* result = message->value_as_WorkerResult()) {
+        const auto text = [](const flatbuffers::String* value) {
+          return value ? value->str() : std::string();
+        };
         for (const auto* output : *result->outputs()) {
-          const auto name = output->name()->str();
-          outcome.outputs.emplace_back(
-              name,
-              std::string(output->bytes()->begin(), output->bytes()->end()));
-          if (const auto* input = output->forwarded_from())
-            outcome.forwards.emplace_back(name, input->str());
+          const auto* bytes = output->bytes();
+          outcome.outputs.push_back(
+              {output->name()->str(),
+               bytes ? std::string(bytes->begin(), bytes->end()) : "",
+               text(output->path()), text(output->forwarded_from())});
         }
       } else if (const auto* failure = message->value_as_WorkerFailure()) {
         outcome.failure = wire::failure(failure->failure());
@@ -960,8 +962,7 @@ WorkerOutcome WorkerProc::call(
     if (data_closed_)
       return {{},
               FailureData::make(FailureKind::worker_failed,
-                                "worker data channel closed"),
-              {}};
+                                "worker data channel closed")};
     awaiting_ = call_id;
   }
   try {
@@ -970,7 +971,7 @@ WorkerOutcome WorkerProc::call(
     workerd::clear_secret(frame);
     // A partially sent call cannot be resumed or reused.
     terminate();
-    return {{}, error.failure, {}};
+    return {{}, error.failure};
   }
   workerd::clear_secret(frame);
   std::optional<std::chrono::steady_clock::time_point> kill_at;
@@ -1028,41 +1029,39 @@ WorkerOutcome WorkerProc::call(
     }
     if (kill_at && now >= *kill_at) {
       terminate(true);
-      return {{}, stopped(), {}};
+      return {{}, stopped()};
     }
   }
 }
 
 std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::string& params_bfbs,
-                              const std::string& params_root,
                               const std::string& params,
                               const std::vector<types::PortType>& outputs,
                               std::optional<uint64_t> deadline_ms) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
-  auto bytes = [&](const std::string& s) {
-    return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()), s.size());
-  };
   // The Card reads each nested message in place.
   auto message = [&](const std::string& s) {
     b.ForceVectorAlignment(s.size(), sizeof(uint8_t),
                            FLATBUFFERS_MAX_ALIGNMENT);
-    return bytes(s);
+    return b.CreateVector(reinterpret_cast<const uint8_t*>(s.data()),
+                          s.size());
   };
-  std::vector<flatbuffers::Offset<W::WorkerInput>> ins;
+  std::vector<flatbuffers::Offset<C::CardPort>> ins;
   for (const auto& v : inputs) {
-    auto payload = message(v.bytes);
-    auto data = D::CreateFlatBufferData(
-        b, bytes(v.type->bfbs), b.CreateString(v.type->root_type), payload);
-    ins.push_back(
-        W::CreateWorkerInput(b, b.CreateString(v.name), v.kind, data));
+    const bool path = v.kind == PortKind::Path;
+    auto payload = path ? flatbuffers::Offset<flatbuffers::Vector<uint8_t>>()
+                        : message(v.bytes);
+    auto location = path ? b.CreateString(v.path)
+                         : flatbuffers::Offset<flatbuffers::String>();
+    ins.push_back(C::CreateCardPort(b, b.CreateString(v.name), v.kind, payload,
+                                    location));
   }
   auto insv = b.CreateVector(ins);
-  auto payload = message(params);
-  auto pdata = D::CreateFlatBufferData(b, bytes(params_bfbs),
-                                       b.CreateString(params_root), payload);
-  std::vector<flatbuffers::Offset<D::Port>> outs;
-  for (const auto& p : outputs) outs.push_back(wire::port(b, p));
+  auto pdata = message(params);
+  std::vector<flatbuffers::Offset<W::WorkerPort>> outs;
+  for (const auto& p : outputs)
+    outs.push_back(
+        W::CreateWorkerPort(b, b.CreateString(p.name), p.kind, !p.optional));
   auto outsv = b.CreateVector(outs);
   W::WorkerCallBuilder cb(b);
   cb.add_inputs(insv);

@@ -58,3 +58,28 @@ def recorded_input_json(client, directory, run_id, card, *, invocation=1, port="
     value = next(value for value in result.record.inputs if text(value.name) == port)
     return reference_json(directory, bytes(value.schemaBfbs), bytes(value.inlineBytes),
                           root_type=text(value.rootType))
+
+
+def collected_items(client, directory, run_id, card="collect"):
+    """Decode Collect envelopes, using the connected source type only for the member payloads."""
+    from .observations import read_output
+
+    record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
+    value, = record.outputs
+    payload = read_output(client, run_id, card=card)
+    items = reference_json(directory, bytes(value.schemaBfbs), payload,
+                           root_type=text(value.rootType))["items"]
+    if not items:
+        return []
+    source, = client.call("InputTypesRequest", card=path(card)).inputs
+    result = []
+    for index, item in enumerate(items):
+        if item["kind"] == "Path":
+            assert not item.get("bytes")
+            result.append(item["path"])
+        else:
+            assert item["kind"] == "FlatBuffer"
+            assert "path" not in item
+            result.append(reference_json(directory / str(index), bytes(source.type.schemaBfbs),
+                                         bytes(item["bytes"]), root_type=text(source.type.rootType)))
+    return result

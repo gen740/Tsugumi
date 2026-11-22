@@ -30,11 +30,12 @@ struct OutputBudget {
   uint64_t entries = 1000;
 };
 
-// Snapshot one File or Directory from a pinned working directory into private
-// storage. Resolve no symlinks and accept only regular files and directories.
+// Snapshot one Path output, a regular file or a whole directory as found, from
+// a pinned working directory into private storage. Resolve no symlinks to
+// outside the output and accept only regular files and directories.
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
-                         bool directory, const std::atomic<bool>& cancel,
+                         const std::atomic<bool>& cancel,
                          const TransferProgress& progress = {},
                          OutputBudget* budget = nullptr) -> void;
 

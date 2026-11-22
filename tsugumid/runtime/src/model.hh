@@ -150,7 +150,9 @@ struct ArtifactData {
   CardPath card;
   uint64_t invocation = 0;
   std::string output;
-  PortKind kind = PortKind::File;
+  // From lstat when retained: a directory is kept as the artifact's whole
+  // folder, a regular file as <folder>/<name>.
+  bool directory = false;
   std::string name;
   std::vector<ArtifactMemberData> members;
 };

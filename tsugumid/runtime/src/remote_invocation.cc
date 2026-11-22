@@ -195,17 +195,17 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   for (size_t i = 0; i < inputs.size(); ++i) {
     auto& input = inputs[i];
     if (input.kind == PortKind::FlatBuffer) continue;
-    const auto source = path_value(input);
-    if (!source) throw std::runtime_error("remote file input has no path");
-    const auto [root, rel] = input_location(file_roots, *source);
+    if (input.path.empty())
+      throw std::runtime_error("remote Path input has no path");
+    const auto [root, rel] = input_location(file_roots, input.path);
     const auto destination = staged_input_path(i, rel);
-    if (input.kind == PortKind::File) {
+    if (!fs::directory_beneath(root, rel)) {
       stage_file(root, rel, destination);
     } else {
       const auto listing = fs::list_beneath(root, rel, kMaxInputBlobs * 2);
       if (!listing.links.empty() || !listing.special.empty())
         throw std::runtime_error(
-            "remote Directory input contains a symlink or special file");
+            "remote directory input contains a symlink or special file");
       dirs.push_back(destination.generic_string());
       for (const auto& child : listing.directories)
         dirs.push_back(
@@ -214,15 +214,14 @@ auto stage_remote_invocation(const RemoteJobClient& client,
       for (const auto& name : listing.files)
         stage_file(root, rel / name, destination / name);
     }
-    input = with_path(input, destination.generic_string());
+    input.path = destination.generic_string();
   }
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
-  const auto ptype = NixRunner::params_type(request.node);
   const auto params = NixRunner::params_buffer(request.node);
   auto call = worker_call_frame(
-      1, inputs, ptype->bfbs, ptype->root_type, params, request.node.outputs,
+      1, inputs, params, request.node.outputs,
       request.node.settings.timeout_seconds
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)
@@ -366,19 +365,27 @@ auto import_remote_result(
     result.failure = wire::failure(failure->failure());
   } else if (const auto* worker = message->value_as_WorkerResult()) {
     const auto started = now_ms();
-    std::vector<std::pair<std::string, std::string>> raw;
-    for (const auto* output : *worker->outputs())
-      raw.emplace_back(
-          output->name()->str(),
-          std::string(reinterpret_cast<const char*>(output->bytes()->data()),
-                      output->bytes()->size()));
-    result.outputs = workerd::accept_outputs(std::move(raw), outputs);
+    // Paths are job-relative: out/... for a new output, or the staged path of
+    // the input that forwarded_from names, returned unchanged.
+    std::vector<RawOutput> raw;
+    const auto text = [](const flatbuffers::String* value) {
+      return value ? value->str() : std::string();
+    };
+    for (const auto* output : *worker->outputs()) {
+      const auto* bytes = output->bytes();
+      raw.push_back(
+          {output->name()->str(),
+           bytes ? std::string(reinterpret_cast<const char*>(bytes->data()),
+                               bytes->size())
+                 : std::string(),
+           text(output->path()), text(output->forwarded_from())});
+    }
     std::map<std::string, std::string> forwards;
-    for (const auto* output : *worker->outputs())
-      if (output->forwarded_from())
-        forwards.emplace(output->name()->str(),
-                         output->forwarded_from()->str());
-    std::vector<std::pair<stdfs::path, PortKind>> returned_paths;
+    for (const auto& output : raw)
+      if (!output.forwarded_from.empty())
+        forwards.emplace(output.name, output.forwarded_from);
+    result.outputs = workerd::accept_outputs(std::move(raw), outputs);
+    std::vector<stdfs::path> returned_paths;
     for (auto& value : result.outputs) {
       const auto forward = forwards.find(value.name);
       if (value.kind == PortKind::FlatBuffer && forward == forwards.end())
@@ -388,44 +395,41 @@ auto import_remote_result(
                       {{"port", value.name}});
       };
       if (value.kind == PortKind::FlatBuffer)
-        throw invalid("a value output cannot forward a file");
-      const auto relative = path_value(value);
-      if (!relative) throw invalid("missing remote output path");
-      const auto rel = remote::relative_path(*relative);
+        throw invalid("a FlatBuffer output cannot forward a path");
+      if (value.path.empty()) throw invalid("missing remote output path");
+      const auto rel = remote::relative_path(value.path);
       if (forward != forwards.end()) {
         const auto input =
             std::ranges::find(inputs, forward->second, &Value::name);
-        if (input == inputs.end() || input->kind != value.kind)
+        if (input == inputs.end() || input->kind != PortKind::Path)
           throw invalid("remote output forwards an unknown input");
-        const auto original = path_value(*input);
-        if (!original ||
-            rel != staged_input_path(input - inputs.begin(), *original))
+        if (input->path.empty() ||
+            rel != staged_input_path(input - inputs.begin(), input->path))
           throw invalid("remote output does not match the forwarded input");
-        value = with_path(value, *original);
+        value.path = input->path;
         continue;
       }
-      if (*rel.begin() != "out" || rel == "out")
+      if (*rel.begin() != "out")
         throw invalid("remote output is outside its output folder");
-      returned_paths.emplace_back(rel, value.kind);
-      value = with_path(value, (directory / rel).string());
+      returned_paths.push_back(rel);
+      value.path = (directory / rel).string();
     }
     std::set<stdfs::path> directories;
     for (const auto& dir : *environment.directories) {
       const auto rel = remote::relative_path(dir);
       if (*rel.begin() != "out" || !directories.insert(rel).second)
         throw std::runtime_error("invalid remote result directory");
-      if (rel != "out") count_entry();
+      if (rel != "out" ||
+          std::ranges::find(returned_paths, rel) != returned_paths.end())
+        count_entry();
       stdfs::create_directories(temp / "files" / rel);
     }
-    for (const auto& [rel, kind] : returned_paths) {
+    for (const auto& rel : returned_paths) {
       const auto status = stdfs::symlink_status(temp / "files" / rel);
-      const bool exists = kind == PortKind::File
-                              ? stdfs::is_regular_file(status)
-                              : stdfs::is_directory(status);
-      if (!exists)
-        throw Failed(
-            FailureKind::output_invalid,
-            "remote output file or directory is missing or has the wrong kind");
+      if (!stdfs::is_regular_file(status) && !stdfs::is_directory(status))
+        throw Failed(FailureKind::output_invalid,
+                     "remote output is missing or is neither a regular file "
+                     "nor a directory");
     }
     if (stop.stop_requested())
       throw BrokerDisconnected("remote result import stopped");

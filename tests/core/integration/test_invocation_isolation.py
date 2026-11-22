@@ -17,7 +17,7 @@ from Tsugumi.Data.RunState import RunState
 
 def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tmp_path):
     root = tmp_path / "p"
-    make = native_card('std::ofstream("data") << "wired"; out.file("data");',
+    make = native_card('std::ofstream("data") << "wired"; out.path("data");',
                        outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     write(root, {"make": make}, [card("secret", "make")], [])
     c = core_factory(project_root=root).connect()
@@ -32,7 +32,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
         std::string content;
         if (!(std::ifstream(file) >> content) || content != "wired") return 2;
         if (std::ofstream(file, std::ios::app)) return 3;
-        out.file(file);
+        out.path(file);
     ''', inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
     write(root, {"make": make, "read": reader},
           [card("secret", "make"), card("source", "make"), card("reader", "read")],
@@ -95,7 +95,7 @@ def test_reused_worker_clears_input_slots_and_keeps_its_work_directory(core_fact
         static unsigned count = 0;
         const char* name = ++count == 1 ? "first.txt" : "second.txt";
         std::ofstream(name) << name;
-        out.file(name);
+        out.path(name);
     ''', outputs=FILE_FBS, reuseWorker=True)
     reader = native_card(r'''
         const fs::path staged = input_path(in);
@@ -107,7 +107,7 @@ def test_reused_worker_clears_input_slots_and_keeps_its_work_directory(core_fact
                    !fs::exists("work-marker")) return 11;
         printf("staged=%s\n", staged.c_str());
         std::ofstream("current") << "current\n";
-        out.file("current");
+        out.path("current");
     ''', inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": reader}, [card("make", "make"), card("read", "read")],
@@ -167,7 +167,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
         fs::create_directory("nested");
         {create}
         std::ofstream("result") << "safe";
-        out.file("result");
+        out.path("result");
     ''', outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
@@ -201,7 +201,7 @@ def test_live_child_cannot_copy_a_host_file_by_swapping_output_links(core_factor
           }
           _exit(0);
         }
-        out.directory("tree");
+        out.path("tree");
     '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = native_card(body, outputs=DIRECTORY, retainArtifact=True)
     write(tmp_path / "p", {"race": definition}, [card("race", "race")], [])
@@ -272,19 +272,19 @@ def test_local_output_boundary(core_factory, tmp_path, case):
         body = r'''
             const auto file = fs::path(std::getenv("TMPDIR")) / "item";
             std::ofstream(file) << "outside the working directory";
-            out.file(file.string());
+            out.path(file.string());
         '''
     elif case == "linked":
         body = r'''
             std::ofstream("regular") << "inside";
             fs::create_symlink("regular", "linked");
-            out.file("linked");
+            out.path("linked");
         '''
     elif case == "byte-budget":
         body = r'''
             std::ofstream("large").close();
             fs::resize_file("large", (64ull << 30) + 1);
-            out.file("large");
+            out.path("large");
         '''
     else:
         outputs = DIRECTORY
@@ -292,7 +292,7 @@ def test_local_output_boundary(core_factory, tmp_path, case):
             fs::create_directory("many");
             for (unsigned i = 0; i < 1000; ++i)
               std::ofstream(fs::path("many") / std::to_string(i)).close();
-            out.directory("many");
+            out.path("many");
         '''
     definition = native_card(body, outputs=outputs, retainArtifact=True)
     write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])

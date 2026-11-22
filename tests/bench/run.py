@@ -28,8 +28,8 @@ PYTHON_RUN = '''inputs.tsugumi.pythonCard {
   }'''
 VALUE = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
 FILE = ('attribute "tsugumi"; table File { value:string; } '
-        'table Outputs { out:File (required, tsugumi:"file"); } root_type Outputs;')
-DIRECTORY = FILE.replace('tsugumi:"file"', 'tsugumi:"directory"')
+        'table Outputs { out:File (required, tsugumi: "path"); } root_type Outputs;')
+DIRECTORY = FILE
 
 # Metrics are emitted by the benchmark Card, not added to the product's SDK.
 BODY = '''import hashlib
@@ -279,7 +279,7 @@ def stage_project(root, scenario):
     from harness.real_cards import bash
     definitions = {"trigger": {"type": "trigger"},
                    "make": {**python_card("value-fresh"), "_outputs": constants["RICH"].format(ns="a") +
-                            'attribute "tsugumi"; table Doc { value:string; } table Outputs { rich:Rich (required); doc:Doc (required, tsugumi:"file"); } root_type Outputs;'},
+                            'attribute "tsugumi"; table Doc { value:string; } table Outputs { rich:Rich (required); doc:Doc (required, tsugumi: "path"); } root_type Outputs;'},
                    "check": {"type": "code", "inputs": [{"name": "rich"}, {"name": "doc"}],
                              "_outputs": constants["RICH"].format(ns="b") + 'table Outputs { checked:Rich (required); } root_type Outputs;',
                              "_nix": '{ pkgs, inputs, params }: { run = inputs.tsugumi.cppCard { sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; src = ./src; }; }'},

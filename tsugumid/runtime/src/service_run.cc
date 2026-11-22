@@ -1,5 +1,4 @@
 // Run, SDK, history, value, artifact, declared view file and log handlers.
-#include <flatbuffers/reflection.h>
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -737,37 +736,28 @@ void Service::run_record(RequestIn& req) {
         flatbuffers::Offset<flatbuffers::String> file_path;
         bool file_missing = false;
         bool file_deleted = false;
-        if (m.kind != PortKind::FlatBuffer) {
+        // A Path value's recorded bytes are its state-relative path.
+        if (m.kind == PortKind::Path) {
           file_missing = true;
-          auto type = std::make_shared<types::Type>();
-          type->bfbs = m.bfbs;
-          type->root_type = m.root_type;
-          flatbuffers::Verifier verifier(
-              reinterpret_cast<const uint8_t*>(m.bfbs.data()), m.bfbs.size());
-          if (reflection::VerifySchemaBuffer(verifier) && type->root() &&
-              types::verify(*type, data[i])) {
-            Value value{m.name, m.kind, type, data[i], {}};
-            if (const auto recorded = path_value(value)) {
-              const auto root = store_->state_dir() / "runs";
-              const auto rel = stdfs::path(*recorded).lexically_relative("runs");
-              const auto content = root / rel;
-              std::error_code error;
-              if (fs::valid_relative_path(rel.generic_string()) &&
-                  fs::resolves_inside(root, content)) {
-                const auto status = stdfs::symlink_status(content, error);
-                file_missing = error || (m.kind == PortKind::File
-                                             ? !stdfs::is_regular_file(status)
-                                             : !stdfs::is_directory(status));
-                if (!file_missing) {
-                  file_path = b.CreateString(content.string());
-                } else {
-                  const auto owner = rel.begin()->string();
-                  if (owner != run_id && crypto::is_run_id(owner))
-                    file_deleted = history_->read([&](sql::Db& db) {
-                      return !History::owns_recorded_file(db, owner, *recorded);
-                    });
-                }
-              }
+          const auto& recorded = data[i];
+          const auto root = store_->state_dir() / "runs";
+          const auto rel = stdfs::path(recorded).lexically_relative("runs");
+          const auto content = root / rel;
+          std::error_code error;
+          if (!recorded.empty() &&
+              fs::valid_relative_path(rel.generic_string()) &&
+              fs::resolves_inside(root, content)) {
+            const auto status = stdfs::symlink_status(content, error);
+            file_missing = error || (!stdfs::is_regular_file(status) &&
+                                     !stdfs::is_directory(status));
+            if (!file_missing) {
+              file_path = b.CreateString(content.string());
+            } else {
+              const auto owner = rel.begin()->string();
+              if (owner != run_id && crypto::is_run_id(owner))
+                file_deleted = history_->read([&](sql::Db& db) {
+                  return !History::owns_recorded_file(db, owner, recorded);
+                });
             }
           }
         }
@@ -901,7 +891,7 @@ void Service::artifact_list(RequestIn& req) {
     auto mv = b.CreateVector(mem);
     out.push_back(R::CreateArtifactInfo(
         b, b.CreateString(a.artifact_id), b.CreateString(a.run_id),
-        wire::path(b, a.card), a.invocation, b.CreateString(a.output), a.kind,
+        wire::path(b, a.card), a.invocation, b.CreateString(a.output), a.directory,
         b.CreateString(a.name), mv));
   }
   auto v = b.CreateVector(out);
@@ -933,15 +923,15 @@ void Service::artifact_read(RequestIn& req) {
   if (!a || a->members.empty())
     throw Failed(FailureKind::not_found, "unknown artifact");
   const ArtifactMemberData* member = nullptr;
-  if (a->kind == PortKind::File) {
+  if (!a->directory) {
     if (r->member())
       throw Failed(FailureKind::invalid_request,
-                   "File artifacts have no members");
+                   "a file artifact has no members");
     member = &a->members.front();
   } else {
     if (!r->member())
       throw Failed(FailureKind::invalid_request,
-                   "member is required for Directory artifacts");
+                   "member is required for a directory artifact");
     std::string m = r->member()->str();
     if (!fs::valid_relative_path(m))
       throw Failed(FailureKind::invalid_path, "invalid member path");
