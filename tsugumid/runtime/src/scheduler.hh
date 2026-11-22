@@ -18,9 +18,12 @@
 
 namespace tsugumi {
 
+namespace sql { class Db; }
+
 class Service;
 class RunExec;
 struct RemoteJobRecord;
+struct LogRead;
 
 struct RunPlanData {
   std::vector<CardPath> targets;
@@ -68,6 +71,7 @@ class Scheduler {
   // OperationReceipt bytes of the RunAccepted result.
   std::string accept(DocumentPtr doc, const RunParams& p);
   std::optional<RunStatusData> active_status();
+  auto live_log(const std::string& run_id, const std::function<LogRead(sql::Db&)>& read) -> LogRead;
   RunStatusData cancel(const std::string& run_id);
   std::optional<Note> latest_display_note(const std::string& card_key);
   // A committed change of the document. The display of a Card that left

@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 51 requests.
+There are 53 requests.
 
 ## Connection
 
@@ -291,6 +291,8 @@ No fields.
 | [`RunLatestInvocations`](#runlatestinvocations) | InvocationPage | Read each Card's latest invocation in a run. |
 | [`RunRecord`](#runrecord) | RecordResult | Read a Card's invocation record; choose invocation or follow_latest=true. |
 | [`RunValueRead`](#runvalueread) | FileContent | Read a recorded port value page; offset defaults to 0. |
+| [`RunCategoryDelete`](#runcategorydelete) | RunCategoryDeleteResult | Delete one category from a finished run. |
+| [`RunFileReferences`](#runfilereferences) | RunFileReferences | Find runs that refer to a run's retained files. |
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
 | [`RunDefinitionPaths`](#rundefinitionpaths) | RunDefinitionPaths | Accepted definition files for the recorded Card and its enclosing Cards, or for the whole run if card is absent. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
@@ -345,6 +347,20 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
+### RunCategoryDelete
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `op_id` | `string` | yes |  |
+| `run_id` | `string` | yes |  |
+| `category` | `RunRecordCategory` |  |  |
+
+### RunFileReferences
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `run_id` | `string` | yes |  |
+
 ### RunHistoryDelete
 
 | Field | Type | Required | Description |
@@ -394,6 +410,7 @@ No fields.
 | `before` | `uint64` |  | Read up to limit_bytes immediately before this exclusive byte offset. Cannot be combined with tail or a nonzero offset. |
 | `terminal` | `bool` |  | Read the terminal display. Offsets and the size use four units per Unicode scalar. |
 | `terminal_since` | `uint64` |  | Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then. |
+| `live` | `bool` |  | Read stdout or stderr from the active run's transient log. |
 
 ### RunEnvironments
 
@@ -535,6 +552,7 @@ Sent from `tsugumid` to connected clients.
 - `DisplayUpdated`
 - `LogAvailable`
 - `TraceChanged`
+- `RunCategoryDeleteResult`
 
 ### Run events
 
@@ -651,5 +669,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostFolderCreateRequest` | `parent: string` (required), `name: string` (required) |
 | `CardSecretListRequest` | `project_id: string` (required) |
 | `CardSecretSetRequest` | `project_id: string` (required), `name: string` (required), `value: string`, `remove: bool` |
+| `RunCategoryDeleteRequest` | `project_id: string` (required), `run_id: string` (required), `category: Tsugumi.RPC.RunRecordCategory`, `op_id: string` (required) |
+| `RunFileReferencesRequest` | `project_id: string` (required), `run_id: string` (required) |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `RunFileReferences`.

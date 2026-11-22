@@ -89,7 +89,7 @@ auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
 // preserve resident reuse.
 auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
                    std::span<const Value> original_inputs, int output_root,
-                   const std::string& output_alias, int input_root,
+                   const std::string& output_alias,
                    const std::filesystem::path& input_directory,
                    const std::filesystem::path& destination,
                    OutputDelivery delivery, const std::atomic<bool>& cancel,

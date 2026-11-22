@@ -38,7 +38,9 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   const std::string bytes("\0\xff\x80\xc3(\n", 6);
   std::vector<std::string> runs, hashes;
   for (int i = 0; i < 3; ++i) {
-    const auto file = directory / ("file-" + std::to_string(i));
+    const auto run_id = std::to_string(i + 1);
+    const auto relative = std::filesystem::path("runs") / run_id / "values/file";
+    const auto file = directory / relative;
     fs::write_atomic(file, i == 2 ? "other" : bytes);
     flatbuffers::FlatBufferBuilder builder;
     const auto text = builder.CreateString(file.string());
@@ -52,9 +54,10 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
         *type,
         std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()),
                     builder.GetSize()),
-        {}};
+        {},
+        relative.generic_string()};
     RunSummaryData run;
-    run.status.run_id = std::to_string(i + 1);
+    run.status.run_id = run_id;
     run.status.state = RunState::succeeded;
     InvocationRecordData invocation;
     invocation.summary.run_id = *run.status.run_id;
@@ -68,7 +71,7 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
       History::insert_run(db, run, crypto::uuid4());
       original.complete_invocation(db, invocation);
     });
-    hashes.push_back(crypto::sha256_hex(value.bytes));
+    hashes.push_back(crypto::sha256_hex(with_path(value, *value.recorded_path).bytes));
     runs.push_back(*run.status.run_id);
     std::filesystem::remove(file);
   }

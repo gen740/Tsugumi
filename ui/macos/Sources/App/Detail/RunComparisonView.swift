@@ -333,7 +333,7 @@ struct RunComparisonView: View {
       }
     }
     .frame(minWidth: 800, idealWidth: 1100, minHeight: 500, idealHeight: 760)
-    .task(id: "\(left)|\(right)|\(attempt)") { await load() }
+    .task(id: "\(left)|\(right)|\(attempt)|\(session.recordingRevision)") { await load() }
   }
 
   private func runPicker(_ label: LocalizedStringKey, selection: Binding<String>) -> some View {

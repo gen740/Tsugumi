@@ -1094,20 +1094,22 @@ private struct PortsCategory: View {
       if model.kind == .fork && model.definition != nil { ForkOutputsSection(model: model) } else { OutputPortsSection(model: model) }
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("記録と成果物") {
-          toggle("recordIO", label: "入出力を記録")
-          toggle("retainArtifact", label: "成果物を保持")
+          recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
+          recordingOverride("recordDisplays", label: "記録指定のある表示を記録")
+          recordingOverride("recordIO", label: "入出力の値を記録")
+          recordingOverride("retainArtifact", label: "出力ファイルと成果物を保持")
           // Only File / Directory outputs can be kept as artifacts.
           let keepable = (r?.outputs ?? []).filter { $0.kind == .file || $0.kind == .directory }
           if keepable.isEmpty {
-            LabeledContent("保持する出力") {
+            LabeledContent("成果物にする出力") {
               Text(r == nil ? "出力の型がまだ解決されていません" : "File / Directory の出力がないため、保持できる出力はありません")
                 .font(.callout).foregroundStyle(.secondary)
             }
           } else {
-            Picker("保持する出力", selection: Binding(
+            Picker("成果物にする出力", selection: Binding(
               get: { model.definition?["artifactOutput"]?.string ?? "" },
               set: { model.definition?["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
-              Text("選んでください").tag("")
+              Text("なし").tag("")
               ForEach(keepable, id: \.name) { p in
                 Text("\(p.name)（\(p.kind == .file ? "File" : "Directory")）").tag(p.name)
               }
@@ -1130,9 +1132,14 @@ private struct PortsCategory: View {
     model.definition?["inputs"] = inputs.isEmpty ? nil : .array(inputs)
   }
 
-  private func toggle(_ name: String, label: LocalizedStringKey) -> some View {
-    Toggle(label, isOn: Binding(get: { model.definition?[name]?.bool ?? false },
-                                set: { model.definition?[name] = $0 ? .bool(true) : nil }))
+  private func recordingOverride(_ name: String, label: LocalizedStringKey) -> some View {
+    Picker(label, selection: Binding(
+      get: { model.definition?[name]?.bool },
+      set: { model.definition?[name] = $0.map { .bool($0) } })) {
+      Text("プロジェクト設定に従う").tag(nil as Bool?)
+      Text("オン").tag(true as Bool?)
+      Text("オフ").tag(false as Bool?)
+    }
   }
 }
 
