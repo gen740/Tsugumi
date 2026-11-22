@@ -72,7 +72,7 @@ class DefinitionEvaluation : public ::testing::Test {
     return std::make_unique<NixEvaluator>(
         "pkgs: args: { executionList = false; implementationCount = 1; "
         "implementationLabels = builtins.toJSON [ \"\" ]; "
-        "manifest = pkgs.writeText \"evaluation-test\" (" +
+        "plan = pkgs.writeText \"evaluation-test\" (" +
             body + "); }",
         std::vector<std::string>{root.string()});
   }
