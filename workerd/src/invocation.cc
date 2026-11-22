@@ -2,7 +2,6 @@
 #include "tsugumi/workerd/invocation.hh"
 
 #include <fcntl.h>
-#include <flatbuffers/reflection.h>
 #include <poll.h>
 #include <unistd.h>
 
@@ -125,19 +124,6 @@ auto bytes(const flatbuffers::Vector<uint8_t>* value) -> std::string {
   return {reinterpret_cast<const char*>(value->data()), value->size()};
 }
 
-auto type(const flatbuffers::Vector<uint8_t>* schema,
-          const flatbuffers::String* root) -> types::TypeRef {
-  if (!schema || !root) throw std::runtime_error("missing remote port schema");
-  flatbuffers::Verifier verifier(schema->data(), schema->size());
-  if (!reflection::VerifySchemaBuffer(verifier))
-    throw std::runtime_error("invalid remote port schema");
-  auto result = std::make_shared<types::Type>();
-  result->bfbs = bytes(schema);
-  result->root_type = root->str();
-  if (!result->root()) throw std::runtime_error("unknown remote port type");
-  return result;
-}
-
 auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   flatbuffers::FlatBufferBuilder b;
   W::WorkerPayload kind;
@@ -147,13 +133,27 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
     body =
         W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
   } else {
+    // Paths are job-relative: out/... for new outputs, inputs/... for an
+    // input returned unchanged, which forwarded_from names as on the
+    // local path.
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
     for (const auto& value : outcome.outputs) {
+      const bool path = value.kind == PortKind::Path;
       auto data =
-          b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                         value.bytes.size());
-      outputs.push_back(
-          W::CreateWorkerOutput(b, b.CreateString(value.name), data));
+          path ? flatbuffers::Offset<flatbuffers::Vector<uint8_t>>()
+               : b.CreateVector(
+                     reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                     value.bytes.size());
+      auto location = path ? b.CreateString(value.path)
+                           : flatbuffers::Offset<flatbuffers::String>();
+      const auto forward =
+          std::ranges::find(outcome.forwards, value.name,
+                            &std::pair<std::string, std::string>::first);
+      auto forwarded = forward == outcome.forwards.end()
+                           ? flatbuffers::Offset<flatbuffers::String>()
+                           : b.CreateString(forward->second);
+      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(value.name),
+                                              data, location, forwarded));
     }
     kind = W::WorkerPayload::WorkerResult;
     body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
@@ -222,36 +222,30 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
 
   std::vector<Value> values;
   for (const auto* port : *call.inputs()) {
-    const auto* data = port->value();
-    Value value{port->name()->str(),
-                port->kind(),
-                type(data->schema_bfbs(), data->root_type()),
-                bytes(data->bytes()),
-                {}};
-    if (value.kind != PortKind::FlatBuffer) {
-      const auto logical = path_value(value);
-      if (!logical) throw std::runtime_error("remote input value lacks a path");
-      const auto rel = remote::relative_path(*logical);
+    Value value{port->name()->str(), port->kind(), nullptr, {}, {}};
+    if (value.kind == PortKind::Path) {
+      if (!port->path())
+        throw std::runtime_error("remote Path input lacks a path");
+      const auto rel = remote::relative_path(port->path()->str());
       if (*rel.begin() != "inputs")
         throw std::runtime_error("remote input path is outside staging");
-      value = with_path(value, (input / rel).string());
+      value.path = (input / rel).string();
+    } else if (const auto* data = port->bytes()) {
+      value.bytes = bytes(data);
     }
     values.push_back(std::move(value));
   }
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
-    outputs.push_back({port->name()->str(), port->kind(),
-                       port->optional().value_or(false),
-                       type(port->schema_bfbs(), port->root_type())});
+    outputs.push_back(
+        {port->name()->str(), port->kind(), !port->required(), nullptr});
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
   spawn.secrets.reset();
   workerd::Invocation request;
   request.inputs = values;
   request.outputs = std::move(outputs);
-  request.params.bfbs = bytes(call.params()->schema_bfbs());
-  request.params.root = call.params()->root_type()->str();
-  request.params.bytes = bytes(call.params()->bytes());
+  request.params = bytes(call.params());
   request.output_directory = directory / "result/files/out";
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
   request.input_directory = input;

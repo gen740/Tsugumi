@@ -53,7 +53,9 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// A value travelling on a port. `type` is the port message type.
+// A value travelling on a port. A FlatBuffer value carries `bytes` of the
+// port message `type`; the core never opens them. A Path value carries `path`
+// (a regular file or a directory, decided from lstat when needed) and no bytes.
 struct Value {
   std::string name;  // port name
   PortKind kind = PortKind::FlatBuffer;
@@ -62,10 +64,8 @@ struct Value {
   std::optional<std::string> artifact_id;
   // Project state-relative history path, carried independently of staging.
   std::optional<std::string> recorded_path = std::nullopt;
+  std::string path = {};
 };
-
-auto with_path(const Value& value, const std::string& path) -> Value;
-auto path_value(const Value& value) -> std::optional<std::string>;
 
 struct WorkerDisplayData {
   std::string view;

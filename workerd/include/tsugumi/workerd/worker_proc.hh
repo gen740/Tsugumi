@@ -66,10 +66,18 @@ struct WorkerSpawn {
   std::optional<gid_t> gid;
 };
 
+// One output as the worker reported it: bytes of a FlatBuffer output, or the
+// path of a Path output and the input it forwards unchanged, if any.
+struct RawOutput {
+  std::string name;
+  std::string bytes;
+  std::string path;
+  std::string forwarded_from;
+};
+
 struct WorkerOutcome {
-  std::vector<std::pair<std::string, std::string>> outputs;
+  std::vector<RawOutput> outputs;
   std::optional<FailureData> failure;
-  std::vector<std::pair<std::string, std::string>> forwards;
 };
 
 // Whether a Card worker runs as its own uid on the host (folders it writes are
@@ -186,8 +194,6 @@ class WorkerProc {
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
 std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::string& params_bfbs,
-                              const std::string& params_root,
                               const std::string& params,
                               const std::vector<types::PortType>& outputs,
                               std::optional<uint64_t> deadline_ms);

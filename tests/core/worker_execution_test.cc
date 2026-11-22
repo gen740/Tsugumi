@@ -2,6 +2,7 @@
 
 #include <fcntl.h>
 #include <gtest/gtest.h>
+#include <sys/stat.h>
 #include <unistd.h>
 
 #include <fstream>
@@ -20,11 +21,6 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
             ("tsugumi-delivery-" + crypto::uuid4());
     stdfs::create_directories(root_ / "worker/work");
     stdfs::create_directories(root_ / "worker/inputs");
-    std::string error;
-    const auto compiled =
-        types::compile("table Path { value:string; }", "Path", &error);
-    ASSERT_TRUE(compiled) << error;
-    type_ = *compiled;
     output_ = ::open((root_ / "worker/work").c_str(),
                      O_RDONLY | O_DIRECTORY | O_CLOEXEC);
     input_ = ::open((root_ / "worker/inputs").c_str(),
@@ -38,101 +34,110 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
     std::error_code error;
     stdfs::remove_all(root_, error);
   }
-  auto value(const std::string& name, PortKind kind, const stdfs::path& path)
+  static auto input(const std::string& name, const stdfs::path& path)
       -> Value {
-    std::string bytes, error;
-    EXPECT_TRUE(types::json_to_flatbuffer(*type_, R"({"value":"placeholder"})",
-                                          &bytes, &error))
-        << error;
-    return with_path({name, kind, type_, bytes, {}}, path.string());
+    Value value{name, PortKind::Path, nullptr, {}, {}};
+    value.path = path.string();
+    return value;
   }
-  auto stage(WorkerOutcome& outcome, PortKind kind,
-             const std::vector<Value>& inputs = {},
+  // Stages one Path output and returns its delivered path.
+  auto stage(RawOutput output, const std::vector<Value>& inputs = {},
              const std::vector<Value>& original = {},
-             fs::OutputBudget budget = {}) -> void {
+             fs::OutputBudget budget = {}) -> std::string {
     const std::atomic<bool> cancel{false};
-    const std::vector<types::PortType> ports{{"result", kind, false, type_}};
-    auto outputs = accept_outputs(outcome.outputs, ports);
-    stage_outputs(outputs, inputs, original, outcome.forwards, output_,
+    const std::vector<types::PortType> ports{
+        {"result", PortKind::Path, false, nullptr}};
+    std::vector<std::pair<std::string, std::string>> forwards;
+    if (!output.forwarded_from.empty())
+      forwards.emplace_back(output.name, output.forwarded_from);
+    auto outputs = accept_outputs({std::move(output)}, ports);
+    stage_outputs(outputs, inputs, original, forwards, output_,
                   (root_ / "worker/work").string(), root_ / "worker/inputs",
                   root_ / "result/files/out", GetParam(), cancel, {}, budget);
-    for (size_t i = 0; i < outputs.size(); ++i)
-      outcome.outputs[i].second = std::move(outputs[i].bytes);
+    return outputs.at(0).path;
+  }
+  static auto produced(const stdfs::path& path) -> RawOutput {
+    return {"result", {}, path.string(), {}};
   }
   stdfs::path root_;
-  types::TypeRef type_;
   int output_ = -1;
   int input_ = -1;
 };
 
-TEST_P(WorkerDelivery, CopiesOnlyDeclaredFiles) {
+TEST_P(WorkerDelivery, CopiesOnlyTheReturnedFile) {
   fs::write_atomic(root_ / "worker/work/declared", "declared");
   fs::write_atomic(root_ / "worker/work/unused", "unused");
-  const auto produced =
-      value("result", PortKind::File, root_ / "worker/work/declared");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
-  stage(outcome, PortKind::File);
+  const auto result = stage(produced(root_ / "worker/work/declared"));
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/declared"), "declared");
   EXPECT_FALSE(stdfs::exists(root_ / "result/files/out/unused"));
-  const auto result = path_value(
-      Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
   EXPECT_EQ(result, GetParam() == OutputDelivery::local_paths
                         ? (root_ / "result/files/out/declared").string()
                         : "out/declared");
 }
 
+TEST_P(WorkerDelivery, RelativePathIsUnderTheWorkingDirectory) {
+  fs::write_atomic(root_ / "worker/work/relative", "relative");
+  stage(produced("relative"));
+  EXPECT_EQ(fs::read_file(root_ / "result/files/out/relative"), "relative");
+}
+
 TEST_P(WorkerDelivery, CopiesOnlyRegularDirectoryContents) {
   fs::write_atomic(root_ / "worker/work/tree/nested/file", "directory");
   stdfs::create_directories(root_ / "worker/work/tree/empty");
-  const auto produced =
-      value("result", PortKind::Directory, root_ / "worker/work/tree");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
-  stage(outcome, PortKind::Directory);
+  stage(produced(root_ / "worker/work/tree"));
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/tree/nested/file"),
             "directory");
   EXPECT_TRUE(stdfs::is_directory(root_ / "result/files/out/tree/empty"));
 }
 
+TEST_P(WorkerDelivery, PathOutsideTheWorkingDirectoryIsRejected) {
+  fs::write_atomic(root_ / "outside", "private");
+  EXPECT_THROW(stage(produced(root_ / "outside")), Failed);
+  EXPECT_THROW(stage(produced("../outside")), Failed);
+  EXPECT_FALSE(stdfs::exists(root_ / "result/files/out"));
+}
+
 TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
   fs::write_atomic(root_ / "outside", "private");
   stdfs::create_symlink(root_ / "outside", root_ / "worker/work/link");
-  const auto produced =
-      value("result", PortKind::File, root_ / "worker/work/link");
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
-  EXPECT_THROW(stage(outcome, PortKind::File), Failed);
-  EXPECT_FALSE(outcome.failure);
+  EXPECT_THROW(stage(produced(root_ / "worker/work/link")), Failed);
   EXPECT_FALSE(stdfs::exists(root_ / "result/files/out/link"));
+}
+
+TEST_P(WorkerDelivery, SpecialFileIsNeitherAFileNorADirectory) {
+  ASSERT_EQ(::mkfifo((root_ / "worker/work/fifo").c_str(), 0600), 0);
+  EXPECT_THROW(stage(produced(root_ / "worker/work/fifo")), Failed);
 }
 
 TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
   fs::write_atomic(root_ / "worker/inputs/inputs/0/file", "forwarded");
-  const auto staged =
-      value("input", PortKind::File, root_ / "worker/inputs/inputs/0/file");
-  const auto original =
-      value("input", PortKind::File, root_ / "recorded/original");
-  WorkerOutcome outcome{{{"result", staged.bytes}}, {}, {}};
-  outcome.forwards.emplace_back("result", "input");
-  stage(outcome, PortKind::File, {staged}, {original}, {0, 0});
-  const auto delivered = path_value(
-      Value{"result", PortKind::File, type_, outcome.outputs[0].second, {}});
-  ASSERT_TRUE(delivered);
+  const auto staged = input("input", root_ / "worker/inputs/inputs/0/file");
+  const auto original = input("input", root_ / "recorded/original");
+  auto output = produced(staged.path);
+  output.forwarded_from = "input";
+  const auto delivered = stage(output, {staged}, {original}, {0, 0});
   if (GetParam() == OutputDelivery::local_paths) {
-    EXPECT_EQ(*delivered, (root_ / "recorded/original").string());
-    EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
+    EXPECT_EQ(delivered, (root_ / "recorded/original").string());
   } else {
-    EXPECT_EQ(*delivered, "inputs/0/file");
-    EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
+    EXPECT_EQ(delivered, "inputs/0/file");
   }
+  EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
+}
+
+TEST_P(WorkerDelivery, ForwardMustBeTheInputPathExactly) {
+  fs::write_atomic(root_ / "worker/inputs/inputs/0/file", "forwarded");
+  const auto staged = input("input", root_ / "worker/inputs/inputs/0/file");
+  auto output = produced(root_ / "worker/inputs/inputs/0");
+  output.forwarded_from = "input";
+  EXPECT_THROW(stage(output, {staged}, {staged}), Failed);
 }
 
 TEST_P(WorkerDelivery, DefaultBudgetRejectsSparseFileOver64GiB) {
   const auto file = root_ / "worker/work/large";
   fs::write_atomic(file, "");
   stdfs::resize_file(file, (64ull << 30) + 1);
-  const auto produced = value("result", PortKind::File, file);
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
   try {
-    stage(outcome, PortKind::File);
+    stage(produced(file));
     FAIL() << "accepted an oversized sparse file";
   } catch (const Failed& error) {
     EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
@@ -145,10 +150,8 @@ TEST_P(WorkerDelivery, DefaultBudgetRejectsMoreThan1000Entries) {
   const auto dir = root_ / "worker/work/many";
   stdfs::create_directory(dir);
   for (unsigned i = 0; i < 1000; ++i) std::ofstream(dir / std::to_string(i));
-  const auto produced = value("result", PortKind::Directory, dir);
-  WorkerOutcome outcome{{{"result", produced.bytes}}, {}, {}};
   try {
-    stage(outcome, PortKind::Directory);
+    stage(produced(dir));
     FAIL() << "accepted an oversized directory";
   } catch (const Failed& error) {
     EXPECT_EQ(error.failure.kind, FailureKind::output_invalid);
@@ -157,9 +160,24 @@ TEST_P(WorkerDelivery, DefaultBudgetRejectsMoreThan1000Entries) {
   }
 }
 
-TEST_P(WorkerDelivery, InvalidOutputIsRejectedBeforeTransfer) {
-  WorkerOutcome outcome{{{"unknown", "invalid buffer"}}, {}, {}};
-  EXPECT_THROW(stage(outcome, PortKind::File), Failed);
+TEST_P(WorkerDelivery, UnknownOutputIsRejectedBeforeTransfer) {
+  EXPECT_THROW(stage({"unknown", "invalid buffer", {}, {}}), Failed);
+}
+
+TEST(WorkerOutputs, FlatBufferBytesAreAcceptedUnopened) {
+  const std::vector<types::PortType> ports{
+      {"value", PortKind::FlatBuffer, false, nullptr}};
+  const auto outputs =
+      accept_outputs({{"value", std::string("not a FlatBuffer\0", 17), {}, {}}},
+                     ports);
+  ASSERT_EQ(outputs.size(), 1u);
+  EXPECT_EQ(outputs[0].bytes, std::string("not a FlatBuffer\0", 17));
+}
+
+TEST(WorkerOutputs, MissingRequiredOutputIsRejected) {
+  const std::vector<types::PortType> ports{
+      {"value", PortKind::FlatBuffer, false, nullptr}};
+  EXPECT_THROW(accept_outputs({}, ports), Failed);
 }
 
 INSTANTIATE_TEST_SUITE_P(Carriers, WorkerDelivery,

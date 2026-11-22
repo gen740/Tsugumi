@@ -22,12 +22,12 @@ def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path
           remaining -= block.size();
         }}
         if (!file) return 21;
-        out.file("dense");
+        out.path("dense");
     ''', outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     read = native_card(f'''
         const auto file = input_path(in);
         if (fs::file_size(file) != {size}) return 22;
-        out.file(file);
+        out.path(file);
     ''', inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
@@ -66,13 +66,13 @@ def test_sparse_output_and_staged_input_keep_their_holes(core_factory, tmp_path)
         if (fd < 0 || ftruncate(fd, 4ll << 30) ||
             pwrite(fd, "data", 4, 2ll << 30) != 4) return 1;
         close(fd);
-        out.file("sparse");
+        out.path("sparse");
     ''', outputs=FILE_FBS, retainArtifact=True)
     read = native_card(r'''
         const auto staged = input_path(in);
         struct stat info;
         if (stat(staged.c_str(), &info) || info.st_blocks * 512 >= 1024 * 1024) return 23;
-        out.file(staged);
+        out.path(staged);
     ''', inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True, reuseWorker=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],

@@ -499,7 +499,7 @@ def run(input):
     Path("undeclared-file").write_text("unused")
     return Output(doc=DocT(value=report))
 """
-    schema = FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"')
+    schema = FILE_FBS
     definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,
                   "recordIO": True, "timeoutSeconds": 600, "_outputs": schema,
                   "_nix": entry(python_program(body))}

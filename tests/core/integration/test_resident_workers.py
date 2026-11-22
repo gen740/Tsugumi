@@ -85,7 +85,7 @@ def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_p
           fs::remove("result");
           std::ofstream("result") << "recovered";
         }
-        out.file("result");
+        out.path("result");
     ''', outputs=FILE_FBS, reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
@@ -139,7 +139,7 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
           _exit(0);
         }
         std::ofstream("marker") << "test";
-        out.file("marker");
+        out.path("marker");
         printf("%s/stop\n", std::getenv("HOME"));
     ''', declarations="#include <sys/socket.h>", inputs=["data"],
         outputs=FILE_FBS, reuseWorker=True, recordIO=True)
