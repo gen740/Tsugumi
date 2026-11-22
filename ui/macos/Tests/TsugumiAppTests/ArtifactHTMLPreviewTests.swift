@@ -7,7 +7,7 @@ import WebKit
 
 /// Stands for everything outside the document: a listener on this machine that counts
 /// the connections made to it. A request the preview lets out arrives here.
-private final class Outside: @unchecked Sendable {
+final class Outside: @unchecked Sendable {
   let port: UInt16
   private let socket: Int32
   private let wake: Int32

@@ -689,7 +689,7 @@ struct CardArtifactsView: View {
   }
 }
 
-/// A Card's output display enlarged in its own window.
+/// The views a Card declares, live, in their own window. Nothing shown here is recorded.
 struct VisualizationWindow: View {
   let session: ProjectSession
   let cardKey: CardKey
@@ -699,11 +699,14 @@ struct VisualizationWindow: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(session.displayName(cardKey)).font(.title2.bold())
-        if let d = session.displays[cardKey] { Text("呼び出し #\(d.invocation)").foregroundStyle(.secondary) }
+        if session.cardViews.runs[cardKey]?.started == true {
+          ProgressView().controlSize(.small)
+          Text("実行中").foregroundStyle(.secondary)
+        }
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
-      DisplayView(display: session.displays[cardKey], emptyNote: session.noResultNote(cardKey))
+      CardViewsPanel(session: session, cardKey: cardKey)
     }
     .padding(16)
     .navigationTitle(session.displayName(cardKey))

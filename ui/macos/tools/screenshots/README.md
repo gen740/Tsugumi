@@ -4,13 +4,13 @@ Open a copy of a demo and capture it with `ui/macos/tools/run-ui.sh` (no other T
 
 The published images are in English: `TSUGUMI_UI_LANGUAGE=en` runs the app in English for that launch, and settings after the project folder (`-agent.provider anthropic -agent.model claude-sonnet-5-5`) hold for that launch only. The saved settings are left as they are.
 
-The WebGPU line chart of Live Stream (`live-stream.ui`, for checking on the real screen):
+The live view of Live Stream (`live-stream.ui`, for checking on the real screen): the `plot` Card's view window while the random walk streams, and after the run ends. The view shows only what arrives while the window is open; nothing of it is recorded.
 
 ```bash
 cp -R demos/en/live-stream /tmp/shot-live && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/live-stream.ui /tmp/shots /tmp/shot-live
 ```
 
-The README's images all at once (`readme.ui`: Cas A's workflow, timeline and card-source, and the thrush's guide with `$demo`; the chat makes one request to the model connected in the settings). The README's images are taken with the deep observation (ObsID 114, 520 MB, fetched once on the first run), so rewrite the copy's `load` before capturing:
+The README's images all at once (`readme.ui`: Cas A's workflow, timeline and card-source, and the thrush's guide with `$demo`, which points at the spectrum Card on the Canvas; the chat makes one request to the model connected in the settings). The README's images are taken with the deep observation (ObsID 114, 520 MB, fetched once on the first run), so rewrite the copy's `load` before capturing:
 
 ```bash
 cp -R demos/en/casa /tmp/shot-readme && python3 ui/macos/tools/screenshots/casa-obsid114.py /tmp/shot-readme && TSUGUMI_UI_LANGUAGE=en ui/macos/tools/run-ui.sh dist/Tsugumi.app ui/macos/tools/screenshots/readme.ui /tmp/shots /tmp/shot-readme \

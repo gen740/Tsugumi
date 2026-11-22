@@ -146,99 +146,6 @@ enum SyncState: Equatable {
   case offline
 }
 
-enum DisplayValue {
-  case unavailable
-  case text(String)
-  /// Markdown with TeX math (the SDK's Markdown display).
-  case markdown(String)
-  case scalar(Double, String)
-  case table(columns: [String], rows: [[String]])
-  case image(mediaType: String, data: Data, alt: String)
-  case points(x: [Float], y: [Float], z: [Float], colors: [UInt32])
-  case module(name: String, json: String, blobs: [String: Data] = [:])
-}
-
-struct DisplayModule: Equatable {
-  let name: String
-  let config: String
-  var blobs: [String: Data] = [:]
-}
-
-extension DisplayValue {
-  var displayable: Bool {
-    switch self {
-    case .unavailable: return false
-    case .text(let text), .markdown(let text): return text.utf8.count <= 1 << 20
-    case .scalar(let value, _): return value.isFinite
-    case .table(let columns, let rows):
-      return !columns.isEmpty && columns.count <= 64 && rows.count <= 10000 && columns.allSatisfy { $0.utf8.count <= 4096 } &&
-        rows.allSatisfy { $0.count == columns.count && $0.allSatisfy { $0.utf8.count <= 4096 } }
-    case .image(let media, let data, _):
-      return data.count <= 8 << 20 && (media == "image/png" ? data.count > 8 && data.starts(with: [137,80,78,71,13,10,26,10]) :
-        media == "image/jpeg" && data.count > 3 && data.starts(with: [255,216]))
-    case .points(let x, let y, let z, let colors):
-      return x.count <= 1000000 && x.count == y.count && x.count == z.count && (colors.isEmpty || colors.count == x.count) &&
-        [x,y,z].allSatisfy { $0.allSatisfy(\.isFinite) }
-    case .module(let name, let json, let blobs):
-      let pattern = #"^/nix/store/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$"#
-      return name.range(of: pattern, options: .regularExpression) != nil && json.utf8.count <= 1 << 20 &&
-        blobs.count <= 64 && blobs.keys.allSatisfy { $0 != "." && $0 != ".." && $0.range(of: #"^[a-zA-Z0-9_.-]{1,128}$"#, options: .regularExpression) != nil } &&
-        blobs.values.reduce(0) { $0 + $1.count } <= 8 << 20
-    }
-  }
-}
-
-extension DisplayValue {
-  var module: DisplayModule? {
-    func builtin(_ name: String, _ config: [String: Any], blobs: [String: Data] = [:]) -> DisplayModule? {
-      guard let json = try? JSONSerialization.data(withJSONObject: config, options: .sortedKeys) else { return nil }
-      return DisplayModule(name: "tsugumi:" + name, config: String(decoding: json, as: UTF8.self), blobs: blobs)
-    }
-    switch self {
-    case .unavailable: return nil
-    case .text(let text): return builtin("text", ["text": text])
-    case .markdown(let text): return builtin("markdown", ["text": text])
-    case .scalar(let value, let label): return builtin("scalar", ["value": value, "label": label])
-    case .table(let columns, let rows): return builtin("table", ["columns": columns, "rows": rows])
-    case .image(let type, let data, let alt):
-      return builtin("image", ["mediaType": type, "alt": alt], blobs: ["image": data])
-    case .points(let x, let y, let z, let colors):
-      return builtin("points", [:], blobs: [
-        "x": x.withUnsafeBytes { Data($0) }, "y": y.withUnsafeBytes { Data($0) },
-        "z": z.withUnsafeBytes { Data($0) }, "colors": colors.withUnsafeBytes { Data($0) },
-      ])
-    case .module(let name, let json, let blobs):
-      let sdkDefault = ["line-chart", "plotly", "vega-lite"].first { name.hasSuffix("-tsugumi-view-" + $0) }
-      return DisplayModule(name: sdkDefault.map { "tsugumi:" + $0 } ?? name, config: json, blobs: blobs)
-    }
-  }
-}
-
-struct DisplaySnapshot {
-  struct Identity: Equatable {
-    let runId: String
-    let invocation: UInt64
-    let revision: UInt64
-  }
-  var identity: Identity { Identity(runId: runId, invocation: invocation, revision: revision) }
-  let runId: String
-  let invocation: UInt64
-  let revision: UInt64
-  /// Preserve the result's content even when it cannot be rendered.
-  let content: DisplayValue
-  let value: DisplayValue
-  let module: DisplayModule?
-
-  init(runId: String, invocation: UInt64, revision: UInt64, value: DisplayValue) {
-    self.runId = runId
-    self.invocation = invocation
-    self.revision = revision
-    self.content = value
-    self.value = value.displayable ? value : .unavailable
-    module = self.value.module
-  }
-}
-
 /// One open project: shared by every window showing it. Owns the RPC
 /// connection, the confirmed document (from tsugumid), the local draft with
 /// undo/redo, run progress, displays and logs.
@@ -400,7 +307,10 @@ final class ProjectSession {
     }
   }
   private(set) var cardStates: [CardKey: CardRunState] = [:]
-  private(set) var displays: [CardKey: DisplaySnapshot] = [:]
+  /// Live view traffic of the Cards whose view windows are open (never recorded).
+  let cardViews = CardViewRelay()
+  /// How declared view files are read from the project core.
+  var viewFiles = CardViewFiles.unavailable
   @ObservationIgnored private var displayViewers: [UUID: CardKey] = [:]
   private(set) var lastFinished: Date?
   private(set) var remoteHistoryRevision = 0
@@ -728,6 +638,8 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
+    case .cardviewsupdated, .displayupdated, .displayrunstatechanged:
+      applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
     case .logavailable:
@@ -738,6 +650,26 @@ final class ProjectSession {
       break
     }
     return true
+  }
+
+  /// Declarations, data and run state of Card views, kept only while a window shows the Card.
+  func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
+    switch payload.type {
+    case .cardviewsupdated:
+      if let u = payload.value as? Tsugumi_RPC_CardViewsUpdatedT, viewing(key(u.card.path)) {
+        cardViews.declare(key(u.card.path), u.views.compactMap { $0 }.map(CardViewDeclaration.init))
+      }
+    case .displayupdated:
+      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display, viewing(key(d.card.path)) {
+        cardViews.receive(key(d.card.path), view: d.view, bytes: Data(d.bytes))
+      }
+    case .displayrunstatechanged:
+      if let r = payload.value as? Tsugumi_RPC_DisplayRunStateChangedT, viewing(key(r.card.path)), r.state != .unspecified {
+        cardViews.runState(key(r.card.path), runId: r.runId, started: r.state == .started)
+      }
+    default:
+      break
+    }
   }
 
   // MARK: - Applying core state
@@ -803,7 +735,7 @@ final class ProjectSession {
     resolution = r
     diagnostics = all
     // A result belongs to a Card of the current document.
-    for k in displays.keys where r[k] == nil { displays[k] = nil }
+    for k in cardViews.cards where r[k] == nil { cardViews.forget(k) }
   }
 
   /// What a Card's invocation says about the Card, from a notification or from the run's record.
@@ -1235,7 +1167,7 @@ final class ProjectSession {
 
   /// A Card that took a name another Card had starts without that Card's result and run state.
   func forgetResult(_ k: CardKey) {
-    displays[k] = nil
+    cardViews.forget(k)
     cardStates[k] = nil
   }
 
@@ -1254,6 +1186,9 @@ final class ProjectSession {
     return try await client.resolveNixSource(ref: ref)
   }
 
+  /// View traffic is kept only for Cards a window shows.
+  private func viewing(_ card: CardKey) -> Bool { displayViewers.values.contains(card) }
+
   func openDisplayViewer(_ id: UUID, card: CardKey) {
     let alreadyOpen = displayViewers.values.contains(card)
     displayViewers[id] = card
@@ -1262,7 +1197,7 @@ final class ProjectSession {
 
   func closeDisplayViewer(_ id: UUID) {
     guard let card = displayViewers.removeValue(forKey: id), !displayViewers.values.contains(card) else { return }
-    displays[card] = nil
+    cardViews.forget(card)
     Task { await refreshVisibleDisplays() }
   }
 

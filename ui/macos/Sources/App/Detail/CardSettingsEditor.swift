@@ -1092,7 +1092,6 @@ private struct PortsCategory: View {
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("記録と成果物") {
           recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
-          recordingOverride("recordDisplays", label: "記録指定のある表示を記録")
           recordingOverride("recordIO", label: "入出力の値を記録")
           recordingOverride("retainArtifact", label: "出力ファイルと成果物を保持")
           // Only File / Directory outputs can be kept as artifacts.

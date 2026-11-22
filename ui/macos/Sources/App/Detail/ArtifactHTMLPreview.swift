@@ -33,7 +33,7 @@ struct ArtifactHTMLPreview: NSViewRepresentable {
   /// The document as the view loads it. The policy goes after a leading doctype, never
   /// before it, so the document keeps its own rendering mode. Whatever this cannot read
   /// with certainty as "nothing but a doctype so far" gets the policy at the very start.
-  static func document(_ html: String) -> String {
+  static func document(_ html: String, policy: String = policy) -> String {
     let meta = "<meta http-equiv=\"Content-Security-Policy\" content=\"\(policy)\">"
     // Scalars, not characters: a combining mark must not hide a closing bracket.
     let text = html.unicodeScalars
