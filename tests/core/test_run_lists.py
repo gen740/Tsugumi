@@ -188,7 +188,7 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
     from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("start", {"type": "trigger"})
+    graph = Project(project)
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
     entry = """
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
@@ -214,7 +214,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
     connect_collect(graph)
     graph.save(client)
 
-    run_id = run(client, "start", propagate=True)
+    run_id = run(client, "vector", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     vector_page = invocation_page(client, run_id, "vector")
     assert len(vector_page.records) == 1
@@ -328,7 +328,7 @@ def test_collected_path_members_preserve_saved_batch_order(core_factory, project
     """A saved Path batch preserves its file and directory paths through Collect."""
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
-    graph = Project(project).card("start", {"type": "trigger"})
+    graph = Project(project)
     packages = scripted_implementations(tmp_path / "packages", [
         [{"op": "file", "port": "out", "path": "data.txt", "text": "one"}],
         [{"op": "directory", "port": "out", "path": "sample", "files": {"data.txt": "two"}}],
@@ -338,7 +338,7 @@ def test_collected_path_members_preserve_saved_batch_order(core_factory, project
     connect_collect(graph)
     graph.save(client)
 
-    run_id = run(client, "start", propagate=True)
+    run_id = run(client, "work", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
     def check(current):
         first, second = map(Path, collected(current, tmp_path / "decode", run_id))

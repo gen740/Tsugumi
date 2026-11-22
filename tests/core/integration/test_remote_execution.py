@@ -24,9 +24,8 @@ import pytest
 from harness import remote_worker as R
 from harness.file_events import process_file, wait_for_file
 from harness.host import Host
-from harness.observations import read_output
 from harness.real_cards import log, nix_string
-from harness.values import reference_json
+from harness.values import collected_items
 from projects import (
     FILE_FBS,
     card,
@@ -279,7 +278,6 @@ import platform
 from pathlib import Path
 from shutil import copyfile
 from card import Output
-from outputs.files.Doc import DocT
 
 def run(input):
     wait_for_release()
@@ -288,8 +286,8 @@ def run(input):
     assert "TSUGUMI_REMOTE_PRIVATE_KEY" not in os.environ
     print("remote-card-stdout")
     output = Path("copied.txt")
-    copyfile(input.in_.value, output)
-    return Output(doc=DocT(value=output))
+    copyfile(input.in_, output)
+    return Output(doc=output)
 """
     source = {"type": "input", "params": [{"name": "value", "type": "string", "data": "payload.txt"}],
               "_outputs": FILE_FBS}
@@ -433,12 +431,8 @@ def run(input):
                for row in page.records)
     assert len({text(row.executionJobId) for row in page.records}) == 4
 
-    record = client.call("RunRecordRequest", runId=run_id, card=path("collect")).record
-    output, = record.outputs
-    payload = read_output(client, run_id, card="collect")
-    collected = reference_json(tmp_path / "decode", bytes(output.schemaBfbs), payload,
-                               root_type=text(output.rootType))
-    assert collected["items"] == [{"value": value} for value in (110, 210, 120, 220)]
+    assert collected_items(client, tmp_path / "decode", run_id) == [
+        {"value": value} for value in (110, 210, 120, 220)]
 
 
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
@@ -487,7 +481,6 @@ def test_remote_snapshots_only_declared_regular_outputs(project, core_factory, r
 import os
 from pathlib import Path
 from card import Output
-from outputs.files.Doc import DocT
 
 def run(input):
     report = Path("report")
@@ -497,7 +490,7 @@ def run(input):
         (report / "link").symlink_to("data")
     os.mkfifo("undeclared-fifo")
     Path("undeclared-file").write_text("unused")
-    return Output(doc=DocT(value=report))
+    return Output(doc=report)
 """
     schema = FILE_FBS
     definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,

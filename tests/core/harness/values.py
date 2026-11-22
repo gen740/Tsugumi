@@ -61,7 +61,7 @@ def recorded_input_json(client, directory, run_id, card, *, invocation=1, port="
 
 
 def collected_items(client, directory, run_id, card="collect"):
-    """Decode Collect envelopes, using the recorded source type only for the member payloads."""
+    """Decode Collect envelopes, using the connected source type only for the member payloads."""
     from .observations import read_output
 
     record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
@@ -69,6 +69,9 @@ def collected_items(client, directory, run_id, card="collect"):
     payload = read_output(client, run_id, card=card)
     items = reference_json(directory, bytes(value.schemaBfbs), payload,
                            root_type=text(value.rootType))["items"]
+    if not items:
+        return []
+    source, = client.call("InputTypesRequest", card=path(card)).inputs
     result = []
     for index, item in enumerate(items):
         if item["kind"] == "Path":
@@ -77,7 +80,6 @@ def collected_items(client, directory, run_id, card="collect"):
         else:
             assert item["kind"] == "FlatBuffer"
             assert "path" not in item
-            source = record.inputs[0]
-            result.append(reference_json(directory / str(index), bytes(source.schemaBfbs),
-                                         bytes(item["bytes"]), root_type=text(source.rootType)))
+            result.append(reference_json(directory / str(index), bytes(source.type.schemaBfbs),
+                                         bytes(item["bytes"]), root_type=text(source.type.rootType)))
     return result

@@ -21,9 +21,7 @@ root_type Outputs;
 """
 
 FILE_FBS = """
-namespace files;
-table Doc { value:string; }
-table Outputs { doc:Doc (required, tsugumi: "path"); }
+table Outputs { doc:string (required, tsugumi: "path"); }
 root_type Outputs;
 attribute "tsugumi";
 """

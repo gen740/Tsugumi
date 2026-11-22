@@ -5,7 +5,6 @@ from __future__ import annotations
 from pathlib import Path
 
 from harness.observations import decode_scalar
-from harness.values import recorded_input_json
 from projects import FILE_FBS, SINK, card, conn, run_and_wait, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
@@ -92,9 +91,10 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
     # The merge reruns from its saved value; the sink records the path it received.
     run_id, st2 = run_and_wait(c, "join")
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
-    received = recorded_input_json(c, tmp_path / "decode", run_id, "out")
-    assert received["value"]["value"].endswith("/report.txt")
-    assert received["value_type"] == "a"
+    record = c.call("RunRecordRequest", runId=run_id, card=path("out"), invocation=1).record
+    received, = record.inputs
+    assert Path(text(received.filePath)).name == "report.txt"
+    assert Path(text(received.filePath)).read_text() == "quarterly numbers\n"
 
 
 

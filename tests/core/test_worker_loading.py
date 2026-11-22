@@ -341,8 +341,8 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
 
 
 NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; table Directory { value:string; } '
-             'table Outputs { doc:Directory (required, tsugumi: "path"); } '
+DIRECTORY = ('attribute "tsugumi"; '
+             'table Outputs { doc:string (required, tsugumi: "path"); } '
              'root_type Outputs;')
 
 

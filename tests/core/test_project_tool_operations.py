@@ -1,21 +1,20 @@
 """What the in-app Agent relies on: reads without at_rev use the latest
 revision, "" names the project folder, project_validate checks proposed
 changes without saving them, and an input Card hands a project file to the
-next Card as a File."""
+next Card on a Path port."""
 
 from __future__ import annotations
 
 import json
 from pathlib import Path
 
-from harness.values import recorded_input_json
 from projects import SINK, put, run_and_wait
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
-FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; }\n' \
-           'table Outputs { events:Events (required, tsugumi: "path"); }\nroot_type Outputs;\n'
+FILE_FBS = 'attribute "tsugumi";\n' \
+           'table Outputs { events:string (required, tsugumi: "path"); }\nroot_type Outputs;\n'
 
 
 def make(root: Path) -> None:
@@ -70,7 +69,9 @@ def test_input_card_hands_a_project_file_on(tmp_path, core_factory):
     assert st.failure.kind == FailureKind.input_missing
     rid, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    shown = recorded_input_json(c, tmp_path / "decode", rid, "show")["value"]
+    record = c.call("RunRecordRequest", runId=rid, card=path("show"), invocation=1).record
+    event, = record.inputs
+    shown = text(event.filePath)
     assert shown.endswith("/events.txt") and "definitions/load/data" not in shown, shown
 
 

@@ -14,8 +14,8 @@ from .daemon import BUILD, ROOT
 from .file_events import wait_for_file
 
 STRING_OUTPUT = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-FILE_OUTPUT = ('attribute "tsugumi"; table File { value:string; } '
-               'table Outputs { doc:File (tsugumi: "path"); } root_type Outputs;')
+FILE_OUTPUT = ('attribute "tsugumi"; '
+               'table Outputs { doc:string (tsugumi: "path"); } root_type Outputs;')
 
 
 class Gate:
