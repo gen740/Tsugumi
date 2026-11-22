@@ -132,8 +132,6 @@ LAID_OUT = {
     "cards": {"start": {"x": 0, "y": 0}, "src": {"x": 10.5, "y": 20, "collapsed": True}, "out": {"x": 30, "y": 40},
               "src/inner": {"x": 1, "y": 2}, "src2": {"x": 5, "y": 6}},
     "notes": [{"id": "n", "scope": "", "text": "メモ \"src\"\n改行", "x": 1, "y": 2}],
-    "displays": {"src": {"x": 100, "y": 200, "width": 300, "height": 150, "hidden": False},
-                 "src2": {"x": 7, "y": 8, "width": 9, "height": 10}},
     "groups": [{"id": "g", "scope": "", "name": "src", "color": "blue", "cards": ["src", "out"],
                 "outputs": [{"card": "src", "port": "msg"}, {"card": "out", "port": "x"}]}],
 }
@@ -151,7 +149,7 @@ def without_card(doc: dict, id: str) -> dict:
 
 
 def test_an_agent_name_change_preserves_layout_verbatim(tmp_path, core_factory):
-    """Names do not affect positions, frames, groups or any formatting."""
+    """Names do not affect positions, groups or any formatting."""
     root = tmp_path / "p"
     laid_out_project(root)
     d = core_factory(project_root=root)
@@ -164,7 +162,7 @@ def test_an_agent_name_change_preserves_layout_verbatim(tmp_path, core_factory):
 
 
 def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_factory):
-    """The saving client supplies position, frame and group cleanup atomically.
+    """The saving client supplies position and group cleanup atomically.
 
     A new card with the same name starts without that layout, while restoring
     the card and its layout together keeps the supplied layout.
@@ -176,7 +174,6 @@ def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_f
     rev, doc = project_json(c)
     kept = json.loads(json.dumps(LAID_OUT))
     kept["cards"] = {k: v for k, v in kept["cards"].items() if k not in ("src", "src/inner")}
-    del kept["displays"]["src"]
     kept["groups"][0]["cards"] = ["out"]
     kept["groups"][0]["outputs"] = [{"card": "out", "port": "x"}]
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
@@ -186,12 +183,11 @@ def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_f
     # Off the canvas with its definition left behind is deleted too.
     rev, doc = project_json(c)
     del kept["cards"]["src2"]
-    del kept["displays"]["src2"]
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
         change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("SetLayout", json=spelled(kept))])
     assert text(c.call("ProjectInspectRequest").layoutJson) == spelled(kept)
 
-    # A Card of the same name starts with no frame.
+    # A Card of the same name starts without the prior layout.
     rev, doc = project_json(c)
     doc["canvas"]["cards"].append({"id": "src"})
     res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[

@@ -635,6 +635,7 @@ struct CardArtifactsView: View {
 struct VisualizationWindow: View {
   let session: ProjectSession
   let cardKey: CardKey
+  @State private var viewer = UUID()
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
@@ -644,10 +645,11 @@ struct VisualizationWindow: View {
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
-      DisplayContent(display: session.displays[cardKey], large: true)
+      DisplayView(display: session.displays[cardKey], emptyNote: session.noResultNote(cardKey))
     }
     .padding(16)
     .navigationTitle(session.displayName(cardKey))
-    .task { await session.refreshVisibleDisplays() }
+    .onAppear { session.openDisplayViewer(viewer, card: cardKey) }
+    .onDisappear { session.closeDisplayViewer(viewer) }
   }
 }

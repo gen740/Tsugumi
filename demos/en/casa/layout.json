@@ -37,25 +37,5 @@
       "height": 430.0
     }
   ],
-  "flow": "leftToRight",
-  "displays": {
-    "bands": {
-      "x": 560.0,
-      "y": 180.0,
-      "width": 340.0,
-      "height": 150.0
-    },
-    "rgb": {
-      "x": 1200.0,
-      "y": 80.0,
-      "width": 420.0,
-      "height": 440.0
-    },
-    "spectrum": {
-      "x": 240.0,
-      "y": 540.0,
-      "width": 680.0,
-      "height": 400.0
-    }
-  }
+  "flow": "leftToRight"
 }

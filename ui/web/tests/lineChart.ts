@@ -1,7 +1,6 @@
 import assert from 'node:assert/strict'
 import { buildVertices, decodeSeries, relativePosition, visibleRange, palette } from '../../../sdk/views/line-geometry.js'
 import * as view from '../../../sdk/views/line-chart.js'
-import { moduleThumbnailKey } from '../src/model/moduleThumbnails'
 
 const pack = (values: number[]) => {
   const bytes = new Uint8Array(values.length * 8), data = new DataView(bytes.buffer)
@@ -23,7 +22,6 @@ assert.notDeepEqual(buildVertices(series, 640, 400, 1, true), buildVertices(seri
 assert.notDeepEqual(buildVertices(series, 640, 400), buildVertices(series, 640, 400, 1, false, { ...visibleRange(series), xmin: 1e12 - .25, xspan: .5 }))
 assert.throws(() => decodeSeries({ ...data, blobs: { ...data.blobs, y: pack([NaN]) } }))
 assert.throws(() => decodeSeries({ ...data, config: { series: [{ offset: 1, count: 5 }] } }))
-assert.notEqual(await moduleThumbnailKey('line-chart', '{}', 100, 80, {}, 'light'), await moduleThumbnailKey('line-chart', '{}', 100, 80, {}, 'dark'))
 
 // Real module lifecycle against a GPU stand-in: uploads, replacement, theme,
 // visibility, preview compositing and resource release, without a browser.

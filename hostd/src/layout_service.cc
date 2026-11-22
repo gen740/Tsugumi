@@ -91,7 +91,6 @@ auto scene_of(const R::LayoutScene& in) -> layout::Scene {
       }
     return out;
   };
-  s.frames = boxes(in.frames(), "scene.frames");
   s.notes = boxes(in.notes(), "scene.notes");
   auto bar = [](const R::LayoutBar* b, const std::string& field) {
     layout::Bar out;
@@ -131,12 +130,6 @@ auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
       if (!n.id->has_value() || !n.text->has_value() || !n.x->has_value() ||
           !n.y->has_value())
         invalid_layout("layout.json: notes need id, text, x and y");
-  if (const auto* displays = schema::get(l.displays))
-    for (const auto& [key, d] : displays->entries())
-      if (!d.x->has_value() || !d.y->has_value() || !d.width->has_value() ||
-          !d.height->has_value())
-        invalid_layout("layout.json: display " + key +
-                       " needs x, y, width and height");
   return l;
 }
 
@@ -194,7 +187,7 @@ auto layout_without_cards(const std::string& text,
   Object root;
   as(schema::capture(text), root);
   for (auto& [field, value] : root.value()) {
-    if (field == "cards" || field == "displays" || field == "boundaries") {
+    if (field == "cards" || field == "boundaries") {
       value = cards_by_key(value);
     } else if (field == "groups") {
       schema::v::Array<Object> groups;
@@ -294,32 +287,12 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
   return result;
 }
 
-auto DefaultDisplayGeometry(bool top_to_bottom) -> R::DisplayGeometryT {
-  R::DisplayGeometryT geometry;
-  geometry.anchor_x = top_to_bottom ? 1 : 0;
-  geometry.anchor_y = top_to_bottom ? 0 : 1;
-  geometry.x = top_to_bottom ? 40 : 0;
-  geometry.y = top_to_bottom ? 0 : 30;
-  geometry.width = 320;
-  geometry.height = 170;
-  return geometry;
-}
-
 auto LayoutHandles(R::RequestPayload type) -> bool {
-  return type == R::RequestPayload::DisplayGeometryRequest ||
-         type == R::RequestPayload::LayoutValidateRequest ||
+  return type == R::RequestPayload::LayoutValidateRequest ||
          type == R::RequestPayload::LayoutCompleteRequest ||
          type == R::RequestPayload::VersionCanvasRequest;
 }
 auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
-  if (req.value_as_DisplayGeometryRequest()) {
-    R::DisplayGeometriesT result;
-    result.top_to_bottom =
-        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(true));
-    result.left_to_right =
-        std::make_unique<R::DisplayGeometryT>(DefaultDisplayGeometry(false));
-    return agent::wire::HostReply(id, std::move(result));
-  }
   if (const auto* v = req.value_as_LayoutCompleteRequest()) {
     const auto definitions =
         ::tsugumi::json::Object(v->definitions_json()->str());

@@ -32,6 +32,13 @@ enum SmokeTest {
         await s.save()
         report["layout_save_rev"] = [before, s.rev]
         let trigger = s.cards(in: []).compactMap { $0["id"]?.string }.first { s.kind(key([$0])) == .trigger } ?? "start"
+        let viewers = s.resolution.keys.filter { s.kind($0) == .code }.map { card in
+          let id = UUID()
+          s.openDisplayViewer(id, card: card)
+          return id
+        }
+        defer { for id in viewers { s.closeDisplayViewer(id) } }
+        await s.refreshVisibleDisplays()
         let t1 = Date()
         try await s.run(card: [trigger], propagate: true)
         try await Task.sleep(for: .milliseconds(200))
@@ -62,7 +69,7 @@ enum SmokeTest {
           switch d.value {
           case .text(let t): return String(t.prefix(200))
           case .scalar(let v, let l): return "\(l)=\(v)"
-          default: return d.summary
+          default: return d.module?.name ?? "unavailable"
           }
         }
         await s.undo()
@@ -71,14 +78,11 @@ enum SmokeTest {
         var ok = s.saveError == nil
         report["save_error"] = s.saveError ?? ""
 
-        // Layout-only UI data (notes, groups, collapse, hidden output frame) passes the core schema.
+        // Layout-only UI data (notes, groups, collapse) passes the core schema.
         let first = s.cards(in: []).compactMap { $0["id"]?.string }.prefix(2).map { $0 }
         _ = try await s.addNote(in: [], at: CGPoint(x: 10, y: 400))
         _ = try await s.addGroup(Set(first), in: [])
         s.setCollapsed([first[0]], true)
-        if let shown = s.resolution.keys.first(where: { s.displays[$0] != nil }) {
-          s.closeDisplayFrame(shown)
-        }
         await s.save()
         report["layout_extras"] = s.saveError ?? "ok"
         ok = ok && s.saveError == nil && s.confirmedLayout["groups"] != nil

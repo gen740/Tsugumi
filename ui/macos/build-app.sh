@@ -101,10 +101,6 @@ cp -R "$web_out/share/tsugumi/ui/web/dist/public" "$app/Contents/Resources/web"
 mkdir -p "$licenses/web"
 cp -R "$web_out/share/tsugumi/ui/web/dist/licenses/". "$licenses/web/"
 chmod -R u+w "$app/Contents/Resources/web" "$licenses/web"
-# The common isolated frame host. Modules and libraries come from tsugumid over RPC.
-mods="$app/Contents/Resources/modules"
-mkdir -p "$mods"
-cp "$repo/ui/shared/modules/viewer.html" "$repo/ui/shared/modules/viewer.js" "$mods/"
 # Japanese source strings and the generated English table.
 resources="$app/Contents/Resources"
 cp -R "$repo/ui/macos/Resources/ja.lproj" "$resources/"

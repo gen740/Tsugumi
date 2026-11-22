@@ -478,6 +478,8 @@ FlatBuffer from `_params.fbs`. The function table also provides one display
 callback, logging, cancellation, deadlines, structured failures and typed
 JSON conversion. The same entry handles interpreter preparation, source
 loading and the run-start hook. See [abi.h](../sdk/include/tsugumi/sdk/abi.h).
+ABI 8 is what the code does today; its replacement, [Card ABI 9](CardABI.md), is
+decided but not implemented yet.
 
 ## Worker state
 
@@ -713,26 +715,25 @@ All assets must be incorporated at build time. This output directory is shared
 and cached by Nix, referenced by the Card manifest's closure and fixed with the
 Card's SDK. It is not a per-run artifact.
 
-The entry must export these functions (each may return a Promise):
+The entry exports a default `mount` function. It can return a Promise.
 
 ```javascript
-export function initialise(root, { config, blobs }, size) {
-  // root is a plain HTMLElement; blobs is { name: Uint8Array }.
-  // size is { width, height, pixelRatio, visible, colorScheme }, in CSS pixels.
+export default function mount(root, initialData) {
+  function render({ config, blobs }) {
+    const settings = JSON.parse(config)
+    root.textContent = settings.title ?? `${blobs.points?.byteLength ?? 0} bytes`
+  }
+
+  render(initialData)
+  root.addEventListener("tsugumi:data", event => render(event.detail))
 }
-export function update({ config, blobs }) {}
-export function resize({ width, height, pixelRatio, visible, colorScheme }) {}
-export function dispose() {}
 ```
 
-`initialise` runs once per loaded identity, `update` replaces all input data,
-`resize` supplies geometry and visibility, and `dispose` releases timers,
-listeners, GPU resources and library instances. Treat a display as a full
-replacement snapshot. Export `snapshot()` returning a PNG data URL for DOM
-views or libraries with their own image exporter. Otherwise previews capture
-the first canvas. A WebGPU view should redraw before its snapshot and await
-`device.queue.onSubmittedWorkDone()`. The canvas remains a cached still image;
-Expand creates an interactive frame. Closing it releases the frame.
+The host supplies one root element and the initial data. The configuration is
+a UTF-8 JSON string, and each named blob is a `Uint8Array`. Every
+`tsugumi:data` event carries a full replacement in its `detail`. The module can
+observe its own size with `ResizeObserver`. Closing the viewer or changing its
+module destroys the isolated document.
 
 In Python, send computed bytes separately from the small JSON configuration:
 

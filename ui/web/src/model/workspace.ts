@@ -44,19 +44,17 @@ export class WorkflowTab extends Observable {
     this.hoveredNixCard = card
     this.changed()
   }
-  /** Sticky notes (ids) and Cards' output frames caught by a marquee. */
+  /** Sticky notes (ids) caught by a marquee. */
   selectedNotes = new Set<string>()
-  selectedFrames = new Set<CardKey>()
 
   constructor(public scope: string[], public selection = new Set<CardKey>()) {
     super()
   }
 
-  /** Choosing Cards anew lets go of the notes and frames, which come from a marquee. */
-  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = [], frames: Iterable<CardKey> = []) {
+  /** Choosing Cards anew lets go of the notes, which come from a marquee. */
+  setSelection(s: Iterable<CardKey>, notes: Iterable<string> = []) {
     this.selection = new Set(s)
     this.selectedNotes = new Set(notes)
-    this.selectedFrames = new Set(frames)
     this.changed()
   }
 

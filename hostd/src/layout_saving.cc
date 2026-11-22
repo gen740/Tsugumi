@@ -84,9 +84,6 @@ static auto TransformLayout(
                    double fallback) {
     return value.contains(key) ? std::stod(value.at(key)) : fallback;
   };
-  const auto displays = json::Object(json::Get(doc, "displays", "{}"));
-  const auto geometry = DefaultDisplayGeometry(scene.top_to_bottom);
-  const auto other_geometry = DefaultDisplayGeometry(!scene.top_to_bottom);
   for (const auto& raw : json::Array(json::Get(graph, "cards", "[]"))) {
     const auto id = json::Text(json::Object(raw), "id");
     const auto position = json::Object(json::Get(positions, id, "{}"));
@@ -122,34 +119,11 @@ static auto TransformLayout(
         std::max(320.0, 64.0 * static_cast<double>(ports) + 24);
     const double height = 240 + 26.0 * static_cast<double>(params) +
                           30.0 * static_cast<double>(ports);
-    // A default frame follows the measured Card edge in each UI. Our Card
-    // reservation bounds normal UI sizes, so reserve the whole envelope from
-    // the Card origin through that frame, including smaller/folded Cards.
-    // Reserve it before any run too: placement must not depend on run history.
-    const bool default_frame = !displays.contains(id);
-    auto reserve = [&](const auto& d, bool horizontal) {
-      return horizontal ? d.anchor_x * width + d.x + d.width
-                        : d.anchor_y * height + d.y + d.height;
-    };
-    // Without a saved direction, windows may infer a flow or use their own
-    // preference. Reserve both possible default frames in that case.
-    const double reserved_width =
-        default_frame
-            ? std::max(
-                  {width, reserve(geometry, true),
-                   doc.contains("flow") ? 0 : reserve(other_geometry, true)})
-            : width;
-    const double reserved_height =
-        default_frame
-            ? std::max(
-                  {height, reserve(geometry, false),
-                   doc.contains("flow") ? 0 : reserve(other_geometry, false)})
-            : height;
     scene.cards.push_back({id,
                            number(position, "x", 0),
                            number(position, "y", 0),
-                           reserved_width,
-                           reserved_height,
+                           width,
+                           height,
                            {},
                            {},
                            action >= 0});
@@ -174,13 +148,6 @@ static auto TransformLayout(
     const auto to = json::Object(json::Get(w, "to", "{}"));
     scene.wires.push_back({json::Text(from, "card"), json::Text(from, "port"),
                            json::Text(to, "card"), json::Text(to, "port")});
-  }
-  for (const auto& [id, raw] : json::Object(json::Get(doc, "displays", "{}"))) {
-    const auto b = json::Object(raw);
-    if (!json::Bool(json::Get(b, "hidden")))
-      scene.frames.push_back({id, number(b, "x", 0), number(b, "y", 0),
-                              number(b, "width", 320),
-                              number(b, "height", 240)});
   }
   for (const auto& raw : json::Array(json::Get(doc, "notes", "[]"))) {
     const auto b = json::Object(raw);
@@ -246,33 +213,12 @@ static auto TransformLayout(
         saved_order(card.inputs, "inputOrder");
         saved_order(card.outputs, "outputOrder");
       }
-      for (auto& frame : scene.frames)
-        for (const auto& size : measured.frames)
-          if (size.id == frame.id) {
-            frame.width = size.width;
-            frame.height = size.height;
-          }
       for (auto& note : scene.notes)
         for (const auto& size : measured.notes)
           if (size.id == note.id) {
             note.width = size.width;
             note.height = size.height;
           }
-      // A displayed default frame has no saved rectangle yet. Its dimensions
-      // come from the UI; ownership and the current Card position come here.
-      for (const auto& frame : measured.frames) {
-        if (displays.contains(frame.id)) continue;
-        const auto card =
-            std::find_if(scene.cards.begin(), scene.cards.end(),
-                         [&](const auto& c) { return c.id == frame.id; });
-        const auto old =
-            std::find_if(measured.cards.begin(), measured.cards.end(),
-                         [&](const auto& c) { return c.id == frame.id; });
-        if (card != scene.cards.end() && old != measured.cards.end())
-          scene.frames.push_back({frame.id, card->x + frame.x - old->x,
-                                  card->y + frame.y - old->y, frame.width,
-                                  frame.height});
-      }
     }
     const auto boundary =
         json::Object(json::Get(json::Object(project), "boundary", "{}"));
@@ -305,40 +251,18 @@ static auto TransformLayout(
     };
     const auto dx = move->cards.empty() ? move->dx : snap(move->dx);
     const auto dy = move->cards.empty() ? move->dy : snap(move->dy);
-    auto frames = json::Object(json::Get(doc, "displays", "{}"));
-    for (auto& frame : scene.frames) {
-      if (!has(move->frames, frame.id)) continue;
-      auto entry = json::Object(json::Get(frames, frame.id, "{}"));
-      if (has(move->cards, frame.id) && !entry.contains("x")) continue;
-      frame.x = std::round(frame.x + dx);
-      frame.y = std::round(frame.y + dy);
-      entry["x"] = std::to_string(frame.x);
-      entry["y"] = std::to_string(frame.y);
-      entry["width"] = std::to_string(frame.width);
-      entry["height"] = std::to_string(frame.height);
-      frames[frame.id] = json::Encode(entry);
-    }
-    if (!move->frames.empty()) doc["displays"] = json::Encode(frames);
     for (const auto& id : move->cards) {
       auto card =
           std::find_if(scene.cards.begin(), scene.cards.end(),
                        [&](const auto& value) { return value.id == id; });
       if (card == scene.cards.end())
         throw LayoutFailure("moved Card is missing: " + id);
-      const auto old_x = card->x, old_y = card->y;
       card->x = snap(card->x) + dx;
       card->y = snap(card->y) + dy;
       auto entry = json::Object(json::Get(positions, id, "{}"));
       entry["x"] = std::to_string(card->x);
       entry["y"] = std::to_string(card->y);
       positions[id] = json::Encode(entry);
-      if (!displays.contains(id) ||
-          !json::Object(displays.at(id)).contains("x"))
-        for (auto& frame : scene.frames)
-          if (frame.id == id) {
-            frame.x += card->x - old_x;
-            frame.y += card->y - old_y;
-          }
     }
     auto notes = json::Array(json::Get(doc, "notes", "[]"));
     for (auto& raw : notes) {
@@ -373,21 +297,6 @@ static auto TransformLayout(
     positions[order.id] = json::Encode(position);
   }
   if (action >= 0) {
-    auto frames = json::Object(json::Get(doc, "displays", "{}"));
-    for (const auto& p : proposal.frames) {
-      auto frame = json::Object(json::Get(frames, p.id, "{}"));
-      frame["x"] = std::to_string(p.x);
-      frame["y"] = std::to_string(p.y);
-      const auto size =
-          std::find_if(scene.frames.begin(), scene.frames.end(),
-                       [&](const auto& f) { return f.id == p.id; });
-      if (size != scene.frames.end()) {
-        frame["width"] = std::to_string(size->width);
-        frame["height"] = std::to_string(size->height);
-      }
-      frames[p.id] = json::Encode(frame);
-    }
-    if (!proposal.frames.empty()) doc["displays"] = json::Encode(frames);
     auto notes = json::Array(json::Get(doc, "notes", "[]"));
     for (auto& raw : notes) {
       auto note = json::Object(raw);

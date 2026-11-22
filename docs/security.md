@@ -100,6 +100,8 @@ Only hostd talks to the signed Mac helper, over the owner-only Unix socket using
 
 ## 4. Card (worker) ⇄ tsugumid
 
+This section describes the current implementation. The decided target, not implemented yet, is [The sandbox contract](SandboxContract.md).
+
 Each Card's code is further run inside a `bubblewrap` sandbox (`workerd/src/worker_proc.cc`).
 
 ### `sandbox: true` (the default)

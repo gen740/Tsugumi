@@ -41,37 +41,5 @@
       "width": 760,
       "height": 560
     }
-  ],
-  "displays": {
-    "market": {
-      "x": 540,
-      "y": 170,
-      "width": 780,
-      "height": 410
-    },
-    "schedule": {
-      "x": 1860,
-      "y": -700,
-      "width": 760,
-      "height": 480
-    },
-    "capacities": {
-      "x": 1860,
-      "y": -196,
-      "width": 850,
-      "height": 490
-    },
-    "tariffs": {
-      "x": 1860,
-      "y": 318,
-      "width": 840,
-      "height": 640
-    },
-    "check": {
-      "x": 1860,
-      "y": 982,
-      "width": 780,
-      "height": 340
-    }
-  }
+  ]
 }

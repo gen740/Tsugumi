@@ -132,32 +132,6 @@ import TsugumiRPC
     #expect(session.currentRunId == "new" && session.canStopRun)
   }
 
-  @Test func displayKeepsItsRunMarkAfterAnotherBranchRuns() throws {
-    let directory = try SyncTests.project()
-    defer { try? FileManager.default.removeItem(at: directory) }
-    let session = ProjectSession(identity: try ProjectIdentity(url: directory), environments: EnvironmentManager(image: nil))
-    func accept(_ id: String, partial: Bool) {
-      let status = Tsugumi_RPC_RunStatusT(); status.runId = id; status.partialRun = partial
-      let accepted = Tsugumi_RPC_RunAcceptedEventT(); accepted.status = status
-      let event = Tsugumi_RPC_RunEventT(); event.runId = id
-      event.value = Tsugumi_RPC_RunEventValueUnion(accepted, type: .runacceptedevent)
-      session.applyRunEvent(event)
-    }
-    func display(_ run: String) {
-      let display = Tsugumi_Data_DisplayT(); display.runId = run; display.card = cardPath(["b"])
-      display.invocation = 1; display.revision = 1
-      let text = Tsugumi_Data_DisplayTextT(); text.text = "B result"
-      display.value = Tsugumi_Data_DisplayValueUnion(text, type: .displaytext)
-      session.applyDisplay(display)
-    }
-    accept("partial-b", partial: true); display("partial-b")
-    #expect(session.nodeData("c").runMark == nil)
-    accept("other-input", partial: false)
-    #expect(session.nodeData("b").runMark == RunMarkLabel.partial)
-    #expect(session.nodeData("b").runText == RunMarkLabel.partial)
-    accept("whole", partial: false); display("whole")
-    #expect(session.nodeData("b").runMark == nil)
-  }
 }
 
 // Use the same daemon, positional RPC API and save helpers as the passing
