@@ -7,7 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing, contextmanager
 
 import pytest
-from harness.daemon import DAEMON, SDK, WORKER
+from harness.daemon import DAEMON, NIX, WORKER
 from harness.host import Host, HostConnection, HostFailure
 from tsugumi_client import Client, RpcFailure
 from Tsugumi.Host.EnvironmentAction import EnvironmentAction
@@ -144,7 +144,7 @@ def test_trace_connection_does_not_duplicate_host_events(tmp_path):
 
 @pytest.mark.parametrize("rpc_trace", [False, True])
 def test_host_launches_native_core_with_its_trace_grant(project, tmp_path, rpc_trace):
-    args = ("--tsugumid", str(DAEMON), "--worker", str(WORKER), "--sdk-dir", str(SDK),
+    args = ("--tsugumid", str(DAEMON), "--worker", str(WORKER), "--nix-dir", str(NIX),
             "--environment-dir", str(tmp_path / "environments"))
     fields = {"project": str(project)}
     with closing(Host(tmp_path / "host", rpc_trace=rpc_trace, args=args)) as host, \

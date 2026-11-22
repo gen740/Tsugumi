@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -42,7 +43,8 @@ struct ServiceOptions {
   std::string server_instance_id;
   std::filesystem::path
       control_dir;                // launcher-managed files hidden from workers
-  std::filesystem::path sdk_dir;  // installed SDK (share/tsugumi/sdk)
+  std::filesystem::path
+      nix_dir;  // installed Card evaluator (share/tsugumi/nix)
   std::filesystem::path worker_binary;
   std::filesystem::path workerd_binary;
   std::string fault;      // test-only fault injection point
@@ -246,6 +248,7 @@ class Service : public RequestSink {
       const std::optional<std::string>& view_id, const ViewRecord* view);
   void check_snapshot(const Document& doc);
   void publish_delta(const Delta& delta, size_t notification_bytes);
+  auto refresh_card_views(DocumentPtr doc) -> void;
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
 
@@ -277,6 +280,13 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
+  std::unique_ptr<Lane> card_views_lane_;
+  std::stop_source card_views_shutdown_;
+  std::mutex card_views_build_mu_;
+  // Owned by the mutation lane. A new execution revision cancels older work.
+  std::optional<uint64_t> card_views_rev_;
+  std::stop_source card_views_cancel_;
+  std::map<std::string, std::optional<Note>> card_views_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
@@ -296,6 +306,7 @@ class Service : public RequestSink {
   // Owned by the transport loop, alongside debug dispatch and disconnect.
   std::optional<ConnId> trace_owner_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
+  std::map<ConnId, std::set<std::string>> visible_cards_;
 
   std::mutex view_mu_;
 

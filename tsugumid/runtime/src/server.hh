@@ -1,5 +1,6 @@
 // Project notification endpoint over the protocol-free transport loop.
 #pragma once
+#include "tsugumi/document/document.hh"
 #include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/rpc/transport.hh"
 namespace tsugumi {
@@ -14,10 +15,10 @@ struct Note {
   using Build = std::function<
       std::pair<Tsugumi::RPC::NotificationPayload, flatbuffers::Offset<void>>(
           flatbuffers::FlatBufferBuilder&)>;
-  enum class Kind { Doc, Run, Display, Log };
+  enum class Kind { Doc, Run, Log, CardViews, Display, DisplayRunState };
   Kind kind = Kind::Doc;
-  std::string coalesce_key;  // Display/Log: same key replaces an unsent note
-  std::string card_key;      // Display: target card path key
+  std::string coalesce_key;  // Same key replaces an unsent note
+  std::string card_key;      // Target of a live view notification
   std::shared_ptr<const Build> build;
   size_t approx_bytes = 256;
 };
@@ -41,6 +42,11 @@ class Server {
                            Tsugumi::RPC::NotificationPayload type,
                            flatbuffers::Offset<void> value) -> std::string;
   void broadcast(Note note);
+  auto display(const CardPath& card, std::string_view view,
+               std::string_view bytes) -> void;
+  auto begin_display_run(std::string run) -> void;
+  auto start_display_run(const CardPath& card, const std::string& run) -> void;
+  auto end_display_run(const std::string& run) -> void;
   void close(ConnId conn);
 
  private:

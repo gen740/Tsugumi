@@ -16,6 +16,7 @@
 #include <vector>
 
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
 
@@ -47,6 +48,7 @@ struct RemoteJobState {
   std::string log = {};
   // The running job waits for its Card secrets (JobSecretsRequest).
   bool secrets_wanted = false;
+  std::vector<WorkerDisplayData> displays = {};
 };
 
 struct RemoteProbe {

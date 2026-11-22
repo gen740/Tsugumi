@@ -32,7 +32,7 @@ class EnvironmentFixture : public AgentFixture {
     extra_host_arguments = {
         "--tsugumid",        DaemonBinary(),
         "--worker",          TSUGUMI_WORKER_BINARY,
-        "--sdk-dir",         TSUGUMI_TEST_SDK,
+        "--nix-dir",         TSUGUMI_TEST_NIX,
         "--environment-dir", (directory.path / "environments").string()};
     AgentFixture::SetUp();
     Observe();

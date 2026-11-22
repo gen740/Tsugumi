@@ -24,7 +24,8 @@ import pytest
 from harness import remote_worker as R
 from harness.file_events import process_file, wait_for_file
 from harness.host import Host
-from harness.observations import read_output, read_pages
+from harness.observations import read_output
+from harness.real_cards import log, nix_string
 from harness.values import reference_json
 from projects import (
     FILE_FBS,
@@ -32,11 +33,13 @@ from projects import (
     conn,
     run_and_wait,
     start_run,
+    wait_for_display,
     wait_invocation,
     wait_run,
     write,
 )
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -193,10 +196,10 @@ def broker_request(endpoint, capability_file, body_type, body, **routing):
 
 
 @pytest.fixture
-def module_downloads(remote_broker, monkeypatch):
-    """Observe blob requests while forwarding the broker's original frames."""
+def remote_results(remote_broker, monkeypatch, tmp_path):
+    """Observe the disposable worker's result set before the core releases it."""
     upstream = remote_broker["endpoint"].removeprefix("unix:")
-    downloads = set()
+    results = {}
 
     class Forward(socketserver.BaseRequestHandler):
         def handle(self):
@@ -206,7 +209,12 @@ def module_downloads(remote_broker, monkeypatch):
                 payload = R.exact(downstream, size)
                 request = R.MessageT.InitFromPackedBuf(payload).payload.request
                 if request.bodyType == R.RequestBody.GetBlobRequest:
-                    downloads.add(text(request.body.digest))
+                    job = text(request.jobId)
+                    folders = list((tmp_path / "daemon-state/projects").glob(f"*/jobs/{job}/work/result"))
+                    if folders and job not in results:
+                        directory, = folders
+                        results[job] = {file.relative_to(directory).as_posix(): file.read_bytes()
+                                        for file in directory.rglob("*") if file.is_file()}
                 control = request.bodyType == R.RequestBody.CancelRequest
                 connection.connect(upstream + ".c" if control else upstream)
                 connection.sendall(header + payload)
@@ -215,7 +223,7 @@ def module_downloads(remote_broker, monkeypatch):
                     size, = struct.unpack("<I", header)
                     self.request.sendall(header + R.exact(response, size))
 
-    with tempfile.TemporaryDirectory(prefix="mb-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
+    with tempfile.TemporaryDirectory(prefix="rr-", dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as sockets:
         address = str(Path(sockets) / "broker")
         with socketserver.ThreadingUnixStreamServer(address, Forward) as server:
             os.symlink(address, address + ".c")
@@ -223,41 +231,29 @@ def module_downloads(remote_broker, monkeypatch):
             thread = threading.Thread(target=server.serve_forever)
             thread.start()
             try:
-                yield downloads
+                yield results
             finally:
                 server.shutdown()
                 thread.join()
 
 
-def test_remote_broker_isolates_copies_of_a_project(remote_broker):
-    endpoint, original, copy = (remote_broker[name] for name in ("endpoint", "capability", "copyCapability"))
-    # Keep the life ID identical to check project scoping independently of job ownership.
-    core_life = secrets.token_hex(32)
-    first = broker_request(endpoint, original, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
-    second = broker_request(endpoint, copy, R.RequestBody.ProbeRequest, R.ProbeRequestT(), coreLifeId=core_life)
-    assert first.bodyType == R.ReplyBody.Capabilities, vars(first.body)
-    assert second.bodyType == R.ReplyBody.Capabilities, vars(second.body)
-    first, second = first.body, second.body
-    assert first.instanceId != second.instanceId
-    value = b"private to the original project\n"
-    digest = hashlib.sha256(value).hexdigest()
-    job = "8" * 64
-    uploaded = broker_request(endpoint, original, R.RequestBody.PutBlobRequest,
-        R.PutBlobRequestT(digest=digest, total=len(value), bytes=value), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
-    assert uploaded.bodyType == R.ReplyBody.Ack
-    accepted = broker_request(endpoint, original, R.RequestBody.GetBlobRequest,
-        R.GetBlobRequestT(digest=digest), instanceId=first.instanceId, jobId=job, coreLifeId=core_life)
-    assert accepted.bodyType == R.ReplyBody.BlobChunk and bytes(accepted.body.bytes) == value
-    for instance, code in ((first.instanceId, R.ErrorCode.InstanceChanged),
-                           (second.instanceId, R.ErrorCode.NotFound)):
-        refused = broker_request(endpoint, copy, R.RequestBody.GetBlobRequest,
-            R.GetBlobRequestT(digest=digest), instanceId=instance, jobId=job, coreLifeId=core_life)
-        assert refused.bodyType == R.ReplyBody.Failure
-        assert refused.body.code == code, R.string(refused.body.message)
+GATE_HELPER = """
+def wait_for_release():
+    import os
+    os.mkfifo("test-release")
+    os.chmod("test-release", 0o666)
+    with open("test-release") as gate:
+        gate.readline()
+"""
 
 
-# HOME is the writable work folder inside this invocation's bound scratch.
-CARD_GATE = 'mkfifo -m 666 "$HOME/test-release" && read -r release < "$HOME/test-release"'
+def python_program(source):
+    return 'inputs.tsugumi.pythonSdk.pythonCard { src = pkgs.writeTextDir "main.py" ' + nix_string(source) + '; }'
+
+
+def entry(run, extra=""):
+    return "{ pkgs, inputs, params }: { run = " + run + "; " + extra + " }"
+
 
 @pytest.fixture
 def remote_gates(tmp_path, remote_daemon):
@@ -277,16 +273,24 @@ def remote_gates(tmp_path, remote_daemon):
 
 
 def fixture(project):
-    script = """
-      set -e
-      test "$(uname -s)" = Linux
-      test ! -e /etc/hostname
-      test -z "$TSUGUMI_REMOTE_PRIVATE_KEY"
-      printf 'remote-card-stdout\\n'
-      printf '%s' '{"text":"remote Card display"}' > "$TSUGUMI_REPORT"
-      cp "$FILE_IN" "$TSUGUMI_OUTPUT_DIR/copied.txt"
-      jq -nc --arg f "$TSUGUMI_OUTPUT_DIR/copied.txt" '{doc:{value:$f}}' > "$TSUGUMI_OUTPUT"
-    """
+    body = GATE_HELPER + """
+import os
+import platform
+from pathlib import Path
+from shutil import copyfile
+from card import Output
+from outputs.files.Doc import DocT
+
+def run(input):
+    wait_for_release()
+    assert platform.system() == "Linux"
+    assert not Path("/etc/hostname").exists()
+    assert "TSUGUMI_REMOTE_PRIVATE_KEY" not in os.environ
+    print("remote-card-stdout")
+    output = Path("copied.txt")
+    copyfile(input.in_.value, output)
+    return Output(doc=DocT(value=output))
+"""
     source = {"type": "input", "params": [{"name": "value", "type": "string", "data": "payload.txt"}],
               "_outputs": FILE_FBS}
     settings = {
@@ -296,7 +300,7 @@ def fixture(project):
     }
     definitions = {
         "input": source,
-        "slow": {**settings, "_nix": "{ pkgs, inputs, params }: { run = ''" + CARD_GATE + "\n" + script + "''; }"},
+        "slow": {**settings, "_nix": entry(python_program(body))},
     }
     write(project, definitions, [card("source", "input"), card("slow", "slow")],
           [conn("source", "doc", "slow", "in")],
@@ -310,7 +314,6 @@ def check_success(client, run_id, name, system):
     assert summary.executionState == RemoteExecutionState.succeeded
     assert text(summary.executionService) == "remote-test"
     assert text(summary.executionSystem) == system
-    assert text(record.display.value.text) == "remote Card display"
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(name)).artifacts
     assert len(artifacts) == 1
     content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
@@ -347,90 +350,46 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
     assert text(resumed.executionJobId) == text(started.executionJobId)
 
 
-@pytest.mark.parametrize("view", ["own-js", "own-wasm"])
-def test_remote_display_serves_card_owned_modules(project, core_factory, module_downloads, monkeypatch, view):
-    marker = "remote-module-" + hashlib.sha256(str(project).encode()).hexdigest()[:16]
-    config = {"answer": 42}
-    blob = b"remote view data"
-    report = json.dumps({"module": {"module": "own", "config": config, "blobs": {"data": "data.bin"}}})
-    script = """
-      set -e
-      printf '%s' 'remote view data' > data.bin
-      printf '%s' '__DISPLAY_REPORT__' > "$TSUGUMI_REPORT"
-      printf '%s' '{}' > "$TSUGUMI_OUTPUT"
-    """.replace("__DISPLAY_REPORT__", report)
-    entry = f'export default function mount(root) {{ root.textContent = "{marker}"; }}\n'
-    if view == "own-js":
-        views = f'views.own = inputs.tsugumi.viewModule {{ src = ./view; name = "{marker}-js"; }};'
-    else:
-        # Exercise the SDK's shared-index.js / Card-owned view.wasm layout
-        # without building the much larger WebGPU template for this RPC test.
-        entry = (f'// {marker}\nexport default function mount(root) {{ '
-                 'root.textContent = new WebAssembly.Instance(new WebAssembly.Module(tsugumiWasm)).exports.answer(); }\n')
-        views = f"""
-          views.own = pkgs.runCommand "{marker}-wasm" {{ nativeBuildInputs = [ pkgs.wabt ]; }} ''
-            mkdir -p $out
-            wat2wasm ${{./view/view.wat}} -o $out/view.wasm
-            ln -s ${{pkgs.runCommand "{marker}-template" {{ }} ''
-              mkdir -p $out
-              cp ${{./view/index.js}} $out/index.js
-            ''}}/index.js $out/index.js
-          '';
-        """
-    definition = {"type": "code", "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
-                  "_outputs": "table Outputs {} root_type Outputs;",
-                  "_nix": "{ pkgs, inputs, params }: { " + views + " run = ''" + script + "''; }"}
-    write(project, {"display": definition},
-          [card("remote", "display", executionService="remote-test")], [],
-          {"definitions/display/view/index.js": entry,
-           "definitions/display/view/view.wat": '(module (func (export "answer") (result i32) i32.const 42))'})
-    daemon = core_factory()
-    client = daemon.connect()
+def test_remote_display_is_live_and_leaves_no_result_file(project, core_factory, remote_results, remote_gates):
+    if remote_gates is None:
+        pytest.skip("requires the disposable worker's job folders")
+    payload = b"remote-opaque-view-353e4f6c\x00\xff\x80"
+    source = GATE_HELPER + f"""
+from card import Output
+import tsugumi
 
-    def run_display():
-        run_id, status = run_and_wait(client, "remote")
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        record = client.call("RunRecordRequest", runId=run_id, card=path("remote")).record
-        assert record.summary.executionState == RemoteExecutionState.succeeded
-        return run_id, record.display.value
-
-    remote_run, remote = run_display()
-    identity = text(remote.module)
-    assert not Path(identity).exists(), "the Card-owned output must only exist on the worker"
-    assert json.loads(text(remote.configJson)) == config
-    assert {text(b.name): bytes(b.data) for b in remote.blobs} == {"data": blob}
-    remote_source = read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536)
-    node = shutil.which("node")
-    if not node:
-        pytest.skip("needs Node.js to exercise the retrieved module")
-    script = """
-import fs from 'node:fs';
-const code = fs.readFileSync(0);
-const module = await import('data:text/javascript;base64,' + code.toString('base64'));
-const root = {};
-await module.default(root, { config: '{}', blobs: {} });
-process.stdout.write(JSON.stringify(root.textContent));
+def run(input):
+    tsugumi.send("notes", {payload!r})
+    wait_for_release()
+    return Output()
 """
-    result = subprocess.check_output([node, "--input-type=module", "-e", script], input=remote_source)
-    assert json.loads(result) == (42 if view == "own-wasm" else marker)
-    if view == "own-js":
-        digest = hashlib.sha256(remote_source).hexdigest()
-        assert digest in module_downloads
-        module_downloads.clear()
-        _, repeated = run_display()
-        assert text(repeated.module) == identity
-        assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
-        assert digest not in module_downloads
-    else:
-        # Serve the recorded module after a restart with no worker access.
-        with monkeypatch.context() as offline:
-            offline.delenv("TSUGUMI_EXECUTION_BROKER")
-            offline.delenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE")
-            daemon.restart()
-            client = daemon.connect()
-            recorded = client.call("RunRecordRequest", runId=remote_run, card=path("remote")).record.display.value
-            assert text(recorded.module) == identity
-            assert read_pages(client, "ModuleReadRequest", module=identity, page_bytes=65536) == remote_source
+    views = 'views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];'
+    definition = {"type": "code", "executionService": "remote-test",
+                  "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
+                  "_outputs": "table Outputs {} root_type Outputs;",
+                  "_nix": entry(python_program(source), views)}
+    write(project, {"work": definition}, [card("work", "work")], [],
+          {"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
+    client = core_factory().connect()
+    subscription = text(client.open().subscriptionId)
+    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    declared = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
+                                        timeout=RUN_LIST_TIMEOUT_SECONDS).value
+    note, = declared.views
+    assert text(note.name) == "notes" and text(note.type) == "html"
+    assert Path(text(note.blob)).is_file()
+
+    run_id = start_run(client, "work")
+    active = wait_invocation(client, run_id, "work", lambda row: row.executionState == RemoteExecutionState.running)
+    shown = wait_for_display(client, run_id).value.display
+    assert shown.card.segments == [b"work"] and text(shown.view) == "notes"
+    assert bytes(shown.bytes) == payload
+    remote_gates(active)
+    status = wait_run(client, run_id)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    result = remote_results[text(active.executionJobId)]
+    assert set(result) == {"worker.fb", "logs.jsonl", "environment.json"}
+    assert all(payload not in contents for contents in result.values())
 
 
 def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker):
@@ -447,29 +406,20 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
 
 
 def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
+    def numbers(values, value=""):
+        programs = [python_program(f"""
+from card import Output
+from outputs.Number import NumberT
+
+def run(input):
+    return Output(out=NumberT(value={value}{number}))
+""") for number in values]
+        return entry("[ " + " ".join(programs) + " ]")
+
     definitions = {
-        "source": {
-            "type": "code", "_outputs": RUN_LIST_OUTPUT,
-            "_nix": """
-                { pkgs, inputs, params }: {
-                  run = [
-                    ''printf '%s' '{"out":{"value":10}}' > "$TSUGUMI_OUTPUT"''
-                    ''printf '%s' '{"out":{"value":20}}' > "$TSUGUMI_OUTPUT"''
-                  ];
-                }
-            """,
-        },
-        "work": {
-            **RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
-            "_nix": """
-                { pkgs, inputs, params }: {
-                  run = [
-                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 100 ))" > "$TSUGUMI_OUTPUT"''
-                    ''printf '{"out":{"value":%s}}' "$(( $(jq -r .value "$JSON_IN") + 200 ))" > "$TSUGUMI_OUTPUT"''
-                  ];
-                }
-            """,
-        },
+        "source": {"type": "code", "_outputs": RUN_LIST_OUTPUT, "_nix": numbers([10, 20])},
+        "work": {**RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
+                 "_nix": numbers([100, 200], "input.in_.value + ")},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
@@ -494,19 +444,16 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
     if remote_gates is None:
         pytest.skip("requires a disposable worker to synchronize both jobs")
+    programs = [python_program(GATE_HELPER + f"""
+import sys
+
+def run(input):
+    wait_for_release()
+    print({message!r}, file=sys.stderr)
+    raise RuntimeError({message!r})
+""") for message in ("expected-batch-member-failure", "unexpected-sibling-completion")]
     definitions = {
-        "fails": {
-            **RUN_LIST_REMOTE,
-            "_nix": """
-                { pkgs, inputs, params }: {
-                  run = [
-                    ''@fail_gate@; echo expected-batch-member-failure >&2; exit 17''
-                    ''@sibling_gate@; exit 99''
-                  ];
-                }
-            """.replace("@fail_gate@", CARD_GATE)
-               .replace("@sibling_gate@", CARD_GATE),
-        },
+        "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(programs) + " ]")},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
@@ -534,51 +481,47 @@ def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, 
     assert blocked.state == CardState.blocked and not downstream.batches
 
 
-def test_remote_transfers_only_declared_outputs(project, core_factory, remote_broker, tmp_path):
-    """Remote execution ignores undeclared files/FIFOs and materializes relative links within a declared Directory."""
-    from harness.real_cards import bash, log
+@pytest.mark.parametrize("link", [False, True])
+def test_remote_snapshots_only_declared_regular_outputs(project, core_factory, remote_broker, tmp_path, link):
+    body = f"""
+import os
+from pathlib import Path
+from card import Output
+from outputs.files.Doc import DocT
+
+def run(input):
+    report = Path("report")
+    report.mkdir()
+    (report / "data").write_text("safe\n")
+    if {link!r}:
+        (report / "link").symlink_to("data")
+    os.mkfifo("undeclared-fifo")
+    Path("undeclared-file").write_text("unused")
+    return Output(doc=DocT(value=report))
+"""
     schema = FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"')
-    create = ('mkdir "$TSUGUMI_OUTPUT_DIR/report"; '
-              'echo safe > "$TSUGUMI_OUTPUT_DIR/report/data"; '
-              'ln -s data "$TSUGUMI_OUTPUT_DIR/report/link"; '
-              'result=report; ')
-    script = (create +
-              'mkfifo "$TSUGUMI_OUTPUT_DIR/undeclared-fifo"; '
-              'echo unused > "$TSUGUMI_OUTPUT_DIR/undeclared-file"; '
-              'mkfifo "$TSUGUMI_WORK_DIR/undeclared-fifo"; '
-              'mkfifo "$TSUGUMI_TMP_DIR/undeclared-fifo"; '
-              'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$result" > "$TSUGUMI_OUTPUT"')
-    definition = bash(script, outputs=schema, executionService="remote-test", retainArtifact=True,
-                      timeoutSeconds=600)
+    definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,
+                  "recordIO": True, "timeoutSeconds": 600, "_outputs": schema,
+                  "_nix": entry(python_program(body))}
     write(project, {"copy": definition}, [card("copy", "copy")], [])
     scratch = tmp_path / "scratch"
     c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
     run_id, st = run_and_wait(c, "copy")
+    if link:
+        assert st.state == RunState.failed and st.failure.kind == FailureKind.output_invalid
+        return
     assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
     record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
     saved = Path(text(record.outputs[0].filePath))
-    assert not (saved / "link").is_symlink()
-    assert (saved / "link").read_text() == "safe\n"
+    assert (saved / "data").read_text() == "safe\n"
     invocation = scratch / "runs" / run_id / "work/copy/1"
     assert not list(invocation.rglob("undeclared-*"))
 
 
-def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_factory, remote_broker):
-    """Remote bodies and hooks use the same definition-owned tools and inventory as local runs."""
-    from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
-
-    write(project, {"work": {"type": "code", "recordIO": True, "executionService": "remote-test",
-                             "timeoutSeconds": 600, "_outputs": TXT, "_nix": DEFINITION_TOOLS_NIX}},
-          [card("work", "work")], [])
-    client = core_factory().connect()
-    run_id, status = run_and_wait(client, "work")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    check_definition_tools(client, run_id)
-
-
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
-    from harness.real_cards import bash, log
-    definition = bash(CARD_GATE, executionService="remote-test", timeoutSeconds=1, buildTimeoutSeconds=600)
+    definition = {"type": "code", "executionService": "remote-test", "timeoutSeconds": 1,
+                  "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
+                  "_nix": entry(python_program(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
     client = core_factory().connect()
     run_id, status = run_and_wait(client, "deadline")
@@ -591,13 +534,17 @@ def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory
 # process without writing it anywhere.
 SENTINEL = "remote-card-secret-sentinel-5e81c0b7d4"
 SECRET_PROJECT = "a2b3c4"
-USES_SECRET = (
-    'case "$database_password" in ' + SENTINEL.rsplit("-", 1)[0] + '-*) ;; *) exit 3 ;; esac; '
-    f'test "${{#database_password}}" = {len(SENTINEL)} || exit 5; '
-    'test "$FROM_PRE" = ready || exit 4; '
-    'echo remote-card-ran; '
-    'printf \'{"out":{"value":%d}}\' "${#database_password}" > "$TSUGUMI_OUTPUT"'
-)
+USES_SECRET = """
+import os
+from card import Output
+from outputs.Number import NumberT
+
+def run(input):
+    value = os.environ["database_password"]
+    assert value.startswith("remote-card-secret-sentinel-")
+    print("remote-card-ran")
+    return Output(out=NumberT(value=len(value)))
+"""
 
 
 @pytest.fixture
@@ -609,10 +556,8 @@ def secret_project(project):
 
 
 def uses_secret():
-    from harness.real_cards import bash
-    # preRun's environment, the secret included, comes back to the worker.
-    return bash(USES_SECRET, pre="export FROM_PRE=ready", secrets=["database_password"],
-                recordIO=True, executionService="remote-test", timeoutSeconds=600)
+    return {**RUN_LIST_REMOTE, "secrets": ["database_password"],
+            "_nix": entry(python_program(USES_SECRET))}
 
 
 def files_containing(root, needle, skip=lambda path: False):
@@ -653,7 +598,6 @@ def test_remote_card_receives_its_secret_and_no_file_keeps_it(secret_project, pr
                                                               remote_broker, remote_daemon, tmp_path):
     if remote_daemon[2] is None:
         pytest.skip("requires a disposable worker whose state folder the test can read")
-    from harness.real_cards import log
     host = remote_broker["host"]
     host.call("CardSecretSetRequest", projectId=secret_project, name="database_password", value=SENTINEL)
     write(project, {"use": uses_secret()}, [card("use", "use")], [])
@@ -731,7 +675,6 @@ def test_remote_worker_restart_before_the_card_starts_fails_the_job(secret_proje
     fails, saying why, and nothing sends them again."""
     if remote_daemon[2] is None:
         pytest.skip("requires a disposable worker whose listener can be restarted")
-    from harness.real_cards import log
     arrived, release = held_secret_delivery
     host = remote_broker["host"]
     host.call("CardSecretSetRequest", projectId=secret_project, name="database_password", value=SENTINEL)

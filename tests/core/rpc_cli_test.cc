@@ -155,7 +155,7 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
                  (directory.path / "project.sock").string(), "--listen",
                  "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
                  (directory.path / "project-control").string(), "--worker",
-                 TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
+                 TSUGUMI_WORKER_BINARY, "--nix-dir", TSUGUMI_TEST_NIX},
                 directory.path / "project.log");
   const auto server =
       Readiness(project, directory.path / "project-control/server.ready",
@@ -232,7 +232,7 @@ TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
        (directory.path / "project").string(), "--unix", socket, "--listen",
        "127.0.0.1:0", "--allow-missing-origin", "--control-dir",
        (directory.path / "project-control").string(), "--worker",
-       TSUGUMI_WORKER_BINARY, "--sdk-dir", TSUGUMI_TEST_SDK},
+       TSUGUMI_WORKER_BINARY, "--nix-dir", TSUGUMI_TEST_NIX},
       directory.path / "project.log");
   const auto server =
       Readiness(project, directory.path / "project-control/server.ready",

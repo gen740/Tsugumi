@@ -200,32 +200,6 @@ void stage_close(InvocationSummaryData& s, StageOutcome o) {
 
 }  // namespace
 
-namespace {
-
-auto display_note(const CardPath& card, const std::string& run,
-                  const WorkerDisplayData& display) -> Note {
-  auto payload = std::make_shared<const WorkerDisplayData>(display);
-  Note n;
-  n.kind = Note::Kind::Display;
-  n.card_key = path_key(card);
-  n.coalesce_key = "display|" + n.card_key + "|" + display.view;
-  n.approx_bytes = display.bytes.size() + display.view.size() + 1024;
-  n.build = std::make_shared<const Note::Build>([card, run, payload](FBB& b) {
-    const auto path = wire::path(b, card);
-    const auto run_id = b.CreateString(run);
-    const auto view = b.CreateString(payload->view);
-    const auto bytes = b.CreateVector(
-        reinterpret_cast<const uint8_t*>(payload->bytes.data()),
-        payload->bytes.size());
-    const auto update = D::CreateDisplay(b, path, run_id, view, bytes);
-    return std::make_pair(R::NotificationPayload::DisplayUpdated,
-                          R::CreateDisplayUpdated(b, update).Union());
-  });
-  return n;
-}
-
-}  // namespace
-
 // ---------------------------------------------------------------------------
 
 class RunExec : public std::enable_shared_from_this<RunExec> {
@@ -1387,8 +1361,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                        "batch cancelled before execution");
         if (node.kind == CardType::Code)
           out = run_code(rt, w, s, inputs, sources, lane);
-        else
+        else {
+          svc_.server()->start_display_run(node.path, run_id_);
           out = run_builtin(rt, w, s, inputs);
+        }
       } catch (const ExecutionDetached&) {
         svc_.history().clear_live(s);
         out.detached = true;
@@ -1402,7 +1378,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stage_begin(s, Phase::validate);
         const auto started = now_ms();
         try {
-          validate_outputs(node, w, out.outputs, inputs, std::nullopt);
+          validate_outputs(node, w, out.outputs, inputs);
         } catch (const Failed& f) {
           out.failure = f.failure;
           out.outputs.clear();
@@ -1682,11 +1658,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         });
   }
 
-  auto validate_outputs(
-      const Node& node, const Work& w, std::vector<Value>& outputs,
-      const std::vector<Value>& inputs,
-      const std::optional<std::pair<std::string, std::string>>& out_alias)
-      -> void {
+  auto validate_outputs(const Node& node, const Work& w,
+                        std::vector<Value>& outputs,
+                        const std::vector<Value>& inputs) -> void {
     // Files received as inputs may be passed on unchanged (branch, fork, a
     // Card forwarding its input); anything else must be newly produced in the
     // invocation's own output directory.
@@ -1716,15 +1690,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       }
       if (v.kind != PortKind::FlatBuffer) {
         auto p = path_value(v);
-        // A path under the passed output descriptor is the output folder's real
-        // path.
-        if (p && out_alias) {
-          const auto& [alias, real] = *out_alias;
-          if (*p == alias || p->starts_with(alias + "/")) {
-            p = real + p->substr(alias.size());
-            v = with_path(v, *p);
-          }
-        }
         auto out_dir = invocation_dir(node, w.invocation) / "out";
         std::error_code ec;
         bool is_forward =
@@ -1990,12 +1955,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     const auto inv = s.invocation;
     int64_t last_transfer = 0;
     auto result = w.execution->execute(
-        {node,
-         *w.implementation,
-         in,
-         sources,
-         s,
-         invocation_dir(node, inv),
+        {node, *w.implementation, in, sources, s, invocation_dir(node, inv),
          w.cancellation->stop,
          [&] {
            return explicit_cancel_.load() || w.cancellation->failed.load();
@@ -2004,8 +1964,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
-         [&](const WorkerDisplayData& display) {
-           svc_.server()->broadcast(display_note(rt.node->path, run_id_, display));
+         [server = svc_.server(),
+          card = node.path](const WorkerDisplayData& display) {
+           server->display(card, display.view, display.bytes);
          },
          [&](int64_t begin, int64_t end) {
            svc_.server()->broadcast(timeline_note(
@@ -2019,6 +1980,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
            });
            card_status(s);
            set_state(RunState::running);
+           svc_.server()->start_display_run(node.path, run_id_);
          },
          [&] { card_status(s); },
          [&](workerd::InvocationResult& completed) {
@@ -2030,8 +1992,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                                                     started, now_ms()));
            };
            try {
-             validate_outputs(node, w, completed.outputs, in,
-                              completed.out_alias);
+             validate_outputs(node, w, completed.outputs, in);
            } catch (...) {
              trace_validation();
              throw;
@@ -2610,6 +2571,7 @@ std::string Scheduler::accept(DocumentPtr doc, const RunParams& p) {
     History::put_substituters(db, *s.status.run_id, svc_.substituters());
     History::put_receipt(db, p.op_id, "run", p.digest, receipt);
   });
+  svc_.server()->begin_display_run(*s.status.run_id);
   svc_.server()->broadcast(status_note(s.status, true));
   active_ = std::make_shared<RunExec>(svc_, *this, doc, p, s, std::move(plan));
   active_->start();
@@ -2707,6 +2669,7 @@ auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
                                              "saving the run result failed");
     }
   }
+  svc_.server()->end_display_run(*sum.status.run_id);
   svc_.server()->broadcast(status_note(sum.status, false));
   svc_.server()->broadcast(finished_note(sum));
   reapers_.emplace_back([this, done = std::move(done), status = sum.status,

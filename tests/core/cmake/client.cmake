@@ -11,7 +11,7 @@ target_compile_definitions(tsugumi_rpc_cli_tests PRIVATE
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
   TSUGUMI_PROJECT_SCHEMA="${_test_project_schema}"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
+  TSUGUMI_TEST_NIX="${_test_nix}")
 add_dependencies(tsugumi_rpc_cli_tests tsugumi-rpc tsugumid-mock)
 gtest_discover_tests(tsugumi_rpc_cli_tests TEST_PREFIX "core_rpc_cli." DISCOVERY_MODE PRE_TEST
   PROPERTIES TIMEOUT 30)

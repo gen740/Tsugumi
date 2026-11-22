@@ -4,6 +4,7 @@ import json
 
 import pytest
 
+from harness.fixtures import mock_plan
 from harness.observations import read_output
 from harness.scenario import Project, run, wait_run
 from harness.values import recorded_input_json, reference_json
@@ -19,9 +20,16 @@ PAIR = 'table Pair { left:ulong; right:ulong; } table Outputs { out:Pair (requir
 VECTOR = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
 
 
-def implementation(value):
-    output = json.dumps({"out": {"value": value}})
-    return {"bash": f"printf '%s' '{output}' > \"$TSUGUMI_OUTPUT\""}
+def numeric_plan(directory, values, **options):
+    runs = []
+    for value in values:
+        package = directory / f"number-{value}"
+        package.mkdir()
+        (package / "scenario.json").write_text(json.dumps({
+            "actions": [{"op": "output", "port": "out", "type": "uint64", "value": value}],
+        }))
+        runs.append(str(package))
+    return mock_plan(runs, execution_list=True, **options)
 
 
 def invocation_page(client, run_id, card):
@@ -42,11 +50,10 @@ def label(row):
 
 def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
     """Labels from the execution plan are recorded on every member, and an unlabeled entry keeps only its index."""
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True}, outputs=NUMBER,
-               manifest={"runs": [implementation(1), implementation(2), implementation(3)]},
-               plan={"labels": ["threshold 10", "", "threshold 14"]})
+               plan=numeric_plan(tmp_path, [1, 2, 3], labels=["threshold 10", "", "threshold 14"]))
     graph.save(client)
 
     run_id = run(client, "work", propagate=False)
@@ -65,11 +72,10 @@ def test_run_list_labels_name_each_invocation(core_factory, project, tmp_path):
     (["same", "same"], "names more than one implementation"),
     (["tab\there", ""], "control character"),
 ])
-def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, project, labels, message):
-    client = core_factory(mocked_builds=True).connect()
+def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, project, tmp_path, labels, message):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
-                                  manifest={"runs": [implementation(1), implementation(2)]},
-                                  plan={"labels": labels})
+                                  plan=numeric_plan(tmp_path, [1, 2], labels=labels))
     graph.save(client)
 
     run_id = run(client, "work", propagate=False)
@@ -81,10 +87,10 @@ def test_invalid_run_list_labels_fail_before_any_member_runs(core_factory, proje
 
 def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory, project, tmp_path):
     """Each swept value is one member; the last param varies fastest and arriving batches stay the outer axis."""
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
-               manifest={"runs": [implementation(7), implementation(8)]})
+               plan=numeric_plan(tmp_path, [7, 8]))
     graph.card("values", {"type": "input", "recordIO": True, "params": [
         {"name": "left", "type": "uint64", "sweep": [1, 2]},
         {"name": "right", "type": "uint64", "sweep": [10, 20, 30]},
@@ -111,7 +117,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
 
 def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory, project, tmp_path):
     """sweep: [x] keeps an explicit one-member batch; data holding a list stays one ordinary value."""
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("one", {"type": "input", "recordIO": True,
                        "params": [{"name": "value", "type": "uint64", "sweep": [5]}]}, outputs=NUMBER)
@@ -144,7 +150,7 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
 
 
 def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("values", {"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": []}]},
                outputs=NUMBER)
@@ -159,11 +165,11 @@ def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
     assert collected(client, tmp_path / "decode", run_id) == []
 
 
-def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, project):
-    client = core_factory(mocked_builds=True).connect()
+def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, project, tmp_path):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
-               manifest={"runs": [implementation(n) for n in range(2)]})
+               plan=numeric_plan(tmp_path, [0, 1]))
     graph.card("values", {"type": "input", "params": [
         {"name": "value", "type": "uint64", "sweep": list(range(200))}]}, outputs=NUMBER)
     graph.connect("starts", "out", "values", "start").save(client)
@@ -185,7 +191,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
                                       {"name": "right", "type": "uint64", "sweep": list(range(16))}]},
      "at most 256"),
     ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
-      "_nix": "{ pkgs, inputs, params }: { run = \"true\"; }"},
+      "_nix": "{ pkgs, inputs, params }: { run = pkgs.emptyDirectory; }"},
      "sweep is for Input Cards"),
 ])
 def test_invalid_sweeps_are_definition_errors(core_factory, project, definition, message):

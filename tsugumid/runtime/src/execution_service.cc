@@ -162,13 +162,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   sp.worker_binary = build.worker.empty()
                          ? service_.options().worker_binary.string()
                          : build.worker;
-  // The shell and PATH are the definition's (the manifest's), so they are in
-  // the recorded environment and do not change with this build of the core.
-  sp.bash = build.shell;
-  sp.path = build.path;
   if (!secrets->values.empty()) sp.secrets = std::move(secrets);
-  sp.program = {build.package, build.bash, build.pre_run, build.post_run,
-                build.views};
+  sp.package = build.package;
   sp.sandbox = node.settings.sandbox;
   sp.shared_vm = !service_.options().gcroots_dir.empty();
   sp.closure = build.environment.paths;
@@ -223,11 +218,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
   std::string key =
-      build.package.value_or("") + "|" + build.bash.value_or("") + "|" +
-      build.pre_run + "|" + build.post_run + "|" + build.views + "|" +
-      std::to_string(sp.sandbox.filesystem) + std::to_string(sp.sandbox.pid) +
-      std::to_string(sp.sandbox.ipc) + std::to_string(sp.sandbox.identity) +
-      "|" + std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
+      build.package + "|" + std::to_string(sp.sandbox.filesystem) +
+      std::to_string(sp.sandbox.pid) + std::to_string(sp.sandbox.ipc) +
+      std::to_string(sp.sandbox.identity) + "|" +
+      std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
       std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
       std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
       (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
@@ -254,8 +248,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node)};
   };
   invocation.output_directory = request.directory / "out";
-  if (uid && ::geteuid() == 0 && worker_uid_on_host())
-    invocation.output_owner = std::make_pair(kCardUid, kCardUid);
+  invocation.output_budget = {node.settings.output_limit_bytes,
+                              node.settings.output_limit_entries};
   invocation.cancel = &request.cancel;
   if (node.settings.timeout_seconds)
     invocation.timeout_ms = *node.settings.timeout_seconds * 1000;

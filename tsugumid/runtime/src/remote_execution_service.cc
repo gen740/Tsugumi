@@ -236,6 +236,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       reply = poll_remote_job(client_, job, live_log.cursor(), stop);
       if (stop.stop_requested()) continue;
       more_log = live_log.accept(*reply);
+      if (request.display)
+        for (const auto& display : reply->displays) request.display(display);
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,

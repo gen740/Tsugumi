@@ -49,8 +49,9 @@ the person's decision.
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
   Card upstream of what it reaches, so one run after writing several Cards costs less than one after each. A fix made after a failed
   run is known to work only once that run has been repeated. run_record
-  shows what each Card produced (an image a Card displayed comes back as an image you can see) or why it failed. For
-  Nix failures, use tools family runs action logs with the Card and stream "build". It reads what the actual build
+  shows a finished run's saved port values, artifacts, and failures. Card views receive live updates during
+  and after execution. For Nix failures, use tools family runs action logs with the Card and stream "build".
+  It reads what the actual build
   target recorded for the run. A shell can have a different Nix store from the Card's build target.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.

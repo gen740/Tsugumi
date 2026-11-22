@@ -13,7 +13,7 @@ else()
   set(_core_headers ${PROJECT_SOURCE_DIR}/tsugumid/runtime/src ${PROJECT_SOURCE_DIR}/hostd/private ${PROJECT_SOURCE_DIR}/hostd/agent/private)
   include_directories(${_core_headers})
   set(_test_mock "$<TARGET_FILE:tsugumid-mock>")
-  set(_test_sdk ${PROJECT_SOURCE_DIR}/sdk)
+  set(_test_nix ${PROJECT_BINARY_DIR}/share/tsugumi/nix)
   set(_test_project_schema ${TSUGUMI_GEN_DIR}/bfbs/tsugumi.bfbs)
 endif()
 

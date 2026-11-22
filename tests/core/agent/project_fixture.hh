@@ -81,8 +81,8 @@ class AgentProjectFixture : public AgentFixture {
         (directory.path / "project-control").string(),
         "--worker",
         TSUGUMI_WORKER_BINARY,
-        "--sdk-dir",
-        TSUGUMI_TEST_SDK};
+        "--nix-dir",
+        TSUGUMI_TEST_NIX};
     if (!project_fault.empty())
       args.insert(args.begin() + 2, {"TSUGUMI_ENABLE_FAULTS=1",
                                      "TSUGUMI_FAULT=" + project_fault});

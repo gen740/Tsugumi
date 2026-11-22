@@ -144,7 +144,7 @@ struct PreparedCard {
   // The evaluation key, as the core would compute it again for this Card.
   Opt<"key", v::String> key;
   Opt<"derivation", v::String> derivation;
-  Opt<"manifest", v::String> manifest;
+  Opt<"plan", v::String> plan;
   Opt<"system", v::String> system;
   Opt<"execution_list", v::Bool> execution_list;
   Opt<"implementations", v::Uint64> implementations;

@@ -86,8 +86,9 @@ struct Settings {
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
   bool record_logs = true;
-  bool record_displays = true;
   uint64_t log_limit_bytes = schema::kDefaultLogLimitBytes;
+  uint64_t output_limit_bytes = schema::kDefaultOutputLimitBytes;
+  uint64_t output_limit_entries = schema::kDefaultOutputLimitEntries;
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;
