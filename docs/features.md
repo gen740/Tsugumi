@@ -115,15 +115,17 @@ The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) 
 ### An environment per Card
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   sdk = inputs.tsugumi.cppSdk;
 in
 {
-  run = sdk.cppCard { src = ./src; };
+  run = sdk.cppCard { inherit schemas; src = ./src; };
   views = sdk.views;
 }
 ```
+
+- `schemas` holds the port schemas made from the Card's current definition and wiring; the builder generates the Card's typed API from them and places it under `share/tsugumi/api/` of its output. "Build SDK" in the Card editor and the Agent's `sdk` tool family (`api`) build the Card and show those files ([The builder interface](CoreAndSDK.md#the-builder-interface)).
 
 - `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. New projects are created already pinned to the app's revision. To keep using it after an app update, open **Project settings → Name and Environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
 - Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch during evaluation are limited to nixpkgs archives (build-time fetches must be pinned by hash).
@@ -151,14 +153,14 @@ in
 - `default.nix` can use the packages as they are. They are built when the Card runs.
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, inputs, schemas, ... }:
 let ciao = inputs.sources.ciao.packages.ciao;
-in { run = "${ciao}/bin/dmlist ..."; }
+in { run = inputs.tsugumi.cppSdk.cppCard { inherit schemas; src = ./src; tools = [ ciao ]; }; }
 ```
 
 - `tsugumid` evaluates the flake with an evaluator separate from the Cards', and passes the Card only the packages' derivations. The Cards' evaluator can still fetch only nixpkgs and has no `builtins.getFlake`. The separate evaluator is the same pure evaluation as `nix build`, without IFD.
 - A package is built with the nixpkgs of that flake's `flake.lock` (not the project's nixpkgs).
-- A declaration applies only to that project's Cards (a Card in Card is another project). An external source whose name is not written in a `default.nix` is neither evaluated nor fetched (the check is a plain text match, so a mention in a comment counts).
+- A declaration applies only to that project's Cards (a Card in Card is another project). Every declared source is offered to the project's Cards, and `tsugumid` evaluates (and fetches) one only when a Card's evaluation reads it: Nix decides, not a search of the source text.
 
 ### Keeping build results
 
