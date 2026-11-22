@@ -102,7 +102,6 @@ export function DependenciesCategory({ model }: { model: CardEditorModel }) {
         <div key={ref.id} className="col gap4">
           <span>{session.displayPath(path(ref.target))}</span>
           <code className="caption secondary selectable">{ref.expression}</code>
-          {!ref.valid && <span className="caption" style={{ color: 'var(--orange)' }}>{L('参照を解決できません。Nix 定義と診断を確認してください。')}</span>}
         </div>
       ))}
       <h3>{L('最後に記録された環境')}</h3>

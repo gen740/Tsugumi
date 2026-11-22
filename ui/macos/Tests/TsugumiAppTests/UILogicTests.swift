@@ -499,7 +499,7 @@ import TsugumiTestSupport
     table Outputs { out:Num (required); extra:Num; /* note */ }
     root_type Outputs;
     """)
-  #expect(ok == .ports([PortData(name: "out", typeName: "Num", optional: false), PortData(name: "extra", typeName: "Num", optional: true)]))
+  #expect(ok == .ports([PortData(name: "out", typeName: "Num"), PortData(name: "extra", typeName: "Num")]))
   if case .error = OutputCatalog.parse("table Outputs { out:Num ") {} else { Issue.record("an unfinished catalog is an error") }
   if case .error = OutputCatalog.parse("table Outputs { out:Num; }") {} else { Issue.record("root_type is required") }
 }

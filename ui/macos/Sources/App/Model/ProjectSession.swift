@@ -32,8 +32,12 @@ struct Diagnostic: Identifiable, Hashable {
 struct PortInfo: Hashable {
   let name: String
   let kind: Tsugumi_Data_PortKind
-  let optional: Bool
   let rootType: String?
+  var mergeMemberTypes: [String] = []
+  var typeName: String? {
+    if !mergeMemberTypes.isEmpty { return mergeMemberTypes.joined(separator: " | ") }
+    return kind == .path ? "Path" : rootType
+  }
   var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
 }
 
@@ -723,13 +727,13 @@ final class ProjectSession {
     for rc in res {
       let p = rc.card.path
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
-        PortInfo(name: x.name, kind: x.kind, optional: x.optional_ ?? false, rootType: x.rootType, executionShape: x.executionShape)
+        PortInfo(name: x.name, kind: x.kind, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 }, executionShape: x.executionShape)
       }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
                                nixReferences: rc.nixReferences.compactMap { $0 }.map {
-                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name, valid: $0.valid)
+                                 CardNixReference(source: key(p), target: key($0.target.path), name: $0.name)
                                })
       all += d
     }

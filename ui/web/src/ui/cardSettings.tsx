@@ -11,7 +11,7 @@ import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { portTypeName, CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
@@ -763,13 +763,6 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       )}
       {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
-          {kind === 'code' && (
-            <Row label="trigger" help={L('allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。')}>
-              <Select {...string('trigger', 'allInputs')} options={[
-                { value: 'allInputs', label: L('すべての入力が揃ったとき') }, { value: 'eachInput', label: L('入力が届くたび') },
-              ]} />
-            </Row>
-          )}
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
           {kind === 'code' && (
@@ -1062,7 +1055,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
                     <TextField {...portNote(model, 'inputs', name)} placeholder={L('用途（何を受け取るか）')} style={{ flex: 1 }}
                       help={L('このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。')} />
-                    <span className="caption secondary nowrap">{r?.inputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+                    <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
                     <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
                 </Row>
@@ -1072,7 +1065,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           </>
         ) : (
           <>
-            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={p.rootType ?? L('未解決')} />)}
+            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={portTypeName(p) ?? L('未解決')} />)}
             {!(r?.inputs ?? []).length && <Row><span className="secondary">{L('入力はありません')}</span></Row>}
           </>
         )}
@@ -1129,7 +1122,7 @@ function ForkOutputsSection({ model }: { model: CardEditorModel }) {
             <TextField value={name} placeholder={L('名前')} mono help={L('出力ポートの名前')} style={{ width: 140 }}
               onChange={(v) => edit((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
             <TextField {...portNote(model, 'outputs', name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            <span className="caption secondary nowrap">{r?.outputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+            <span className="caption secondary nowrap">{portTypeName(r?.outputs.find((p) => p.name === name)) ?? L('未解決')}</span>
             <Button kind="borderless" iconOnly icon="minus.circle" help={L('出力を削除')} disabled={names.length <= 1}
               onClick={() => edit((a) => a.splice(i, 1))} />
           </div>
@@ -1203,7 +1196,7 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
             <span className="mono ellipsis" style={{ width: 120, flex: 'none' }}>{port.name}</span>
             <TextField {...portNote(model, 'outputs', port.name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
             {types.length === 0 || !p ? (
-              <span className="caption secondary nowrap">{(port.rootType ?? L('未解決')) + (port.optional ? L('（省略可）') : '')}</span>
+              <span className="caption secondary nowrap">{portTypeName(port) ?? L('未解決')}</span>
             ) : (
               <>
                 <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }} help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
