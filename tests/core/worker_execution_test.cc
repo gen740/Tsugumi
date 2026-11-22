@@ -197,7 +197,8 @@ TEST(WorkerOutputs, PathAndFlatBufferUseSeparateFields) {
 
 TEST(WorkerOutputs, MissingRequiredOutputIsRejected) {
   const std::vector<types::PortType> ports{
-      {"value", PortKind::FlatBuffer, false, nullptr}};
+      {.name = "value", .kind = PortKind::FlatBuffer, .required = true,
+       .type = nullptr}};
   EXPECT_THROW(accept_outputs({}, ports), Failed);
 }
 
