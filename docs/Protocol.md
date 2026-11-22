@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 52 requests.
+There are 53 requests.
 
 ## Connection
 
@@ -446,6 +446,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
+| [`CardViewRead`](#cardviewread) | CardViewContent | Read a page of the file a Card declared as the view `name` (the blob of that entry in its views list, as CardViewsUpdated last sent it). Only declared files are served, and their bytes are relayed without being interpreted. offset defaults to 0 and length to 1 MiB (1..1048576). |
 
 ### ViewSetVisible
 
@@ -462,6 +463,15 @@ No fields.
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
 | `view_json` | `string` | yes |  |
+
+### CardViewRead
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
+| `offset` | `uint64` |  |  |
+| `length` | `uint32` |  |  |
 
 ## Versions
 
