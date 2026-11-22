@@ -55,20 +55,6 @@ import Testing
     #expect(missing[2].difference == .unknown && missing[2].right == nil)
   }
 
-  @Test func retainedDisplayEqualityIgnoresIdentityButChecksContent() {
-    let first = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .table(columns: ["Band", "Photons"], rows: [["red", "101187"]]))
-    let equal = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: first.value)
-    let changed = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: .table(columns: ["Band", "Photons"], rows: [["red", "104821"]]))
-    #expect(RunComparison.sameDisplay(first, equal))
-    #expect(!RunComparison.sameDisplay(first, changed))
-    #expect(!RunComparison.sameDisplay(first, nil))
-    let image = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 2]), alt: "rgb"))
-    let other = DisplaySnapshot(runId: "right", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 3]), alt: "rgb"))
-    #expect(!RunComparison.sameDisplay(image, other))
-    let sameImage = DisplaySnapshot(runId: "right", invocation: 2, revision: 9, value: image.content)
-    #expect(RunComparison.sameDisplay(image, sameImage))
-  }
-
   @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
     func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
       let value = Tsugumi_Data_NamedValueT()

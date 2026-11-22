@@ -319,6 +319,6 @@ struct TsugumiSpool: View {
 }
 
 #Preview("割合なし") {
-  TsugumiLoadingCard(content: LoadingContent(title: "起動しています", message: "コンテナに接続しています…"))
+  TsugumiLoadingCard(content: LoadingContent(title: "起動しています", message: "VM を起動しています"))
     .padding(40)
 }

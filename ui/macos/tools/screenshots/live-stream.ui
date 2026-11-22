@@ -1,11 +1,13 @@
-# For checking the WebGPU line chart: the random walk while it is drawn, and when it is done
+# For checking the live view: the plot Card's view window while the random walk streams, and when it is done
 size 1440 900
 chat hide
 wait 2
 fit
+open visual plot
+wait 2
 run
 wait 12
-capture live-stream
+capture live-stream plot
 waitrun
 wait 1
-capture live-stream-done
+capture live-stream-done plot

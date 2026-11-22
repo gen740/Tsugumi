@@ -116,7 +116,6 @@ struct EvidenceView: View {
       }
     }.padding(20).frame(minWidth: 650, minHeight: 450)
       .task(id: "\(target.href)|\(session.recordingRevision)") { await load() }
-
   }
   private func load() async {
     artifact = nil

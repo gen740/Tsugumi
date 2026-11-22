@@ -65,13 +65,8 @@ enum SmokeTest {
           report["rerun_notifications"] = [s.notificationCount - n0, s.notificationBatches - b0]
         }
         report["card_states"] = s.cardStates.mapValues { String(describing: $0.state) }
-        report["displays"] = s.displays.mapValues { d -> String in
-          switch d.value {
-          case .text(let t): return String(t.prefix(200))
-          case .scalar(let v, let l): return "\(l)=\(v)"
-          default: return d.module?.name ?? "unavailable"
-          }
-        }
+        report["views"] = s.cardViews.declarations.mapValues { $0.map { "\($0.name):\($0.type)" } }
+        report["view_data"] = s.cardViews.received.mapValues { $0.sorted() }
         await s.undo()
         await s.save()
         report["undo_save_rev"] = s.rev

@@ -286,7 +286,7 @@ private struct GeneralProjectSettings: View {
   @State private var agentExclude = ""
   @State private var recording: [String: Bool] = [:]
   @State private var logLimit = ""
-  private let recordingDefaults = ["recordLogs": true, "recordDisplays": true, "recordIO": false, "retainArtifact": false]
+  private let recordingDefaults = ["recordLogs": true, "recordIO": false, "retainArtifact": false]
 
   private func recordingValues(_ project: JSONValue) -> [String: Bool] {
     Dictionary(uniqueKeysWithValues: recordingDefaults.map { key, fallback in
@@ -351,7 +351,6 @@ private struct GeneralProjectSettings: View {
         .disabled(!session.trustedFolder.isEmpty)
         Section("記録の既定値") {
           recordingToggle("recordLogs", "標準出力と標準エラーを記録")
-          recordingToggle("recordDisplays", "記録指定のある表示を記録")
           recordingToggle("recordIO", "入出力の値を記録")
           recordingToggle("retainArtifact", "出力ファイルと成果物を保持")
           TextField("呼び出しごとのログ上限（バイト）", text: $logLimit)
