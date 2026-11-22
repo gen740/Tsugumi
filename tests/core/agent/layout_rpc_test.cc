@@ -13,7 +13,7 @@ TEST_F(AgentProjectFixture,
   const auto revision = JsonString(before, "/value/rev");
   const auto arguments =
       "{\"base_rev\":" + Quote(revision) +
-      R"(,"changes":[{"value_type":"SetLayout","value":{"json":"{\"cards\":{\"a\":{\"x\":1}}}"}}]})";
+      R"(,"changes":[{"value_type":"SetLayout","value":{"layout":"{\"cards\":{\"a\":{\"x\":1}}}"}}]})";
   const auto refused =
       Tool(conversation, "project_save", arguments, "bad-layout");
   ASSERT_TRUE(refused.Code().empty()) << refused.View();

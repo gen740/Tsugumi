@@ -400,13 +400,14 @@ def test_uint64_max_and_original_spelling_preserved(builtin_client):
     diags = [text(x.code) for r in res.delta.resolution for x in r.diagnostics
              if text(r.card.segments[0]) == "b"]
     assert "invalid_param" not in diags
-    # One more than uint64 max is a type error diagnostic, not a silent truncation.
+    # The document parser rejects a value outside the schema's ulong range.
     raw2 = raw.replace("18446744073709551615", "18446744073709551616")
-    res2 = c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-                  changes=[change("PutDefinition", id="b", cardJson=raw2)])
-    diags2 = [text(x.code) for r in res2.delta.resolution for x in r.diagnostics
-              if text(r.card.segments[0]) == "b"]
-    assert "invalid_param" in diags2
+    with pytest.raises(RpcFailure) as error:
+        c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
+               changes=[change("PutDefinition", id="b", cardJson=raw2)])
+    assert error.value.kind == "invalid_document"
+    assert "18446744073709551616" in str(error.value)
+    assert c.call("ProjectInspectRequest").rev == res.rev
 
 
 def test_explicit_false_is_not_omitted(builtin_client):

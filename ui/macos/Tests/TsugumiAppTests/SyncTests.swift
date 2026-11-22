@@ -33,6 +33,7 @@ import TsugumiTestSupport
                            "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
                            "--worker", worker?.path ?? env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
+                           "--workerd", env["TSUGUMI_WORKERD"] ?? build.appendingPathComponent("workerd/tsugumi-workerd").path,
                            "--nix-dir", env["TSUGUMI_NIX_DIR"] ?? build.appendingPathComponent("share/tsugumi/nix").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice

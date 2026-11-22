@@ -284,7 +284,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     accepted_source = next(s for s in inspected.sources if text(s.path) == card_path)
     assert json.loads(bytes(accepted_source.document)) == json.loads(updated)
     content = c.call("ProjectFileReadRequest", path=card_path, atRev=changed.rev)
-    assert bytes(content.bytes) == updated.encode()
+    assert bytes(content.bytes) == bytes(accepted_source.document)
     with pytest.raises(RpcFailure) as error:
         c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
                changes=[change("PutSource", path=card_path, bytes=b'{"type":"trigger"}',
@@ -339,7 +339,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert bytes(c.call("ProjectFileReadRequest", path="externals/greeting/notes.txt").bytes) == b"x"
     snap = c.call("ProjectInspectRequest")
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutSource", path="externals/fresh/tsugumi.json", bytes=list(b"{}"))])
+           changes=[change("PutSource", path="externals/fresh/tsugumi.json",
+                           bytes=b'{"canvas":{"cards":[],"connections":[]}}')])
     # The external opens on its own, with the same result.
     d.stop()
     alone = root / "externals" / "greeting"

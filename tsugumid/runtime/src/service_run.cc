@@ -637,13 +637,10 @@ auto Service::run_environment_uses(RequestIn& req) -> void {
       throw Failed(FailureKind::not_found, "unknown run environment");
     auto q = db.prepare(
         "SELECT card, invocation FROM ("
-        "SELECT card, invocation, detail FROM invocations WHERE run_id=?1 "
-        "UNION ALL SELECT card, invocation, detail FROM statuses AS s WHERE "
-        "run_id=?1 "
-        "AND NOT EXISTS (SELECT 1 FROM invocations AS i WHERE "
-        "i.run_id=s.run_id "
-        "AND i.card=s.card AND i.invocation=s.invocation)) "
-        "WHERE json_extract(detail, '$.environment_id')=?2 ORDER BY card, "
+        "SELECT card, invocation FROM invocations WHERE run_id=?1 "
+        "AND environment_id=?2 UNION ALL SELECT card, invocation "
+        "FROM active_environments WHERE run_id=?1 AND environment_id=?2) "
+        "ORDER BY card, "
         "invocation LIMIT ?3 OFFSET ?4");
     q.bind(1, run)
         .bind(2, id)

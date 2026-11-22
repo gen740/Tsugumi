@@ -81,7 +81,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
   try await session.run(card: ["a"], propagate: false)
   // Run status and batch metadata can arrive in separate UI notification frames.
   try await waitForModel { !session.runActive && session.executionBatch("a")?.complete == true }
-  #expect(session.runStatus?.state == .succeeded)
+  #expect(session.runStatus?.state == .succeeded, "\(session.runStatus?.failure?.diagnostic ?? "No run diagnostic")")
   let runId = try #require(session.currentRunId)
   let batch = try #require(session.executionBatch("a"))
   #expect(batch.complete)

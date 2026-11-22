@@ -67,7 +67,8 @@ def stop_services(root, group=None):
     # discovery records, including hosts whose command has no state argument.
     recorded = set()
     for directory, _, files in os.walk(root, followlinks=False):
-        for name in ('host.ready', 'server.ready', 'server.json'):
+        # Project daemons carry the test directory in their arguments.
+        for name in ('host.ready', 'server.json'):
             if name in files and not (Path(directory) / name).is_symlink():
                 try:
                     recorded.add(int(json.loads((Path(directory) / name).read_text())['pid']))

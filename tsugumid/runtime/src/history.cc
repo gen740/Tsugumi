@@ -490,7 +490,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
   duration_ms INTEGER, failure BLOB, waiting BLOB, record_io INTEGER NOT NULL,
-  input_sources BLOB, build_cached INTEGER, detail BLOB,
+  input_sources BLOB, build_cached INTEGER, detail BLOB, environment_id TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p +
@@ -923,8 +923,8 @@ void History::complete_invocation(sql::Db& db,
       "INSERT OR REPLACE INTO invocations(run_id, card, "
       "invocation, state, phase, started_at, ended_at, "
       "duration_ms, failure, waiting, record_io, "
-      "input_sources, build_cached, detail) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      "input_sources, build_cached, detail, environment_id) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   st.bind(1, s.run_id)
       .bind(2, key(s.card))
       .bind(3, s.invocation)
@@ -942,8 +942,7 @@ void History::complete_invocation(sql::Db& db,
     st.bind(13, *s.build_cached);
   else
     st.bind_null(13);
-  st.bind_blob(14, detail_bytes(s));
-  st.run();
+  st.bind_blob(14, detail_bytes(s)).bind(15, s.environment_id).run();
   // The completion removes exactly this invocation's progress status, never a
   // newer one.
   db.prepare(

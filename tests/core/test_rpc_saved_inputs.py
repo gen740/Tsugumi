@@ -81,9 +81,9 @@ def test_child_branch_forwards_saved_files_across_partial_runs(saved_file_subgra
         assert record.record.outputs  # Explicit Record I/O and Retain artifact are both obeyed.
 
 
-def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgraph):
-    """Container, child and producer names leave saved paths and source JSON intact."""
-    from test_definitions import rename
+def test_description_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgraph):
+    """README edits leave saved paths and run evidence intact."""
+    from test_definitions import edit_description
     client, first_run = saved_file_subgraph
     record = client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))
     import flatbuffers
@@ -92,9 +92,9 @@ def test_name_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgrap
         builder.Finish(value.Pack(builder))
         return bytes(builder.Output())
     before = packed(record)
-    rename(client, "source", "Same name")
-    rename(client, "child", "Same name")
-    rename(client, "inner", "Same name", "externals/child/")
+    edit_description(client, "source", "Shared description")
+    edit_description(client, "child", "Shared description")
+    edit_description(client, "inner", "Shared description", "externals/child/")
     assert packed(client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))) == before
     assert artifact_contents(client, first_run) == CONTENTS
     run_id, status = run_and_wait(client, "child", propagate=False)

@@ -2,11 +2,13 @@
 #include <algorithm>
 #include <iostream>
 #include <map>
+#include <optional>
 #include <string>
 #include <vector>
 
 #include "host/project_operations.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -14,6 +16,24 @@ namespace {
 namespace json = tsugumi::json;
 namespace crypto = tsugumi::crypto;
 using tsugumi::host::OperationReply;
+
+auto CanonicalDocument(const std::string& path, const std::string& text)
+    -> std::string {
+  using namespace tsugumi::document_text;
+  std::optional<Schema> kind;
+  if (path == "tsugumi.json" || path.ends_with("/tsugumi.json"))
+    kind = Schema::Project;
+  if (path.ends_with("/_card.json")) kind = Schema::Card;
+  if (path.ends_with("/_comments.json")) kind = Schema::Comments;
+  if (!kind) return text;
+  try {
+    return print(*kind, parse(*kind, path, text));
+  } catch (const tsugumi::DocumentError&) {
+    // Client behavior fixtures also simulate definitions with diagnostics.
+    return text;
+  }
+}
+
 class ProjectFixture {
  public:
   std::map<std::string, std::string> files;
@@ -98,7 +118,8 @@ class ProjectFixture {
                    v = json::Object(change.at("value"));
         const auto kind = json::Text(change, "value_type");
         if (kind == "SetProject")
-          files["tsugumi.json"] = json::Text(v, "json");
+          files["tsugumi.json"] =
+              CanonicalDocument("tsugumi.json", json::Text(v, "json"));
         else if (kind == "SetLayout")
           files["layout.bin"] = binary(v.at("layout"));
         else if (kind == "PutDefinition") {
@@ -110,7 +131,7 @@ class ProjectFixture {
             if (text.empty())
               files.erase(dir + name);
             else
-              files[dir + name] = text;
+              files[dir + name] = CanonicalDocument(dir + name, text);
           }
         } else if (kind == "RemoveDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
@@ -127,7 +148,8 @@ class ProjectFixture {
             bytes = json::String(data);
           else
             bytes = binary(data);
-          files[json::Text(v, "path")] = bytes;
+          const auto path = json::Text(v, "path");
+          files[path] = CanonicalDocument(path, bytes);
         }
       }
       ++saves;

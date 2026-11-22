@@ -37,7 +37,8 @@ extension ChatResumeTests {
       for await _ in entered.stream { break }
       let openedRev = s.rev
       let projectBytes = try Data(contentsOf: dir.appendingPathComponent("tsugumi.json"))
-      let layoutBytes = try Data(contentsOf: dir.appendingPathComponent("layout.bin"))
+      let layoutURL = dir.appendingPathComponent("layout.bin")
+      let layoutBytes = try? Data(contentsOf: layoutURL)
       let code = CardEditorModel(session: s, cardKey: "a")
       code.meta = .object([("description", .string("logs the value"))])
       let second = try t.makeSession()
@@ -50,7 +51,7 @@ extension ChatResumeTests {
       #expect(s.position("a") == second.position("a"))
       #expect(!s.dirty && !second.dirty)
       #expect(try Data(contentsOf: dir.appendingPathComponent("tsugumi.json")) == projectBytes)
-      #expect(try Data(contentsOf: dir.appendingPathComponent("layout.bin")) == layoutBytes)
+      #expect((try? Data(contentsOf: layoutURL)) == layoutBytes)
       #expect(await code.apply())
       #expect(s.rev == openedRev + 1)
       #expect(s.saveError == nil)

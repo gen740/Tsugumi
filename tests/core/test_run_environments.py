@@ -48,7 +48,7 @@ def inventory(client, run_id, card="work"):
 
 
 def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory, project, tmp_path):
-    """Renamed Cards keep their recorded builds and redacted cache URLs in a copied Project."""
+    """README edits preserve the recorded builds and cache URLs in a copied Project."""
     listed = tmp_path / "substituters"
     listed.write_text("https://cache.nixos.org\n"
                       "https://reader:cache-secret@private.example.org/team?token=cache-token\n"
@@ -66,8 +66,8 @@ def test_environment_survives_cache_reuse_restart_and_project_copy(core_factory,
     assert wait_run(client, cached).state == RunState.succeeded
     environment = inventory(client, run_id)
     assert inventory(client, cached) == environment
-    from test_definitions import rename
-    rename(client, "work", "renamed")
+    from test_definitions import edit_description
+    edit_description(client, "work", "Updated description")
     daemon.stop()
     # The list is the run's own: a later configuration does not rewrite it,
     # and it travels with the project's copy of the run.

@@ -148,11 +148,11 @@ extension SyncTests {
     try await Self.connected(session)
     let agent = RPCClient(endpoint: daemon.endpoint.url)
     _ = try await agent.connect(token: daemon.endpoint.token, expectedProjectId: nil)
-    func save(_ name: String, _ content: String) async throws {
+    func save(_ description: String, _ content: String) async throws {
       let snapshot = try await agent.inspect()
-      let meta = JSONValue.object([("name", .string(name)), ("content", .string(content))])
+      let readme = Documents.printReadme(description: description, body: content)
       _ = try await agent.save(baseRev: snapshot.rev ?? 0, opId: UUID(), origin: "agent", changes: [
-        Change.putDefinition(id: "a", cardJSON: #"{"type":"draft"}"#, commentsJSON: meta.serialized()),
+        Change.putDefinition(id: "a", cardJSON: #"{"type":"draft"}"#, readme: readme),
       ])
       try await waitForModel { !(session.rev <= (snapshot.rev ?? 0)) }
       #expect(session.rev > (snapshot.rev ?? 0))
@@ -163,23 +163,21 @@ extension SyncTests {
     let untouchedRev = session.rev
     _ = await session.finishDraftEdit()
     #expect(session.inlineDraft == nil && !session.dirty && session.rev == untouchedRev)
-    #expect(session.cardMeta("a")?["content"]?.string == "agent" && session.displayName("a") == "agent")
-    for field in ["name", "content"] {
-      await session.startDraftEdit("a")
-      if field == "name" { session.inlineDraft?.name = "mine" } else { session.inlineDraft?.content = "mine" }
-      try await save("newer", "newer")
-      _ = await session.finishDraftEdit()
-      #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
-      // Overwriting is guarded by the value shown at the conflict: a third
-      // writer's change is refused again, and the next overwrite replaces it.
-      try await save("newest", "newest")
-      _ = await session.finishDraftEdit(overwrite: true)
-      #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
-      _ = await session.finishDraftEdit(overwrite: true)
-      #expect(session.inlineDraft == nil && !session.dirty)
-      #expect(session.cardMeta("a")?[field]?.string == "mine")
-      #expect(session.cardMeta("a")?[field == "name" ? "content" : "name"]?.string == "newest")
-    }
+    #expect(session.cardMeta("a")?["content"]?.string == "agent" && session.displayName("a") == "a")
+
+    await session.startDraftEdit("a")
+    session.inlineDraft?.content = "mine"
+    try await save("newer", "newer")
+    _ = await session.finishDraftEdit()
+    #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
+    // A third writer's change is refused again before the next overwrite.
+    try await save("newest", "newest")
+    _ = await session.finishDraftEdit(overwrite: true)
+    #expect(session.inlineDraft?.revision.conflictRev == session.rev && !session.dirty)
+    _ = await session.finishDraftEdit(overwrite: true)
+    #expect(session.inlineDraft == nil && !session.dirty)
+    #expect(session.cardMeta("a")?["content"]?.string == "mine")
+    #expect(session.cardMeta("a")?["description"]?.string == "newest")
     await agent.close()
     await session.close()
   }

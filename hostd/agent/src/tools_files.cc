@@ -7,6 +7,8 @@
 #include "agent/tools.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
+#include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/text.hh"
@@ -405,10 +407,28 @@ auto Tools::FileOperation(const std::string& conversation,
         check_cancelled();
         digest.update(chunk);
       });
-      if (digest.finish_hex() != hash)
+      const auto disk_hash = digest.finish_hex();
+      bool matches = disk_hash == hash;
+      if (!matches && Document::is_document_file(path) &&
+          (path.ends_with("/_card.json") || path.ends_with("/_comments.json")) &&
+          std::filesystem::file_size(work / path) <= kMaxDocumentJsonBytes) {
+        // A confirmed document is canonical JSON; its formatting on disk may
+        // still reflect a human edit already accepted by the core.
+        using namespace document_text;
+        const auto kind =
+            path.ends_with("/_card.json") ? Schema::Card : Schema::Comments;
+        try {
+          const auto data = fs::read_file_or_throw(work / path);
+          matches = crypto::sha256_hex(print(kind, parse(kind, path, data))) ==
+                    hash;
+        } catch (const DocumentError&) {
+          // An invalid file is an unconfirmed edit.
+        }
+      }
+      if (!matches)
         throw Failure("external_change",
                       "Reload external edits before running shell: " + path);
-      initial[path] = hash;
+      initial[path] = disk_hash;
       bool may_write = SourcePath(path, true);
       if (may_write) try {
           check(path, true);

@@ -23,7 +23,7 @@ def project_with_file(root, value, external=False, record_io=False):
                  "data/events.txt": "Unlisted root file"})
     if external:
         doc = json.loads((owner / "tsugumi.json").read_text())
-        doc["boundary"] = {"inputs": {}, "outputs": {"doc": {"card": "load", "port": "doc"}}}
+        doc["boundary"] = {"outputs": [{"name": "doc", "card": "load", "port": "doc"}]}
         put(owner / "tsugumi.json", json.dumps(doc))
         write(root, defs={"shared": {"type": "trigger"}}, cards=[card("child"), card("shared", "shared")], conns=[],
               files={"definitions/shared/data/events.txt": "Outer-project contents"})

@@ -221,10 +221,11 @@ import TsugumiTestSupport
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let edit = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
       let before = try JSONValue.parse(try #require(edit.oldValue.json))
-      draftBases.append(try #require(before["content"]?.string))
-      if before["content"]?.string != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
+      let readme = Documents.parseReadme(try #require(before.string))
+      draftBases.append(readme.body)
+      if readme.body != "agent" { throw RPCFailure(kind: .valueConflict, diagnostic: "") }
       let after = try JSONValue.parse(try #require(edit.newValue.json))
-      #expect(after["description"]?.string == "unrelated")
+      #expect(Documents.parseReadme(try #require(after.string)).description == "unrelated")
       return self.result(unchanged(request.opId))
     }
     _ = await session.finishDraftEdit()
@@ -509,9 +510,9 @@ extension ProjectOperationTests {
         if draft {
           let json = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectJSONEditT)
           let before = try JSONValue.parse(try #require(json.oldValue.json))
-          guardValue = try #require(before["content"]?.string)
+          guardValue = Documents.parseReadme(try #require(before.string)).body
           let written = try JSONValue.parse(try #require(json.newValue.json))
-          #expect(written["description"]?.string == "unrelated")
+          #expect(Documents.parseReadme(try #require(written.string)).description == "unrelated")
         } else {
           let field = try #require(body.edits[0]?.value?.value as? Tsugumi_Host_ProjectFieldEditT)
           guard case .number(let n) = try JSONValue.parse(try #require(field.oldValue.json)) else { throw RPCFailure(kind: .invalidRequest, diagnostic: "") }
@@ -554,7 +555,7 @@ extension ProjectOperationTests {
     let items = s.marqueeItems(marquee, in: [])
     #expect(items.cards == ["a"] && items.notes == ["note"])
     let inverse = Tsugumi_Host_ProjectEditsT()
-    let old = try JSONValue.parse(initial)
+    let old = s.layout
     var moved = old
     moved["cards"]?["a"]?["x"] = .number("30")
     var notes = try #require(moved["notes"]?.array)

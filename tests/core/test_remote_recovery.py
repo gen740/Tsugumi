@@ -772,7 +772,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
 def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
     limit = 6
-    logs = b'{"stream":1,"text":"remote output"}\n'
+    logs = R.log_entries((LogStream.standard_output, "remote output"))
     gateway.live_logs[job_id] = logs
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
