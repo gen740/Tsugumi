@@ -212,7 +212,7 @@ As long as the input and output types are the same, what is inside can be replac
 
 ### C++
 
-The input and output ports become members of `Card::Inputs` and `Card::Output`.
+Read each input through `Card::Inputs` by port name. `Card::InputType` supplies the connected type and lets the same source compile when the port is unwired. Return ports through `Card::Output`.
 
 `definitions/multiply/default.nix` (C++)
 
@@ -235,7 +235,9 @@ in
 #include <string>
 
 auto run(const Card::Inputs& input) -> Card::Output {
-  const auto n = input.get<inputs::number::hello::NumberT>("number").value;
+  using Fallback = decltype(Card::Output::result)::value_type;
+  using Number = Card::InputType<"number", Fallback>;
+  const auto n = input.get<Number>("number").value;
   const auto factor = input.params.factor.value_or(1);
   card::display::send(std::to_string(n) + " × " + std::to_string(factor) +
                       " = " + std::to_string(n * factor));
