@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
@@ -177,6 +178,70 @@ void remove_file_durable(const stdfs::path& p) {
   if (::unlink(p.c_str()) != 0 && errno != ENOENT)
     throw Error("unlink " + p.string() + ": " + std::strerror(errno));
   fsync_dir(p.parent_path());
+}
+
+namespace {
+auto inside(const std::string& root, const std::string& path) -> bool {
+  return path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
+         (root.back() == '/' || path[root.size()] == '/');
+}
+
+// Where an open descriptor's file is, symlinks resolved.
+auto descriptor_path(int fd) -> std::optional<std::string> {
+#ifdef F_GETPATH
+  char path[PATH_MAX];
+  if (::fcntl(fd, F_GETPATH, path) != 0) return std::nullopt;
+  return std::string(path);
+#else
+  std::error_code ec;
+  auto path =
+      stdfs::read_symlink("/proc/self/fd/" + std::to_string(fd), ec).string();
+  if (ec || path.empty() || path.front() != '/') return std::nullopt;
+  return path;
+#endif
+}
+}  // namespace
+
+std::optional<ContainedRange> read_range_inside(const stdfs::path& root,
+                                                const stdfs::path& p,
+                                                uint64_t offset,
+                                                uint64_t limit) {
+  std::error_code ec;
+  const auto resolved_root = stdfs::canonical(root, ec).string();
+  if (ec || !p.is_absolute()) return std::nullopt;
+  // O_NONBLOCK: a FIFO in place of the file must not hang the open.
+  int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+  if (fd < 0) {
+    if (errno == ENOENT || errno == ENOTDIR || errno == ELOOP ||
+        errno == EACCES || errno == ENXIO)
+      return std::nullopt;
+    throw Error("open " + p.string() + ": " + std::strerror(errno));
+  }
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{fd};
+  struct stat st{};
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) return std::nullopt;
+  const auto location = descriptor_path(fd);
+  if (!location || !inside(resolved_root, *location)) return std::nullopt;
+  ContainedRange out{.size = static_cast<uint64_t>(st.st_size), .bytes = {}};
+  if (offset > out.size) return out;
+  const auto size = std::min<uint64_t>(limit, out.size - offset);
+  out.bytes.resize(size);
+  size_t got = 0;
+  while (got < size) {
+    ssize_t r = ::pread(fd, out.bytes.data() + got, size - got,
+                        static_cast<off_t>(offset + got));
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      throw Error("read " + p.string() + ": " + std::strerror(errno));
+    }
+    if (r == 0) break;
+    got += static_cast<size_t>(r);
+  }
+  out.bytes.resize(got);
+  return out;
 }
 
 bool resolves_inside(const stdfs::path& root, const stdfs::path& p) {
@@ -398,6 +463,63 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
   std::sort(out.links.begin(), out.links.end());
   std::sort(out.directories.begin(), out.directories.end());
   return out;
+}
+
+std::string sha256_tree(const stdfs::path& p) {
+  const auto listing = list_beneath(p, "");
+  crypto::Sha256 hash;
+  const auto entry = [&](std::string_view kind, const std::string& name,
+                         std::string_view digest = {}) {
+    hash.update(kind);
+    hash.update(std::string_view(name.c_str(), name.size() + 1));
+    hash.update(digest);
+    hash.update(std::string_view("\n", 1));
+  };
+  for (const auto& name : listing.directories) entry("d", name);
+  for (const auto& name : listing.files) {
+    crypto::Sha256 file;
+    stream_beneath(p, name, UINT64_MAX,
+                   [&](std::string_view chunk) { file.update(chunk); });
+    entry("f", name, file.finish_hex());
+  }
+  for (const auto& name : listing.links) entry("l", name);
+  for (const auto& name : listing.special) entry("s", name);
+  return hash.finish_hex();
+}
+
+bool directory_beneath(const stdfs::path& root, const stdfs::path& rel) {
+  const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
+  struct stat st{};
+  const int status = ::fstat(fd, &st);
+  ::close(fd);
+  if (status != 0 || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
+    throw Error((root / rel).string() +
+                " is neither a regular file nor a directory");
+  return S_ISDIR(st.st_mode);
+}
+
+bool copy_path_beneath(
+    const stdfs::path& root, const stdfs::path& rel,
+    const stdfs::path& destination,
+    const std::function<void(const stdfs::path&, const stdfs::path&)>&
+        copy_file) {
+  if (!directory_beneath(root, rel)) {
+    copy_file(rel, destination);
+    return false;
+  }
+  const auto listing = list_beneath(root, rel);
+  if (!listing.links.empty())
+    throw Error((root / rel).string() + " contains the link " +
+                listing.links.front());
+  if (!listing.special.empty())
+    throw Error((root / rel).string() + " contains the special file " +
+                listing.special.front());
+  stdfs::create_directories(destination);
+  for (const auto& child : listing.directories)
+    stdfs::create_directories(destination / child);
+  for (const auto& child : listing.files)
+    copy_file(rel / child, destination / child);
+  return true;
 }
 
 FileLock::~FileLock() {

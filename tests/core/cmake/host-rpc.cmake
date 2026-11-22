@@ -47,7 +47,7 @@ target_compile_definitions(${_agent_rpc_target} PRIVATE
   TSUGUMI_HOST_BINARY="$<TARGET_FILE:tsugumi-hostd>"
   TSUGUMI_PROJECT_BINARY="${_test_mock}"
   TSUGUMI_WORKER_BINARY="$<TARGET_FILE:tsugumi-worker>"
-  TSUGUMI_TEST_SDK="${_test_sdk}")
+  TSUGUMI_TEST_NIX="${_test_nix}")
 if(TSUGUMI_INSTALLED_CORE)
   install(TARGETS ${_agent_rpc_target} RUNTIME DESTINATION libexec/tsugumi-tests)
 endif()

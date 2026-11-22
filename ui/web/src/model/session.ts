@@ -5,7 +5,7 @@ import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
 import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
-import { registerModuleClient, ModuleBlobs } from './moduleSources'
+import { LiveViews } from './liveViews'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -16,7 +16,7 @@ import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
+import { D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
@@ -51,9 +51,14 @@ const diag = (d: D.DiagnosticT): Diagnostic => ({
 export interface PortInfo {
   name: string
   kind: D.PortKind
-  optional: boolean
   rootType?: string
+  mergeMemberTypes?: string[]
   executionShape?: D.ExecutionShape
+}
+
+export function portTypeName(port?: PortInfo): string | undefined {
+  if (port?.mergeMemberTypes?.length) return port.mergeMemberTypes.join(' | ')
+  return port?.kind === D.PortKind.Path ? 'Path' : port?.rootType
 }
 
 export interface ResolvedCard {
@@ -61,7 +66,7 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
-  nixReferences: { target: string[]; name: string; valid: boolean }[]
+  nixReferences: { target: string[]; name: string }[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -201,121 +206,6 @@ export type SyncState =
   | { kind: 'offline' }
   /** Card changes wait until the run ends. */
 
-export type DisplayValue =
-  | { kind: 'unavailable' }
-  | { kind: 'text'; text: string }
-  /** Markdown with TeX math (the SDK's Markdown display). */
-  | { kind: 'markdown'; text: string }
-  | { kind: 'scalar'; value: number; label: string }
-  | { kind: 'table'; columns: string[]; rows: string[][] }
-  | { kind: 'image'; mediaType: string; data: Uint8Array; alt: string }
-  | { kind: 'points'; x: number[]; y: number[]; z: number[]; colors: number[] }
-  | { kind: 'module'; name: string; json: string; blobs: ModuleBlobs }
-
-export interface DisplaySnapshot {
-  runId: string
-  invocation: bigint
-  revision: bigint
-  value: DisplayValue
-}
-
-/** Decode a retained display without changing the live canvas. */
-export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
-  let value: DisplayValue
-  try {
-  switch (d.valueType) {
-    case D.DisplayValue.DisplayText: {
-      const t = d.value as D.DisplayTextT
-      value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
-      break
-    }
-    case D.DisplayValue.DisplayScalar: {
-      const v = d.value as D.DisplayScalarT
-      value = { kind: 'scalar', value: v.value ?? NaN, label: s(v.label) }
-      break
-    }
-    case D.DisplayValue.DisplayTable: {
-      const t = d.value as D.DisplayTableT
-      value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
-      break
-    }
-    case D.DisplayValue.DisplayImage: {
-      const im = d.value as D.DisplayImageT
-      value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
-      break
-    }
-    case D.DisplayValue.DisplayPointCloud: {
-      const p = d.value as D.DisplayPointCloudT
-      value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
-      break
-    }
-    case D.DisplayValue.DisplayModule: {
-      const m = d.value as D.DisplayModuleT
-      if (new Set(m.blobs.map(b => s(b.name))).size !== m.blobs.length) throw new Error('duplicate blobs')
-      value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
-      break
-    }
-    default:
-      value = { kind: 'unavailable' }
-  }
-  if (!displayable(value)) value = { kind: 'unavailable' }
-  } catch { value = { kind: 'unavailable' } }
-  return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
-}
-
-export interface DisplayModule {
-  name: string
-  config: string
-  blobs: ModuleBlobs
-}
-
-/** ABI 8 still carries typed Display values and store paths for SDK defaults. */
-export function displayModule(value: DisplayValue): DisplayModule | undefined {
-  const builtin = (name: string, config: object, blobs: ModuleBlobs = {}): DisplayModule =>
-    ({ name: `tsugumi:${name}`, config: JSON.stringify(config), blobs })
-  switch (value.kind) {
-    case 'unavailable': return undefined
-    case 'text': case 'markdown': return builtin(value.kind, { text: value.text })
-    case 'scalar': return builtin('scalar', { value: value.value, label: value.label })
-    case 'table': return builtin('table', { columns: value.columns, rows: value.rows })
-    case 'image': return builtin('image', { mediaType: value.mediaType, alt: value.alt }, { image: value.data })
-    case 'points': return builtin('points', {}, {
-      x: new Uint8Array(Float32Array.from(value.x).buffer),
-      y: new Uint8Array(Float32Array.from(value.y).buffer),
-      z: new Uint8Array(Float32Array.from(value.z).buffer),
-      colors: new Uint8Array(Uint32Array.from(value.colors).buffer),
-    })
-    case 'module': {
-      const sdkDefault = /-tsugumi-view-(line-chart|plotly|vega-lite)$/.exec(value.name)?.[1]
-      return { name: sdkDefault ? `tsugumi:${sdkDefault}` : value.name, config: value.json, blobs: value.blobs }
-    }
-  }
-}
-
-/** A malformed presentation stays attached to its run, with an explicit state. */
-function displayable(v: DisplayValue): boolean {
-  const bytes = (s: string) => new TextEncoder().encode(s).length
-  const id = (s: string) => s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]{1,128}$/.test(s)
-  switch (v.kind) {
-    case 'unavailable': return false
-    case 'text': case 'markdown': return bytes(v.text) <= 1 << 20
-    case 'scalar': return Number.isFinite(v.value)
-    case 'table': return v.columns.length > 0 && v.columns.length <= 64 && v.rows.length <= 10000 &&
-      v.columns.every(c => bytes(c) <= 4096) && v.rows.every(r => r.length === v.columns.length && r.every(c => bytes(c) <= 4096))
-    case 'image': return v.data.length <= 8 << 20 && (v.mediaType === 'image/png'
-      ? v.data.length > 8 && [137,80,78,71,13,10,26,10].every((b,i) => v.data[i] === b)
-      : v.mediaType === 'image/jpeg' && v.data.length > 3 && v.data[0] === 255 && v.data[1] === 216)
-    case 'points': return v.x.length <= 1000000 && v.x.length === v.y.length && v.x.length === v.z.length &&
-      (!v.colors.length || v.colors.length === v.x.length) && [v.x,v.y,v.z].every(a => a.every(Number.isFinite))
-    case 'module':
-      if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
-          Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
-      return true
-  }
-}
-
-/** A built-in view's title or line-series summary (as an image shows its alt
- *  text), or what it is when it has none. */
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
 /** Undo consists solely of the host's guarded inverse edits. */
@@ -450,8 +340,7 @@ export class ProjectSession extends Observable {
       this.stopRunId = undefined
   }
   cardStates = new Map<CardKey, CardRunState>()
-  displays = new Map<CardKey, DisplaySnapshot>()
-  private displayViewers = new Map<CardKey, number>()
+  readonly liveViews = new LiveViews()
   lastFinished = 0
   remoteHistoryRevision = 0
   recordingRevision = 0
@@ -470,8 +359,6 @@ export class ProjectSession extends Observable {
   /** How many notifications the UI has taken in, and in how many batches. */
   notificationCount = 0
   notificationBatches = 0
-  private inbox: Notification[] = []
-  private inboxScheduled = false
   private offEvents: () => void
   private offHost: () => void
 
@@ -631,6 +518,7 @@ export class ProjectSession extends Observable {
         if (this.client !== c) return
         this.documentRevisions.disconnect(new RPCError('disconnected', L('接続していません')))
         this.connected = false
+        this.liveViews.reset()
         this.changed()
         this.reconnect()
       }
@@ -643,6 +531,7 @@ export class ProjectSession extends Observable {
     } catch (e) {
       if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
+      this.liveViews.reset()
       this.connectionFailed = e instanceof Unreached
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
@@ -662,7 +551,6 @@ export class ProjectSession extends Observable {
       signal.addEventListener('abort', cancel, { once: true })
       try { await client.connect(token) }
       finally { signal.removeEventListener('abort', cancel) }
-      registerModuleClient(client)
       return client
     } catch (e) {
       client?.close()
@@ -680,6 +568,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     old?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     void (async () => {
       // The host Start request joins a restart and answers only when ready or
@@ -700,6 +589,7 @@ export class ProjectSession extends Observable {
       this.client = undefined
       old?.close()
       this.connected = false
+      this.liveViews.reset()
       this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
       this.changed()
       try {
@@ -729,6 +619,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
   }
 
   async stopEnvironment() {
@@ -738,6 +629,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     try { this.environment = await this.environmentHost.stop(this.dir) }
     catch (error) { this.connectionMessage = errorText(error) }
@@ -748,24 +640,29 @@ export class ProjectSession extends Observable {
     this.offEvents()
     this.offHost()
     this.client?.close()
+    this.liveViews.reset()
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
    *  once per frame (or four times a second with no frames): a run with thousands of short invocations causes one
    *  view update per batch, not per event. */
   private listen(c: RPCClient) {
+    let inbox: Notification[] = []
     c.onNotification = (e) => {
-      this.inbox.push(e)
-      if (this.inboxScheduled) return
-      this.inboxScheduled = true
+      if (this.client !== c) return
+      inbox.push(e)
+      if (inbox.length > 1) return
       const apply = () => {
         cancelAnimationFrame(frame)
         clearTimeout(timer)
-        this.inboxScheduled = false
-        const batch = this.inbox
-        this.inbox = []
-        if (batch.length) this.notificationBatches++
-        for (const ev of batch) this.handle(ev)
+        const batch = inbox
+        inbox = []
+        if (this.client !== c) return
+        this.notificationBatches++
+        for (const ev of batch) {
+          if (this.client !== c) break
+          this.handle(ev)
+        }
         this.changed()
       }
       const frame = requestAnimationFrame(apply)
@@ -830,14 +727,27 @@ export class ProjectSession extends Observable {
         if (d) this.applyDelta(d)
         break
       }
+      case R.NotificationPayload.CardViewsUpdated: {
+        const { card, views, failure } = e.value as R.CardViewsUpdatedT
+        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })),
+          failure ? s(failure.diagnostic) || (D.FailureKind[failure.kind] ?? String(failure.kind)) : undefined)
+        break
+      }
+      case R.NotificationPayload.DisplayUpdated: {
+        const { card, view, bytes } = e.value as LiveDisplayUpdate
+        this.liveViews.get(key(card))?.data(view, bytes)
+        break
+      }
+      case R.NotificationPayload.DisplayRunStateChanged: {
+        const { card, runId, state } = e.value as R.DisplayRunStateChangedT
+        const view = this.liveViews.get(key(segs(card)))
+        if (state === D.DisplayRunState.started) view?.run(s(runId), 'started')
+        if (state === D.DisplayRunState.ended) view?.run(s(runId), 'ended')
+        break
+      }
       case R.NotificationPayload.RunEvent:
         this.applyRunEvent(e.value as R.RunEventT)
         break
-      case R.NotificationPayload.DisplayUpdated: {
-        const d = (e.value as R.DisplayUpdatedT).display
-        if (d) this.applyDisplay(d)
-        break
-      }
       case R.NotificationPayload.RunCategoryDeleteResult:
         this.recordingRevision++
         this.changed()
@@ -897,19 +807,21 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), kind: x.kind, optional: !!x.optional, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), kind: x.kind, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), valid: r.valid })) })
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })) })
       all.push(...d)
+    }
+    for (const [card, views] of this.liveViews) {
+      if (this.resolution.has(card) && !r.has(card)) views.clear()
     }
     this.resolution = r
     this.diagnostics = all
-    // A result belongs to a Card of the current document.
-    for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
   private applyDelta(d: R.DocumentDeltaT) {
@@ -1005,18 +917,6 @@ export class ProjectSession extends Observable {
         this.lastFinished = Date.now()
         break
       }
-    }
-  }
-
-  private applyDisplay(d: D.DisplayT) {
-    const k = key(segs(d.card))
-    if (!this.displayViewers.has(k)) return
-    const rev = d.revision ?? 0n
-    const old = this.displays.get(k)
-    if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    const display = recordedDisplay(d)
-    if (display) {
-      this.displays.set(k, display)
     }
   }
 
@@ -1230,23 +1130,12 @@ export class ProjectSession extends Observable {
 
   /** Subscribe only while at least one live viewer for a Card is open. */
   observeDisplay(card: CardKey): () => void {
-    const count = this.displayViewers.get(card) ?? 0
-    this.displayViewers.set(card, count + 1)
-    if (!count) void this.refreshVisibleDisplays()
-    return () => {
-      const remaining = (this.displayViewers.get(card) ?? 1) - 1
-      if (remaining) this.displayViewers.set(card, remaining)
-      else {
-        this.displayViewers.delete(card)
-        this.displays.delete(card)
-        void this.refreshVisibleDisplays()
-      }
-    }
+    return this.liveViews.observe(card, () => { void this.refreshVisibleDisplays() })
   }
 
   private async refreshVisibleDisplays() {
     if (!this.client || !this.subscription) return
-    const cards = [...this.displayViewers.keys()].sort().map(path)
+    const cards = [...this.liveViews.keys()].sort().map(path)
     await this.client.setVisible(this.subscription, cards, cards.length > 0).catch(() => {})
   }
 
@@ -1798,7 +1687,7 @@ export class ProjectSession extends Observable {
 
   /** A new Card must not display the result or run state of a previous owner of its ID. */
   private forgetResult(k: CardKey) {
-    this.displays.delete(k)
+    this.liveViews.get(k)?.clear()
     this.cardStates.delete(k)
     this.changed()
   }
@@ -2299,24 +2188,24 @@ export class ProjectSession extends Observable {
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
-      inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
-      outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
+      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')), note: note('inputs', 'in') }],
+      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')), note: note('outputs', 'out') }],
     }
     const kind = definitionKind(def)
     const draft = kind === 'draft'
     if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
-        inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
-        outputs: r.outputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) })),
+        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('inputs', p.name) })),
+        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) })),
       }
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, typeName: r?.inputs.find((p) => p.name === n)?.rootType, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)), note: note('inputs', n) }] : []
     })
-    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) }))
     return { inputs: ins, outputs: outs }
   }
 
@@ -2360,14 +2249,14 @@ export class ProjectSession extends Observable {
       changed = false
       for (const id of ids) {
         if (waits.has(id)) continue
-        for (const p of this.resolution.get(key([...scope, id]))?.inputs ?? []) {
-          if (p.optional) continue
-          const from = conns.filter((c) => str(get(c, 'to', 'card')) === id && str(get(c, 'to', 'port')) === p.name).map((c) => str(get(c, 'from', 'card')) ?? '')
-          if (from.length && from.every((f) => waits.has(f))) {
-            waits.add(id)
-            changed = true
-            break
-          }
+        const sources = conns.filter((c) => str(get(c, 'to', 'card')) === id)
+          .map((c) => str(get(c, 'from', 'card')) ?? '')
+        const blocked = this.kind(key([...scope, id])) === 'merge'
+          ? sources.length > 0 && sources.every((f) => waits.has(f))
+          : sources.some((f) => waits.has(f))
+        if (blocked) {
+          waits.add(id)
+          changed = true
         }
       }
     }

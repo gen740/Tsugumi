@@ -37,7 +37,7 @@ struct Options {
   stdfs::path control_dir;
   std::vector<std::string> origins;
   bool allow_missing_origin = false;
-  stdfs::path sdk_dir;
+  stdfs::path nix_dir;
   stdfs::path worker;
   stdfs::path workerd;
   uint32_t cpus = 2;
@@ -61,7 +61,7 @@ void usage() {
       "usage: tsugumid --project DIR [--unix PATH] [--listen HOST:PORT] "
       "[--control-dir DIR]\n"
       "                [--allow-origin ORIGIN]... [--allow-missing-origin] "
-      "[--sdk-dir DIR]\n"
+      "[--nix-dir DIR]\n"
       "                [--worker PATH] [--workerd PATH] [--cpus N] "
       "[--gcroots-dir DIR]\n"
       "                [--scratch-dir DIR] [--run-scratch-dir DIR] "
@@ -101,8 +101,8 @@ std::optional<Options> parse(int argc, char** argv) {
       o.origins.push_back(next());
     else if (a == "--allow-missing-origin")
       o.allow_missing_origin = true;
-    else if (a == "--sdk-dir")
-      o.sdk_dir = next();
+    else if (a == "--nix-dir")
+      o.nix_dir = next();
     else if (a == "--worker")
       o.worker = next();
     else if (a == "--workerd")
@@ -187,8 +187,8 @@ int run_daemon(int argc, char** argv) {
     else
       opt.workerd = opt.worker.parent_path() / "tsugumi-workerd";
   }
-  if (opt.sdk_dir.empty())
-    opt.sdk_dir = bin.parent_path() / "share" / "tsugumi" / "sdk";
+  if (opt.nix_dir.empty())
+    opt.nix_dir = bin.parent_path() / "share" / "tsugumi" / "nix";
 
   // Ownership: a fixed lock file, exclusive and non-blocking, held for life.
   auto state = root / ".tsugumi";
@@ -226,7 +226,7 @@ int run_daemon(int argc, char** argv) {
   so.token = crypto::random_token(32);
   so.server_instance_id = crypto::uuid4();
   so.control_dir = opt.control_dir;
-  so.sdk_dir = opt.sdk_dir;
+  so.nix_dir = opt.nix_dir;
   so.worker_binary = opt.worker;
   so.workerd_binary = opt.workerd;
   so.fault = opt.fault;

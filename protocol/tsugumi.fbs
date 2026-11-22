@@ -36,12 +36,11 @@ table Definition {
   meta_json:string (id: 2);
 }
 
-/// A static Card reference in default.nix. Target paths are absolute in the
-/// project, including references that fail validation. No Nix evaluation.
+/// An authorized Nix input derived from the project wiring. The target path
+/// is absolute in the project.
 table CardNixReference {
   target:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
-  valid:bool (id: 2);
 }
 
 table ResolvedCard {
@@ -243,17 +242,31 @@ table RunHistoryDeleteResult {
   freed_bytes:uint64 = null (id: 1);
 }
 
-table SDKFile {
+/// A regular file under share/tsugumi/api/ of a run implementation, as its
+/// builder wrote it.
+table CardApiFile {
+  /// Relative to share/tsugumi/api/, with / between folders.
   path:string (id: 0, required);
-  hash:string (id: 1, required);
-  size_bytes:uint64 = null (id: 2);
+  content:[ubyte] (id: 1);
 }
 
-table CardSDKPrepareResult {
-  op_id:string (id: 0, required);
-  rev:uint64 = null (id: 1);
-  state:Tsugumi.Data.SDKState (id: 2);
-  files:[SDKFile] (id: 3, required);  // empty while pending
+table CardApiImplementation {
+  /// 1-based position in the run list (1 for a single run).
+  index:uint32 = null (id: 0);
+  label:string (id: 1);
+  /// The run implementation's store path (it contains lib/main.so).
+  package:string (id: 2, required);
+  /// Empty when the builder placed nothing under share/tsugumi/api/.
+  files:[CardApiFile] (id: 3, required);
+}
+
+table CardApiResult {
+  rev:uint64 = null (id: 0);
+  implementations:[CardApiImplementation] (id: 1, required);
+  /// Set when the build failed; implementations is then empty.
+  failure:Tsugumi.Data.Failure (id: 2);
+  /// The build's output (its end when long).
+  log:string (id: 3);
 }
 
 table RunAccepted {
@@ -266,7 +279,6 @@ union ReceiptValue {
   SaveResult = 1,
   RunAccepted = 3,
   ProjectCacheClearResult = 4,
-  CardSDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
@@ -550,15 +562,11 @@ table OutputTypesRequest {
   kind:Tsugumi.Data.PortKind (id: 3);
 }
 
-/// -> CardSDKPrepareResult. Accepted asynchronously.
-table CardSDKPrepareRequest {
+/// -> CardApiResult. Build a Code Card from its current definition and wiring (the build a run uses) and return the files its builder placed under share/tsugumi/api/ of each run implementation: the generated API its code is written against, read without interpretation (regular files; symlinks are not followed). A failed build returns failure and the build log. Unsaved edits are not part of the build.
+table CardApiRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   at_rev:uint64 = null (id: 1);
-  op_id:string (id: 2, required);
 }
-
-/// -> CardSDKPrepareResult or Failure.
-table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
 /// -> RunPlanResult. Preview the Cards a run reaches; propagate defaults to true.
 table RunPlanRequest {
@@ -787,11 +795,23 @@ table ViewSaveRequest {
   view_json:string (id: 2, required);
 }
 
-/// -> FileContent. Read immutable display-module source in pages.
-table ModuleReadRequest {
-  module:string (id: 0, required);
-  offset:uint64 = null (id: 1);
-  limit_bytes:uint32 = null (id: 2);
+/// -> FileContent. Read a page of the file of one view declaration: entry
+/// `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name`
+/// must be that entry's name, so a read made against a list that has since
+/// changed fails with not_found instead of serving another declaration. Names
+/// may repeat; the core never chooses between declarations by name. Only
+/// declared regular files that resolve inside the Nix store are served, read
+/// from one open descriptor, and their bytes are relayed without being
+/// interpreted. Neither RPC trace records these requests or their replies.
+/// FileContent.name is the view name and hash is the declared store path,
+/// which names immutable content. offset defaults to 0 and limit_bytes to
+/// 1 MiB (1..1048576).
+table CardViewReadRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  offset:uint64 = null (id: 2);
+  limit_bytes:uint32 = null (id: 3);
+  index:uint32 = null (id: 4);
 }
 
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
@@ -811,8 +831,7 @@ union RequestPayload {
   ProjectFileListRequest = 11,
   ProjectFileStatRequest = 12,
   ProjectFileReadRequest = 13,
-  CardSDKPrepareRequest = 15,
-  CardSDKStatusRequest = 16,
+  CardApiRequest = 15,
   RunPlanRequest = 17,
   RunRequest = 18,
   RunCancelRequest = 19,
@@ -838,7 +857,6 @@ union RequestPayload {
   RunEnvironmentsRequest = 42,
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
-  ModuleReadRequest = 45,
   ProjectCacheUsageRequest = 48,
   RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
@@ -853,6 +871,7 @@ union RequestPayload {
   VersionCommentsRequest = 59,
   RunCategoryDeleteRequest = 60,
   RunFileReferencesRequest = 61,
+  CardViewReadRequest = 62,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1140,10 +1159,9 @@ table InvocationRecord {
   inputs:[Tsugumi.Data.NamedValue] (id: 1, required);
   outputs:[Tsugumi.Data.NamedValue] (id: 2, required);
   input_sources:[InputSource] (id: 3, required);
-  display:Tsugumi.Data.Display (id: 4);
-  record_io:bool = null (id: 5);
+  record_io:bool = null (id: 4);
   /// Parameters captured from the run's immutable document; absent if unavailable.
-  params_json:string (id: 6);
+  params_json:string (id: 5);
 }
 
 table HistoryState {
@@ -1184,7 +1202,9 @@ table ArtifactInfo {
   card:Tsugumi.Data.CardPath (id: 2, required);
   invocation:uint64 = null (id: 3);
   output:string (id: 4, required);
-  kind:Tsugumi.Data.PortKind (id: 5);
+  /// A directory artifact has one member per file; a file artifact has one
+  /// member, its name.
+  directory:bool (id: 5);
   name:string (id: 6, required);
   members:[ArtifactMember] (id: 7, required);
 }
@@ -1231,7 +1251,7 @@ union ReplyPayload {
   SourcePage = 10,
   SourceInfo = 11,
   FileContent = 12,
-  CardSDKPrepareResult = 14,
+  CardApiResult = 14,
   RunPlanResult = 15,
   RunAccepted = 16,
   RunStatus = 17,
@@ -1302,6 +1322,21 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
+/// The full list of views for a Card, available independently of a run.
+/// When evaluating the declarations failed, failure says why and views is
+/// empty; an absent failure with an empty list means the Card declares none.
+table CardViewsUpdated {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  views:[Tsugumi.Data.CardView] (id: 1, required);
+  failure:Tsugumi.Data.Failure (id: 2);
+}
+
+table DisplayRunStateChanged {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  run_id:string (id: 1, required);
+  state:Tsugumi.Data.DisplayRunState (id: 2);
+}
+
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
 table LogAvailable {
@@ -1320,6 +1355,8 @@ union NotificationPayload {
   LogAvailable = 4,
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
   RunCategoryDeleteResult = 6,
+  CardViewsUpdated = 7,
+  DisplayRunStateChanged = 8,
 }
 
 // ---- Frame -------------------------------------------------------------------

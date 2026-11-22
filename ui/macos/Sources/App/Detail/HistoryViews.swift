@@ -589,7 +589,7 @@ struct CardArtifactsView: View {
         List(artifacts, id: \.artifactId, selection: $artifactId) { a in
           VStack(alignment: .leading) {
             Text(a.output).font(.callout.bold())
-            Text("#\(a.invocation ?? 0) · \(String(describing: a.kind)) · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
+            Text("#\(a.invocation ?? 0) · \(a.directory ? "directory" : "file") · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
           }
           .tag(Optional(a.artifactId))
         }
@@ -662,7 +662,7 @@ struct CardArtifactsView: View {
     preview = nil
     guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
     do {
-      let data = try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? member : nil)
+      let data = try await rpc.readArtifact(id: a.artifactId, member: a.directory ? member : nil)
       guard !Task.isCancelled else { return }
       if let html = ArtifactHTMLPreview.text(member: member, data: data) {
         preview = .html(html)
@@ -684,12 +684,12 @@ struct CardArtifactsView: View {
     p.nameFieldStringValue = (m as NSString).lastPathComponent
     guard p.runModal() == .OK, let url = p.url else { return }
     do {
-      try await rpc.readArtifact(id: a.artifactId, member: a.kind == .directory ? m : nil).write(to: url)
+      try await rpc.readArtifact(id: a.artifactId, member: a.directory ? m : nil).write(to: url)
     } catch { self.error = "\(error)" }
   }
 }
 
-/// A Card's output display enlarged in its own window.
+/// The views a Card declares, live, in their own window. Nothing shown here is recorded.
 struct VisualizationWindow: View {
   let session: ProjectSession
   let cardKey: CardKey
@@ -699,11 +699,14 @@ struct VisualizationWindow: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(session.displayName(cardKey)).font(.title2.bold())
-        if let d = session.displays[cardKey] { Text("呼び出し #\(d.invocation)").foregroundStyle(.secondary) }
+        if session.cardViews.runs[cardKey]?.started == true {
+          ProgressView().controlSize(.small)
+          Text("実行中").foregroundStyle(.secondary)
+        }
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
-      DisplayView(display: session.displays[cardKey], emptyNote: session.noResultNote(cardKey))
+      CardViewsPanel(session: session, cardKey: cardKey)
     }
     .padding(16)
     .navigationTitle(session.displayName(cardKey))

@@ -92,14 +92,6 @@ auto AgentExclude::CheckRequest(const std::string& name, const j::Members& args,
     if (args.contains("run_id"))
       Check(".tsugumi/runs/" + j::Text(args, "run_id"));
   }
-  if (name == "module_read") {
-    const std::filesystem::path module(j::Text(args, "module"));
-    Check(module);
-    Check(module / "index.js");
-    Check(module / "view.wasm");
-    Check(std::filesystem::path(".tsugumi/modules") / module.filename() /
-          "index.js");
-  }
   if (name == "artifact_read") {
     // Artifacts use run/Card-path/invocation/output as their canonical id.
     const auto id = j::Text(args, "artifact_id");

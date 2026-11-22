@@ -9,9 +9,9 @@
 namespace tsugumi {
 struct WorkerStoreResult {
   WorkerDerivation derivation;
-  std::string manifest;  // its contents
+  std::string plan;  // the Card build plan JSON
   std::vector<std::string>
-      closure;         // runtime references, including the manifest
+      closure;         // runtime references, including the build plan
   bool built = false;  // false: the result was already in the store
 };
 

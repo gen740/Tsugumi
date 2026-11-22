@@ -20,6 +20,7 @@
 #include <nix/expr/eval-settings.hh>
 #include <nix/expr/eval.hh>
 #include <nix/expr/get-drvs.hh>
+#include <nix/expr/json-to-value.hh>
 #include <nix/expr/value-to-json.hh>
 #include <nix/fetchers/fetch-settings.hh>
 #include <nix/fetchers/filtering-source-accessor.hh>
@@ -391,6 +392,10 @@ struct EvaluationState {
   std::map<std::string, std::pair<nix::RootValue, bool>> existence_checks;
   std::vector<std::unique_ptr<nix::PrimOp>> wrapped_ops;
   nix::RootValue entry;
+  // The entry's readSource: a declared nixSources flake, evaluated in the
+  // flake state for the system of the evaluation in progress.
+  nix::RootValue source_reader;
+  std::string evaluation_system;
   std::map<std::string, nix::RootValue> pkgs;  // per nixpkgs pin: read once
 
   auto install(nix::Value& value, nix::PrimOp operation) -> void {
@@ -494,6 +499,43 @@ struct EvaluationState {
     };
     install(exists, std::move(tracked_exists));
     for (const auto& p : allowed) state->allowPathLegacy(p);
+    auto read = [this](nix::EvalState& st, nix::PosIdx pos, nix::Value** args,
+                       nix::Value& out) {
+      st.forceAttrs(*args[0], pos, "while reading a nixSource");
+      auto field = [&](const char* name) {
+        const auto* attr = args[0]->attrs()->get(st.symbols.create(name));
+        if (!attr) throw nix::Error("a nixSource lacks %s", name);
+        return std::string(st.forceStringNoCtx(*attr->value, pos,
+                                               "while reading a nixSource"));
+      };
+      const auto name = field("name");
+      NixCall call;
+      call.system = evaluation_system;
+      call.source_overrides = field("overrides");
+      FlakeInfo info;
+      try {
+        info = flake(call, field("ref"));
+      } catch (const nix::Interrupted&) {
+        throw;
+      } catch (const nix::BaseError& e) {
+        throw nix::Error("nixSources %s for system %s: %s", name, call.system,
+                         message(e));
+      } catch (const std::exception& e) {
+        throw nix::Error("nixSources %s for system %s: %s", name, call.system,
+                         e.what());
+      }
+      nix::parseJSON(st, info.json, out);
+    };
+    auto* reader = state->allocValue();
+    install(*reader, nix::PrimOp{.name = "readSource",
+                                 .args = {"source"},
+                                 .arity = 1,
+                                 .doc = std::nullopt,
+                                 .addTrace = true,
+                                 .impl = std::move(read),
+                                 .experimentalFeature = std::nullopt,
+                                 .internal = false});
+    source_reader = nix::allocRootValue(reader);
     auto* v = state->allocValue();
     state->eval(
         state->parseExprFromString(
@@ -520,6 +562,7 @@ struct EvaluationState {
     existence_checks.clear();
     pkgs.clear();
     entry.reset();
+    source_reader.reset();
     state.reset();
     wrapped_ops.clear();
     ++epoch;
@@ -687,8 +730,11 @@ struct EvaluationState {
     state->eval(state->parseExprFromString(
                     c.args, state->rootPath(nix::CanonPath("/"))),
                 *vargs);
+    evaluation_system = c.system;
+    auto* with_pkgs = state->allocValue();
+    state->callFunction(**entry, vpkgs, *with_pkgs, nix::noPos);
     auto* partial = state->allocValue();
-    state->callFunction(**entry, vpkgs, *partial, nix::noPos);
+    state->callFunction(*with_pkgs, **source_reader, *partial, nix::noPos);
     auto* vres = state->allocValue();
     state->callFunction(*partial, *vargs, *vres, nix::noPos);
     state->forceAttrs(*vres, nix::noPos,
@@ -715,10 +761,11 @@ struct EvaluationState {
     for (const auto& label : labels)
       r.implementation_labels.push_back(label.get<std::string>());
     check_implementation_labels(r.implementation_labels, count);
-    auto& manifest = attr("manifest");
-    state->forceValue(manifest, nix::noPos);
-    auto drv = nix::getDerivation(*state, manifest, false);
-    if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
+    auto& plan = attr("plan");
+    state->forceValue(plan, nix::noPos);
+    auto drv = nix::getDerivation(*state, plan, false);
+    if (!drv)
+      throw std::runtime_error("the Card build plan is not a derivation");
     auto out = drv->queryOutPath();
     auto drv_path = drv->requireDrvPath();
     r.derivation = {store->printStorePath(drv_path), store->printStorePath(out),
@@ -817,7 +864,7 @@ struct EvaluationState {
     std::ifstream f(r.derivation.output, std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
-    r.manifest = ss.str();
+    r.plan_json = ss.str();
     return r;
   }
 
@@ -858,6 +905,7 @@ struct EvaluationState {
     existence_checks.clear();
     pkgs.clear();
     entry.reset();
+    source_reader.reset();
     state.reset();
     wrapped_ops.clear();
     ++epoch;

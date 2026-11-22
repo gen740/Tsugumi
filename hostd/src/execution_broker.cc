@@ -428,8 +428,12 @@ struct ExecutionBroker::State {
     const auto length = W::frame_length(tls.Read(4));
     const auto frame = tls.Read(length);
     auto reply = W::decode(frame);
-    trace::Observe(link, "remote worker service", "hostd execution broker",
-                   false, frame, &trace::kFlatBufferCodec);
+    // View bytes in a status reply are transient: they are never traced.
+    const auto* answer = reply->payload.AsReply();
+    const auto* status = answer ? answer->body.AsJobStatus() : nullptr;
+    if (!status || status->displays.empty())
+      trace::Observe(link, "remote worker service", "hostd execution broker",
+                     false, frame, &trace::kFlatBufferCodec);
     Require(reply->payload.AsReply(), "Expected remote worker reply");
     return std::move(*reply);
   }

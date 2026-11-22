@@ -53,6 +53,17 @@ def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_fa
     assert artifact_bytes(c, rid, segments) == expected
 
 
+def test_input_path_can_name_a_project_folder(project, core_factory):
+    owner, segments = project_with_file(project, "data", external=True)
+    put(owner / "definitions/load/data/nested/more.txt", "second file")
+    c = core_factory().connect()
+    rid, status = run_and_wait(c, segments)
+    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
+    artifact, = c.call("ArtifactListRequest", runId=rid, card=path(*segments)).artifacts
+    assert artifact.directory
+    assert {text(member.path) for member in artifact.members} == {"events.txt", "nested/more.txt"}
+
+
 @pytest.mark.parametrize("value", ["../data/events.txt", "/etc/passwd", "project:../data/events.txt",
                                    "project:/etc/passwd", "", "definitions/load/data/events.txt"])
 def test_input_paths_reject_escape_and_implicit_project_paths(project, core_factory, value):

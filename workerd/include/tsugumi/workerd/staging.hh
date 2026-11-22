@@ -3,6 +3,7 @@
 #pragma once
 
 #include <atomic>
+#include <cstdint>
 #include <filesystem>
 #include <functional>
 #include <string_view>
@@ -22,14 +23,20 @@ auto clear_staging(const std::filesystem::path& path,
                    const std::function<void(int, const char*)>& recover = {},
                    std::string_view preserved_entry = {}) -> void;
 
-// Copy only one declared File/Directory from a pinned staging root. Within a
-// Directory, materialize relative symlinks whose fully resolved targets stay
-// inside that output. No kernel lookup follows a symlink, including during
-// concurrent replacement. The destination must be private to the core.
-// Throws with the offending path and entry kind; cancellation is also checked.
+// Limits count logical bytes, including sparse holes, and filesystem entries
+// across a call's new outputs. A forwarded input never consumes this budget.
+struct OutputBudget {
+  uint64_t bytes = 64ull << 30;
+  uint64_t entries = 1000;
+};
+
+// Snapshot one Path output, a regular file or a whole directory as found, from
+// a pinned working directory into private storage. Resolve no symlinks to
+// outside the output and accept only regular files and directories.
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
-                         bool directory, const std::atomic<bool>& cancel,
-                         const TransferProgress& progress = {}) -> void;
+                         const std::atomic<bool>& cancel,
+                         const TransferProgress& progress = {},
+                         OutputBudget* budget = nullptr) -> void;
 
 }  // namespace tsugumi::fs

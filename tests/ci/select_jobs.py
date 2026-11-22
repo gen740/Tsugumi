@@ -18,10 +18,10 @@ SYSTEMS = {
     "aarch64-darwin": "macos-26",
 }
 NATIVE_TESTS = {"agent-rpc", "rpc"}
-CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "sdk", "swift", "vm"}
+CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "swift", "vm", "kit"}
 GUEST = {"vm", "pack-guest"}
 WEB = {"docs", "web-typecheck", "web-contracts", "adapters"}
-ALL = CORE | GUEST | WEB | {"prompt"}
+ALL = CORE | GUEST | WEB | {"demos", "prompt"}
 ADAPTER_TESTS = {
     "tests/python/test_claude_code_plugin.py",
     "tests/python/test_web_server.py",
@@ -40,16 +40,15 @@ def consumers(path):
         if path in {"tests/core/vm_lifetime_test.cc", "tests/core/cmake/vm.cmake"}:
             return {"vm"}
         if path in {"tests/core/doubles/nix_eval.cc", "tests/core/cmake/daemon-double.cmake"}:
-            jobs = NATIVE_TESTS | {"swift", "adapters"}
-            return jobs | {"sdk"} if path.endswith(".cc") else jobs
+            return NATIVE_TESTS | {"swift", "adapters"}
         if path in {"tests/core/input_types_test.cc", "tests/core/cmake/input-types.cmake"}:
-            return {"agent-rpc", "sdk"}
+            return {"agent-rpc"}
         if path in {"tests/core/agent/document_edit_driver.cc", "tests/core/cmake/host-edit-driver.cmake"}:
             return {"web-contracts"}
         if path in {"tests/core/CMakeLists.txt", "tests/core/cmake/installed-core.cmake"} or path.startswith(
             "tests/core/cmake/installed/"
         ):
-            return NATIVE_TESTS | {"swift", "adapters", "sdk", "vm", "web-contracts"}
+            return NATIVE_TESTS | {"swift", "adapters", "vm", "web-contracts"}
         if path in {
             "tests/core/agent/project_rpc_test.cc", "tests/core/agent/project_fixture.hh",
             "tests/core/agent/fixture.hh", "tests/core/agent/view.hh",
@@ -63,11 +62,10 @@ def consumers(path):
             return NATIVE_TESTS
         if path.startswith("tests/core/integration/"):
             return {"host", "remote-execution"} if path.endswith("/test_remote_execution.py") else {"host"}
-        # Shared harness modules are also imported by the Host project RPC
-        # test in Agent RPC and by SDK and adapter tests.
+        # Shared harness modules also serve the Host project RPC and adapters.
         if path.startswith("tests/core/test_"):
             return {"rpc"}
-        return {"agent-rpc", "rpc", "host", "remote-execution", "sdk", "adapters", "vm"}
+        return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "vm"}
     if path.startswith(("protocol/", "nix/", ".github/", "tests/ci/")) or path in {
         "flake.nix", "flake.lock", "CMakeLists.txt",
     } or path.endswith(("/CMakeLists.txt", ".cmake")):
@@ -81,9 +79,6 @@ def consumers(path):
             "docs/CardGuide.md", "docs/assets/tsugumi-icon.svg",
         }:
             jobs.add("web-contracts")
-        # Runnable examples are extracted from the guide, not copied fixtures.
-        if path == "docs/CardGuide.md":
-            jobs.add("sdk")
         if path == "docs/features.md":
             jobs.add("prompt")
         return jobs
@@ -103,18 +98,15 @@ def consumers(path):
     if path.startswith("ui/web/"):
         return WEB
     if path.startswith("demos/"):
-        # Guide and version tests, SDK demo runs, the MCP plugin, and the Web player.
-        return {"docs", "web-contracts", "adapters", "sdk", "agent-rpc", "rpc"}
+        # Guide and version tests, demo runs, the MCP plugin, and the Web player.
+        return {"docs", "web-contracts", "adapters", "demos", "agent-rpc", "rpc"}
     if path.startswith("ui/shared/"):
-        return CORE | GUEST | WEB
-    if path.startswith("sdk/"):
-        # The native runtime installs the SDK; C++ and host tests use it too.
-        return CORE | GUEST | WEB
+        return CORE | GUEST | WEB | {"demos"}
     if path.startswith("client/"):
         # Shared native client, Swift C interface and the browser Wasm build.
-        return CORE | GUEST | WEB
+        return CORE | GUEST | WEB | {"demos"}
     if path.startswith(("util/", "rpc/", "tsugumid/document/")):
-        return CORE | GUEST | WEB
+        return CORE | GUEST | WEB | {"demos"}
     if path.startswith("hostd/agent/"):
         jobs = {"agent-rpc", "adapters", "swift"}
         if path.startswith("hostd/agent/Shared/"):
@@ -128,7 +120,7 @@ def consumers(path):
         return jobs
     if path.startswith("hostd/"):
         # Host RPC is consumed by native clients, the broker and the Web edit
-        # driver. Guest entry points and the Card SDK run through tsugumid.
+        # driver. Guest entry points and Card evaluation run through tsugumid.
         return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "swift", "web-contracts"}
     if path.startswith(("tsugumid/", "workerd/")):
         return CORE | GUEST
@@ -139,10 +131,12 @@ def consumers(path):
     if path == "tests/python/test_host_projects_rpc.py":
         return {"agent-rpc"}
     if path.startswith("tests/python/"):
-        # Includes shared harness files, not just individual SDK test cases.
-        jobs = {"sdk", "adapters"}
+        if path.rsplit("/", 1)[1].startswith("test_demo"):
+            return {"demos"}
+        # Includes shared adapter and demo harnesses.
+        jobs = {"adapters"}
         if path == "tests/python/conftest.py":
-            jobs.add("agent-rpc")
+            jobs |= {"agent-rpc", "demos"}
         return jobs
     if path.startswith("tests/remote/"):
         return {"remote-execution"}
@@ -167,8 +161,8 @@ def select(paths=None):
         # Linux's host integrations take several minutes. Keep them and their
         # Web consumers parallel to the cold C++ test build and RPC suites.
         "x86_64-linux": {"native-checks": NATIVE_TESTS, "host-and-web": host_checks,
-                         "sdk": {"sdk"}, "remote-execution": {"remote-execution"}},
-        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host"}, "swift": {"swift"}},
+                         "kit-and-demos": {"kit", "demos"}, "remote-execution": {"remote-execution"}},
+        "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host"}, "swift": {"swift"}, "kit": {"kit"}},
     }.items():
         selected = set().union(*(jobs for path, jobs in changes if system in systems_for(path)))
         lanes = []
@@ -182,8 +176,7 @@ def select(paths=None):
 
 
 def systems_for(path):
-    if path.startswith("demos/") or path in {
-        "tests/core/integration/test_definition_evaluation.py",
+    if path.startswith(("demos/", "tests/python/test_demo")) or path in {
         "tests/python/test_host_projects_rpc.py",
     }:
         return {"x86_64-linux"}

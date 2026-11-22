@@ -68,7 +68,7 @@ def registered_remote(monkeypatch, resource_limits):
         def handle(self):
             assert R.read_broker_request(self.rfile).bodyType == R.RequestBody.CatalogRequest
             caps = R.CapabilitiesT(serverId="2" * 64, nativeSystem=FOREIGN, systems=[FOREIGN],
-                                   resourceLimits=resource_limits, maxJobs=8, workerContract=12)
+                                   resourceLimits=resource_limits, maxJobs=8, workerContract=R.WORKER_CONTRACT)
             self.wfile.write(R.frame(R.reply(R.ReplyBody.Catalog, R.CatalogT(
                 services=[R.TargetT(id="cluster", available=True, capabilities=caps)]))))
 
@@ -108,7 +108,7 @@ def test_external_service_validation_keeps_cached_capabilities_advisory(
         project, core_factory, registered_remote, resource_limits, settings, valid):
     """The catalog describes services; live capabilities are checked during prepare."""
     definition = {"type": "code", "_outputs": MSG_FBS,
-                  "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}
+                  "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }', **settings}
     write(project, {"work": definition}, [card("work", "work")], [])
     client = core_factory().connect()
     services = {text(service.id): service for service in client.call("ProjectInspectRequest").executionServices}
@@ -150,7 +150,7 @@ def test_snapshot_lists_the_systems_the_local_service_can_run(client):
 
 @pytest.mark.parametrize("definition", [
     {"type": "code", "executionService": "unavailable", "_outputs": MSG_FBS,
-     "_nix": '{ pkgs, inputs, params }: { run = "true"; }'},
+     "_nix": '{ pkgs, inputs, params, ... }: { run = "true"; }'},
     {"type": "trigger", "executionService": "local"},
 ], ids=["unknown-service", "built-in-card"])
 def test_invalid_execution_service_selection_prevents_the_run(project, core_factory, definition):
@@ -191,7 +191,7 @@ def test_an_unavailable_foreign_system_stops_the_run(tmp_path):
     defs = {"trigger": {"type": "trigger"},
             "sh": {"type": "code", "inputs": [{"name": "in"}],
                    "_outputs": MSG_FBS,
-                   "_nix": '{ pkgs, inputs, params }:\n{ run = "uname -m"; }\n'}}
+                   "_nix": '{ pkgs, inputs, params, ... }:\n{ run = "uname -m"; }\n'}}
     write(root, defs, [card("start", "trigger"), card("x", "sh", system=FOREIGN)], [conn("start", "out", "x", "in")])
     with Daemon(root) as daemon:
         c = daemon.connect()

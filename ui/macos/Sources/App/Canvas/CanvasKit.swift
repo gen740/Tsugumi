@@ -27,7 +27,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var label: String {
     switch self {
     case .waiting: return String(localized: "入力待ち")
-    case .prepare: return String(localized: "SDK 準備")
+    case .prepare: return String(localized: "スキーマ生成")
     case .evaluate: return String(localized: "Nix 評価")
     case .build: return "build"
     case .execute: return "run"
@@ -41,7 +41,7 @@ enum Stage: Int, CaseIterable, Identifiable {
   var activeLabel: String {
     switch self {
     case .waiting: return String(localized: "入力待ち")
-    case .prepare: return String(localized: "SDK 準備中")
+    case .prepare: return String(localized: "スキーマ生成中")
     case .evaluate: return String(localized: "Nix 評価中")
     case .build: return String(localized: "build 中")
     case .execute: return String(localized: "実行中")
@@ -99,7 +99,7 @@ enum Stage: Int, CaseIterable, Identifiable {
     }
   }
 
-  /// Stages shown for a Card, in order: build (SDK preparation, Nix
+  /// Stages shown for a Card, in order: build (schema generation, Nix
   /// evaluation and build), run, validate (output check and saving).
   /// Builtin Cards do not build.
   static func applicable(code: Bool) -> [Stage] {
@@ -173,7 +173,6 @@ struct StageProgress: Equatable {
 struct PortData: Hashable {
   var name: String
   var typeName: String?
-  var optional = false
   var note: String?
 }
 
@@ -1382,7 +1381,6 @@ struct CardNodeView: View {
     }
     if data.kind == .fork && output { s += String(localized: "（value をそのまま送る）") }
     if let t = p.typeName { s += " : \(t)" }
-    s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }

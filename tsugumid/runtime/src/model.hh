@@ -11,7 +11,6 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
-#include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {
@@ -151,7 +150,9 @@ struct ArtifactData {
   CardPath card;
   uint64_t invocation = 0;
   std::string output;
-  PortKind kind = PortKind::File;
+  // From lstat when retained: a directory is kept as the artifact's whole
+  // folder, a regular file as <folder>/<name>.
+  bool directory = false;
   std::string name;
   std::vector<ArtifactMemberData> members;
 };

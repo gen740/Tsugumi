@@ -12,9 +12,16 @@ let
 in
 {
   perSystem =
-    { pkgs, lib, ... }:
+    {
+      pkgs,
+      lib,
+      ...
+    }:
     let
-      core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
+      core = pkgs.callPackage ../core.nix {
+        inherit cardNixpkgs hosq;
+        kitSource = inputs.tsugumi-kit;
+      };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
         inherit core hosq;
@@ -47,7 +54,9 @@ in
           chmod -R u+w $out
           cp ${../../flake.nix} $out/flake.nix
           cp ${../../flake.lock} $out/flake.lock
-          cp -R ${../.} $out/nix
+          mkdir -p $out/nix
+          cp -R ${../.}/. $out/nix/
+          chmod -R u+w $out/nix
           cp -R ${../../vm/guest}/. $out/vm/guest/
         '';
         site-player = web.sitePlayer;

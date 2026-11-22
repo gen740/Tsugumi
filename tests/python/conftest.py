@@ -21,7 +21,7 @@ sys.path.insert(0, str(ROOT / "tests" / "core"))
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
 TSUGUMID = Path(os.environ.get("TSUGUMID", BUILD / "tsugumid" / "tsugumid"))
 WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd" / "tsugumi-worker"))
-SDK = Path(os.environ.get("TSUGUMI_SDK_DIR", ROOT / "sdk"))
+NIX = Path(os.environ.get("TSUGUMI_NIX_DIR", BUILD / "share/tsugumi/nix"))
 WEB_DIST = Path(os.environ.get("TSUGUMI_WEB_DIST", ROOT / "ui/web" / "dist"))
 # The tsugumi command (cli/), and the built page hostd serves.
 CLI = Path(os.environ.get("TSUGUMI_CLI", BUILD / "cli" / "tsugumi"))

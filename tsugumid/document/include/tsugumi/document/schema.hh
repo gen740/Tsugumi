@@ -47,6 +47,8 @@ struct NixSource {
 
 inline constexpr uint64_t kDefaultLogLimitBytes = uint64_t{128} << 20;
 inline constexpr uint64_t kMaxLogLimitBytes = uint64_t{1} << 30;
+inline constexpr uint64_t kDefaultOutputLimitBytes = uint64_t{64} << 30;
+inline constexpr uint64_t kDefaultOutputLimitEntries = 1000;
 
 struct Project {
   Opt<"name", Json> name;
@@ -57,10 +59,11 @@ struct Project {
   // Host policy, carried without affecting execution.
   Opt<"agentExclude", v::Array<v::String>> agent_exclude;
   Opt<"recordLogs", v::Bool> record_logs;
-  Opt<"recordDisplays", v::Bool> record_displays;
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"logLimitBytes", v::Uint64> log_limit_bytes;
+  Opt<"outputLimitBytes", v::Uint64> output_limit_bytes;
+  Opt<"outputLimitEntries", v::Uint64> output_limit_entries;
   Opt<"canvas", Obj<Graph>> canvas;
   // The ports this project has as a Card in Card (an external of another
   // project): outer port name -> a port of one of its Cards.
@@ -82,7 +85,6 @@ struct ParamDef {
 
 struct InputDef {
   Opt<"name", v::String> name;
-  Opt<"optional", v::Bool> optional;
 };
 
 // A Fork's output port; other Cards' outputs come from their schema.
@@ -132,15 +134,11 @@ struct CardDefinition {
   Opt<"params", v::Array<Obj<ParamDef>>> params;
   Opt<"inputs", v::Array<Obj<InputDef>>> inputs;
   Opt<"outputs", v::Array<Obj<OutputDef>>> outputs;  // a Fork's
-  // When the Card runs: "allInputs" (every required input has a value, the
-  // default) or "eachInput" (once per arriving value).
-  Opt<"trigger", v::String> trigger;
   Opt<"maxRuns", v::Uint64> max_runs;
   Opt<"timeoutSeconds", Json> timeout_seconds;  // positive integer or null
   Opt<"buildTimeoutSeconds", Json>
       build_timeout_seconds;  // positive integer or null
   Opt<"recordLogs", v::Bool> record_logs;
-  Opt<"recordDisplays", v::Bool> record_displays;
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;

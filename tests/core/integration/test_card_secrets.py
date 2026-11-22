@@ -16,7 +16,9 @@ from pathlib import Path
 import pytest
 
 from harness import remote_worker as R
-from harness.real_cards import NUM, bash, log
+from harness.observations import decode_scalar, read_output
+from harness.real_cards import log
+from test_worker_loading import native_card
 from projects import card, run_and_wait, write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
@@ -65,12 +67,12 @@ def broker(monkeypatch):
 
 
 # The definition checks the value without containing it, and never prints it.
-USES_SECRET = bash(
-    'case "$database_password" in ' + PREFIX + '-*) ;; *) exit 3 ;; esac; '
-    f'test "${{#database_password}}" = {len(SENTINEL)} || exit 5; '
-    'test "$FROM_PRE" = ready || exit 4; '
-    'printf \'{"out":{"value":%d}}\' "${#database_password}" > "$TSUGUMI_OUTPUT"',
-    pre="export FROM_PRE=ready", secrets=["database_password"], recordIO=True)
+USES_SECRET = native_card(f"""
+    const auto* secret = std::getenv("database_password");
+    if (!secret || !std::string_view(secret).starts_with("{PREFIX}-")) return 3;
+    if (std::strlen(secret) != {len(SENTINEL)}) return 5;
+    out.number(std::strlen(secret));
+""", secrets=["database_password"], recordIO=True)
 
 
 def files_containing(root: Path, needle: bytes) -> list[str]:
@@ -103,8 +105,7 @@ def test_secret_reaches_the_process_and_no_record(core_factory, broker, tmp_path
 def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_path):
     """A declared secret that hostd does not hold fails the invocation, naming it."""
     root = tmp_path / "p"
-    definition = bash('printf \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-                      secrets=["database_password", "not_set"])
+    definition = native_card("out.number(1);", secrets=["database_password", "not_set"])
     write(root, {"use": definition}, [card("use", "use")], [])
     c = core_factory(project_root=root).connect()
     run_id, status = run_and_wait(c, "use")
@@ -123,8 +124,7 @@ def test_missing_secret_fails_before_the_card_runs(core_factory, broker, tmp_pat
 def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path, settings, message):
     """Secret names follow the same rule as the worker launch channel."""
     root = tmp_path / "p"
-    write(root, {"use": {"type": "code", "_outputs": NUM,
-                         "_nix": '{ pkgs, inputs, params }: { run = "true"; }', **settings}},
+    write(root, {"use": native_card("out.number(1);", **settings)},
           [card("use", "use")], [])
     validation = core_factory(project_root=root).connect().call("ProjectValidateRequest")
     assert not validation.valid
@@ -134,13 +134,12 @@ def test_invalid_secret_declarations_are_reported(core_factory, broker, tmp_path
 
 def test_secret_rotation_retires_resident(core_factory, broker, tmp_path):
     root = tmp_path / "p"
-    definition = bash(
-        'test -n "$database_password"; '
-        'n=0; if test -f "$HOME/count"; then read -r n < "$HOME/count"; fi; '
-        'n=$((n+1)); echo "$n" > "$HOME/count"; '
-        """printf '{"out":{"value":%s}}' "$n" > "$TSUGUMI_OUTPUT"; """
-        """printf '{"text":"%s|%s"}' "$n" "${#database_password}" > "$TSUGUMI_REPORT" """,
-        secrets=["database_password"], reuseWorker=True)
+    definition = native_card(r"""
+        const auto* secret = std::getenv("database_password");
+        if (!secret) return 1;
+        static unsigned count = 0;
+        out.number(++count * 1000 + std::strlen(secret));
+    """, secrets=["database_password"], reuseWorker=True, recordIO=True)
     write(root, {"use": definition}, [card("use", "use")], [])
     client = core_factory(project_root=root).connect()
     for count, rotates in ((1, False), (2, False), (1, True)):
@@ -150,5 +149,5 @@ def test_secret_rotation_retires_resident(core_factory, broker, tmp_path):
         assert status.state == RunState.succeeded, log(client, run_id, "use", 2)
         invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path("use")).records
         assert invocation.workerReused == (count == 2)
-        record = client.call("RunRecordRequest", runId=run_id, card=path("use")).record
-        assert text(record.display.value.text) == f'{count}|{len(broker[1]["database_password"])}'
+        observed = decode_scalar(read_output(client, run_id, card="use"), "uint64")
+        assert observed == count * 1000 + len(broker[1]["database_password"])

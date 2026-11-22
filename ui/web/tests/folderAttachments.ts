@@ -6,6 +6,7 @@ import path from 'node:path'
 import { ChatController } from '../src/model/chat'
 import { chatRoutes } from '../src/host/chat'
 import { CoreHost } from '../src/host/coreHost'
+import { LiveViews } from '../src/model/liveViews'
 
 // One server request shares all selected folders before registering them. Equal
 // names in different parent folders must keep separate resource identities.
@@ -77,7 +78,7 @@ const session = Object.create(ProjectSession.prototype) as any
 const order: string[] = []
 let release!: () => void
 const held = new Promise<void>(resolve => { release = resolve })
-Object.assign(session, { connected: true, closed: false, changed() {},
+Object.assign(session, { connected: true, closed: false, liveViews: new LiveViews(), changed() {},
   client: { close() { order.push('close') } },
   async openConnection() { order.push('connect'); this.connected = true; this.client = { close() { order.push('close') } } },
 })

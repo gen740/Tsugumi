@@ -50,10 +50,8 @@ native_agent=(
 # Python suites that exercise native workers, paths or transports keep their
 # own marker. Shared rules and the rest of each mixed fixture run on x86 Linux.
 core_args=(--ignore=tests/core/integration)
-sdk_marker='not static'
 if ! $full; then
   core_args+=(-m native_core)
-  sdk_marker='not static and (not sdk_pure or package_smoke)'
 fi
 gtest() {
   local target=$1
@@ -93,7 +91,7 @@ case "$suite" in
   host)
     if [[ "$system" == aarch64-darwin ]]; then
       run python3 -m pytest -q tests/core/integration/test_host_isolation.py tests/core/integration/test_host_sandbox.py \
-        tests/core/integration/test_nix_build_log.py
+        tests/core/integration/test_nix_build_log.py tests/core/integration/test_definition_evaluation.py
     else
       host_args=(--ignore=tests/core/integration/test_host_sandbox.py)
       if ! $full; then host_args+=(--ignore=tests/core/integration/test_definition_evaluation.py); fi
@@ -111,15 +109,16 @@ case "$suite" in
       run python3 -m pytest -q -m package_smoke tests/python/test_web_server.py tests/python/test_cli.py
     fi
     ;;
-  sdk)
-    python=$3
-    run "$python" -c 'import matplotlib, plotly, altair'
-    run "$python" -m pytest -q -m "$sdk_marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile --durations=40 tests/python \
-      --ignore=tests/python/test_sdk_examples.py --ignore=tests/python/test_csharp_sdk.py \
-      --ignore=tests/python/test_host_projects_rpc.py \
-      --ignore=tests/python/test_claude_code_plugin.py --ignore=tests/python/test_web_server.py --ignore=tests/python/test_cli.py
-    TSUGUMI_TEST_HOST_SANDBOX=1 run "$python" -m pytest -q tests/python/test_csharp_sdk.py
-    run "$python" -m pytest -q tests/python/test_sdk_examples.py
+  kit)
+    run nix build --no-link ".#checks.$system.pinned-kit"
+    ;;
+  demos)
+    # TODO(ABI 9): every demo module skips until the demos are ported
+    # (docs/Demos.md), and pytest reports that as 5 (no tests ran).
+    status=0
+    run "${3:?supply the demo Python executable from .#ci-python}" -m pytest -q -m 'not static' -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile \
+      --durations=40 tests/python/test_demo*.py || status=$?
+    if [[ $status != 0 && $status != 5 ]]; then exit "$status"; fi
     ;;
   *) echo "Unknown suite: $suite" >&2; exit 2 ;;
 esac

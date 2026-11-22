@@ -46,7 +46,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
       fields.emplace_back("key", schema::string_value(plan.evaluation_key));
       fields.emplace_back("derivation",
                           schema::string_value(plan.common.derivation.path));
-      fields.emplace_back("manifest",
+      fields.emplace_back("plan",
                           schema::string_value(plan.common.derivation.output));
       fields.emplace_back("system",
                           schema::string_value(plan.common.derivation.system));

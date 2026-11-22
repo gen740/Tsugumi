@@ -281,7 +281,6 @@ function NixSourceSettings({ session }: { session: ProjectSession }) {
 
 const recordingDefaults = {
   recordLogs: true,
-  recordDisplays: true,
   recordIO: false,
   retainArtifact: false,
 }
@@ -375,7 +374,6 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           </Section>
           <Section title={L('記録の既定値')}>
             <Row label={L('標準出力と標準エラーを記録')}><Toggle checked={recording.recordLogs} onChange={recordLogs => setRecording({ ...recording, recordLogs })} /></Row>
-            <Row label={L('記録指定のある表示を記録')}><Toggle checked={recording.recordDisplays} onChange={recordDisplays => setRecording({ ...recording, recordDisplays })} /></Row>
             <Row label={L('入出力の値を記録')}><Toggle checked={recording.recordIO} onChange={recordIO => setRecording({ ...recording, recordIO })} /></Row>
             <Row label={L('出力ファイルと成果物を保持')}><Toggle checked={recording.retainArtifact} onChange={retainArtifact => setRecording({ ...recording, retainArtifact })} /></Row>
             <Row label={L('呼び出しごとのログ上限（バイト）')}>
@@ -522,7 +520,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
   }
   return (
     <div className="col fill pad16 gap12">
-      <div className="row"><InfoButton>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')} {L('実行中・SDK 準備中は削除できません。')}</InfoButton></div>
+      <div className="row"><InfoButton>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')} {L('実行中は削除できません。')}</InfoButton></div>
       <div className="groupbox col gap8" style={{ overflow: 'auto' }}>
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />

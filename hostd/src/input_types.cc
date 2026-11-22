@@ -17,11 +17,11 @@ auto InputTypes(const R::InputTypesResult& resolved) -> H::InputTypesT {
       if (input->source_port()) item->source_port = input->source_port()->str();
       item->state = input->source_card() ? "unresolved" : "no_source";
       if (const auto* port = input->type()) {
-        item->kind = port->kind() == Tsugumi::Data::PortKind::File ? "file"
-                     : port->kind() == Tsugumi::Data::PortKind::Directory
-                         ? "directory"
-                         : "value";
-        if (port->schema_bfbs() && port->root_type()) {
+        item->kind =
+            port->kind() == Tsugumi::Data::PortKind::Path ? "path" : "value";
+        if (port->kind() == Tsugumi::Data::PortKind::Path) {
+          item->state = "resolved";
+        } else if (port->schema_bfbs() && port->root_type()) {
           types::Type type;
           type.bfbs.assign(
               reinterpret_cast<const char*>(port->schema_bfbs()->data()),

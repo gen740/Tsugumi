@@ -87,8 +87,9 @@ auto LaunchFromEnvironment(const f::path& executable) -> Launch {
     };
     launch.runtime = {"--tsugumid", pick("TSUGUMID", FirstExisting({self.parent_path() / "tsugumid", build / "tsugumid" / "tsugumid"})),
                       "--worker", pick("TSUGUMI_WORKER", FirstExisting({self.parent_path() / "tsugumi-worker", build / "workerd" / "tsugumi-worker"})),
-                      "--sdk-dir", pick("TSUGUMI_SDK_DIR", launch.root / "sdk"),
                       "--environment-dir", (data / "env").string()};
+    if (const auto dir = Env("TSUGUMI_NIX_DIR"); !dir.empty())
+      launch.runtime.insert(launch.runtime.end(), {"--nix-dir", dir});
   }
   return launch;
 }

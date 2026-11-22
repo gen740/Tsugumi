@@ -1,0 +1,33 @@
+// Shared execution values for the project RPC and private worker protocol.
+
+include "tsugumi_enums.fbs";
+
+namespace Tsugumi.Data;
+
+table KeyValue {
+  key:string (id: 0, required);
+  value:string (id: 1, required);
+}
+
+table Failure {
+  kind:FailureKind (id: 0);
+  /// Optional source position: source (Card-definition-relative path), line
+  /// (one-based decimal), cell (notebook cell name). Carried opaquely by core.
+  args:[KeyValue] (id: 1);
+  diagnostic:string (id: 2);
+  current_rev:uint64 = null (id: 3);
+  retry_after_ms:uint32 = null (id: 4);
+}
+
+// A resolved port. FlatBuffer ports carry a schema and root type when known.
+table Port {
+  name:string (id: 0, required);
+  kind:PortKind (id: 1);
+  schema_bfbs:[ubyte] (id: 2);
+  root_type:string (id: 3);
+  path:string (id: 4);
+  /// Static execution shape when known without evaluating Nix.
+  execution_shape:ExecutionShape (id: 5);
+  /// Member type names for the UI when a port carries a Merge union.
+  merge_member_types:[string] (id: 6);
+}

@@ -7,7 +7,6 @@ add_library(tsugumi_document STATIC
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/graph.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/worker_condition.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/input_types.cc
-  ${PROJECT_SOURCE_DIR}/tsugumid/document/src/nix_refs.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/collect_type.cc
   ${PROJECT_SOURCE_DIR}/tsugumid/document/src/host_requirements.cc)
 target_include_directories(tsugumi_document PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

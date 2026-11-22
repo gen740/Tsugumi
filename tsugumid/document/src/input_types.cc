@@ -23,8 +23,7 @@ auto input_types(const Resolution& graph, const CardPath& card,
     for (const auto& edge : graph.edges) {
       if (edge.to != index || edge.to_port != port) continue;
       const auto& source = graph.nodes[edge.from];
-      // Code is generated from the destination's resolved contract, even
-      // when compatible producers used different table names.
+      // The destination inherits the connected output's type.
       result.push_back(
           {name, &source, edge.from_port, graph.nodes[index].input(port)});
       connected = true;

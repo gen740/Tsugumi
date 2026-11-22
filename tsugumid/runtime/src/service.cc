@@ -247,6 +247,7 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   // Plan requests can occupy every reader while the execution broker is down.
   cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
+  card_views_lane_ = std::make_unique<Lane>(1);
 }
 
 Service::~Service() { shutdown(); }
@@ -302,12 +303,11 @@ auto Service::keep_file_value(
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
     -> Value {
   if (value.kind == PortKind::FlatBuffer) return value;
-  const auto source = path_value(value);
-  if (!source)
-    throw Failed(FailureKind::output_invalid, "file value has no path");
+  if (value.path.empty())
+    throw Failed(FailureKind::output_invalid, "Path value has no path");
   for (const auto& root : file_roots()) {
     const auto rel =
-        stdfs::path(*source).lexically_normal().lexically_relative(root);
+        stdfs::path(value.path).lexically_normal().lexically_relative(root);
     if (!fs::valid_relative_path(rel.generic_string())) continue;
     const auto check = [&] {
       if (stop.load())
@@ -326,26 +326,19 @@ auto Service::keep_file_value(
         if (progress) progress(from.generic_string(), done, total);
       });
     };
-    if (value.kind == PortKind::File)
-      copy(rel, destination);
-    else {
-      const auto listing = fs::list_beneath(root, rel);
-      if (!listing.links.empty() || !listing.special.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "kept directory contains a link or special file");
-      stdfs::create_directories(destination);
-      for (const auto& child : listing.directories) {
-        check();
-        stdfs::create_directories(destination / child);
-      }
-      for (const auto& child : listing.files)
-        copy(rel / child, destination / child);
+    try {
+      fs::copy_path_beneath(root, rel, destination, copy);
+    } catch (const fs::Error& error) {
+      throw Failed(FailureKind::output_invalid,
+                   std::string("kept path: ") + error.what());
     }
     check();
-    return with_path(value, destination.string());
+    auto kept = value;
+    kept.path = destination.string();
+    return kept;
   }
   throw Failed(FailureKind::output_invalid,
-               "file value is outside the run's folders: " + *source);
+               "Path value is outside the run's folders: " + value.path);
 }
 
 auto Service::invalidate_resident(const std::string& card) -> void {
@@ -387,8 +380,21 @@ namespace {
 auto unsupported_local_option(const Settings& settings,
                               const RemoteTarget& target) -> std::string {
 #ifdef __linux__
-  if (settings.sandbox.filesystem && !target.namespace_isolation)
-    return "sandbox.filesystem requires a Linux worker with bubblewrap";
+  // Without bubblewrap only the plain worker could run, which enforces none
+  // of these: the Card fails instead of running without what it selected.
+  if (!target.namespace_isolation) {
+    if (settings.sandbox.filesystem)
+      return "sandbox.filesystem requires a Linux worker with bubblewrap";
+    if (!settings.grants.network)
+      return "a Card without grants.network requires a Linux worker with "
+             "bubblewrap to keep it off the network";
+    if (settings.sandbox.pid)
+      return "sandbox.pid requires a Linux worker with bubblewrap";
+    if (settings.sandbox.ipc)
+      return "sandbox.ipc requires a Linux worker with bubblewrap";
+    if (settings.sandbox.identity)
+      return "sandbox.identity requires a Linux worker with bubblewrap";
+  }
 #endif
   if (settings.sandbox.limits.limited() && !target.resource_limits)
     return "sandbox.limits requires a delegated cgroup v2 subtree";
@@ -411,8 +417,8 @@ auto effective_local_options(const Settings& settings,
           "network isolation does not hide filesystem Unix sockets");
 #endif
   }
-#ifdef __APPLE__
   (void)target;
+#ifdef __APPLE__
   if (settings.sandbox.filesystem)
     notes.push_back("Seatbelt filesystem isolation is partial");
   if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
@@ -421,15 +427,6 @@ auto effective_local_options(const Settings& settings,
     notes.push_back("identity isolation unavailable");
   if (settings.grants.network && settings.sandbox.filesystem)
     notes.push_back("Seatbelt still restricts access to the local host");
-#else
-  if (!target.namespace_isolation) {
-    if (!settings.grants.network)
-      notes.push_back("network isolation unavailable");
-    if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
-    if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
-    if (settings.sandbox.identity)
-      notes.push_back("identity namespace unavailable");
-  }
 #endif
   std::string message;
   for (const auto note : notes) {
@@ -685,6 +682,7 @@ auto Service::execution_diagnostic(const Node& node,
 
 void Service::shutdown() {
   remote_jobs_.stop();
+  card_views_shutdown_.request_stop();
   {
     std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
@@ -696,6 +694,7 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
+  if (card_views_lane_) card_views_lane_->stop();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
   // outlives the service only until it is closed.
@@ -726,8 +725,7 @@ std::vector<std::string> Service::capabilities() {
                                    "ProjectFileRead",
                                    "OutputTypes",
                                    "InputTypes",
-                                   "CardSDKPrepare",
-                                   "CardSDKStatus",
+                                   "CardApi",
                                    "RunPlan",
                                    "Run",
                                    "RunCancel",
@@ -743,10 +741,10 @@ std::vector<std::string> Service::capabilities() {
                                    "RunValueRead",
                                    "ArtifactList",
                                    "ArtifactRead",
-                                   "ModuleRead",
                                    "LogRange",
                                    "ViewSetVisible",
                                    "ViewSave",
+                                   "CardViewRead",
                                    "NixSourceResolve",
                                    "VersionInit",
                                    "VersionMark",
@@ -756,10 +754,6 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionNote",
                                    "VersionDiff",
                                    "VersionComments"};
-  // Every Display kind of the protocol.
-  for (auto v : D::EnumValuesDisplayValue())
-    if (v != D::DisplayValue::NONE)
-      caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
   return caps;
 }
 
@@ -817,6 +811,7 @@ void Service::disconnected(ConnId conn) {
   }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
+  visible_cards_.erase(conn);
 }
 
 void Service::on_lane(Lane& lane, RequestIn req,
@@ -948,8 +943,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
       return on_lane(m, std::move(req), &Service::run);
-    case P::CardSDKPrepareRequest:
-      return on_lane(m, std::move(req), &Service::sdk_prepare);
     case P::VersionInitRequest:
       return on_lane(m, std::move(req), &Service::version_init);
     case P::VersionMarkRequest:
@@ -984,8 +977,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest:
       return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::CardSDKStatusRequest:
-      return on_lane(r, std::move(req), &Service::sdk_status);
+    case P::CardApiRequest:
+      return on_lane(r, std::move(req), &Service::card_api);
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
@@ -1014,8 +1007,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest:
       return on_lane(r, std::move(req), &Service::artifact_list);
-    case P::ModuleReadRequest:
-      return on_lane(r, std::move(req), &Service::module_read);
     case P::ArtifactReadRequest:
       return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest:
@@ -1024,6 +1015,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::view_set_visible);
     case P::ViewSaveRequest:
       return on_lane(r, std::move(req), &Service::view_save);
+    case P::CardViewReadRequest:
+      return on_lane(r, std::move(req), &Service::card_view_read);
     default:
       return fail(req, FailureData::make(FailureKind::unsupported,
                                          "request is not supported"));
@@ -1054,10 +1047,6 @@ std::string Service::receipt_reply(uint64_t request_id,
     case R::ReceiptValue::ProjectCacheClearResult:
       type = R::ReplyPayload::ProjectCacheClearResult;
       tname = "Tsugumi.RPC.ProjectCacheClearResult";
-      break;
-    case R::ReceiptValue::CardSDKPrepareResult:
-      type = R::ReplyPayload::CardSDKPrepareResult;
-      tname = "Tsugumi.RPC.CardSDKPrepareResult";
       break;
     case R::ReceiptValue::RunScratchDeleteResult:
       type = R::ReplyPayload::RunScratchDeleteResult;
@@ -1528,6 +1517,7 @@ void Service::open_project(RequestIn& req) {
   {
     std::lock_guard<std::mutex> l(subs_mu_);
     subscriptions_[req.conn] = sub;
+    visible_cards_.erase(req.conn);
   }
   server_->subscribe(req.conn, sub, std::move(bytes));
 }
@@ -1735,8 +1725,11 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
       check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
   reply(req, receipt_reply(req.request_id, response.receipt, false));
-  if (staged.delta.doc)
+  if (staged.delta.doc) {
     publish_delta(staged.delta, response.notification_bytes);
+    if (staged.delta.doc->execution_rev != base.execution_rev)
+      refresh_card_views(staged.delta.doc);
+  }
   finish_op(op_id, response.receipt);
 }
 
@@ -2004,10 +1997,9 @@ void Service::cache_clear(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "cache_clear", digest)) return;
   try {
-    if (scheduler_->active_status() || nix_->sdk_jobs_active())
-      throw Failed(
-          FailureKind::busy,
-          "cache can only be cleared while no run or SDK job is active");
+    if (scheduler_->active_status())
+      throw Failed(FailureKind::busy,
+                   "cache can only be cleared while no run is active");
     if (history_->read(History::has_remote_jobs))
       throw Failed(
           FailureKind::busy,
@@ -2018,7 +2010,12 @@ void Service::cache_clear(RequestIn& req) {
       std::lock_guard lock(worker_selection_mutex_);
       resident_targets_.clear();
     }
-    auto result = nix_->clear_cache();
+    card_views_cancel_.request_stop();
+    card_views_rev_.reset();
+    const auto result = [&] {
+      std::lock_guard lock(card_views_build_mu_);
+      return nix_->clear_cache();
+    }();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"
                            : opts_.gcroots_dir;
@@ -2557,9 +2554,6 @@ void Service::file_stat(RequestIn& req) {
   } else if (auto bytes = confirmed_bytes(*doc, *store_, path)) {
     info = wire::source_info(b, path, D::SourceKind::file, true,
                              crypto::sha256_hex(*bytes), bytes->size());
-  } else if (auto sdk = nix_->sdk_file(path)) {
-    info = wire::source_info(b, path, D::SourceKind::file, true,
-                             crypto::sha256_hex(*sdk), sdk->size());
   } else {
     info = wire::source_info(b, path, D::SourceKind::file, false, std::nullopt,
                              std::nullopt);
@@ -2576,8 +2570,6 @@ void Service::file_read(RequestIn& req) {
   check_path_arg(path, false);
   uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
   std::optional<std::string> bytes = confirmed_bytes(*doc, *store_, path);
-  if (!bytes)
-    bytes = nix_->sdk_file(path, doc->rev);  // throws when the SDK rev is stale
   if (!bytes)
     throw Failed(FailureKind::not_found, path + " does not exist",
                  {{"path", path}});
@@ -2626,7 +2618,7 @@ void Service::input_types(RequestIn& req) {
                : flatbuffers::Offset<D::CardPath>(),
         source ? b.CreateString(port)
                : flatbuffers::Offset<flatbuffers::String>(),
-        type ? wire::port(b, *type) : flatbuffers::Offset<D::Port>()));
+        type ? wire::resolved_port(b, *type) : flatbuffers::Offset<D::Port>()));
   };
   try {
     const std::optional<std::string> output =
@@ -2719,23 +2711,143 @@ void Service::view_save(RequestIn& req) {
                          off.Union()));
 }
 
+namespace {
+
+auto card_views_note(CardPath card, std::vector<schema::CardView> views,
+                     std::optional<FailureData> failure = std::nullopt)
+    -> Note {
+  Note note;
+  note.kind = Note::Kind::CardViews;
+  note.card_key = path_key(card);
+  for (const auto& view : views)
+    note.approx_bytes +=
+        view.name->size() + view.type->size() + view.blob->size() + 64;
+  if (failure)
+    note.approx_bytes += failure->diagnostic.value_or("").size() + 64;
+  note.build = std::make_shared<const Note::Build>(
+      [card = std::move(card), views = std::move(views),
+       failure = std::move(failure)](FBB& b) {
+        std::vector<flatbuffers::Offset<D::CardView>> declarations;
+        declarations.reserve(views.size());
+        for (const auto& view : views)
+          declarations.push_back(D::CreateCardView(
+              b, b.CreateString(*view.name), b.CreateString(*view.type),
+              b.CreateString(*view.blob)));
+        const auto reason = failure ? wire::failure(b, *failure)
+                                    : flatbuffers::Offset<D::Failure>{};
+        const auto value = R::CreateCardViewsUpdated(
+            b, wire::path(b, card), b.CreateVector(declarations), reason);
+        return std::make_pair(R::NotificationPayload::CardViewsUpdated,
+                              value.Union());
+      });
+  return note;
+}
+
+}  // namespace
+
+auto Service::refresh_card_views(DocumentPtr doc) -> void {
+  if (card_views_shutdown_.stop_requested()) return;
+  if (card_views_rev_ != doc->execution_rev) {
+    card_views_cancel_.request_stop();
+    card_views_cancel_ = std::stop_source{};
+    card_views_rev_ = doc->execution_rev;
+    card_views_.clear();
+  }
+  std::set<std::string> visible;
+  {
+    std::lock_guard lock(subs_mu_);
+    for (const auto& [conn, cards] : visible_cards_)
+      visible.insert(cards.begin(), cards.end());
+  }
+  for (const auto& key : visible) {
+    const auto [cached, inserted] = card_views_.try_emplace(key);
+    if (!inserted) continue;
+    auto card = path_from_key(key);
+    const auto* node = doc->resolution->find(card);
+    if (!node || node->kind != CardType::Code) {
+      set_card_views(card, {});
+      cached->second = card_views_note(std::move(card), {});
+      server_->broadcast(*cached->second);
+      continue;
+    }
+    // Build only the declared immutable paths on the native store serving
+    // the UI. Evaluation belongs to the confirmed document snapshot.
+    card_views_lane_->submit([this, doc, node, card = std::move(card), key,
+                              cancel = card_views_cancel_]() mutable {
+      std::stop_callback shutdown(card_views_shutdown_.get_token(),
+                                  [&] { cancel.request_stop(); });
+      const auto stop = cancel.get_token();
+      if (stop.stop_requested()) return;
+      std::vector<schema::CardView> views;
+      std::optional<FailureData> failure;
+      try {
+        std::lock_guard lock(card_views_build_mu_);
+        if (stop.stop_requested()) return;
+        BuildRequest request;
+        request.node = node;
+        request.doc = doc;
+        request.cancel = stop;
+        request.timeout_seconds = node->settings.build_timeout_seconds;
+        views = nix_->declared_views(request);
+      } catch (const Failed& e) {
+        failure = e.failure;
+      } catch (const std::exception& e) {
+        failure = FailureData::make(FailureKind::nix_failed, e.what());
+      }
+      if (stop.stop_requested()) return;
+      // A failed evaluation clears the previous list and says why, so the
+      // UI can tell it from a Card that declares no views.
+      std::vector<DeclaredView> files;
+      files.reserve(views.size());
+      for (const auto& view : views) files.push_back({*view.name, *view.blob});
+      auto note = card_views_note(card, std::move(views), std::move(failure));
+      mutation_lane_->submit([this, key, stop, card = std::move(card),
+                              files = std::move(files),
+                              note = std::move(note)]() mutable {
+        if (stop.stop_requested()) return;
+        card_views_.at(key) = note;
+        // CardViewRead serves exactly the list this notification sends.
+        set_card_views(card, std::move(files));
+        server_->broadcast(note);
+      });
+    });
+  }
+}
+
 void Service::view_set_visible(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ViewSetVisibleRequest();
   std::set<std::string> cards;
   for (const auto* c : *r->cards())
     cards.insert(path_key(wire::card_arg(c, "cards")));
-  bool enabled = r->enabled().value_or(true);
+  const bool enabled = r->enabled().value_or(true);
+  const std::string id = r->subscription_id()->str();
+  bool matches;
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto sub = subscriptions_.find(req.conn);
+    matches = sub != subscriptions_.end() && sub->second == id;
+    if (matches) {
+      if (enabled)
+        visible_cards_[req.conn] = cards;
+      else
+        visible_cards_.erase(req.conn);
+    }
+  }
+  const auto doc = store_->current();
+  std::vector<Note> initial;
+  if (enabled && matches && card_views_rev_ == doc->execution_rev) {
+    for (const auto& key : cards)
+      if (auto cached = card_views_.find(key);
+          cached != card_views_.end() && cached->second)
+        initial.push_back(*cached->second);
+  }
   FBB b;
   auto ack = R::CreateAck(b);
-  std::string ack_bytes =
+  auto ack_bytes =
       wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union());
-  std::vector<Note> initial;
-  if (enabled)
-    for (const auto& key : cards)
-      if (auto n = scheduler_->latest_display_note(key))
-        initial.push_back(std::move(*n));
-  server_->set_visible(req.conn, r->subscription_id()->str(), std::move(cards),
-                       enabled, std::move(ack_bytes), std::move(initial));
+  server_->set_visible(req.conn, id, std::move(cards), enabled,
+                       std::move(ack_bytes), std::move(initial));
+  if (enabled && matches) refresh_card_views(doc);
 }
 
 }  // namespace tsugumi

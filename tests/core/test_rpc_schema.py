@@ -27,6 +27,8 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
         '{"type":"code","sandbox":{"pid":"false"}}',
         '{"type":"code","grants":{"gui":null}}',
         '{"type":"code","unknownCardField":true}',
+        '{"type":"code","inputs":[{"name":"old","optional":true}]}',
+        '{"type":"code","trigger":"eachInput"}',
         '{}',
         '{"type":"none"}',
     )
@@ -68,9 +70,9 @@ def test_core_stores_opaque_layout_unchanged(client):
 def test_card_settings_round_trip(client):
     """Execution settings survive a save and inspect without a filesystem switch."""
     settings = {
-        "type": "code", "inputs": [{"name": "data", "optional": True}],
+        "type": "code", "inputs": [{"name": "data"}],
         "params": [{"name": "limit", "type": "double", "data": 2.5}],
-        "trigger": "eachInput", "maxRuns": 3,
+        "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,
         "recordIO": True, "retainArtifact": True, "artifactOutput": "report",
         "sandbox": {"pid": False, "ipc": True, "identity": False, "filesystem": True,

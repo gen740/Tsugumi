@@ -1,7 +1,7 @@
 # The sandbox contract
 
-**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21.
-The implementation notes record the behavior before P1 at `24fc2d2c`. [Security §4](security.md#4-card-worker--tsugumid) describes the current implementation. [Open](#open) lists the remaining decision.
+**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21. The P1 sandbox work and the ABI 9 cutover implement it.
+Each **Before P1** note records the behavior at `24fc2d2c`, the revision the contract was written against, as evidence of what changed. [Security §4](security.md#4-card-worker--tsugumid) describes the current implementation. [Open](#open) lists the remaining decision.
 
 ## The worker builds what the Card sees
 
@@ -12,13 +12,14 @@ The implementation notes record the behavior before P1 at `24fc2d2c`. [Security 
 - Each kind of worker implements the contract with its own means: bubblewrap on Linux, and Seatbelt with the environment on native macOS.
 - The environment, `HOME`, `TMPDIR` and the working directory are fixed for the lifetime of the process.
 - The contract states what the worker **provides**. It does not defend against the Card's own code: `main.so` shares the worker's address space.
-- So that nothing about identity is left for the Card to see, the identity wrapping of displays moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id`, `invocation` and the Card's identity ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
+- Nothing about identity is left for the Card to see. `tsugumid`, not the worker, stamps display messages with the Card and the run, and `WorkerCall` carries no `run_id`, invocation or Card ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
 - The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
+- The Card's process gets no implicit shell and no implicit `PATH`: there is no `/bin/sh` for it to rely on. A Card that runs other programs declares them to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone (and leaves it unset when there is none). [The language SDK guides](https://github.com/gen740/tsugumi-kit) describe the attribute.
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - `WorkerCall` carries `run_id`, the Card and the invocation (`protocol/worker.fbs`).
-- The working directory and the environment are set again on each call ([Worker state](CardGuide.md#worker-state)).
+- The working directory and the environment are set again on each call.
 - Each call also sets `HOME` to the worker's work directory.
 
 ## The unit of isolation is the Card
@@ -36,7 +37,7 @@ The implementation notes record the behavior before P1 at `24fc2d2c`. [Security 
   - a call that is already running finishes on the old version and records the version it used.
 - A failed attempt is recorded even though its outputs are discarded.
 
-**Before P1.** A resident worker lives until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call discards it ([Worker state](CardGuide.md#worker-state)).
+**Before P1 (`24fc2d2c`).** A resident worker lives until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call discards it.
 
 ## Directories
 
@@ -49,23 +50,23 @@ The implementation notes record the behavior before P1 at `24fc2d2c`. [Security 
 
 Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote workers), `/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care there. On native macOS only `TMPDIR` is guaranteed.
 
-File and Directory outputs are created under the working directory ([Card ABI 9](CardABI.md#file-and-directory-outputs)).
+New Path outputs are created under the working directory. A Card can also return a staged input path unchanged. [Card ABI 9](CardABI.md#path-ports)
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories.
 - The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 - bubblewrap mounts an in-memory tmpfs at `/tmp`, separate from `TMPDIR` (`workerd/src/worker_proc.cc`).
 
-## File and Directory inputs
+## Path inputs
 
 **Decided.**
 
-- The input value holds an absolute path.
+- A Path input holds an absolute path in the ABI envelope. The worker stages a regular file or a whole directory tree according to what exists at run time.
   - With the `filesystem` option on, the Card's view of the input is read-only.
   - With `filesystem` off, the input is a copy (below), so the Card can write to that copy. Only the stored original is protected.
 - "Valid for that invocation" is the lifetime of the path. File descriptors that the Card keeps open are not revoked.
-- Inputs are hardlinked; a Directory is hardlinked file by file.
+- When hardlinking is possible, the worker links regular files individually, including each file in a directory tree.
 - Inputs are copied instead of hardlinked:
   - across filesystems;
   - whenever read-only cannot be enforced. A hardlink shares the inode of the stored run data, so without read-only enforcement the Card could change those data;
@@ -73,7 +74,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - always on native macOS.
 - With `reuseWorker`, the inputs are in a read-only bound directory, and the worker swaps its contents for each invocation.
 
-**Before P1.** The core copies the invocation's File and Directory inputs into a fixed, read-only staging area local to the worker ([pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
+**Before P1 (`24fc2d2c`).** The core copies the invocation's File and Directory inputs into a fixed, read-only staging area local to the worker ([pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 
 ## Grants
 
@@ -87,7 +88,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 - The TLS CA is confined to the Card. It defaults to Nix's `cacert` and never comes from the launcher's environment.
 - **I/O that the Card starts through a grant is an explicitly permitted side effect.** For example, a Card can download from the network or write into a read-write host path. "Run data travel only on `tsugumid`'s channel" ([The core and the language SDKs](CoreAndSDK.md#philosophy-constraints-that-still-hold)) covers Tsugumi's own transport, not what a Card does through its grants.
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - `network` and `hostFolders` are set in `_card.json`. A host folder is mounted at `/host/<name>`, read-only by default ([Outside access](features.md#outside-access-experimental)).
 - There is no GUI grant.
@@ -121,7 +122,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - in the VM, hostd's tokens are hidden from the Card;
   - the Card's processes are killed as a process group.
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - `sandbox` (on by default) is a single Card setting, and `sandbox: false` is a separate mode ([`sandbox: false` before P1](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-false)).
 - An Agent's save that turns the sandbox off, allows the network or adds a host folder waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
@@ -131,7 +132,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 
 ## What each kind of worker did before P1
 
-These are facts about the code at origin/main 24fc2d2c, for comparison with the contract.
+These are facts about the code at `24fc2d2c`, kept for comparison with the contract.
 
 | Kind | What it does |
 | --- | --- |
@@ -147,11 +148,12 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 - the Card identity variables `TSUGUMI_RUN_ID`, `TSUGUMI_CARD` and `TSUGUMI_INVOCATION`;
 - `TSUGUMI_PARAMS_JSON`;
 - the `TSUGUMI_*_DIR` variables;
-- the per-call change of `HOME`.
+- the per-call change of `HOME`;
+- the implicit `PATH` and `/bin/sh` that the worker supplied to every Card.
 
-`MPLCONFIGDIR` moves to the Python SDK.
+The Python SDK sets `MPLCONFIGDIR` itself.
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - The worker sets the identity variables, `TSUGUMI_PARAMS_JSON` and `HOME` for each call (`workerd/src/worker_execution.cc`).
 - `MPLCONFIGDIR` is set by `workerd/src/worker_proc.cc`.
@@ -160,7 +162,7 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 
 **Decided.** Card secrets ([#226](https://github.com/gen740/Tsugumi/issues/226)) are injected into the environment of the process once, when it starts. A change of a value recreates the worker.
 
-**Before P1.**
+**Before P1 (`24fc2d2c`).**
 
 - Each invocation receives the values in its call and sets them in the Card's process ([Card secrets](security.md#card-secrets), [remote](RemoteExecution.md#card-secrets)).
 - A Card with secrets cannot keep a resident worker.

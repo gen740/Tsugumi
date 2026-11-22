@@ -1,8 +1,0 @@
-{
-  "name": "Card-owned WebGPU view",
-  "pkgsPath": "tsugumi:default",
-  "canvas": {
-    "cards": [{"id": "start"}, {"id": "cloud"}],
-    "connections": [{"from": {"card": "start", "port": "out"}, "to": {"card": "cloud", "port": "start"}}]
-  }
-}

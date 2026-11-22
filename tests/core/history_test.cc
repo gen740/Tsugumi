@@ -21,7 +21,7 @@ TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   EXPECT_EQ(restored->kind, failure.kind);
 }
 
-TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
+TEST(RunHistory, PathContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -31,31 +31,29 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   } cleanup{directory};
   History original(directory / "original.sqlite");
   History restored(directory / "original.sqlite");
-  std::string error;
-  const auto type = types::compile(
-      "table File { value:string; } root_type File;", "File", &error);
-  ASSERT_TRUE(type) << error;
   const std::string bytes("\0\xff\x80\xc3(\n", 6);
-  std::vector<std::string> runs, hashes;
-  for (int i = 0; i < 3; ++i) {
+  std::vector<std::string> runs, hashes, contents;
+  // Two equal files, an empty file, a nonempty tree and an empty tree.
+  for (int i = 0; i < 5; ++i) {
     const auto run_id = std::to_string(i + 1);
     const auto relative = std::filesystem::path("runs") / run_id / "values/file";
     const auto file = directory / relative;
-    fs::write_atomic(file, i == 2 ? "other" : bytes);
-    flatbuffers::FlatBufferBuilder builder;
-    const auto text = builder.CreateString(file.string());
-    const auto start = builder.StartTable();
-    builder.AddOffset(4, text);
-    builder.Finish(
-        flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
-    Value value{
-        "file",
-        PortKind::File,
-        *type,
-        std::string(reinterpret_cast<const char*>(builder.GetBufferPointer()),
-                    builder.GetSize()),
-        {},
-        relative.generic_string()};
+    if (i >= 3) {
+      std::filesystem::create_directories(file);
+      if (i == 3) {
+        fs::write_atomic(file / "nested/data", bytes);
+        std::filesystem::create_directories(file / "empty");
+      }
+      contents.push_back("tree:" + fs::sha256_tree(file));
+    } else {
+      const auto content = i == 2 ? std::string_view{} : std::string_view(bytes);
+      fs::write_atomic(file, content);
+      contents.push_back(crypto::sha256_hex(content));
+    }
+    // A Path value has no type and no bytes; history records its path.
+    Value value{"file", PortKind::Path, nullptr, {}, {},
+                relative.generic_string()};
+    value.path = file.string();
     RunSummaryData run;
     run.status.run_id = run_id;
     run.status.state = RunState::succeeded;
@@ -71,22 +69,31 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
       History::insert_run(db, run, crypto::uuid4());
       original.complete_invocation(db, invocation);
     });
-    hashes.push_back(crypto::sha256_hex(with_path(value, *value.recorded_path).bytes));
+    hashes.push_back(crypto::sha256_hex(relative.generic_string()));
     runs.push_back(*run.status.run_id);
-    std::filesystem::remove(file);
+    std::filesystem::remove_all(file);
   }
   ASSERT_NE(hashes[0], hashes[1]);
+  ASSERT_NE(contents[3], contents[4]);
+  ASSERT_NE(contents[4], contents[2]);
   for (size_t i = 0; i < runs.size(); ++i) {
     for (const bool input : {false, true}) {
       restored.read([&](sql::Db& db) {
         const auto values =
             History::value_metas(db, runs[i], {"card"}, 1, input);
         ASSERT_EQ(values.size(), 1u);
+        EXPECT_EQ(values[0].kind, PortKind::Path);
+        EXPECT_TRUE(values[0].bfbs.empty());
         EXPECT_EQ(values[0].hash, hashes[i]);
-        EXPECT_EQ(values[0].file_content_hash,
-                  crypto::sha256_hex(i == 2 ? "other" : bytes));
+        EXPECT_EQ(values[0].file_content_hash, contents[i]);
       });
     }
+    // A recorded path belongs to the run that wrote it.
+    restored.read([&](sql::Db& db) {
+      EXPECT_TRUE(History::owns_recorded_file(
+          db, runs[i], "runs/" + runs[i] + "/values/file"));
+      EXPECT_FALSE(History::owns_recorded_file(db, runs[i], "runs/x/file"));
+    });
   }
 }
 

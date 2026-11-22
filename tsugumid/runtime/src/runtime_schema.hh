@@ -144,7 +144,7 @@ struct PreparedCard {
   // The evaluation key, as the core would compute it again for this Card.
   Opt<"key", v::String> key;
   Opt<"derivation", v::String> derivation;
-  Opt<"manifest", v::String> manifest;
+  Opt<"plan", v::String> plan;
   Opt<"system", v::String> system;
   Opt<"execution_list", v::Bool> execution_list;
   Opt<"implementations", v::Uint64> implementations;
@@ -155,20 +155,6 @@ struct PreparedCard {
 struct NixpkgsPin {
   t::String<"url"> url;
   t::String<"narHash"> nar_hash;
-};
-
-struct SdkFileJson {
-  t::String<"path"> path;
-  t::String<"hash"> hash;
-  t::Uint64<"size"> size;
-};
-
-struct SdkJobJson {
-  t::Array<"card", v::String> card;
-  t::Uint64<"rev"> rev;
-  t::String<"state"> state;  // pending | ready | failed
-  t::Array<"files", Obj<SdkFileJson>> files;
-  t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
 };
 
 // ---- .tsugumi-history.json (a demo's versions,

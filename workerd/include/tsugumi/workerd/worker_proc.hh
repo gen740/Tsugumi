@@ -6,6 +6,7 @@
 #include <array>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <functional>
 #include <memory>
@@ -22,16 +23,6 @@
 
 namespace tsugumi {
 
-// Only the realised program enters worker ownership; evaluation, build keys
-// and recorded environments remain with the caller.
-struct WorkerProgram {
-  std::optional<std::string> package;
-  std::optional<std::string> bash;
-  std::string pre_run;
-  std::string post_run;
-  std::string views;
-};
-
 struct WorkerSecrets {
   std::vector<std::pair<std::string, std::string>> values;
   ~WorkerSecrets();
@@ -39,18 +30,16 @@ struct WorkerSecrets {
 
 struct WorkerSpawn {
   std::string worker_binary;
-  std::string bash;
   std::string store_path = "/nix/store";
-  WorkerProgram program;
-  std::string path;
+  std::string package;
   std::vector<std::string> closure;
   // Remote supervision knows this leaf and cleans it on interruption.
   std::filesystem::path cgroup;
   bool shared_vm = false;
   std::shared_ptr<WorkerSecrets> secrets;
-  // The worker's own folder: work/, tmp/, out/, home/, inputs/, and
-  // scripts/ for preRun / a bash run / postRun. Created with the worker
-  // and removed when it ends, so it lives as long as the worker.
+  // The worker's work/, tmp/, and input staging live with the process.
+  // Local workerd retains process ownership while the core reads the channel.
+  bool channels_borrowed = false;
   std::string scratch;
   SandboxOptions sandbox;
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
@@ -77,8 +66,17 @@ struct WorkerSpawn {
   std::optional<gid_t> gid;
 };
 
+// One output as the worker reported it: bytes of a FlatBuffer output, or the
+// path of a Path output and the input it forwards unchanged, if any.
+struct RawOutput {
+  std::string name;
+  std::string bytes;
+  std::string path;
+  std::string forwarded_from;
+};
+
 struct WorkerOutcome {
-  std::vector<std::pair<std::string, std::string>> outputs;
+  std::vector<RawOutput> outputs;
   std::optional<FailureData> failure;
 };
 
@@ -97,7 +95,7 @@ class WorkerProc {
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;
-  using DisplaySink = std::function<void(const DisplayData&)>;
+  using DisplaySink = std::function<void(const WorkerDisplayData&)>;
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
   explicit WorkerProc(const WorkerSpawn& spawn);
@@ -121,14 +119,21 @@ class WorkerProc {
   // gets WorkerCancel, then the process group is killed after one second.
   WorkerOutcome call(
       std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
-      std::optional<std::chrono::steady_clock::time_point> deadline,
-      const DisplaySink& display);
+      std::optional<std::chrono::steady_clock::time_point> deadline);
   uint64_t next_call_id() { return ++call_id_; }
   auto call_id() const -> uint64_t { return call_id_; }
   auto set_call_id(uint64_t value) -> void { call_id_ = value; }
   auto lease_id() const -> uint64_t { return lease_id_; }
   auto returning_lease() -> void { borrowed_abandon_ = {}; }
   auto hand_over() -> std::array<int, 4>;
+  // Releasing a resident lease transfers log ownership to workerd and leaves
+  // the core's data reader attached until the process exits.
+  auto idle() -> void;
+  auto resume(Borrowed borrowed) -> void;
+  auto scratch() const -> const std::string& { return scratch_; }
+  // The sink may run on the reader thread between invocations. It must own
+  // its captures and return promptly.
+  auto set_display(DisplaySink display) -> void;
   auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.
   void set_logs(LogSink logs);
@@ -137,15 +142,17 @@ class WorkerProc {
   void terminate(bool force = false);
   std::string work_dir() const { return scratch_ + "/work"; }
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
-  std::string out_dir() const { return scratch_ + "/out"; }
   std::string inputs_dir() const { return scratch_ + "/inputs"; }
-  // Empties tmp/ and the invocation input/output staging areas.
+  // Empties tmp/ and the invocation input staging area.
   void clear_scratch();
   auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
  private:
+  auto start_data_reader() -> void;
+  auto stop_data_reader() -> void;
+  auto read_data() -> void;
   auto stop_log_reader() -> void;
   void read_logs(bool drain);
   void send(int fd, const std::string& frame);
@@ -163,6 +170,14 @@ class WorkerProc {
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;
+  std::mutex data_mutex_;
+  std::condition_variable data_ready_;
+  std::thread data_thread_;
+  std::array<int, 2> data_wake_{-1, -1};
+  uint64_t awaiting_ = 0;
+  bool data_closed_ = false;
+  std::optional<WorkerOutcome> pending_;
+  std::shared_ptr<DisplaySink> display_;
   LogSink logs_;
   std::mutex log_mu_;
   text::Utf8Decoder out_dec_;
@@ -178,13 +193,9 @@ class WorkerProc {
 };
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
-std::string worker_call_frame(
-    uint64_t call_id, const std::string& run_id, const CardPath& card,
-    uint64_t invocation, std::span<const Value> inputs,
-    const std::string& params_bfbs, const std::string& params_root,
-    const std::string& params, const std::vector<types::PortType>& outputs,
-    const std::string& work, const std::string& tmp, const std::string& out,
-    const std::vector<std::pair<std::string, std::string>>& env,
-    std::optional<uint64_t> deadline_ms);
+std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
+                              const std::string& params,
+                              const std::vector<types::PortType>& outputs,
+                              std::optional<uint64_t> deadline_ms);
 
 }  // namespace tsugumi

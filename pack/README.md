@@ -28,7 +28,7 @@ come later.
    perform on the local service (`NixRunner::build`), whether or not a run
    would reach it. For each Card it records the evaluation key (the nixpkgs
    pin, the system and the content-addressed definition, contract,
-   parameter and upstream folders) and the build: manifest, closure and run
+   parameter and upstream folders) and the build: plan, closure and run
    list shape. A Card that does not build fails the export and is named.
 3. **Write the payload.** The Cards' runtime closures, minus what the app's
    runner image already holds, go into `payload.erofs` with those records
@@ -49,8 +49,7 @@ the apps use. For each Card it computes the evaluation key as it would
 before evaluating, and uses the recorded build only if the key is the
 export's; a Card without a record, or one that changed, fails with that
 reason instead of being evaluated. Every Card's outputs (raw FlatBuffers
-bytes, JSON, and the content of File and Directory values), display (PNG,
-text, table) and logs are written under the results folder. `summary.json`
+bytes, JSON, and the content of File and Directory values), and logs are written under the results folder. `summary.json`
 lists every invocation and, under `results`, the outputs no other Card
 consumes: the Workflow's results. The guest then powers off; Ctrl-C stops it
 and removes the run's temporary folder and scratch disk.
@@ -100,7 +99,7 @@ and removes the run's temporary folder and scratch disk.
   into the copy of the Project there (`recipient/<name>`) and points the Card
   at it. An input Card is not built, so this changes no build.
 - **Values are recorded in the app.** Record I/O is off by default, which
-  would leave the recipient with displays only. The app's copy turns it on
+  would leave the recipient without recorded output values. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
 - **Size.** What remains is what the Cards and tsugumid need to run.
   Cell-count's payload (402 MiB) is its Cards' closures: Python 147 MiB,
@@ -138,7 +137,10 @@ it whenever `pack/` or the native runtime changes).
 ## First end-to-end check
 
 `demos/en/cell-count` (seven Python and Bash Cards), exported and
-run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18:
+run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
+measurement predates Card ABI 9. The demo is still ABI 8 and does not build
+now. TODO: repeat the check once the demos are ported
+([Demos](../docs/Demos.md)).
 
 | | |
 | --- | --- |

@@ -13,6 +13,7 @@
 #include <mutex>
 #include <optional>
 #include <set>
+#include <stop_token>
 #include <string>
 #include <thread>
 
@@ -42,7 +43,8 @@ struct ServiceOptions {
   std::string server_instance_id;
   std::filesystem::path
       control_dir;                // launcher-managed files hidden from workers
-  std::filesystem::path sdk_dir;  // installed SDK (share/tsugumi/sdk)
+  std::filesystem::path
+      nix_dir;  // installed Card evaluator (share/tsugumi/nix)
   std::filesystem::path worker_binary;
   std::filesystem::path workerd_binary;
   std::string fault;      // test-only fault injection point
@@ -138,6 +140,15 @@ class Service : public RequestSink {
   // A run finished: its record goes to the project's copy soon.
   // A run ended: its result goes to the note of the version it started from.
   void note_run_end(const RunStatusData& s, const std::string& record_json);
+  // The views a Card declares (name -> blob), set with the full list each
+  // time CardViewsUpdated is sent; an empty list clears them. CardViewRead
+  // serves only these files.
+  struct DeclaredView {
+    std::string name;
+    std::string blob;
+  };
+  auto set_card_views(const CardPath& card, std::vector<DeclaredView> views)
+      -> void;
 
  private:
   void reply(const RequestIn& req, std::string bytes);
@@ -171,7 +182,6 @@ class Service : public RequestSink {
   void history_category_delete(RequestIn& req);
   void history_file_references(RequestIn& req);
   void run(RequestIn& req);
-  void sdk_prepare(RequestIn& req);
   void version_init(RequestIn& req);
   void version_mark(RequestIn& req);
   void version_checkout(RequestIn& req);
@@ -191,7 +201,7 @@ class Service : public RequestSink {
   void output_types(RequestIn& req);
   void input_types(RequestIn& req);
   void nix_source_resolve(RequestIn& req);
-  void sdk_status(RequestIn& req);
+  void card_api(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);
   void run_status(RequestIn& req);
@@ -209,9 +219,9 @@ class Service : public RequestSink {
   void run_value_read(RequestIn& req);
   void artifact_list(RequestIn& req);
   void artifact_read(RequestIn& req);
-  void module_read(RequestIn& req);
   void log_range(RequestIn& req);
   void view_set_visible(RequestIn& req);
+  void card_view_read(RequestIn& req);
   void view_save(RequestIn& req);
 
   // Receipt handling shared by mutating requests. Returns true when the
@@ -237,6 +247,7 @@ class Service : public RequestSink {
       const std::optional<std::string>& view_id, const ViewRecord* view);
   void check_snapshot(const Document& doc);
   void publish_delta(const Delta& delta, size_t notification_bytes);
+  auto refresh_card_views(DocumentPtr doc) -> void;
   void check_at_rev(std::optional<uint64_t> at_rev, const Document& doc) const;
   RunStatusData current_run_status();
 
@@ -251,6 +262,8 @@ class Service : public RequestSink {
   // (size, modification time) when checked. Later pages read their range only.
   std::mutex verified_mu_;
   std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
+  std::mutex view_files_mu_;
+  std::map<std::string, std::vector<DeclaredView>> view_files_;  // path_key
   std::unique_ptr<NixRunner> nix_;
   std::filesystem::path run_scratch_;
   std::unique_ptr<CacheUsage> cache_usage_;
@@ -266,6 +279,13 @@ class Service : public RequestSink {
   std::unique_ptr<Lane> read_pool_;
   std::unique_ptr<Lane> cancel_lane_;
   std::unique_ptr<Lane> shell_lane_;
+  std::unique_ptr<Lane> card_views_lane_;
+  std::stop_source card_views_shutdown_;
+  std::mutex card_views_build_mu_;
+  // Owned by the mutation lane. A new execution revision cancels older work.
+  std::optional<uint64_t> card_views_rev_;
+  std::stop_source card_views_cancel_;
+  std::map<std::string, std::optional<Note>> card_views_;
   std::mutex cancellations_mu_;
   bool shell_stopping_ = false;
   std::map<std::pair<ConnId, uint64_t>, std::shared_ptr<std::atomic<bool>>>
@@ -285,6 +305,7 @@ class Service : public RequestSink {
   // Owned by the transport loop, alongside debug dispatch and disconnect.
   std::optional<ConnId> trace_owner_;
   std::map<ConnId, std::string> subscriptions_;  // conn -> subscription id
+  std::map<ConnId, std::set<std::string>> visible_cards_;
 
   std::mutex view_mu_;
 

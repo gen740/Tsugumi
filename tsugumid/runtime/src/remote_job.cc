@@ -194,7 +194,12 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
   });
   if (j->log_bytes.size() > workerd::kLogChunkBytes)
     throw BrokerDisconnected("remote log slice exceeds its limit");
-  return {state,
+  std::vector<WorkerDisplayData> displays;
+  displays.reserve(j->displays.size());
+  for (const auto& display : j->displays)
+    displays.push_back({display->view, std::string(display->bytes.begin(),
+                                                   display->bytes.end())});
+  return {std::move(state),
           j->fingerprint,
           j->result_sha256,
           j->diagnostic,
@@ -205,7 +210,8 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->log_offset,
           j->log_size,
           std::string(j->log_bytes.begin(), j->log_bytes.end()),
-          j->secrets_wanted};
+          j->secrets_wanted,
+          std::move(displays)};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())
@@ -265,10 +271,12 @@ auto RemoteJobClient::request(R::RequestT q,
   std::string response(workerd::frame_length(prefix), '\0');
   read_exact(socket.fd, response.data(), response.size(), io);
   auto incoming = workerd::decode(response);
-  trace::Observe(link, "hostd execution broker", "project core", false, response,
-                 &trace::kFlatBufferCodec);
   auto* reply = incoming->payload.AsReply();
   if (!reply) throw BrokerDisconnected("expected execution broker reply");
+  const auto* status = reply->body.AsJobStatus();
+  if (!status || status->displays.empty())
+    trace::Observe(link, "hostd execution broker", "project core", false,
+                   response, &trace::kFlatBufferCodec);
   if (const auto* error = reply->body.AsFailure()) {
     switch (error->code) {
       case R::ErrorCode::InstanceChanged:

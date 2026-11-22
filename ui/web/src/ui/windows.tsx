@@ -4,7 +4,8 @@ import { app, DetailWindow } from '../model/app'
 import { useObserve } from '../model/observable'
 import { CardSettingsEditor } from './cardSettings'
 import { ChatPanel } from './chat'
-import { CardArtifactsView, VisualizationWindow } from './history'
+import { CardArtifactsView } from './history'
+import { CardViewsWindow } from './cardViews'
 import { Icon } from './icons'
 import { CardDatabaseView, WorkflowSettingsView } from './projectViews'
 import { ApplicationSettings } from './settings'
@@ -43,7 +44,7 @@ function Content({ w }: { w: DetailWindow }) {
     case 'executions': return <CardSettingsEditor session={s} card={what.card} initial="executions" onClose={close} />
     case 'artifacts': return <CardArtifactsView session={s} cardKey={what.card} />
     case 'workflowSettings': return <WorkflowSettingsView session={s} />
-    case 'visual': return <VisualizationWindow session={s} cardKey={what.card} />
+    case 'visual': return <CardViewsWindow session={s} cardKey={what.card} />
     case 'chat': return <ChatPanel session={s} chat={app.chat(s)} detached />
   }
 }

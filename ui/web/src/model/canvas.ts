@@ -6,7 +6,7 @@ import { D } from '../wire/rpc'
 import { Camera, CardGeometry, CardNodeData, fitCamera, isDraftWire, Pt, Rect, union, WireRouter } from './canvasKit'
 import { Observable } from './observable'
 import { ShortcutAction } from './prefs'
-import { CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
+import { portTypeName, CardKey, DefinitionTemplate, key, path, ProjectSession } from './session'
 import type { WorkflowTab } from './workspace'
 import { L } from '../i18n'
 
@@ -172,7 +172,7 @@ export class Scene {
     const ports = (list: [string, J][], bar: Rect, output: boolean): BoundaryPort[] => list.map(([name, v], i) => {
       const px = bar.x + (bar.width * (i + 1)) / (list.length + 1)
       const c = str(get(v, 'card')), p = str(get(v, 'port'))
-      const t = (output ? resolved?.outputs : resolved?.inputs)?.find((x) => x.name === name)?.rootType
+      const t = portTypeName((output ? resolved?.outputs : resolved?.inputs)?.find((x) => x.name === name))
       return { name, point: { x: px, y: output ? bar.y : bar.y + bar.height }, inner: c && p !== undefined ? [key([...this.scope, c]), p] : undefined, type: t }
     })
     return { top, bottom, inputs: ports(ins, top, false), outputs: ports(outs, bottom, true) }

@@ -79,7 +79,7 @@ auto large_file(const fs::path& root, bool sparse) -> void {
   expect(directory >= 0, "open worker output");
   const std::atomic<bool> cancel = false;
   const auto saved = root / "saved";
-  tsugumi::fs::copy_staging_output(directory, "data", saved, false, cancel);
+  tsugumi::fs::copy_staging_output(directory, "data", saved, cancel);
   ::close(directory);
   check(saved);
   // The next Card's input uses copy_beneath, just like keep_file_value.
@@ -131,7 +131,7 @@ auto transfer_progress(const fs::path& root) -> void {
   uint64_t previous = 0;
   size_t calls = 0;
   tsugumi::fs::copy_staging_output(
-      directory, "data", root / "copy", false, cancel,
+      directory, "data", root / "copy", cancel,
       [&](const fs::path& name, uint64_t done, uint64_t total) {
         expect(name == "data", "progress lost the current filename");
         expect(total == bytes.size() && done >= previous && done <= total,

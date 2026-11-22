@@ -1,4 +1,4 @@
-// Run behavioral regression tests and, with a configured Chromium, the log viewport test.
+// Run behavioral regression tests, including browser checks with a configured Chromium.
 import * as esbuild from 'esbuild'
 import { execFileSync } from 'node:child_process'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
@@ -40,7 +40,9 @@ try {
   await import(pathToFileURL(out).href)
   if (process.env.TSUGUMI_CHROMIUM) {
     const { checkLogInChromium } = await import('../tests/logBrowser.mjs')
+    const { checkCardViewsInChromium } = await import('../tests/cardViewsBrowser.mjs')
     await checkLogInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
+    await checkCardViewsInChromium(process.env.TSUGUMI_CHROMIUM, web, dir)
   }
 } finally {
   fs.rmSync(dir, { recursive: true, force: true })

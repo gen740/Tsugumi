@@ -21,11 +21,9 @@ import threading
 
 import flatbuffers
 
-from Tsugumi.Data.Display import DisplayT
-from Tsugumi.Data.DisplayText import DisplayTextT
-from Tsugumi.Data.DisplayValue import DisplayValue
 from Tsugumi.Data.Failure import FailureT
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerFailure import WorkerFailureT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
@@ -47,6 +45,7 @@ def text(value):
 class Channel:
     def __init__(self, fd):
         self.socket = socket.socket(fileno=fd)
+        self.lock = threading.Lock()
 
     def _read(self, count):
         data = bytearray()
@@ -76,7 +75,8 @@ class Channel:
         builder = flatbuffers.Builder(1024)
         builder.Finish(message.Pack(builder), file_identifier=b"TSW1")
         frame = bytes(builder.Output())
-        self.socket.sendall(struct.pack("<I", len(frame)) + frame)
+        with self.lock:
+            self.socket.sendall(struct.pack("<I", len(frame)) + frame)
 
 
 def scalar(kind, value):
@@ -167,12 +167,12 @@ class Worker:
         self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure))
 
     def output_path(self, relative):
-        if self.call is None or not self.call.outputDirectory:
+        if self.call is None:
             raise ValueError("file actions require a File or Directory output")
         relative = Path(relative)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("output action path must stay inside the output directory")
-        return Path(text(self.call.outputDirectory)) / relative
+        return Path.cwd() / relative
 
     def actions(self, actions, outputs):
         for action in actions:
@@ -204,12 +204,17 @@ class Worker:
                 self.failure(action.get("kind", "worker_failed"), action.get("message", "scripted worker failure"))
                 return False
             elif operation == "output":
-                sources = {"calls": self.calls, "invocation": self.call.invocation, "pid": os.getpid()}
+                sources = {"calls": self.calls, "pid": os.getpid()}
                 value = sources[action["source"]] if "source" in action else action["value"]
-                outputs[action["port"]] = scalar(action["type"], value)
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=scalar(action["type"], value))
             elif operation == "echo":
                 value = next(v for v in self.call.inputs if text(v.name) == action["input"])
-                outputs[action["port"]] = bytes(value.value.bytes)
+                # A Path input is returned unchanged; a FlatBuffer one by its bytes.
+                if value.kind == PortKind.Path:
+                    outputs[action["port"]] = WorkerOutputT(
+                        name=action["port"], path=text(value.path), forwardedFrom=text(value.name))
+                else:
+                    outputs[action["port"]] = WorkerOutputT(name=action["port"], bytes=bytes(value.bytes))
             elif operation in ("file", "directory"):
                 destination = self.output_path(action["path"])
                 if operation == "file":
@@ -221,18 +226,14 @@ class Worker:
                         member = self.output_path(str(Path(action["path"]) / relative))
                         member.parent.mkdir(parents=True, exist_ok=True)
                         member.write_text(contents)
-                outputs[action["port"]] = scalar("string", str(destination))
+                outputs[action["port"]] = WorkerOutputT(name=action["port"], path=str(destination))
             elif operation == "symlink":
                 destination = self.output_path(action["path"])
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.symlink_to(action["target"])
             elif operation == "display_text":
-                display = DisplayT(
-                    card=self.call.card, runId=self.call.runId, invocation=self.call.invocation,
-                    revision=1, valueType=DisplayValue.DisplayText,
-                    value=DisplayTextT(text=action["text"]),
-                )
-                self.data.send(self.call_id, WorkerPayload.WorkerDisplay, WorkerDisplayT(display=display))
+                display = WorkerDisplayT(view="test", bytes=action["text"].encode())
+                self.data.send(0, WorkerPayload.WorkerDisplay, display)
             else:
                 raise ValueError(f"unknown worker action: {operation}")
         return True
@@ -243,6 +244,10 @@ class Worker:
             return
         while message := self.data.receive():
             try:
+                if message.valueType == WorkerPayload.WorkerStart and self.calls == 0:
+                    os.environ.update({text(entry.name): text(entry.value)
+                                       for entry in message.value.environment})
+                    continue
                 if message.valueType != WorkerPayload.WorkerCall:
                     raise ValueError("expected a worker call")
                 self.call_id = message.callId
@@ -251,7 +256,7 @@ class Worker:
                 outputs = {}
                 if self.actions(self.scenario.get("actions", []), outputs):
                     self.check_cancel()
-                    result = WorkerResultT(outputs=[WorkerOutputT(name=port, bytes=value) for port, value in outputs.items()])
+                    result = WorkerResultT(outputs=list(outputs.values()))
                     self.data.send(self.call_id, WorkerPayload.WorkerResult, result)
             except Cancelled:
                 self.failure("cancelled", "scripted worker observed cancellation")
@@ -263,12 +268,6 @@ class Worker:
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--package", required=True)
-    # The real launcher also supplies shell-step arguments. This double only
-    # runs the explicit scenario; shell behavior is exercised with the real worker.
-    parser.add_argument("--bash")
-    parser.add_argument("--pre")
-    parser.add_argument("--run")
-    parser.add_argument("--post")
     options = parser.parse_args()
     scenario = json.loads((Path(options.package) / "scenario.json").read_text())
     Worker(scenario).serve()

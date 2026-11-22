@@ -10,8 +10,9 @@ import { hostCall } from '../wire/host'
 import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
+import { pathChoices } from '../model/pathChoices'
 import { prefs } from '../model/prefs'
-import { CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { portTypeName, CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
@@ -763,13 +764,6 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       )}
       {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
-          {kind === 'code' && (
-            <Row label="trigger" help={L('allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。')}>
-              <Select {...string('trigger', 'allInputs')} options={[
-                { value: 'allInputs', label: L('すべての入力が揃ったとき') }, { value: 'eachInput', label: L('入力が届くたび') },
-              ]} />
-            </Row>
-          )}
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
           {timeoutField('timeoutSeconds', L('実行の期限（秒）'))}
           {kind === 'code' && (
@@ -959,12 +953,12 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   // execution list). A list-typed value without it stays one vector.
   const sweep = arr(get(param, 'sweep'))
   const [draft, setDraft] = useState<string>()
-  const fileInput = model.kind === 'input' && name === 'value' && type === 'string' &&
-    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.File)
+  const pathInput = model.kind === 'input' && name === 'value' && type === 'string' &&
+    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
   const folder = model.session.definitionDir(model.cardKey) ?? ''
   const entered = str(value) ?? ''
   const target = entered.startsWith('project:')
-    ? folder.slice(0, folder.lastIndexOf('definitions/')) + entered.slice(8)
+    ? folder.split('/').slice(0, -3).map((part) => part + '/').join('') + entered.slice(8)
     : folder + entered
   const update = (change: (p: JObj) => void) => {
     const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
@@ -981,6 +975,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
       p.set('data', on ? undefined : first)
     })
   }
+  const choices = pathInput && !sweep ? pathChoices(model.session.sourcePaths, folder) : []
   const sweepText = draft ?? serialize(sweep ?? [], false)
   const parsedSweep = arr(tryParse(sweepText))
   return (
@@ -995,6 +990,10 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
             : type === 'bool'
             ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
             : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
+          {pathInput && !sweep && <Select value={choices.includes(entered) ? entered : ''} onChange={(v) => v && set(v)} style={{ maxWidth: 220 }}
+            help={L('プロジェクトのファイルかフォルダを選びます。')}
+            options={[{ value: '', label: L('ファイルかフォルダを選択…'), disabled: true },
+              ...choices.map((p) => ({ value: p, label: p }))]} />}
           <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
         </div>
         {model.kind === 'input' && <div className="row gap6 center" style={{ marginTop: 4 }}>
@@ -1006,7 +1005,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
             : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
           {type.endsWith('[]') && <div>{L('リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。')}</div>}
         </div>}
-        {fileInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+        {pathInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
           <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
           {!sweep && <div>{L('参照先: {0}', target)}</div>}
         </div>}
@@ -1042,7 +1041,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
     fn(a)
     model.setSetting('inputs', a.length ? a : undefined)
   }
-  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.File || p.kind === D.PortKind.Directory)
+  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.Path)
   return (
     <Form>
       {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
@@ -1062,7 +1061,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
                     <TextField {...portNote(model, 'inputs', name)} placeholder={L('用途（何を受け取るか）')} style={{ flex: 1 }}
                       help={L('このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。')} />
-                    <span className="caption secondary nowrap">{r?.inputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+                    <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
                     <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
                 </Row>
@@ -1072,7 +1071,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           </>
         ) : (
           <>
-            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={p.rootType ?? L('未解決')} />)}
+            {(r?.inputs ?? []).map((p) => <Value key={p.name} label={p.name} value={portTypeName(p) ?? L('未解決')} />)}
             {!(r?.inputs ?? []).length && <Row><span className="secondary">{L('入力はありません')}</span></Row>}
           </>
         )}
@@ -1082,7 +1081,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         <Section title={L('記録と成果物')}>
           {([
             ['recordLogs', L('標準出力と標準エラーを記録')],
-            ['recordDisplays', L('記録指定のある表示を記録')],
             ['recordIO', L('入出力の値を記録')],
             ['retainArtifact', L('出力ファイルと成果物を保持')],
           ] as const).map(([key, label]) => {
@@ -1094,13 +1092,13 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
             </Row>
           })}
-          {/* Only File / Directory outputs can be kept as artifacts. */}
+          {/* Only Path outputs can be kept as artifacts. */}
           <Row label={L('成果物にする出力')}>
             {keepable.length === 0
-              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('File / Directory の出力がないため、保持できる出力はありません')}</span>
+              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('Path の出力がないため、保持できる出力はありません')}</span>
               : <Select value={str(get(def, 'artifactOutput')) ?? ''} onChange={(v) => model.setSetting('artifactOutput', v || undefined)}
                   options={[{ value: '', label: L('なし') },
-                    ...keepable.map((p) => ({ value: p.name, label: L('{0}（{1}）', p.name, p.kind === D.PortKind.File ? 'File' : 'Directory') }))]} />}
+                    ...keepable.map((p) => ({ value: p.name, label: p.name }))]} />}
           </Row>
         </Section>
       )}
@@ -1130,7 +1128,7 @@ function ForkOutputsSection({ model }: { model: CardEditorModel }) {
             <TextField value={name} placeholder={L('名前')} mono help={L('出力ポートの名前')} style={{ width: 140 }}
               onChange={(v) => edit((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
             <TextField {...portNote(model, 'outputs', name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            <span className="caption secondary nowrap">{r?.outputs.find((p) => p.name === name)?.rootType ?? L('未解決')}</span>
+            <span className="caption secondary nowrap">{portTypeName(r?.outputs.find((p) => p.name === name)) ?? L('未解決')}</span>
             <Button kind="borderless" iconOnly icon="minus.circle" help={L('出力を削除')} disabled={names.length <= 1}
               onClick={() => edit((a) => a.splice(i, 1))} />
           </div>
@@ -1203,20 +1201,16 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
           <div className="row gap8 center fill">
             <span className="mono ellipsis" style={{ width: 120, flex: 'none' }}>{port.name}</span>
             <TextField {...portNote(model, 'outputs', port.name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            {types.length === 0 || !p ? (
-              <span className="caption secondary nowrap">{(port.rootType ?? L('未解決')) + (port.optional ? L('（省略可）') : '')}</span>
+            {!p ? (
+              <span className="caption secondary nowrap">{portTypeName(port) ?? L('未解決')}</span>
             ) : (
-              <>
-                <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }} help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
-                  onChange={(t) => void set(port.name, t, port.kind)}
-                  options={[...(port.rootType === undefined ? [{ value: '', label: L('未解決') }] : []),
-                    ...(port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
-                    ...types.map((t) => ({ value: t, label: shortType(t) }))]} />
-                <Select<number> value={port.kind} style={{ maxWidth: 100 }} help={L('File / Directory は、型に文字列の value（パス）がある場合に選べます')}
-                  onChange={(k) => void set(port.name, port.rootType ?? '', k)}
-                  options={[{ value: D.PortKind.FlatBuffer, label: L('値') }, { value: D.PortKind.File, label: 'File' }, { value: D.PortKind.Directory, label: 'Directory' },
-                    ...(port.kind === D.PortKind.unspecified ? [{ value: D.PortKind.unspecified, label: '—' }] : [])]} />
-              </>
+              <Select value={port.kind === D.PortKind.Path ? 'string' : port.rootType ?? ''} style={{ maxWidth: 150 }}
+                help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
+                onChange={(type) => void set(port.name, type, type === 'string' ? D.PortKind.Path : D.PortKind.FlatBuffer)}
+                options={[...(port.kind !== D.PortKind.Path && port.rootType === undefined ? [{ value: '', label: L('未解決'), disabled: true }] : []),
+                  { value: 'string', label: 'Path' },
+                  ...(port.kind !== D.PortKind.Path && port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
+                  ...types.map((type) => ({ value: type, label: shortType(type) }))]} />
             )}
           </div>
         </Row>
@@ -1431,7 +1425,7 @@ function fileTree(rel: string[], base: string): FileNode[] {
   ]
 }
 
-const READ_ONLY_WHY = L('接続から生成されるファイルです（手で編集しません）')
+const READ_ONLY_WHY = L('Card のビルドが生成したファイルです（手で編集しません）')
 
 /** A short "RO" mark for files that are not edited here; hover tells why. */
 export function ReadOnlyMark({ why }: { why: string }) {
@@ -1454,10 +1448,17 @@ function FileRow({ name, icon, depth, folder, selected, edited, readOnly, onClic
   )
 }
 
-const GENERATED = 'generated:'
+const SDK = 'sdk:'
+const SDK_LOG = SDK + 'log'
+
+/** What the last "build SDK" returned: the files of share/tsugumi/api/ by
+ *  their shown name, or the build failure and its log. Held only while the
+ *  editor is open. */
+type SdkState = { building: boolean, files?: { id: string, name: string, text: string }[], failure?: string, log?: string }
 
 /** File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
- *  `default.nix`, with formatting, errors in place and the generated inputs.
+ *  `default.nix`, with formatting, errors in place and the Card's generated
+ *  API (the "SDK" section: what the builder placed under share/tsugumi/api/).
  *  The open files, the shown one and the expanded folders live on the model,
  *  so switching categories or applying keeps them. */
 function SourceCategory({ model }: { model: CardEditorModel }) {
@@ -1470,8 +1471,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   const [formatting, setFormatting] = useState(false)
   const [formatMessage, setFormatMessage] = useState<string>()
   const [formatMarkers, setFormatMarkers] = useState<EditorMarker[]>([])
-  const [generated, setGenerated] = useState<Record<string, string>>({})
-  const [generatedError, setGeneratedError] = useState<string>()
+  const [sdk, setSdk] = useState<SdkState>({ building: false })
   const shown = model.shownFile
 
   useEffect(() => {
@@ -1486,38 +1486,37 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   useEffect(() => {
     setFormatMarkers([])
     setFormatMessage(undefined)
-    if (shown && !shown.startsWith(GENERATED) && model.files.includes(shown)) void model.text(shown).catch(() => {})
+    if (shown && !shown.startsWith(SDK) && model.files.includes(shown)) void model.text(shown).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, model.generation])
 
-  useEffect(() => {
-    if (!shown?.startsWith(GENERATED)) return
+  // The same Card API request the Agent uses: the saved definition built with
+  // the current wiring.
+  const buildSdk = async () => {
     const rpc = session.rpc
-    if (!rpc) return
-    let alive = true
-    void (async () => {
-      try {
-        const rev = session.rev
-        const list = await rpc.generatedContracts(path(model.cardKey), rev)
-        const out: Record<string, string> = {}
-        for (const f of list) {
-          const p = s(f.path)
-          const name = p.split('/').pop() ?? p
-          if (!name.endsWith('.fbs')) continue
-          out[name] = new TextDecoder().decode(await rpc.readFile(p, rev))
-        }
-        if (!alive) return
-        setGenerated((g) => ({ ...g, ...out }))
-        setGeneratedError(undefined)
-      } catch (e) {
-        if (alive) setGeneratedError(L('生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ') + errorText(e))
+    if (!rpc || sdk.building) return
+    setSdk({ building: true })
+    try {
+      const r = await rpc.cardApi(path(model.cardKey), session.rev)
+      if (r.failure) {
+        setSdk({ building: false, failure: s(r.failure.diagnostic) || D.FailureKind[r.failure.kind], log: sOpt(r.log) })
+        return
       }
-    })()
-    return () => {
-      alive = false
+      const decoder = new TextDecoder()
+      const several = r.implementations.length > 1
+      const files = r.implementations.flatMap((impl, position) => {
+        const base = several ? (sOpt(impl.label) || `#${position + 1}`) + '/' : ''
+        return impl.files.map((file) => ({
+          id: SDK + position + '/' + s(file.path),
+          name: base + s(file.path),
+          text: decoder.decode(new Uint8Array(file.content)),
+        }))
+      })
+      setSdk({ building: false, files })
+    } catch (e) {
+      setSdk({ building: false, failure: errorText(e) })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, session.rev])
+  }
 
   const canFormat = (p: string) => /[^/]\.(json|nix)$/.test(p)
 
@@ -1564,10 +1563,11 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     ]
   })
 
-  const displayName = (f: string) => (f.startsWith(GENERATED) ? f.slice(GENERATED.length) : f.split('/').pop() ?? f)
+  const sdkName = (f: string) => f === SDK_LOG ? L('ビルドログ') : sdk.files?.find((file) => file.id === f)?.name ?? f.split('/').pop() ?? f
+  const displayName = (f: string) => (f.startsWith(SDK) ? sdkName(f) : f).split('/').pop() ?? f
 
   const header = (p: string, generatedFile: boolean) => {
-    const rel = generatedFile ? p.slice(GENERATED.length) : p.slice(prefix.length)
+    const rel = generatedFile ? sdkName(p) : p.slice(prefix.length)
     const parts = rel.split('/')
     return (
       <div className="src-head">
@@ -1591,13 +1591,16 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   }
 
   let pane: ReactNode
-  if (shown?.startsWith(GENERATED)) {
-    const name = shown.slice(GENERATED.length)
+  if (shown?.startsWith(SDK)) {
+    const text = shown === SDK_LOG ? sdk.log : sdk.files?.find((file) => file.id === shown)?.text
     pane = (
       <>
         {header(shown, true)}
-        {generatedError && <div className="callout pad12 selectable" style={{ color: 'var(--red)' }}>{generatedError}</div>}
-        <CodeEditor text={generated[name] ?? ''} language="fbs" editable={false} documentId={shown} className="src-editor" />
+        {text !== undefined ? (
+          <CodeEditor text={text} language={shown === SDK_LOG ? undefined : shown.split('.').pop()} editable={false} documentId={shown} className="src-editor" />
+        ) : (
+          <Empty title={L('SDK をビルドすると表示されます')} icon="doc.text" />
+        )}
       </>
     )
   } else if (shown && model.files.includes(shown)) {
@@ -1637,7 +1640,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   const editor = (
     <div key="editor" className="src-pane" onKeyDown={(e) => {
-      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED) || !canFormat(shown)) return
+      if (e.nativeEvent.isComposing || !shown || shown.startsWith(SDK) || !canFormat(shown)) return
       if (prefs.action(e.nativeEvent, false) === 'formatSource') {
         e.preventDefault()
         e.stopPropagation()
@@ -1648,7 +1651,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
         <div className="src-tabs" role="tablist">
           {model.openFiles.map((f) => (
             <div key={f} role="tab" aria-selected={shown === f} className={`src-tab${shown === f ? ' shown' : ''}`} title={f} onClick={() => model.openFile(f)}>
-              <Icon name={f.startsWith(GENERATED) ? 'lock.doc' : fileIcon(f)} size={11} />
+              <Icon name={f.startsWith(SDK) ? 'lock.doc' : fileIcon(f)} size={11} />
               <span className="caption ellipsis">{displayName(f)}</span>
               {model.isEdited(f) && <span className="edited-dot" title={L('未適用の変更')} />}
               <button type="button" className="src-tab-close" title={L('タブを閉じる（内容は保持されます）')} aria-label={L('タブを閉じる')}
@@ -1672,17 +1675,34 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                 {tree(fileTree(files.map((f) => f.slice(prefix.length)), prefix), 0)}
                 {model.kind === 'code' && (
                   <>
-                    <div className="src-section caption">{L('生成')}</div>
-                    {['_inputs.fbs', '_params.fbs'].map((n) => (
-                      <FileRow key={n} name={n} icon="lock.doc" depth={0} selected={shown === GENERATED + n} readOnly onClick={() => model.openFile(GENERATED + n)} />
+                    <div className="src-section caption row center gap4">
+                      <span className="spacer">{L('SDK')}</span>
+                      <Button small disabled={sdk.building || !session.rpc} onClick={() => void buildSdk()}
+                        help={L('保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します')}>
+                        {sdk.building ? L('ビルドしています…') : L('SDK をビルド')}
+                      </Button>
+                    </div>
+                    {sdk.failure !== undefined && (
+                      <>
+                        <div className="caption selectable pad6 wrap-pre" style={{ color: 'var(--red)' }}>{L('ビルドできませんでした: {0}', sdk.failure)}</div>
+                        {sdk.log && (
+                          <FileRow name={L('ビルドログ')} icon="doc.text" depth={0} selected={shown === SDK_LOG} readOnly onClick={() => model.openFile(SDK_LOG)} />
+                        )}
+                      </>
+                    )}
+                    {sdk.files?.length === 0 && (
+                      <div className="caption pad6">{L('ビルドで生成された SDK ファイルはありません')}</div>
+                    )}
+                    {sdk.files?.map((file) => (
+                      <FileRow key={file.id} name={file.name} icon="lock.doc" depth={0} selected={shown === file.id} readOnly help={file.name} onClick={() => model.openFile(file.id)} />
                     ))}
                   </>
                 )}
               </div>
               <div className="row gap4 pad6 border-top">
                 <Button kind="borderless" iconOnly icon="plus" help={L('ファイルを作成')} onClick={() => setShowNew(true)} />
-                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(GENERATED)}
-                  onClick={() => { if (shown && !shown.startsWith(GENERATED)) { model.removeFile(shown); model.closeFile(shown) } }} />
+                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(SDK)}
+                  onClick={() => { if (shown && !shown.startsWith(SDK)) { model.removeFile(shown); model.closeFile(shown) } }} />
               </div>
             </div>,
             editor,

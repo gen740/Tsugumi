@@ -1,6 +1,6 @@
 set(TSUGUMI_PROTOCOL_DIR ${CMAKE_CURRENT_SOURCE_DIR}/protocol)
 set(TSUGUMI_GEN_DIR ${CMAKE_CURRENT_BINARY_DIR}/generated)
-set(TSUGUMI_SCHEMAS tsugumi_enums rpc_trace data worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest)
+set(TSUGUMI_SCHEMAS card_enums tsugumi_enums rpc_trace worker_types data card worker local_worker remote_worker tsugumi service_common agent host vm_host vm_guest)
 
 function(schema_inputs schema result)
   set(source ${TSUGUMI_PROTOCOL_DIR}/${schema}.fbs)

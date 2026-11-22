@@ -24,7 +24,7 @@ const diagnostic = (id: string, message: string) => Object.assign(new DT.Diagnos
   path: `definitions/${id}/_card.json`,
 })
 const resolved = (id: string, diagnostics: DT.DiagnosticT[] = []) =>
-  ({ card: { segments: [id] }, inputs: [], outputs: [{ name: 'out', kind: 0 }], diagnostics, nixReferences: [] }) as unknown as R.ResolvedCardT
+  ({ card: { segments: [id] }, inputs: [], outputs: [Object.assign(new DT.PortT(), { name: 'out' })], diagnostics, nixReferences: [] }) as unknown as R.ResolvedCardT
 const definition = (id: string, card: string) => Object.assign(new R.DefinitionT(), { id, cardJson: card })
 
 const s = new ProjectSession('/p', 'k', 'p')

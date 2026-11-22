@@ -106,7 +106,7 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","data":9007199254740993}],"sandbox":{"filesystem":false},"grants":{"network":true}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/_card.json",
@@ -186,7 +186,7 @@ TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
 
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const std::string root =
-      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","settings":{"sandbox":false},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":{"input":{"card":"a","port":"in"}},"outputs":{"result":{"card":"b","port":"out"}}}})";
+      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":{"input":{"card":"a","port":"in"}},"outputs":{"result":{"card":"b","port":"out"}}}})";
   const auto edit = MakeSubgraph(root, {"a", "b"}, "sub");
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
@@ -204,8 +204,11 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
     EXPECT_TRUE(selected.emplace(id, std::move(card)).second);
   }
   ASSERT_TRUE(selected.contains("a"));
-  EXPECT_FALSE(json::Bool(
-      json::Get(json::Object(selected.at("a").at("settings")), "sandbox")));
+  const auto& card_a = selected.at("a");
+  const auto sandbox = json::Object(card_a.at("sandbox"));
+  const auto grants = json::Object(card_a.at("grants"));
+  EXPECT_FALSE(json::Bool(json::Get(sandbox, "filesystem")));
+  EXPECT_TRUE(json::Bool(json::Get(grants, "network")));
   const auto params = json::Array(selected.at("a").at("params"));
   ASSERT_EQ(params.size(), 1u);
   EXPECT_EQ(json::Text(json::Object(params.front()), "name"), "value");

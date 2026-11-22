@@ -602,19 +602,11 @@ extension ProjectOperationTests {
     #expect(!tab.hasSelection)
   }
 
-  @Test func anAgentRenameKeepsTheOpenCardResultAndGroup() throws {
+  @Test func anAgentRenameKeepsTheCardPositionAndGroup() throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = #"{"cards":{"a":{"x":700,"y":500}},"groups":[{"id":"group","cards":["a","b"]}]}"#
     let s = try offlineSession(dir, cards: [("a", #"{"type":"code"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
-    let display = Tsugumi_Data_DisplayT()
-    display.card = cardPath(["a"])
-    display.runId = "run-a"; display.invocation = 1
-    let value = Tsugumi_Data_DisplayTextT(); value.text = "output"
-    display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytext)
-    s.openDisplayViewer(UUID(), card: "a")
-    s.applyDisplay(display)
-    let before = try #require(s.displays["a"]?.identity)
     let renamed = delta(0, "rename", "unused")
     renamed.projectJson = nil; renamed.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
@@ -627,7 +619,6 @@ extension ProjectOperationTests {
     renamed.resolution = [resolved]
     s.applyDelta(renamed)
     #expect(s.nodeData("a").title == s.nodeData("b").title)
-    #expect(s.displays["a"]?.identity == before && s.displays["b"] == nil)
     #expect(s.position("a") == CGPoint(x: 700, y: 500))
     #expect(Set(s.groups(in: []).first?["cards"]?.array?.compactMap(\.string) ?? []) == ["a", "b"])
   }

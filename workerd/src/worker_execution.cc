@@ -40,12 +40,13 @@ class StagingHandle {
 };
 
 auto copy_output(int source, const stdfs::path& relative,
-                 const stdfs::path& destination, PortKind kind,
+                 const stdfs::path& destination,
                  const std::atomic<bool>& cancel, OutputDelivery delivery,
-                 const fs::TransferProgress& progress) -> void {
+                 const fs::TransferProgress& progress, fs::OutputBudget& budget)
+    -> void {
   try {
-    fs::copy_staging_output(source, relative, destination,
-                            kind == PortKind::Directory, cancel, progress);
+    fs::copy_staging_output(source, relative, destination, cancel, progress,
+                            &budget);
   } catch (const std::exception& error) {
     if (delivery == OutputDelivery::local_paths && cancel.load())
       throw Failed(FailureKind::cancelled, "output transfer cancelled");
@@ -77,12 +78,12 @@ auto stage_input(const Value& value, std::span<const stdfs::path> roots,
                  const stdfs::path& directory, bool read_only,
                  const std::atomic<bool>& cancel,
                  const fs::TransferProgress& progress) -> Value {
-  const auto source = path_value(value);
-  if (!source)
-    throw Failed(FailureKind::output_invalid, "file input has no path");
+  if (value.path.empty())
+    throw Failed(FailureKind::output_invalid,
+                 "Path input " + value.name + " has no path");
   for (const auto& root : roots) {
     const auto relative =
-        stdfs::path(*source).lexically_normal().lexically_relative(root);
+        stdfs::path(value.path).lexically_normal().lexically_relative(root);
     if (!fs::valid_relative_path(relative.generic_string())) continue;
     const auto check_cancel = [&] {
       if (cancel.load())
@@ -105,51 +106,52 @@ auto stage_input(const Value& value, std::span<const stdfs::path> roots,
       });
     };
     const auto destination = directory / relative.filename();
-    if (value.kind == PortKind::File) {
-      stage(relative, destination);
-    } else {
-      const auto entries = fs::list_beneath(root, relative);
-      if (!entries.links.empty() || !entries.special.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "Directory input contains a link or special file");
-      stdfs::create_directories(destination);
-      for (const auto& dir : entries.directories) {
-        check_cancel();
-        stdfs::create_directories(destination / dir);
-      }
-      for (const auto& file : entries.files)
-        stage(relative / file, destination / file);
+    try {
+      fs::copy_path_beneath(root, relative, destination, stage);
+    } catch (const fs::Error& error) {
+      throw Failed(FailureKind::output_invalid, error.what());
     }
     check_cancel();
-    return with_path(value, destination.string());
+    auto staged = value;
+    staged.path = destination.string();
+    return staged;
   }
   throw Failed(FailureKind::output_invalid,
-               "file input is outside the run's folders: " + *source);
+               "Path input is outside the run's folders: " + value.path);
 }
 
-auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
+auto accept_outputs(std::vector<RawOutput> raw,
                     std::span<const types::PortType> ports)
     -> std::vector<Value> {
   std::set<std::string_view> seen;
   std::vector<Value> outputs;
   outputs.reserve(raw.size());
-  for (auto& [name, bytes] : raw) {
+  for (auto& output : raw) {
+    const auto& name = output.name;
     const auto port = std::ranges::find(ports, name, &types::PortType::name);
-    if (port == ports.end() || !port->type)
+    if (port == ports.end())
       throw Failed(FailureKind::output_invalid, "unknown output " + name,
                    {{"port", name}});
     if (!seen.insert(name).second)
       throw Failed(FailureKind::output_invalid,
                    "output " + name + " produced twice", {{"port", name}});
-    if (!types::verify(*port->type, bytes))
-      throw Failed(
-          FailureKind::output_invalid,
-          "output " + name + " is not a valid " + port->type->root_type,
-          {{"port", name}});
-    outputs.push_back({name, port->kind, port->type, std::move(bytes), {}});
+    Value value{name, port->kind, port->type, {}, {}};
+    if (port->kind == PortKind::Path) {
+      if (!output.bytes.empty() || output.path.empty())
+        throw Failed(FailureKind::output_invalid,
+                     "Path output must carry only a path", {{"port", name}});
+      value.path = std::move(output.path);
+    } else {
+      if (!output.path.empty() || !output.forwarded_from.empty())
+        throw Failed(FailureKind::output_invalid,
+                     "FlatBuffer output cannot carry or forward a path",
+                     {{"port", name}});
+      value.bytes = std::move(output.bytes);
+    }
+    outputs.push_back(std::move(value));
   }
   for (const auto& port : ports)
-    if (!port.optional && !seen.contains(port.name))
+    if (port.required && !seen.contains(port.name))
       throw Failed(FailureKind::output_invalid,
                    "required output " + port.name + " is missing",
                    {{"port", port.name}});
@@ -157,71 +159,86 @@ auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
 }
 
 auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
-                   std::span<const Value> original_inputs, int output_root,
-                   const std::string& output_alias,
+                   std::span<const Value> original_inputs,
+                   std::span<const std::pair<std::string, std::string>> forwards,
+                   int work_root, const stdfs::path& work_path,
                    const stdfs::path& input_directory,
                    const stdfs::path& destination, OutputDelivery delivery,
                    const std::atomic<bool>& cancel,
-                   const fs::TransferProgress& progress) -> void {
+                   const fs::TransferProgress& progress,
+                   fs::OutputBudget budget) -> void {
+  const auto local = delivery == OutputDelivery::local_paths;
   for (auto& value : outputs) {
-    if (value.kind == PortKind::FlatBuffer) continue;
-    const auto actual = path_value(value);
-    if (!actual) {
-      if (delivery == OutputDelivery::local_paths) continue;
-      throw Failed(FailureKind::output_invalid, "remote output has no path");
-    }
-    if (delivery == OutputDelivery::local_paths) {
-      // Forwarded inputs retain the recorded path instead of their staging
-      // path.
-      bool forwarded_input = false;
-      for (size_t i = 0; i < inputs.size(); ++i) {
-        if (inputs[i].kind == value.kind && path_value(inputs[i]) == actual) {
-          value = with_path(value, *path_value(original_inputs[i]));
-          forwarded_input = true;
-          break;
-        }
+    const auto forward = std::ranges::find_if(
+        forwards, [&](const auto& entry) { return entry.first == value.name; });
+    if (value.kind == PortKind::FlatBuffer && forward == forwards.end())
+      continue;
+    const auto invalid = [&](std::string message) {
+      return Failed(FailureKind::output_invalid, std::move(message),
+                    {{"port", value.name}});
+    };
+    if (value.kind == PortKind::FlatBuffer)
+      throw invalid("a FlatBuffer output cannot forward a path");
+    const auto& actual = value.path;
+    if (actual.empty() || actual.find('\0') != std::string::npos)
+      throw invalid("output has no valid path");
+    if (forward != forwards.end()) {
+      // Only an input path returned exactly as it was staged.
+      const auto input =
+          std::ranges::find(inputs, forward->second, &Value::name);
+      if (input == inputs.end() || input->kind != PortKind::Path ||
+          input->path != actual)
+        throw invalid("output does not match the forwarded input");
+      if (local) {
+        const auto index = static_cast<size_t>(input - inputs.begin());
+        const auto& original = original_inputs[index].path;
+        if (original.empty())
+          throw invalid("forwarded input has no original path");
+        value.path = original;
+      } else {
+        const auto relative =
+            remote::relative_path(stdfs::path(actual)
+                                      .lexically_relative(input_directory)
+                                      .generic_string());
+        if (*relative.begin() != "inputs")
+          throw invalid("remote forward is outside input staging");
+        value.path = relative.generic_string();
       }
-      if (forwarded_input || destination.empty()) continue;
-      const auto relative =
-          stdfs::path(*actual).lexically_relative(output_alias);
-      if (relative.empty() || relative.is_absolute() ||
-          std::ranges::any_of(relative,
-                              [](const auto& part) { return part == ".."; }))
-        continue;
-      copy_output(output_root, relative, destination / relative, value.kind,
-                  cancel, delivery, progress);
       continue;
     }
-    stdfs::path rel;
-    if (*actual == output_alias) {
-      rel = "out";
-      copy_output(output_root, ".", destination, value.kind, cancel, delivery,
-                  progress);
-    } else if (actual->starts_with(output_alias + "/")) {
-      const auto relative = remote::relative_path(
-          std::string_view(*actual).substr(output_alias.size() + 1));
-      rel = "out" / relative;
-      copy_output(output_root, relative, destination / relative, value.kind,
-                  cancel, delivery, progress);
-    } else if (std::ranges::any_of(inputs, [&](const Value& in) {
-                 return in.kind == value.kind && path_value(in) == actual;
-               })) {
-      const auto input = stdfs::path(*actual).lexically_relative(input_directory);
-      const auto path = remote::relative_path(input.generic_string());
-      if (*path.begin() != "inputs")
-        throw Failed(FailureKind::output_invalid, "remote forward is outside staging");
-      value = with_path(value, path.generic_string());
-      continue;
-    } else {
-      throw Failed(FailureKind::output_invalid,
-                   "remote output points outside its output directory");
+
+    const stdfs::path path(actual);
+    auto relative = path;
+    if (path.is_absolute()) {
+      relative = path.lexically_relative(work_path);
+#ifdef __APPLE__
+      if ((relative.empty() || *relative.begin() == "..") &&
+          (actual.starts_with("/tmp/") || actual.starts_with("/var/")))
+        relative =
+            stdfs::path("/private" + actual).lexically_relative(work_path);
+#endif
     }
-    const auto actual_path = destination.parent_path() / rel;
-    if (!fs::resolves_inside(destination, actual_path) &&
-        actual_path != destination)
-      throw Failed(FailureKind::output_invalid,
-                   "remote output escapes its directory");
-    value = with_path(value, rel.generic_string());
+    if (relative.empty() || relative.is_absolute() ||
+        std::ranges::any_of(relative,
+                            [](const auto& part) { return part == ".."; }))
+      throw invalid("output path is outside the worker's working directory");
+
+    relative = relative.lexically_normal();
+    if (!relative.has_filename()) relative = relative.parent_path();
+    const auto root = local ? destination : stdfs::path("out");
+    const auto delivered = relative == "." ? root : root / relative;
+    if (!local) {
+      try {
+        remote::relative_path(delivered.generic_string());
+      } catch (const std::exception& error) {
+        throw invalid(error.what());
+      }
+    }
+    const auto snapshot =
+        relative == "." ? destination : destination / relative;
+    copy_output(work_root, relative, snapshot, cancel, delivery, progress,
+                budget);
+    value.path = delivered.generic_string();
   }
 }
 
@@ -246,27 +263,22 @@ auto run_invocation(const ReleaseWorker& release_worker,
   };
   const auto discard_outputs = [&] {
     result.outputs.clear();
-    result.out_alias.reset();
+    result.forwards.clear();
     if (invocation.output_directory.empty()) return;
     std::error_code error;
     stdfs::remove_all(invocation.output_directory, error);
   };
   try {
-    const bool local = invocation.delivery == OutputDelivery::local_paths;
-    const bool needs_out = std::ranges::any_of(
+    worker.set_display(invocation.display);
+    const bool needs_work = std::ranges::any_of(
         invocation.outputs,
         [](const auto& port) { return port.kind != PortKind::FlatBuffer; });
-    if (local && needs_out) {
-      stdfs::create_directories(invocation.output_directory);
-      if (invocation.output_owner)
-        if (::chown(invocation.output_directory.c_str(),
-                    invocation.output_owner->first,
-                    invocation.output_owner->second) != 0)
-          throw std::runtime_error("cannot give the worker its output folder " +
-                                   invocation.output_directory.string() + ": " +
-                                   std::strerror(errno));
-      result.out_alias = std::make_pair(worker.out_dir(),
-                                        invocation.output_directory.string());
+    std::optional<StagingHandle> work;
+    stdfs::path work_path;
+    if (needs_work) {
+      work.emplace(worker.work_dir(), "worker working");
+      // getcwd can return a physical /private path on Darwin.
+      work_path = stdfs::canonical(worker.work_dir());
     }
     // Borrow unchanged inputs; only the local storage adapter makes a staged
     // vector. Large value buffers need no extra copy at this boundary.
@@ -277,32 +289,27 @@ auto run_invocation(const ReleaseWorker& release_worker,
         invocation.stage_inputs ? staged : invocation.inputs;
     const auto params = invocation.prepare_params ? invocation.prepare_params()
                                                   : invocation.params;
-    std::vector<std::pair<std::string, std::string>> environment;
-    if (params.json)
-      environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (invocation.timeout_ms)
       deadline = std::chrono::steady_clock::now() +
                  std::chrono::milliseconds(*invocation.timeout_ms +
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
-    auto frame = worker_call_frame(
-        id, invocation.run_id, invocation.card, invocation.number, inputs,
-        params.bfbs, params.root, params.bytes, invocation.outputs,
-        worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
-        environment, invocation.timeout_ms);
+    auto frame = worker_call_frame(id, inputs, params, invocation.outputs,
+                                   invocation.timeout_ms);
     worker.set_logs(invocation.log);
-    StagingHandle output_directory(worker.out_dir(),
-                                   local ? "worker" : "remote");
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
-    auto outcome = worker.call(std::move(frame), id, invocation.cancel,
-                               deadline, invocation.display);
+    auto outcome =
+        worker.call(std::move(frame), id, invocation.cancel, deadline);
     result.failure = std::move(outcome.failure);
     between_calls = true;
     worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
     if (!result.failure) {
+      for (const auto& output : outcome.outputs)
+        if (!output.forwarded_from.empty())
+          result.forwards.emplace_back(output.name, output.forwarded_from);
       try {
         result.outputs =
             accept_outputs(std::move(outcome.outputs), invocation.outputs);
@@ -315,13 +322,12 @@ auto run_invocation(const ReleaseWorker& release_worker,
     }
     if (!result.failure) {
       const std::atomic<bool> no_cancel{false};
-      stage_outputs(
-          result.outputs, inputs, invocation.inputs, output_directory.get(),
-          worker.out_dir(), invocation.input_directory,
-          local && !needs_out ? stdfs::path{} : invocation.output_directory,
-          invocation.delivery,
-          invocation.cancel ? *invocation.cancel : no_cancel,
-          invocation.transfer);
+      stage_outputs(result.outputs, inputs, invocation.inputs, result.forwards,
+                    work ? work->get() : -1, work_path,
+                    invocation.input_directory, invocation.output_directory,
+                    invocation.delivery,
+                    invocation.cancel ? *invocation.cancel : no_cancel,
+                    invocation.transfer, invocation.output_budget);
       if (invocation.validate) {
         try {
           invocation.validate(result);

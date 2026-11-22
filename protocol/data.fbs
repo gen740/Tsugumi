@@ -1,5 +1,4 @@
-// Tsugumi shared values used by both the external RPC (tsugumi.fbs) and the
-// worker protocol (worker.fbs). Generation 1.
+// Tsugumi project RPC values.
 //
 // Conventions
 // - Required scalars are declared as optional scalars (`= null`) and their
@@ -8,14 +7,9 @@
 //   Duration: uint64 ms. Hash: lowercase SHA-256 hex. Path: project relative.
 // - Maps are vectors of KeyValue; duplicate keys are rejected.
 
-include "tsugumi_enums.fbs";
+include "worker_types.fbs";
 
 namespace Tsugumi.Data;
-
-table KeyValue {
-  key:string (id: 0, required);
-  value:string (id: 1, required);
-}
 
 // A Card path of permanent identifiers, such as ["nested", "step"].
 // Human names are separate; segments never contain '/'.
@@ -33,36 +27,6 @@ table Diagnostic {
   offset:uint64 = null (id: 5);
 }
 
-table Failure {
-  kind:FailureKind (id: 0);
-  /// Optional source position: source (Card-definition-relative path), line
-  /// (one-based decimal), cell (notebook cell name). Carried opaquely by core.
-  args:[KeyValue] (id: 1);
-  diagnostic:string (id: 2);
-  current_rev:uint64 = null (id: 3);
-  retry_after_ms:uint32 = null (id: 4);
-}
-
-// A resolved port. For resolved ports schema_bfbs and root_type are always
-// present (for every kind). Unresolved types omit them and carry a Diagnostic
-// on the owning ResolvedCard instead.
-table Port {
-  name:string (id: 0, required);
-  kind:PortKind (id: 1);
-  optional:bool = null (id: 2);
-  schema_bfbs:[ubyte] (id: 3);
-  root_type:string (id: 4);
-  path:string (id: 5);
-  /// Static execution shape when known without evaluating Nix.
-  execution_shape:ExecutionShape (id: 6);
-}
-
-table FlatBufferData {
-  schema_bfbs:[ubyte] (id: 0, required);
-  root_type:string (id: 1, required);
-  bytes:[ubyte] (id: 2, required);
-}
-
 table NamedValue {
   name:string (id: 0, required);
   kind:PortKind (id: 1);
@@ -74,13 +38,13 @@ table NamedValue {
   /// SHA-256 (hex) of a recorded value's bytes, present on values read from
   /// the run history; it tells two values apart when inline_bytes is omitted.
   content_hash:string (id: 7);
-  /// Current location of the independently kept File / Directory content.
+  /// Current location of the independently kept Path content.
   /// Separate from the original recorded bytes, so copied projects retain
   /// the evidence's hash while reporting the content's actual location.
   file_path:string (id: 8);
   file_missing:bool (id: 9);
-  /// SHA-256 (hex) of a recorded File's content, independent of its storage
-  /// path. Kept with the record even when the file is no longer available.
+  /// SHA-256 (hex) of a recorded Path's file content, or tree:<hex> for a
+  /// directory. Kept with the record independently of the storage path.
   file_content_hash:string (id: 10);
   /// The run that owned this forwarded file no longer has its file record.
   file_deleted:bool (id: 11);
@@ -88,63 +52,19 @@ table NamedValue {
 
 // ---- Display ---------------------------------------------------------------
 
-/// `markdown`: Markdown with TeX math ($…$, $$…$$), drawn by the UI.
-table DisplayText {
-  text:string (id: 0, required);
-  markdown:bool = false (id: 1);
-}
-
-table DisplayScalar {
-  value:double = null (id: 0);
-  label:string (id: 1, required);
-}
-
-table TableRow { cells:[string] (id: 0, required); }
-
-/// Up to 64 columns and 10,000 rows; each cell at most 4 KiB.
-table DisplayTable {
-  columns:[string] (id: 0, required);
-  rows:[TableRow] (id: 1, required);
-}
-
-/// PNG or JPEG, at most 8 MiB.
-table DisplayImage {
-  media_type:string (id: 0, required);  // image/png or image/jpeg
-  data:[ubyte] (id: 1, required);
-  alt:string (id: 2);
-}
-
-/// Up to 1,000,000 points; colors (0xRRGGBB) are empty or one per point.
-table DisplayPointCloud {
-  x:[float] (id: 0, required);
-  y:[float] (id: 1, required);
-  z:[float] (id: 2, required);
-  colors:[uint32] (id: 3);
-}
-
-/// A module's immutable Nix store directory and per-run input. index.js is
-/// a self-contained ES module, or a shared template link with local view.wasm.
-/// ModuleRead always delivers self-contained source, assembled by the core.
-table DisplayBlob {
-  name:string (id: 0, required);
-  data:[ubyte] (id: 1, required);
-}
-table DisplayModule {
-  module:string (id: 0, required);
-  config_json:string (id: 1, required);
-  blobs:[DisplayBlob] (id: 2, required);
-}
-
-union DisplayValue {
-  DisplayText = 1, DisplayScalar = 2, DisplayTable = 4,
-  DisplayImage = 5, DisplayPointCloud = 6, DisplayModule = 7,
-}
-
-// Full replacement snapshot. `revision` increases per run/card.
+/// A live opaque message. run_id is absent when there is no active run.
 table Display {
   card:CardPath (id: 0, required);
-  run_id:string (id: 1, required);
-  invocation:uint64 = null (id: 2);
-  revision:uint64 = null (id: 3);
-  value:DisplayValue (id: 5);
+  run_id:string (id: 1);
+  view:string (id: 2, required);
+  bytes:[ubyte] (id: 3, required);
+}
+
+enum DisplayRunState:ubyte { unspecified, started, ended }
+
+/// One view declared in a Card's definition. Type and blob are relayed unchanged.
+table CardView {
+  name:string (id: 0, required);
+  type:string (id: 1, required);
+  blob:string (id: 2, required);  // Immutable Nix store path to a single file.
 }

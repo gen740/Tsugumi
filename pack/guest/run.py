@@ -14,7 +14,7 @@ REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": 
 RESULT   folder for summary.json and cards/<card>/<invocation>/...
 
 The copy records every Code Card's inputs and outputs (recordIO), whatever the
-author chose: the recipient gets values back, not only displays. recordIO is
+author chose: the recipient gets the values back. recordIO is
 a setting, so this changes no build.
 """
 
@@ -203,32 +203,6 @@ def decode_value(value, folder):
     return entry
 
 
-def write_display(display, folder):
-    """The Card's display as a plain file: no viewer in this path."""
-    kind = display.get("value_type")
-    value = display.get("value", {})
-    if kind == "DisplayText":
-        name = "display.md" if value.get("markdown") else "display.txt"
-        (folder / name).write_text(value.get("text", ""))
-    elif kind == "DisplayImage":
-        extension = "jpg" if value.get("media_type") == "image/jpeg" else "png"
-        name = f"display.{extension}"
-        (folder / name).write_bytes(bytes(value.get("data", [])))
-    elif kind == "DisplayScalar":
-        name = "display.json"
-        (folder / name).write_text(json.dumps(value) + "\n")
-    elif kind == "DisplayTable":
-        name = "display.tsv"
-        rows = [value.get("columns", [])] + [r.get("cells", []) for r in value.get("rows", [])]
-        (folder / name).write_text("".join("\t".join(r) + "\n" for r in rows))
-    elif kind:
-        name = "display.json"
-        (folder / name).write_text(json.dumps({"kind": kind}) + "\n")
-    else:
-        return None
-    return name
-
-
 def read_log(rpc, run_id, card, invocation, stream):
     text, offset = "", 0
     while True:
@@ -276,8 +250,6 @@ def collect(rpc, run_id, result, wired):
                     outputs[value["name"]] = decoded
                 if outputs:
                     entry["outputs"] = outputs
-                if record.get("display"):
-                    entry["display"] = write_display(record["display"], folder)
             for stream, name in (("standard_output", "stdout.txt"), ("standard_error", "stderr.txt")):
                 text = read_log(rpc, run_id, card, number, stream)
                 if text:

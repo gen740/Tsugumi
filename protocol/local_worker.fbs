@@ -7,9 +7,9 @@ attribute "trace_secret";
 enum Action:ubyte { Acquire, Release, Clear, ClearScratch, Terminate, Invalidate }
 table Bind { source:string (required); target:string (required); write:bool; name:string; }
 table Spawn {
-  worker_binary:string (required); bash:string (required); store_path:string (required);
-  path:string; closure:[string]; shared_vm:bool; secrets:[Tsugumi.Worker.EnvVar];
-  package:string; script:string; has_script:bool; pre_run:string; post_run:string; views:string;
+  worker_binary:string (required); store_path:string (required);
+  closure:[string]; shared_vm:bool; secrets:[Tsugumi.Worker.EnvVar];
+  package:string;
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   cpu_millis:ulong; memory_bytes:ulong; network:bool; gui:bool;
   ro_paths:[string]; hidden_paths:[string]; binds:[Bind]; uid:uint = null; gid:uint = null;

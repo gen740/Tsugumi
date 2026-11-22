@@ -19,29 +19,6 @@ export { D, R, RequestPayload }
 export const s = (v: string | Uint8Array | null | undefined): string => (typeof v === 'string' ? v : v ? new TextDecoder().decode(v) : '')
 export const sOpt = (v: string | Uint8Array | null | undefined): string | undefined => (v === null || v === undefined ? undefined : s(v))
 
-/** Preserve invalid display text as an unavailable display, before lossy decoding. */
-export function unpackDisplay(wire: D.Display): D.DisplayT {
-  return wire.unpack()
-}
-
-function unpackRecordResult(wire: R.RecordResult): R.RecordResultT {
-  const value = Object.assign(new R.RecordResultT(), {
-    selectedInvocation: wire.selectedInvocation(), run: wire.run()?.unpack() ?? null,
-    status: wire.status()?.unpack() ?? null, aggregate: wire.aggregate()?.unpack() ?? null,
-    exists: wire.exists(), recordingDisabled: wire.recordingDisabled(), truncated: wire.truncated(), orphaned: wire.orphaned(),
-  })
-  const record = wire.record()
-  if (record) value.record = Object.assign(new R.InvocationRecordT(), {
-    summary: record.summary()?.unpack() ?? null,
-    inputs: Array.from({ length: record.inputsLength() }, (_, i) => record.inputs(i)!.unpack()),
-    outputs: Array.from({ length: record.outputsLength() }, (_, i) => record.outputs(i)!.unpack()),
-    inputSources: Array.from({ length: record.inputSourcesLength() }, (_, i) => record.inputSources(i)!.unpack()),
-    display: record.display() ? unpackDisplay(record.display()!) : null,
-    recordIo: record.recordIo(), paramsJson: record.paramsJson(),
-  })
-  return value
-}
-
 /** A structured failure returned by tsugumid (never matched by its text). */
 export class RPCFailure extends Error {
   readonly kind: D.FailureKind
@@ -84,11 +61,18 @@ export interface Transport {
   onClose?: (reason: string) => void
 }
 
+export interface LiveDisplayUpdate {
+  card: string[]
+  runId?: string
+  view: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
 export interface NotificationEvent {
   subscriptionId: string
   seq: bigint
   type: R.NotificationPayload
-  value: NotificationT['value']
+  value: NotificationT['value'] | LiveDisplayUpdate
 }
 
 export const uuid = (): string =>
@@ -139,10 +123,20 @@ export class RPCClient {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
       const raw = message.payload(new R.Notification()) as R.Notification
-      const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
-        ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
-          value: new R.DisplayUpdatedT(unpackDisplay((raw.value(new R.DisplayUpdated()) as R.DisplayUpdated).display()!)) })
-        : raw.unpack()
+      if (raw.valueType() === R.NotificationPayload.DisplayUpdated) {
+        const update = raw.value(new R.DisplayUpdated()) as R.DisplayUpdated
+        const display = update.display()!
+        const card = display.card()!
+        const value: LiveDisplayUpdate = {
+          card: Array.from({ length: card.segmentsLength() }, (_, i) => s(card.segments(i))),
+          runId: display.runId() ?? undefined,
+          view: s(display.view()),
+          bytes: display.bytesArray()?.slice() ?? new Uint8Array(),
+        }
+        this.onNotification?.({ subscriptionId: s(raw.subscriptionId()), seq: raw.seq() ?? 0n, type: raw.valueType(), value })
+        return
+      }
+      const note = raw.unpack()
       this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
     } catch (error) {
       this.transport.close()
@@ -150,15 +144,15 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<ReplyT> {
+  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<{
+    valueType: R.ReplyPayload; value: ReplyT['value']
+  }> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
     const type = wire.valueType()
-    if (type === R.ReplyPayload.RecordResult)
-      return new ReplyT(type, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
     if (type === R.ReplyPayload.LogSlice) {
       const slice = wire.value(new R.LogSlice()) as R.LogSlice
       return new ReplyT(type, new R.LogSliceT(
@@ -196,16 +190,11 @@ export class RPCClient {
   save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
     return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-  /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
-   *  for one revision and returns the file list when ready. */
-  async generatedContracts(card: string[], atRev: bigint): Promise<R.SDKFileT[]> {
-    let res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKPrepareRequest,
-      Object.assign(new R.CardSDKPrepareRequestT(), { card: cardPath(card), atRev, opId: uuid() }))
-    for (let i = 0; i < 100 && res.state === D.SDKState.pending; i++) {
-      await new Promise((r) => setTimeout(r, 100))
-      res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKStatusRequest, Object.assign(new R.CardSDKStatusRequestT(), { opId: res.opId }))
-    }
-    return res.files
+  /** Builds the saved Card from its current wiring and returns the files its
+   *  builder placed under share/tsugumi/api/, or the build failure and log. */
+  cardApi(card: string[], atRev: bigint) {
+    return this.call<R.CardApiResultT>(RequestPayload.CardApiRequest,
+      Object.assign(new R.CardApiRequestT(), { card: cardPath(card), atRev }))
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
@@ -300,6 +289,24 @@ export class RPCClient {
     }
     const out = concat(parts)
     return out
+  }
+  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
+  async readCardView(card: string[], index: number, name: string, signal: AbortSignal): Promise<string> {
+    const decoder = new TextDecoder()
+    const parts: string[] = []
+    let offset = 0n
+    for (;;) {
+      signal.throwIfAborted()
+      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset, index })
+      const page = await this.call<R.FileContentT>(RequestPayload.CardViewReadRequest, request)
+      signal.throwIfAborted()
+      const next = page.nextOffset ?? offset
+      if (!page.eof && next <= offset)
+        throw new RPCError('protocol', L('ビューの内容を最後まで読み込めませんでした。'))
+      parts.push(decoder.decode(Uint8Array.from(page.bytes), { stream: !page.eof }))
+      if (page.eof) return parts.join('')
+      offset = next
+    }
   }
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {
     return this.call<R.AckT>(

@@ -70,6 +70,9 @@ def source_fixture(directory, monkeypatch, *, message="original"):
     thread = Thread(target=server.serve_forever, daemon=True)
     thread.start()
     monkeypatch.setenv("NIX_SSL_CERT_FILE", str(bundle))
+    # An explicit ssl-cert-file from the local Nix configuration can take
+    # precedence over the environment's default CA bundle.
+    monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "") + f"\nssl-cert-file = {bundle}\n")
     address = f"https://localhost:{server.server_port}"
     def fetched(name):
         digest = subprocess.check_output([*NIX, "hash", "file", str(root / name)], text=True).strip()

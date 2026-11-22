@@ -15,6 +15,7 @@ LocalWorkers::LocalWorkers(std::filesystem::path binary,
     : binary_(std::move(binary)), scratch_(std::move(scratch)) {}
 
 LocalWorkers::~LocalWorkers() {
+  idle_.clear();
   if (fd_ >= 0) ::close(fd_);  // EOF is the sole lifetime of the local pool.
   if (pid_ > 0) proc::wait(pid_);
 }
@@ -98,8 +99,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   request.reuse = reuse;
   auto& target = request.spawn = std::make_unique<L::SpawnT>();
   target->worker_binary = spawn.worker_binary;
-  target->bash = spawn.bash;
-  target->path = spawn.path;
   target->closure = spawn.closure;
   target->shared_vm = spawn.shared_vm;
   if (spawn.secrets) {
@@ -111,12 +110,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     }
   }
   target->store_path = spawn.store_path;
-  target->package = spawn.program.package.value_or("");
-  target->script = spawn.program.bash.value_or("");
-  target->has_script = spawn.program.bash.has_value();
-  target->pre_run = spawn.program.pre_run;
-  target->post_run = spawn.program.post_run;
-  target->views = spawn.program.views;
+  target->package = spawn.package;
   target->filesystem = spawn.sandbox.filesystem;
   target->pid = spawn.sandbox.pid;
   target->ipc = spawn.sandbox.ipc;
@@ -137,8 +131,11 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     value->name = bind.name;
     target->binds.push_back(std::move(value));
   }
+  std::lock_guard leases(leases_mutex_);
   LocalPacket reply;
   exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
   const auto& message = *reply.message;
   if (!message.lease || message.scratch.empty() || reply.descriptors[3] < 0)
     throw Failed(FailureKind::worker_failed,
@@ -156,7 +153,13 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       [this, id = message.lease] { command(L::Action::Release, id); }};
   std::unique_ptr<WorkerProc> worker;
   try {
-    worker = std::make_unique<WorkerProc>(std::move(borrowed));
+    if (auto found = idle_.extract(message.scratch); found) {
+      worker = std::move(found.mapped());
+      worker->resume(std::move(borrowed));
+    } else {
+      worker = std::make_unique<WorkerProc>(std::move(borrowed));
+      reply.descriptors.fill(-1);
+    }
   } catch (...) {
     try {
       command(L::Action::Release, message.lease);
@@ -164,7 +167,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     }
     throw;
   }
-  reply.descriptors.fill(-1);
   return {std::move(worker), message.reused, message.replaced};
 }
 
@@ -177,22 +179,32 @@ auto LocalWorkers::release(std::unique_ptr<WorkerProc> worker, bool keep,
   request.call_id = worker->call_id();
   request.keep = keep;
   request.reason = reason;
-  worker->returning_lease();
-  worker.reset();  // No concurrent log readers when workerd resumes ownership.
+  std::lock_guard leases(leases_mutex_);
+  worker->idle();
+  if (!keep) worker.reset();
   LocalPacket reply;
   exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
+  if (worker && worker->alive()) {
+    const auto scratch = worker->scratch();
+    idle_.emplace(scratch, std::move(worker));
+  }
 }
 
 auto LocalWorkers::clear() -> void {
+  std::lock_guard leases(leases_mutex_);
   // Clearing an unused pool must not start a service.
   {
     std::lock_guard guard(mutex_);
     if (fd_ < 0) return;
   }
   command(L::Action::Clear, 0);
+  idle_.clear();
 }
 auto LocalWorkers::invalidate(const std::string& card,
                               const std::string& reason) -> void {
+  std::lock_guard leases(leases_mutex_);
   {
     std::lock_guard guard(mutex_);
     if (fd_ < 0) return;
@@ -203,6 +215,8 @@ auto LocalWorkers::invalidate(const std::string& card,
   request.reason = reason;
   LocalPacket reply;
   exchange(std::move(request), reply);
+  std::erase_if(idle_,
+                [](const auto& entry) { return !entry.second->alive(); });
 }
 
 }  // namespace tsugumi::workerd

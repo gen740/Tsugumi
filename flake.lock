@@ -57,7 +57,32 @@
       "inputs": {
         "flake-parts": "flake-parts",
         "hosq": "hosq",
-        "nixpkgs": "nixpkgs"
+        "nixpkgs": "nixpkgs",
+        "tsugumi-kit": "tsugumi-kit"
+      }
+    },
+    "tsugumi-kit": {
+      "inputs": {
+        "flake-parts": [
+          "flake-parts"
+        ],
+        "nixpkgs": [
+          "nixpkgs"
+        ]
+      },
+      "locked": {
+        "lastModified": 1795353530,
+        "narHash": "sha256-5M/3i5GJEwfSgfjOwpRrFx/QHcRWEX2qu+a+He4oWTk=",
+        "owner": "gen740",
+        "repo": "tsugumi-kit",
+        "rev": "78f362b30537a290b4ec36fb4ff751839daf4293",
+        "type": "github"
+      },
+      "original": {
+        "owner": "gen740",
+        "ref": "main",
+        "repo": "tsugumi-kit",
+        "type": "github"
       }
     }
   },

@@ -102,17 +102,22 @@ jobs:
 
       - name: Build and run Cards through loopback tsugumi-workerd
         if: matrix.job == 'remote-execution'
+        timeout-minutes: 45
         run: bash tests/ci-remote-worker.sh
 
-      - name: Build the SDK Python environment
-        if: matrix.job == 'sdk'
-        id: sdk-python
+      - name: Card kit checks and the vendored ABI comparison
+        if: matrix.checks.kit
+        run: bash tests/ci/run-suite.sh kit "$TSUGUMI_CI_SYSTEM"
+      - name: Build the demo Python environment
+        if: matrix.checks.demos
+        id: demo-python
         run: |
           path=$(nix build --no-link --print-out-paths .#ci-python)
           echo "python=$path/bin/python3" >> "$GITHUB_OUTPUT"
-      - name: SDK libraries, native runtimes, sandbox and examples
-        if: matrix.job == 'sdk'
-        run: bash tests/ci/run-suite.sh sdk '${{ inputs.system }}' '${{ steps.sdk-python.outputs.python }}'
+      # TODO(ABI 9): the demo runs skip until the demos are ported (docs/Demos.md).
+      - name: Bundled demos
+        if: matrix.checks.demos
+        run: bash tests/ci/run-suite.sh demos "$TSUGUMI_CI_SYSTEM" '${{ steps.demo-python.outputs.python }}'
 
       - name: Identify the Apple toolchain and native runtime
         if: matrix.job == 'swift'

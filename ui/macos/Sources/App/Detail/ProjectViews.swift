@@ -286,7 +286,7 @@ private struct GeneralProjectSettings: View {
   @State private var agentExclude = ""
   @State private var recording: [String: Bool] = [:]
   @State private var logLimit = ""
-  private let recordingDefaults = ["recordLogs": true, "recordDisplays": true, "recordIO": false, "retainArtifact": false]
+  private let recordingDefaults = ["recordLogs": true, "recordIO": false, "retainArtifact": false]
 
   private func recordingValues(_ project: JSONValue) -> [String: Bool] {
     Dictionary(uniqueKeysWithValues: recordingDefaults.map { key, fallback in
@@ -351,7 +351,6 @@ private struct GeneralProjectSettings: View {
         .disabled(!session.trustedFolder.isEmpty)
         Section("記録の既定値") {
           recordingToggle("recordLogs", "標準出力と標準エラーを記録")
-          recordingToggle("recordDisplays", "記録指定のある表示を記録")
           recordingToggle("recordIO", "入出力の値を記録")
           recordingToggle("retainArtifact", "出力ファイルと成果物を保持")
           TextField("呼び出しごとのログ上限（バイト）", text: $logLimit)
@@ -556,7 +555,7 @@ private struct CacheSettings: View {
           .frame(maxWidth: .infinity, alignment: .leading)
         }
       } label: {
-        InfoHeader("キャッシュ使用量", info: Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。"), Text("実行中・SDK 準備中は削除できません。"), Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。"))
+        InfoHeader("キャッシュ使用量", info: Text("このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。"), Text("実行中は削除できません。"), Text("ビルドキャッシュは NAR サイズの概算、scratch はリンクをたどらずに合計したファイルサイズです。共有する依存関係は各プロジェクトにも含まれるため、ビルドの内訳の和と合計は異なります。設定を開いたときに計測します。"))
       }
       GroupBox {
         VStack(alignment: .leading, spacing: 4) {

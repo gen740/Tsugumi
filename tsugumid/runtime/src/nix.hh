@@ -1,5 +1,4 @@
-#include "tsugumi/workerd/manifest.hh"
-// Card evaluation and builds, generated Card SDK files and build cache.
+// Card evaluation and builds, and the build cache.
 #pragma once
 
 #include <atomic>
@@ -18,6 +17,7 @@
 #include "nix_eval.hh"
 #include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/workerd/card_plan.hh"
 
 namespace tsugumi {
 
@@ -25,18 +25,8 @@ class Service;
 class NixEvaluator;
 
 struct CardBuild {
-  // The body (`run`): a package with lib/main.so, or a bash script.
-  std::optional<std::string> package;
-  std::optional<std::string> bash;
-  std::string pre_run;
-  std::string post_run;
-  // The shell of the bash steps and the PATH of the Card's processes, both
-  // from the Card's own nixpkgs (the manifest), never from this build of the
-  // core.
-  std::string shell;
-  std::string path;
-  std::string
-      views;  // JSON mapping of the view module names the worker may show
+  std::string package;  // store path containing lib/main.so
+  std::vector<schema::CardView> views;
   // The program the kernel runs the Card's binaries with (binfmt_misc), for a
   // Card built for another system; "" when it runs natively.
   std::string emulator;
@@ -45,7 +35,7 @@ struct CardBuild {
   std::string worker;
   WorkerDerivation derivation;
   BuildEnvironmentData environment;
-  std::string key;  // the manifest's store path
+  std::string key;  // the build plan's store path
   uint64_t preparation_ms =
       0;                // evaluation/build time, excluding closure transport
   bool cached = false;  // the store already had the result: nothing was built
@@ -58,7 +48,7 @@ struct CardBuildPlan {
   // What identifies the evaluation (pin, system, arguments), for builds
   // prepared ahead of their runs.
   std::string evaluation_key;
-  std::vector<schema::ManifestRun> implementations;
+  std::vector<std::string> implementations;
   std::vector<std::string> implementation_labels;  // one per implementation
   bool execution_list = false;
   auto implementation(size_t index) const -> CardBuild;
@@ -88,24 +78,15 @@ struct CacheClearOutcome {
   uint64_t freed_bytes = 0;
 };
 
-struct SDKJob {
-  std::string op_id;
-  CardPath card;
-  uint64_t rev = 0;
-  enum class State { Pending, Ready, Failed } state = State::Pending;
-  std::vector<std::tuple<std::string, std::string, uint64_t>>
-      files;  // path, hash, size
-  std::optional<FailureData> failure;
-};
-
 class NixRunner {
  public:
   NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
-  // _inputs.fbs, _outputs.fbs, _params.fbs and _contract.json.
+  // The port schemas given to a Card's builder: _inputs.fbs, _outputs.fbs
+  // and _params.fbs.
   static std::map<std::string, std::string> generate(const Node& node);
-  // Builds JSON for all params (worker) and for nix:true params (Nix).
+  // Builds JSON for all effective params and for nix:true params (Nix).
   static std::string params_json(const Node& node, bool nix_only);
   static std::string params_json(const std::vector<ParamDef>& params,
                                  bool nix_only);
@@ -114,16 +95,9 @@ class NixRunner {
   static types::TypeRef params_type(const Node& node);
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
+  // Build only the declared view files on the UI's native store.
+  auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;
-
-  // CardSDKPrepare / CardSDKStatus.
-  SDKJob prepare_sdk(const std::string& op_id, const Node& node, uint64_t rev);
-  std::optional<SDKJob> sdk_job(const std::string& op_id);
-  bool sdk_jobs_active();
-  // Bytes of a published SDK file (".sdk/<op_id>/<name>"). With `rev`, throws
-  // revision_conflict when the job was prepared for another revision.
-  std::optional<std::string> sdk_file(
-      const std::string& path, std::optional<uint64_t> rev = std::nullopt);
 
   CacheClearOutcome clear_cache();
   // A flake to opt in to, as the settings ask for it: a flake reference or a
@@ -131,6 +105,7 @@ class NixRunner {
   FlakeInfo resolve_flake(const std::string& ref);
 
  private:
+  auto build_plan(const BuildRequest& req, bool views_only) -> CardBuildPlan;
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
   // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
@@ -146,7 +121,7 @@ class NixRunner {
   Service& svc_;
   std::filesystem::path
       eval_dir_;  // local folder: definitions and generated files by content
-  std::filesystem::path sdk_dir_;
+  std::filesystem::path nix_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
   // At most one evaluation per Card, capped at 256 Cards; edits replace
@@ -157,9 +132,6 @@ class NixRunner {
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;
-  std::mutex sdk_mu_;
-  std::map<std::string, SDKJob> sdk_jobs_;
-  std::vector<std::thread> sdk_threads_;
 };
 
 }  // namespace tsugumi

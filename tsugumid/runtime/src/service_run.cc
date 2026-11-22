@@ -1,11 +1,11 @@
-// Run, SDK, history, value, artifact and log handlers.
-#include <flatbuffers/reflection.h>
+// Run, Card API, history, value, artifact, declared view file and log handlers.
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <mutex>
 #include <set>
+#include <stop_token>
 
-#include "module_source.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "service.hh"
@@ -13,6 +13,9 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
+#include "tsugumi/util/text.hh"
+#include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
 
 namespace tsugumi {
@@ -44,25 +47,59 @@ uint64_t content_limit(std::optional<uint32_t> limit_arg) {
   return limit;
 }
 
-std::string sdk_result(FBB& b, const SDKJob& job,
-                       flatbuffers::Offset<R::CardSDKPrepareResult>* out) {
-  std::vector<flatbuffers::Offset<R::SDKFile>> files;
-  if (job.state == SDKJob::State::Ready)
-    for (const auto& [p, h, s] : job.files)
-      files.push_back(
-          R::CreateSDKFile(b, b.CreateString(p), b.CreateString(h), s));
-  *out = R::CreateCardSDKPrepareResult(b, b.CreateString(job.op_id), job.rev,
-                                       job.state == SDKJob::State::Ready
-                                           ? D::SDKState::ready
-                                           : D::SDKState::pending,
-                                       b.CreateVector(files));
-  return {};
-}
-
 auto require_run_id(const flatbuffers::String& s, const char* what) -> void {
   if (!crypto::is_run_id(s.string_view()))
     throw Failed(FailureKind::invalid_request,
                  std::string(what) + " must be a positive project run number");
+}
+
+constexpr size_t kCardApiEntryLimit = 2000;
+constexpr uint64_t kCardApiByteLimit = 8u << 20;
+constexpr std::string_view kCardApiDirectory = "share/tsugumi/api";
+
+auto card_api_files(const CardBuildPlan& plan, const std::string& package,
+                    size_t& entries_left, uint64_t& bytes_left, FBB& b)
+    -> std::vector<flatbuffers::Offset<R::CardApiFile>> {
+  // Only paths in the realised plan's store closure are eligible. Walk from
+  // the store so links in the package or above the API directory are rejected.
+  if (std::ranges::find(plan.common.environment.paths, package) ==
+      plan.common.environment.paths.end())
+    throw Failed(FailureKind::nix_failed,
+                 "run output is outside the build closure");
+  const auto store = stdfs::path(plan.common.derivation.output).parent_path();
+  auto base = stdfs::path(package).lexically_relative(store);
+  if (base.empty() || base.has_parent_path())
+    throw Failed(FailureKind::nix_failed,
+                 "run output is outside the Nix store");
+  for (const auto& component : stdfs::path(kCardApiDirectory)) {
+    base /= component;
+    std::error_code ec;
+    const auto status = stdfs::symlink_status(store / base, ec);
+    if (status.type() == stdfs::file_type::not_found) return {};
+    if (ec)
+      throw fs::Error("cannot inspect " + (store / base).string() + ": " +
+                      ec.message());
+    if (!stdfs::is_directory(status)) return {};
+  }
+  const auto listing = fs::list_beneath(store, base, entries_left);
+  entries_left -= listing.files.size() + listing.directories.size() +
+                  listing.links.size() + listing.special.size();
+  std::vector<flatbuffers::Offset<R::CardApiFile>> files;
+  for (const auto& path : listing.files) {
+    if (path.size() > bytes_left)
+      throw Failed(FailureKind::resource_limit,
+                   "share/tsugumi/api/ exceeds 8 MiB");
+    bytes_left -= path.size();
+    std::string content;
+    bytes_left -=
+        fs::stream_beneath(store, base / path, bytes_left,
+                           [&](std::string_view chunk) { content += chunk; });
+    files.push_back(R::CreateCardApiFile(
+        b, b.CreateString(path),
+        b.CreateVector(reinterpret_cast<const uint8_t*>(content.data()),
+                       content.size())));
+  }
+  return files;
 }
 
 }  // namespace
@@ -124,63 +161,90 @@ void Service::run(RequestIn& req) {
   }
 }
 
-void Service::sdk_prepare(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardSDKPrepareRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(project_request(req));
-  if (replay_or_join(req, op_id, "sdk", digest)) return;
-  try {
-    auto doc = store_->current();
-    check_at_rev(r->at_rev(), *doc);
-    auto card = wire::card_arg(r->card());
-    const auto* node = doc->resolution->find(card);
-    if (!node)
-      throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
-                   {{"card", path_key(card)}});
-    if (node->kind != CardType::Code && node->kind != CardType::Input)
-      throw Failed(FailureKind::invalid_request,
-                   "SDKs are generated for code and input Cards only");
-    auto job = nix_->prepare_sdk(op_id, *node, doc->rev);
-    FBB b;
-    flatbuffers::Offset<R::CardSDKPrepareResult> res;
-    sdk_result(b, job, &res);
-    auto rc = R::CreateOperationReceipt(b, b.CreateString(op_id),
-                                        R::ReceiptValue::CardSDKPrepareResult,
-                                        res.Union());
-    b.Finish(rc);
-    std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()),
-                        b.GetSize());
-    history_->write_sync([&](sql::Db& db) {
-      History::put_receipt(db, op_id, "sdk", digest, receipt);
-    });
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    finish_op(op_id, receipt);
-  } catch (const Failed& f) {
-    store_failure_receipt(op_id, "sdk", digest, f.failure);
-    throw;
-  } catch (const std::exception& e) {
-    // Any other error ends the operation too (retryable under the same id).
-    auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "sdk", digest, f);
-    throw Failed(f);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Read pool
 
-void Service::sdk_status(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardSDKStatusRequest();
-  if (!r->op_id() || !crypto::is_operation_id(r->op_id()->str()))
-    throw Failed(FailureKind::invalid_request, "invalid op_id");
-  auto job = nix_->sdk_job(r->op_id()->str());
-  if (!job) throw Failed(FailureKind::not_found, "unknown SDK job");
-  if (job->state == SDKJob::State::Failed) throw Failed(*job->failure);
+void Service::card_api(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_CardApiRequest();
+  auto doc = store_->current();
+  check_at_rev(r->at_rev(), *doc);
+  auto card = wire::card_arg(r->card());
+  const auto* node = doc->resolution->find(card);
+  if (!node)
+    throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
+                 {{"card", path_key(card)}});
+  if (node->kind != CardType::Code)
+    throw Failed(FailureKind::invalid_request,
+                 "only a Code Card has a builder and its API",
+                 {{"card", path_key(card)}});
+  // Use the normal build with the local store and the Card's target system.
+  const SharedStoreDerivationTransport transport;
+  BuildRequest build;
+  build.node = node;
+  build.doc = doc;
+  build.target = {WorkerKind::native, node->settings.system.empty()
+                                          ? native_system()
+                                          : node->settings.system};
+  build.transport = &transport;
+  build.timeout_seconds = node->settings.build_timeout_seconds;
+  std::stop_source stop;
+  std::stop_callback disconnected(req.connection_stop,
+                                  [&] { stop.request_stop(); });
+  std::stop_callback shutdown(card_views_shutdown_.get_token(),
+                              [&] { stop.request_stop(); });
+  build.cancel = stop.get_token();
+  // The end of the build output, for a failure.
+  constexpr size_t kLogLimit = 256u << 10;
+  std::string log;
+  std::mutex log_mu;
+  build.log = [&](proc::LineChunk chunk) {
+    std::lock_guard lock(log_mu);
+    for (const auto& line : chunk.lines) {
+      log += line;
+      if (!line.ends_with('\n')) log += '\n';
+    }
+    if (log.size() > kLogLimit) log.erase(0, log.size() - kLogLimit);
+  };
   FBB b;
-  flatbuffers::Offset<R::CardSDKPrepareResult> res;
-  sdk_result(b, *job, &res);
-  reply(req, wire::reply(b, req.request_id,
-                         R::ReplyPayload::CardSDKPrepareResult, res.Union()));
+  std::vector<flatbuffers::Offset<R::CardApiImplementation>> implementations;
+  flatbuffers::Offset<D::Failure> failure;
+  try {
+    const auto plan = nix_->build(build);
+    size_t entries_left = kCardApiEntryLimit;
+    uint64_t bytes_left = kCardApiByteLimit;
+    for (size_t i = 0; i < plan.implementations.size(); ++i) {
+      const auto& package = plan.implementations[i];
+      const auto files =
+          card_api_files(plan, package, entries_left, bytes_left, b);
+      const auto label = i < plan.implementation_labels.size()
+                             ? plan.implementation_labels[i]
+                             : std::string();
+      implementations.push_back(R::CreateCardApiImplementation(
+          b, static_cast<uint32_t>(i + 1),
+          label.empty() ? 0 : b.CreateString(label), b.CreateString(package),
+          b.CreateVector(files)));
+    }
+  } catch (const Failed& f) {
+    if (stop.stop_requested()) throw;
+    implementations.clear();
+    b.Clear();
+    failure = wire::failure(b, f.failure);
+  } catch (const fs::Error& e) {
+    implementations.clear();
+    b.Clear();
+    failure =
+        wire::failure(b, FailureData::make(FailureKind::nix_failed, e.what()));
+  }
+  std::string build_log;
+  {
+    std::lock_guard lock(log_mu);
+    build_log = text::replace_invalid_utf8(log);
+  }
+  auto res = R::CreateCardApiResult(
+      b, doc->rev, b.CreateVector(implementations), failure,
+      failure.IsNull() ? 0 : b.CreateString(build_log));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardApiResult,
+                         res.Union()));
 }
 
 void Service::run_plan(RequestIn& req) {
@@ -738,37 +802,28 @@ void Service::run_record(RequestIn& req) {
         flatbuffers::Offset<flatbuffers::String> file_path;
         bool file_missing = false;
         bool file_deleted = false;
-        if (m.kind != PortKind::FlatBuffer) {
+        // A Path value's recorded bytes are its state-relative path.
+        if (m.kind == PortKind::Path) {
           file_missing = true;
-          auto type = std::make_shared<types::Type>();
-          type->bfbs = m.bfbs;
-          type->root_type = m.root_type;
-          flatbuffers::Verifier verifier(
-              reinterpret_cast<const uint8_t*>(m.bfbs.data()), m.bfbs.size());
-          if (reflection::VerifySchemaBuffer(verifier) && type->root() &&
-              types::verify(*type, data[i])) {
-            Value value{m.name, m.kind, type, data[i], {}};
-            if (const auto recorded = path_value(value)) {
-              const auto root = store_->state_dir() / "runs";
-              const auto rel = stdfs::path(*recorded).lexically_relative("runs");
-              const auto content = root / rel;
-              std::error_code error;
-              if (fs::valid_relative_path(rel.generic_string()) &&
-                  fs::resolves_inside(root, content)) {
-                const auto status = stdfs::symlink_status(content, error);
-                file_missing = error || (m.kind == PortKind::File
-                                             ? !stdfs::is_regular_file(status)
-                                             : !stdfs::is_directory(status));
-                if (!file_missing) {
-                  file_path = b.CreateString(content.string());
-                } else {
-                  const auto owner = rel.begin()->string();
-                  if (owner != run_id && crypto::is_run_id(owner))
-                    file_deleted = history_->read([&](sql::Db& db) {
-                      return !History::owns_recorded_file(db, owner, *recorded);
-                    });
-                }
-              }
+          const auto& recorded = data[i];
+          const auto root = store_->state_dir() / "runs";
+          const auto rel = stdfs::path(recorded).lexically_relative("runs");
+          const auto content = root / rel;
+          std::error_code error;
+          if (!recorded.empty() &&
+              fs::valid_relative_path(rel.generic_string()) &&
+              fs::resolves_inside(root, content)) {
+            const auto status = stdfs::symlink_status(content, error);
+            file_missing = error || (!stdfs::is_regular_file(status) &&
+                                     !stdfs::is_directory(status));
+            if (!file_missing) {
+              file_path = b.CreateString(content.string());
+            } else {
+              const auto owner = rel.begin()->string();
+              if (owner != run_id && crypto::is_run_id(owner))
+                file_deleted = history_->read([&](sql::Db& db) {
+                  return !History::owns_recorded_file(db, owner, recorded);
+                });
             }
           }
         }
@@ -798,9 +853,6 @@ void Service::run_record(RequestIn& req) {
             b, b.CreateString(s.port), wire::path(b, s.card), s.invocation));
     auto srcv = b.CreateVector(srcs);
     auto sum = wire::invocation(b, summary);
-    flatbuffers::Offset<D::Display> disp;
-    if (o.record && o.record->display)
-      disp = wire::display(b, *o.record->display);
     auto params = summary.params_json.empty()
                       ? flatbuffers::Offset<flatbuffers::String>()
                       : b.CreateString(summary.params_json);
@@ -809,7 +861,6 @@ void Service::run_record(RequestIn& req) {
     rb.add_inputs(ins);
     rb.add_outputs(outs);
     rb.add_input_sources(srcv);
-    if (!disp.IsNull()) rb.add_display(disp);
     rb.add_record_io(o.record ? o.record->record_io : false);
     if (!params.IsNull()) rb.add_params_json(params);
     rec = rb.Finish();
@@ -906,7 +957,7 @@ void Service::artifact_list(RequestIn& req) {
     auto mv = b.CreateVector(mem);
     out.push_back(R::CreateArtifactInfo(
         b, b.CreateString(a.artifact_id), b.CreateString(a.run_id),
-        wire::path(b, a.card), a.invocation, b.CreateString(a.output), a.kind,
+        wire::path(b, a.card), a.invocation, b.CreateString(a.output), a.directory,
         b.CreateString(a.name), mv));
   }
   auto v = b.CreateVector(out);
@@ -928,34 +979,6 @@ void Service::artifact_list(RequestIn& req) {
                          off.Union()));
 }
 
-auto Service::module_read(RequestIn& req) -> void {
-  const auto* r = project_request(req)->value_as_ModuleReadRequest();
-  const auto identity = ModuleIdentity::parse(r->module_()->string_view());
-  if (!identity || stdfs::is_symlink(identity->path()))
-    throw Failed(FailureKind::invalid_path, "invalid module identity");
-  std::string source;
-  try {
-    if (stdfs::is_directory(identity->path()))
-      source = module_source(identity->path());
-    else if (auto cached = cached_module_source(store_->state_dir() / "modules",
-                                                *identity))
-      source = std::move(*cached);
-    else
-      throw std::runtime_error("module source is unavailable");
-  } catch (const std::exception& e) {
-    throw Failed(FailureKind::output_invalid, e.what());
-  }
-  const auto size = source.size();
-  const auto offset = r->offset().value_or(0);
-  if (offset > size)
-    throw Failed(FailureKind::invalid_request,
-                 "module offset exceeds source size");
-  const auto bytes =
-      std::string_view(source).substr(offset, content_limit(r->limit_bytes()));
-  reply(req, wire::file_page(req.request_id, "index.js", bytes, offset, size,
-                             crypto::sha256_hex(source)));
-}
-
 void Service::artifact_read(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ArtifactReadRequest();
   if (!fs::valid_relative_path(r->artifact_id()->str()))
@@ -966,15 +989,15 @@ void Service::artifact_read(RequestIn& req) {
   if (!a || a->members.empty())
     throw Failed(FailureKind::not_found, "unknown artifact");
   const ArtifactMemberData* member = nullptr;
-  if (a->kind == PortKind::File) {
+  if (!a->directory) {
     if (r->member())
       throw Failed(FailureKind::invalid_request,
-                   "File artifacts have no members");
+                   "a file artifact has no members");
     member = &a->members.front();
   } else {
     if (!r->member())
       throw Failed(FailureKind::invalid_request,
-                   "member is required for Directory artifacts");
+                   "member is required for a directory artifact");
     std::string m = r->member()->str();
     if (!fs::valid_relative_path(m))
       throw Failed(FailureKind::invalid_path, "invalid member path");
@@ -1020,6 +1043,54 @@ void Service::artifact_read(RequestIn& req) {
   reply(req, wire::file_page(req.request_id,
                              stdfs::path(member->path).filename().string(),
                              *slice, offset, size, member->hash));
+}
+
+auto Service::set_card_views(const CardPath& card,
+                             std::vector<DeclaredView> views) -> void {
+  std::lock_guard<std::mutex> l(view_files_mu_);
+  if (views.empty())
+    view_files_.erase(path_key(card));
+  else
+    view_files_[path_key(card)] = std::move(views);
+}
+
+// Transport only: the file comes from the Card's own declaration, and its
+// bytes are neither checked nor interpreted.
+void Service::card_view_read(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_CardViewReadRequest();
+  auto card = wire::card_arg(r->card());
+  std::string name = r->name()->str();
+  if (!r->index())
+    throw Failed(FailureKind::invalid_request, "index is required");
+  const auto index = *r->index();
+  std::string blob;
+  {
+    // The declaration the UI selected, never one chosen by name: names may
+    // repeat. A name that differs means the list changed since it was sent.
+    std::lock_guard<std::mutex> l(view_files_mu_);
+    if (auto found = view_files_.find(path_key(card));
+        found != view_files_.end() && index < found->second.size() &&
+        found->second[index].name == name)
+      blob = found->second[index].blob;
+  }
+  if (blob.empty())
+    throw Failed(FailureKind::not_found,
+                 "the Card declares no view " + name + " at index " +
+                     std::to_string(index),
+                 {{"name", name}, {"index", std::to_string(index)}});
+  uint64_t offset = r->offset().value_or(0);
+  uint64_t limit = content_limit(r->limit_bytes());
+  // One descriptor, opened only when the file resolves inside the store.
+  const auto page =
+      fs::read_range_inside(NixStore::store_dir(), blob, offset, limit);
+  if (!page)
+    throw Failed(FailureKind::not_found,
+                 "the view file is missing or outside the Nix store",
+                 {{"name", name}});
+  if (offset > page->size)
+    throw Failed(FailureKind::invalid_range, "offset is past the end");
+  reply(req, wire::file_page(req.request_id, name, page->bytes, offset,
+                             page->size, blob));
 }
 
 void Service::log_range(RequestIn& req) {

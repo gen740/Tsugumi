@@ -17,9 +17,9 @@ trap 'rm -rf "$stage"' EXIT
 git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   flake.nix flake.lock VERSION CMakeLists.txt cmake util rpc tsugumid \
   hostd/CMakeLists.txt hostd/cmake hostd/src hostd/private hostd/agent/src hostd/agent/private hostd/agent/Shared \
-  client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src sdk workerd \
+  client/CMakeLists.txt client/cmake client/include client/src cli/CMakeLists.txt cli/src workerd \
   protocol/CMakeLists.txt protocol/include protocol/trace_codec.cc 'protocol/*.fbs' \
-  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix \
+  nix/core.nix nix/core-source.nix nix/cli.nix nix/web.nix nix/client-wasm.nix nix/card-entry.nix nix/worker.nix \
   third-party \
   vm/guest/CMakeLists.txt vm/guest/src vm/guest/vm-system.nix \
   ui/web/package.json ui/web/package-lock.json 'ui/web/tsconfig*.json' \
@@ -28,27 +28,13 @@ git -C "$repo" archive --format=tar --prefix=tsugumi/ HEAD \
   ui/shared/i18n/en.json \
   demos docs/CardGuide.md docs/site/player/build.mjs docs/site/player/narration.json \
   docs/site/player-data/assets docs/assets/tsugumi-icon.svg | tar -xf - -C "$stage"
-# Lock helpers remain part of the authoring SDK.
-rm -rf "$stage/tsugumi/sdk/go/template" "$stage/tsugumi/sdk/rust/template"
 rm "$stage/tsugumi/hostd/agent/Shared/generate.py" "$stage/tsugumi/hostd/agent/Shared/mcp-transport.md"
 find "$stage" -type f -name README.md -delete
 # The source distribution builds the CLI only; repository checks, documentation
 # tools and development shells are not part of its public flake.
-cat > "$stage/tsugumi/flake.nix" <<'NIX'
-{
-  nixConfig = {
-    extra-substituters = [ "https://tsugumi.cachix.org" ];
-    extra-trusted-public-keys = [ "tsugumi.cachix.org-1:am26Q4VFWYLyJ+t+O5j03MmMVmZ2Ifw6cbNUoLhlrhI=" ];
-  };
-  inputs.nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
-  inputs.hosq = {
-    url = "github:CLI20-dev/hosq/1eb894224b0feffbb5b81d075d3e2c76160f99a1";
-    flake = false;
-  };
-  inputs.flake-parts = {
-    url = "github:hercules-ci/flake-parts";
-    inputs.nixpkgs-lib.follows = "nixpkgs";
-  };
+# Retain the exact same input declarations as the development flake.
+sed '/^  outputs =/,$d' "$repo/flake.nix" > "$stage/tsugumi/flake.nix"
+cat >> "$stage/tsugumi/flake.nix" <<'NIX'
   outputs =
     inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {
@@ -61,6 +47,7 @@ cat > "$stage/tsugumi/flake.nix" <<'NIX'
         let
           tsugumid = pkgs.callPackage ./nix/core.nix {
             hosq = inputs.hosq;
+            kitSource = inputs.tsugumi-kit;
             cardNixpkgs = {
               rev = inputs.nixpkgs.rev;
               narHash = inputs.nixpkgs.narHash;

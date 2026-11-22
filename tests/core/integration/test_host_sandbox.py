@@ -2,12 +2,15 @@
 a Card allowed the network resolves names but reaches nothing else on this
 host (tsugumid's ports and sockets, the web server, by any of its addresses)
 and nothing of the user's session (the clipboard, LaunchServices), and it
-writes only its own output folders. A Python Card works there as anywhere:
-it can ask for its directory while it loads and `main` gets its environment."""
+writes only its own output folders. It can run only the tools it declared,
+never /bin or /usr/bin. A Python Card works there as anywhere: it can ask for
+its directory while it loads, and its environment is the process's, kept
+across the calls of a reused worker."""
 
 from __future__ import annotations
 
 import ctypes
+import json
 import socket
 import subprocess
 import sys
@@ -17,8 +20,9 @@ from pathlib import Path
 import pytest
 
 from projects import card, conn, run_and_wait, write
-from harness.real_cards import (ENV_MAIN, ENV_PRE_RUN, TXT, accept_in_background, bash,
-                                check_python_card_environment, nix_string, python_probe_project)
+from harness.observations import decode_scalar, read_output
+from harness.real_cards import (ENVIRONMENT_MAIN, TXT, accept_in_background, check_process_environment,
+                                python_card, txt_main)
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -29,15 +33,14 @@ def log_of(c, run_id: str, card_id: str) -> str:
     return text(c.call("LogRangeRequest", runId=run_id, card=path(card_id), stream=1, limitBytes=65536).text)
 
 
-def stdout_of_network_card(core_factory, tmp_path, script: str, python: str | None = None) -> str:
-    """Run a script as a sandboxed Card allowed the network; what it printed.
-    With `python`, that program is $PROBE in the script, $PYTHON its interpreter."""
-    probe = bash(script + '\nprintf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT, grants={"network": True})
-    if python:
-        probe["_nix"] = probe["_nix"].replace(
-            "run = ",
-            f'run = "PYTHON=${{pkgs.python3}}/bin/python3 PROBE=${{pkgs.writeText "probe.py" {nix_string(python)}}}\\n" + ',
-            1)
+def stdout_of_network_card(core_factory, tmp_path, body: str) -> str:
+    """Run `body` (Python, indented by 4) as a sandboxed Card allowed the network; what it printed."""
+    return stdout_of_card(core_factory, tmp_path, body, grants={"network": True})
+
+
+def stdout_of_card(core_factory, tmp_path, body: str, *, tools: str = "", **settings) -> str:
+    """Run `body` (Python, indented by 4) as a sandboxed Card; what it printed."""
+    probe = python_card(txt_main(body + "\n    RESULT = 'done'"), outputs=TXT, tools=tools, **settings)
     root = tmp_path / "p"
     write(root, {"start": {"type": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
           [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
@@ -49,9 +52,20 @@ def stdout_of_network_card(core_factory, tmp_path, script: str, python: str | No
     return log_of(c, run_id, "probe")
 
 
-def unix_probe(socket_path: str) -> str:
-    return (f'if /usr/bin/nc -U -w 1 {socket_path} </dev/null >/dev/null 2>&1; '
-            'then echo connected; else echo refused; fi')
+def connects(target: str) -> str:
+    """Python lines printing `<label>: connected|refused` for a TCP (host, port) or Unix path."""
+    return f"""
+    import socket
+    def reach(label, address):
+        family = socket.AF_UNIX if isinstance(address, str) else socket.AF_INET
+        with socket.socket(family) as s:
+            s.settimeout(2)
+            try:
+                s.connect(address)
+                print(label + ": connected", flush=True)
+            except OSError:
+                print(label + ": refused", flush=True)
+{target}"""
 
 
 def test_a_card_with_network_reaches_nothing_on_this_host(core_factory, tmp_path):
@@ -62,8 +76,7 @@ def test_a_card_with_network_reaches_nothing_on_this_host(core_factory, tmp_path
         port = listener.getsockname()[1]
         out = stdout_of_network_card(
             core_factory, tmp_path,
-            f'if (exec 3<>/dev/tcp/127.0.0.1/{port}) 2>/dev/null; then r=connected; else r=refused; fi\n'
-            'echo "loopback: $r"')
+            connects(f'    reach("loopback", ("127.0.0.1", {port}))'))
         assert "loopback: refused" in out
         assert not accepted
 
@@ -96,24 +109,20 @@ def test_a_card_with_network_reaches_this_host_by_none_of_its_addresses(core_fac
         accepted = accept_in_background(listener)
         out = stdout_of_network_card(
             core_factory, tmp_path,
-            f'for a in {address} 0.0.0.0; do\n'
-            f'  if (exec 3<>/dev/tcp/$a/{port}) 2>/dev/null; then r=connected; else r=refused; fi\n'
-            '  echo "$a: $r"\n'
-            'done')
+            connects(f'    for a in ({address!r}, "0.0.0.0"):\n        reach(a, (a, {port}))'))
         assert f"{address}: refused" in out
         assert "0.0.0.0: refused" in out
         assert not accepted
 
 
 MACH_LOOKUP = """
-import ctypes, sys
-libsystem = ctypes.CDLL(None)
-bootstrap = ctypes.c_uint.in_dll(libsystem, "bootstrap_port")
-for name in sys.argv[1:]:
-    port = ctypes.c_uint()
-    found = libsystem.bootstrap_look_up(bootstrap, name.encode(), ctypes.byref(port)) == 0
-    print(name, "reached" if found else "denied")
-"""
+    import ctypes
+    libsystem = ctypes.CDLL(None)
+    bootstrap = ctypes.c_uint.in_dll(libsystem, "bootstrap_port")
+    for name in NAMES:
+        port = ctypes.c_uint()
+        found = libsystem.bootstrap_look_up(bootstrap, name.encode(), ctypes.byref(port)) == 0
+        print(name, "reached" if found else "denied", flush=True)"""
 
 
 def reached_on_this_host(names: list[str]) -> list[str]:
@@ -136,7 +145,7 @@ def test_a_card_with_network_reaches_no_mach_service_of_the_session(core_factory
         pytest.skip("no GUI session on this host: nothing to keep the Card from")
     certificates = "com.apple.trustd.agent"
     assert reached_on_this_host([certificates])
-    out = stdout_of_network_card(core_factory, tmp_path, f'"$PYTHON" "$PROBE" {" ".join(session)} {certificates}', python=MACH_LOOKUP)
+    out = stdout_of_network_card(core_factory, tmp_path, f"\n    NAMES = {session + [certificates]!r}" + MACH_LOOKUP)
     for name in session:
         assert f"{name} denied" in out
     # Go and NSURLSession verify certificates through it.
@@ -152,26 +161,10 @@ def test_a_card_with_network_reaches_only_the_resolver_among_unix_sockets(core_f
         accepted = accept_in_background(listener)
         out = stdout_of_network_card(
             core_factory, tmp_path,
-            f'echo "resolver: $({unix_probe("/var/run/mDNSResponder")})"\n'
-            f'echo "other: $({unix_probe(other)})"')
+            connects(f'    reach("resolver", "/var/run/mDNSResponder")\n    reach("other", {other!r})'))
         assert "resolver: connected" in out
         assert "other: refused" in out
         assert not accepted
-
-
-def python_probe_client(core_factory, root: Path, main: str, pre: str | None = None):
-    """A tsugumid on this Mac serving a sandboxed Python Card `show`."""
-    defs, cards, conns, files = python_probe_project(main, pre)
-    write(root, defs, cards, conns, files)
-    d = core_factory(project_root=root)
-    c = d.connect()
-    return d, c
-
-
-def test_a_python_card_gets_its_environment(core_factory, tmp_path):
-    """A Python card receives preRun exports and resets per-call environment changes."""
-    _, c = python_probe_client(core_factory, tmp_path / "p", ENV_MAIN, ENV_PRE_RUN)
-    check_python_card_environment(c)
 
 
 def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
@@ -184,7 +177,59 @@ def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
         pytest.skip(f"{name} does not resolve on this host either")
     out = stdout_of_network_card(
         core_factory, tmp_path,
-        # The discard port: what matters is the name, not the connection.
-        f'm=$( (exec 3<>/dev/tcp/{name}/9) 2>&1 ) || true\n'
-        'case "$m" in *nodename*) echo "name: unresolved $m";; *) echo "name: resolved";; esac')
+        # What matters is the name, not a connection.
+        f"""
+    import socket
+    try:
+        socket.getaddrinfo({name!r}, 9)
+        print("name: resolved", flush=True)
+    except OSError as e:
+        print("name: unresolved", e, flush=True)""")
     assert "name: resolved" in out
+
+
+SYSTEM_TOOLS = """
+    import shutil, subprocess
+    for tool in ("/bin/sh", "/usr/bin/env"):
+        try:
+            with open(tool, "rb") as f:
+                f.read(1)
+            print(tool, "read", flush=True)
+        except OSError:
+            print(tool, "unreadable", flush=True)
+        try:
+            subprocess.run([tool, "-c", "true"], stdin=subprocess.DEVNULL, capture_output=True)
+            print(tool, "ran", flush=True)
+        except OSError:
+            print(tool, "not run", flush=True)
+    jq = shutil.which("jq")
+    version = subprocess.run([jq, "--version"], capture_output=True, text=True, check=True).stdout
+    print("declared:", jq.startswith("/nix/store/") and version.startswith("jq-"), flush=True)"""
+
+
+def test_a_sandboxed_card_runs_only_what_it_declared(core_factory, tmp_path):
+    """Seatbelt gives the Card no system shell or tools: /bin and /usr/bin can be
+    neither read nor run, while the tool it declared to its builder runs."""
+    out = stdout_of_card(core_factory, tmp_path, SYSTEM_TOOLS, tools="[ pkgs.jq ]")
+    for tool in ("/bin/sh", "/usr/bin/env"):
+        assert f"{tool} unreadable" in out and f"{tool} not run" in out, out
+    assert "declared: True" in out, out
+
+
+def test_a_reused_worker_keeps_its_process_environment(core_factory, tmp_path):
+    """What the module's top set reaches run through os.environ and the C
+    environment, and what a run changes is still there in the next run of
+    the reused worker: nothing is reset per call."""
+    root = tmp_path / "p"
+    show = python_card(ENVIRONMENT_MAIN, outputs=TXT, inputs=["start"], reuseWorker=True, recordIO=True)
+    write(root, {"start": {"type": "trigger"}, "show": show},
+          [card("start", "start"), card("show", "show")], [conn("start", "out", "show", "start")])
+    c = core_factory(project_root=root).connect()
+    seen = []
+    for _ in range(2):
+        run_id, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded, log_of(c, run_id, "show")
+        seen.append(json.loads(decode_scalar(read_output(c, run_id, card="show"))))
+    reused, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+    assert reused.workerReused
+    check_process_environment(*seen)

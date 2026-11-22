@@ -57,7 +57,7 @@ Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires**
 
 Select several Cards and choose **Group Selection** to keep them together on the Canvas. To reuse another Workflow, use the import button by **Add Card** in the sidebar. It copies the selected project into `externals` as a Card in Card. Its boundary maps the outer ports to steps inside, which you can open by double-clicking the Card.
 
-Use **Nix references** in the Canvas controls to see references between saved `default.nix` files. Hover a Card to highlight its references or open **List** to jump to a Card or the reference's source. The overlay shows directly written references such as `inputs.data`, where `data` is the Card's input port name. Aliases and expressions are resolved during evaluation. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
+Use **Nix references** in the Canvas controls to see the upstream Card exports available to each Card through its input ports. Hover a Card to highlight its links or open **List** to jump to either end or open the consumer's `default.nix`. An input port named `data` is available as `inputs.data` when its producer is known. [Nix reference rules](features.md#sharing-nix-exports-through-connections)
 
 ## Run from a Card
 
@@ -69,10 +69,12 @@ A thick wire carries a batch of values. Its count shows how many items are in th
 
 ## Live displays
 
-Right-click a Code Card and choose **Open Display**. The window can be opened
-before the first run and follows new display data as they arrive. Try it with
-the **Live Stream** demo. Compare Runs and chat evidence can also open retained
-displays.
+Right-click a Code Card and choose **Open Display**. The window shows the views
+the Card declares in its `default.nix`, so it can be opened before the first run,
+and each view follows what the Card sends to it while it works. A view is live:
+nothing a Card sends is recorded, so it cannot be reopened from Run History,
+compared between runs or cited in chat. Keep a result to check later as an
+output value, a file or an artifact. [Views](CardGuide.md#views)
 
 ## Project terminal
 

@@ -243,7 +243,6 @@ export function SetupView() {
       <div className="groupbox">
         {step(L('Nix がインストールされている'), s.nix.ok, s.nix.ok ? L('/nix/store があります。Card の環境は Nix で作ります。') : L('https://nixos.org/download からインストールしてください（flakes を有効に）。'))}
         {step(L('core（tsugumid と tsugumi-worker）がビルドされている'), s.tsugumid.ok && s.worker.ok, `${s.tsugumid.path}\n${s.worker.path}`)}
-        {step(L('Card SDK が見つかる'), s.sdk.ok, s.sdk.path)}
       </div>
       <div className="caption secondary mono selectable">{L('手動でビルドする場合:')} cd {s.repo} &amp;&amp; nix develop --command bash -c 'cmake -S . -B build -G Ninja &amp;&amp; ninja -C build'</div>
       <div className="row gap8 center">

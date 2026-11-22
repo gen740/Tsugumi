@@ -1,6 +1,5 @@
-// Run history, artifacts and the enlarged output display of one Card.
+// Run history and artifacts.
 import { useEffect, useMemo, useState } from 'react'
-import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
@@ -10,7 +9,6 @@ import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Sectio
 import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
-import { DisplayView } from './moduleViewer'
 import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
@@ -306,7 +304,6 @@ type Preview = { kind: 'html'; html: string } | { kind: 'text'; text: string } |
 const IMAGE_TYPES: Record<string, string> = {
   png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', gif: 'image/gif', tiff: 'image/tiff', svg: 'image/svg+xml', webp: 'image/webp', pdf: 'application/pdf',
 }
-const kindName = (k: D.PortKind) => (k === D.PortKind.File ? 'file' : k === D.PortKind.Directory ? 'directory' : k === D.PortKind.FlatBuffer ? 'flatbuffer' : 'unspecified')
 
 /** Retained outputs of one Card: run/invocation → outputs → files → preview. */
 export function CardArtifactsView({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
@@ -355,7 +352,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       alive = false
     }
   }, [runId, cardKey, session.recordingRevision])
-  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.kind === D.PortKind.Directory ? m : null)
+  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.directory ? m : null)
   useEffect(() => {
     setPreview(undefined)
     if (!session.rpc || !selected || !member) return
@@ -421,7 +418,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}
                   onClick={() => { setArtifactId(s(a.artifactId)); setMember(a.members[0] ? s(a.members[0].path) : undefined) }}>
                   <b className="callout">{s(a.output)}</b>
-                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {kindName(a.kind)} · {a.members.length} 件</span>
+                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {a.directory ? 'directory' : 'file'} · {a.members.length} 件</span>
                 </div>
               ))}
             </div>,
@@ -447,24 +444,6 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
         </HSplit>
       </div>
       {error && <div className="caption pad6 selectable" style={{ color: 'var(--red)' }}>{error}</div>}
-    </div>
-  )
-}
-
-/** A Card's output display enlarged in its own window. */
-export function VisualizationWindow({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
-  useObserve(session)
-  useEffect(() => session.observeDisplay(cardKey), [session, cardKey])
-  const d = session.displays.get(cardKey)
-  return (
-    <div className="col fill pad16 gap8">
-      <div className="row gap8 center">
-        <span className="title2">{session.displayName(cardKey)}</span>
-        {d && <span className="secondary">{L('呼び出し #{0}', String(d.invocation))}</span>}
-        <span className="spacer" />
-        <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
-      </div>
-      <div className="flex1 min0 col"><DisplayView display={d} emptyNote={session.noResultNote(cardKey)} /></div>
     </div>
   )
 }

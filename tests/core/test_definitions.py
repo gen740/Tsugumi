@@ -383,7 +383,7 @@ def test_link_diagnostics(tmp_path, core_factory):
     assert {text(d.id) for d in after.definitions} == {text(d.id) for d in before.definitions}
 
 
-@pytest.mark.parametrize("settings", [{"trigger": "eachInput"}, {"maxRuns": 2}, {"grants": {"network": False}}])
+@pytest.mark.parametrize("settings", [{"maxRuns": 2}, {"grants": {"network": False}}])
 def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_factory, settings):
     root = tmp_path / "p"
     builtin_project(root)
@@ -398,18 +398,6 @@ def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_facto
                    opId=new_id(), changes=[write])
         assert error.value.kind == "invalid_document"
         assert c.call("ProjectInspectRequest").rev == before.rev
-
-
-def test_trigger_setting(tmp_path, core_factory):
-    """An unknown trigger setting is reported on the affected card."""
-    root = tmp_path / "p"
-    builtin_project(root)
-    card = json.loads((root / "definitions" / "out" / "_card.json").read_text())
-    card["trigger"] = "whenever"
-    put(root / "definitions" / "out" / "_card.json", json.dumps(card))
-    d = core_factory(project_root=root)
-    c = d.connect()
-    assert "invalid_setting" in diagnostics(c, ["out"])
 
 
 def test_display_mode_setting(tmp_path, core_factory):
@@ -435,15 +423,15 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
            "table Outputs { msg:Msg (required); /* note */ other:Msg; }\nroot_type Outputs;\n")
     res = c.call("OutputTypesRequest", text=fbs)
     assert text(res.rootType) == "demo.Outputs" and len(bytes(res.bfbs)) > 0 and res.text is None
-    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # File
+    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # Path
     out = text(changed.text)
-    assert 'msg:Path (required, tsugumi: "file");' in out and "other:Msg;" in out and "// kept" in out
+    assert 'msg:string (required, tsugumi: "path");' in out and "other:Msg;" in out and "// kept" in out
     assert 'attribute "tsugumi";' in out
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Missing")
     assert bad.text is None and bad.error
-    # A File port needs a string value: Msg has none.
-    bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Msg", kind=1)
-    assert bad.text is None and bad.error
+    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg", kind=2)
+    assert 'msg:Msg (required);' in text(restored.text)
+
 
 
 def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_factory):

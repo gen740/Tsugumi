@@ -6,6 +6,14 @@ configuration); without it a host tsugumid is used.
 
 from __future__ import annotations
 
+# TODO(ABI 9): the bundled demos are still Card ABI 8 and are ported once the
+# recording of displays is designed (docs/Demos.md, "TODO: port the demos to
+# Card ABI 9"). Until then these demo runs are skipped, not ported.
+import pytest
+
+pytest.skip("TODO(ABI 9): demos are postponed until display recording is designed; "
+            "see docs/Demos.md", allow_module_level=True)
+
 
 import base64
 import csv

@@ -693,7 +693,7 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
     RequireRun(found->second);
     return;
   }
-  if (tool == "run" || tool == "card_s_d_k_prepare") {
+  if (tool == "run" || tool == "card_api") {
     RequireRun(Card(json::Get(args, "card", "{}")));
     return;
   }

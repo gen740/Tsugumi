@@ -1,6 +1,6 @@
 add_executable(tsugumi_workerd_tests workerd_test.cc)
 target_include_directories(tsugumi_workerd_tests PRIVATE ${_core_headers} ${_workerd_headers})
-target_link_libraries(tsugumi_workerd_tests PRIVATE tsugumi_workerd_support)
+target_link_libraries(tsugumi_workerd_tests PRIVATE tsugumi_workerd_support tsugumi_worker_values)
 target_compile_options(tsugumi_workerd_tests PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 add_test(NAME workerd_protocol_journal COMMAND tsugumi_workerd_tests)
 

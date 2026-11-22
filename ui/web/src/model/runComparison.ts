@@ -3,7 +3,7 @@ import { D, R, RPCClient, s, segs } from '../wire/rpc'
 import { describeValue } from '../wire/flatjson'
 import { isObj, serialize, tryParse } from '../../shared/json'
 import { L } from '../i18n'
-import { DisplaySnapshot, errorText } from './session'
+import { errorText } from './session'
 
 export interface ComparedCard { summary: R.InvocationSummaryT; record?: R.RecordResultT; error?: string }
 export interface ComparedRow { card: string; left?: ComparedCard; right?: ComparedCard }
@@ -53,7 +53,7 @@ const sameBytes = (a: number[], b: number[]) => a.length === b.length && a.every
 export function valueDifference(a?: D.NamedValueT, b?: D.NamedValueT): Difference {
   if (!a || !b) return a || b ? 'unknown' : 'same'
   if (a.kind !== b.kind || s(a.rootType) !== s(b.rootType) || !sameBytes(a.schemaBfbs, b.schemaBfbs)) return 'changed'
-  if (a.kind === D.PortKind.File) {
+  if (a.kind === D.PortKind.Path) {
     const x = s(a.fileContentHash), y = s(b.fileContentHash)
     return x && y ? x === y ? 'same' : 'changed' : 'unknown'
   }
@@ -120,29 +120,6 @@ export function runScope(run?: R.RunSummaryT, displayPath = (segments: string[])
   if (!run) return
   const target = displayPath(segs(run.target))
   return run.propagate === false ? L('{0} だけ（保存した入力）', target) : L('{0} から下流', target)
-}
-
-const sameNumbers = (a: ArrayLike<number>, b: ArrayLike<number>) => {
-  if (a.length !== b.length) return false
-  // NaN marks a gap in a chart: two gaps at the same place are the same content.
-  for (let i = 0; i < a.length; i++) if (a[i] !== b[i] && !(a[i] !== a[i] && b[i] !== b[i])) return false
-  return true
-}
-const sameStrings = (a: string[], b: string[]) => a.length === b.length && a.every((v, i) => v === b[i])
-
-/** Compares what the two displays show, ignoring run identity and frame revision. */
-export function sameDisplay(a?: DisplaySnapshot, b?: DisplaySnapshot): boolean {
-  const x = a?.value, y = b?.value
-  if (!x || !y) return !x && !y
-  switch (x.kind) {
-    case 'unavailable': return y.kind === 'unavailable'
-    case 'text': case 'markdown': return y.kind === x.kind && x.text === y.text
-    case 'scalar': return y.kind === 'scalar' && sameNumbers([x.value], [y.value]) && x.label === y.label
-    case 'table': return y.kind === 'table' && sameStrings(x.columns, y.columns) && x.rows.length === y.rows.length && x.rows.every((r, i) => sameStrings(r, y.rows[i]))
-    case 'image': return y.kind === 'image' && x.mediaType === y.mediaType && x.alt === y.alt && sameNumbers(x.data, y.data)
-    case 'module': return y.kind === 'module' && x.name === y.name && x.json === y.json && Object.keys(x.blobs).length === Object.keys(y.blobs).length && Object.keys(x.blobs).every(k => !!y.blobs[k] && sameNumbers(x.blobs[k], y.blobs[k]))
-    case 'points': return y.kind === 'points' && sameNumbers(x.x, y.x) && sameNumbers(x.y, y.y) && sameNumbers(x.z, y.z) && sameNumbers(x.colors, y.colors)
-  }
 }
 
 /** What names a member of an execution list: its implementation label (a run

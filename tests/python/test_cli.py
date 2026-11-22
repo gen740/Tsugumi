@@ -24,7 +24,7 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
-from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, SDK, write_project
+from conftest import CLI, HOSTD, WEB_ROOT, BUILD, WORKER, NIX, write_project
 from test_claude_code_plugin import isolated_environment, stop_resident_services
 from harness.file_events import process_file, wait_for_file
 
@@ -441,7 +441,7 @@ def vm_server(tmp_path):
     helper = (Path(__file__).parent / "vm_helper_double.py").read_text()
     executable(tmp_path / "host", f"#!{sys.executable}\n{helper}")
     env = isolated_environment(tmp_path, TSUGUMI_VMHOST=str(tmp_path / "host"), TSUGUMI_VM_IMAGE="/image", TSUGUMI_SUPPORT_DIR=str(support),
-               TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_SDK_DIR=str(SDK), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
+               TSUGUMI_PY_BINDINGS=os.environ.get("TSUGUMI_PY_BINDINGS", str(BUILD / "generated/python")), TSUGUMI_WORKER=str(WORKER), TSUGUMI_NIX_DIR=str(NIX), HOST_LOG=str(tmp_path / "log"), HOST_BUSY=str(tmp_path / "busy"))
     try:
         _, port, query = page_url(web(env).stdout)
         yield tmp_path, project, port, page_cookie(port, query["key"][0])
@@ -457,7 +457,7 @@ def test_the_page_needs_no_setup_and_may_share_folders(vm_server):
     with closing(page_host(port, cookie)) as host:
         home = host.call("HostHomeRequest")
     assert home.vm and home.hostFolders
-    assert home.tsugumid.ok and home.worker.ok and home.sdk.ok
+    assert home.tsugumid.ok and home.worker.ok and home.nixDir.ok
 
 
 @needs_server

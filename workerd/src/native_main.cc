@@ -1,126 +1,48 @@
-// tsugumi-worker: runs one Card invocation at a time on behalf of tsugumid.
-//
-// fd 3: data socket (WorkerCall in, WorkerResult/WorkerFailure/WorkerDisplay
-// out) fd 4: control socket (WorkerCancel) stdout/stderr: captured by the core
-// as the invocation's logs.
-//
-// Steps per call: preRun -> the body (`run`) -> postRun. The body is either a
-// package (--package: lib/main.so; Card code loads inside its first invocation)
-// or a bash script
-// (--run). preRun / postRun (--pre / --post) are bash and get no Card inputs;
-// the environment and working directory produced by preRun carry over. An
-// earlier failure is never cleared by a later step's success. One deadline
-// covers all steps, and cancel/deadline are checked before each step starts.
-//
-// The process environment and cwd are configured at launch. ABI 8 preRun
-// overrides and the Bash/R parameter JSON apply only to the current call.
-// A bash body gets, per input port P:
-//   JSON_P          path of a JSON file with the message (any size)
-//   FILE_P / DIR_P  the path carried by File / Directory messages
-// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT and what it
-// shows as JSON to $TSUGUMI_REPORT (read when it ends; see BashDisplay).
-// postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
-
+// The Card host exchanges call and result frames on fd 3 and receives
+// cancellation on fd 4. A Card can send opaque view data on fd 3 at any time
+// after receiving the effects table.
 #include <dlfcn.h>
 #include <fcntl.h>
-#include <flatbuffers/idl.h>
-#include <flatbuffers/reflection.h>
-#include <poll.h>
+#include <flatbuffers/flatbuffers.h>
 #include <signal.h>
-#include <sys/socket.h>
-#include <sys/stat.h>
-#include <sys/wait.h>
-#include <unistd.h>
 
 #include <algorithm>
 #include <atomic>
-#include <cerrno>
 #include <chrono>
-#include <cmath>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <fstream>
 #include <map>
 #include <mutex>
 #include <optional>
-#include <sstream>
 #include <string>
 #include <thread>
 #include <vector>
 
-#include "tsugumi/message_json.hh"
+#include "tsugumi/card_abi.h"
+#include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
-#include "tsugumi/sdk/abi.h"
-#include "tsugumi/util/flatbuffer_schema.hh"
-#include "tsugumi/util/json.hh"
-#include "tsugumi/workerd/display.hh"
 #include "tsugumi/workerd/frame.hh"
 
-extern char** environ;
-
-namespace W = Tsugumi::Worker;
+namespace C = Tsugumi::Card;
 namespace D = Tsugumi::Data;
+namespace W = Tsugumi::Worker;
+namespace frame = tsugumi::rpc::frame;
+using Clock = std::chrono::steady_clock;
 
 namespace {
 
-constexpr uint32_t kMaxFrame = tsugumi::workerd::kMaxWorkerFrameBytes;
+constexpr size_t kMaxFrame = tsugumi::workerd::kMaxWorkerFrameBytes;
 constexpr int kData = 3;
 constexpr int kControl = 4;
 
-std::mutex g_write_mu;
-std::atomic<bool> g_cancel{false};
-std::atomic<pid_t> g_child{0};
-
-namespace frame = tsugumi::rpc::frame;
-
-// A bad or truncated frame ends the worker as a closed stream does.
-std::optional<std::string> read_frame(int fd) {
-  try {
-    return frame::Read(fd, kMaxFrame);
-  } catch (const frame::Error&) {
-    return std::nullopt;
-  }
-}
-
-// The core notices a broken connection on its side.
-void send_frame(flatbuffers::FlatBufferBuilder& b) {
-  std::lock_guard<std::mutex> l(g_write_mu);
-  try {
-    frame::Write(
-        kData,
-        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
-        kMaxFrame);
-  } catch (const frame::Error&) {
-  }
-}
-
-std::string get_env(const std::vector<std::string>& env,
-                    const std::string& key) {
-  std::string prefix = key + "=";
-  for (const auto& e : env)
-    if (e.starts_with(prefix)) return e.substr(prefix.size());
-  return {};
-}
-
-std::string upper(std::string s) {
-  for (auto& c : s)
-    c = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
-  return s;
-}
-
-std::string read_text(const std::string& path) {
-  std::ifstream f(path, std::ios::binary);
-  std::stringstream ss;
-  ss << f.rdbuf();
-  return ss.str();
-}
-
-void write_text(const std::string& path, const std::string& data) {
-  std::ofstream f(path, std::ios::binary | std::ios::trunc);
-  f.write(data.data(), static_cast<std::streamsize>(data.size()));
-}
+struct Host {
+  std::mutex write_mutex;
+  std::atomic<uint64_t> cancelled_id{0};
+  std::atomic<uint64_t> call_id{0};
+  std::atomic<Clock::duration::rep> deadline{Clock::duration::max().count()};
+};
 
 struct Failure {
   D::FailureKind kind;
@@ -128,1297 +50,318 @@ struct Failure {
   std::vector<std::pair<std::string, std::string>> args = {};
 };
 
-std::optional<D::FailureKind> kind_from_name(const std::string& n) {
-  for (auto k : D::EnumValuesFailureKind())
-    if (n == D::EnumNameFailureKind(k) && k != D::FailureKind::unspecified)
-      return k;
-  return std::nullopt;
-}
-
-struct Options {
-  std::string bash;
-  std::string package;  // contains lib/main.so
-  std::string pre;      // a file with bash text
-  std::string run;      // a file with bash text (a bash body)
-  std::string post;     // a file with bash text
-};
-
-struct Call {
-  const W::WorkerCall* msg;
-  uint64_t call_id;
-  std::chrono::steady_clock::time_point deadline;
-  bool has_deadline = false;
-  std::vector<std::pair<std::string, std::string>> outputs;
-  std::optional<Failure> failure;
-  std::string card;
-  std::string run_id;
-  size_t output_bytes = 0;
-  uint32_t phase = TSUGUMI_PREPARE;
-  std::optional<std::string> inputs_json;
-  std::optional<std::string> params_json;
-  std::string display_error;
-};
-
-Call* g_call = nullptr;
-
-int64_t remaining_ms_impl(void*) {
-  if (!g_call || !g_call->has_deadline) return -1;
-  // Rounded up: 0 must mean the deadline has passed, as the worker sees it.
-  auto left = std::chrono::ceil<std::chrono::milliseconds>(
-                  g_call->deadline - std::chrono::steady_clock::now())
-                  .count();
-  return left < 0 ? 0 : left;
-}
-
-void record_failure(D::FailureKind kind, std::string message) {
-  if (g_call && !g_call->failure)
-    g_call->failure = Failure{kind, message.substr(0, 4096)};
-}
-
-// Build the actual result envelope when budgeting: port names, alignment and
-// FlatBuffers metadata count towards the same 16 MiB limit as message bytes.
-auto result_frame(const Call& call) -> flatbuffers::FlatBufferBuilder {
-  flatbuffers::FlatBufferBuilder b;
-  std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-  for (const auto& [name, bytes] : call.outputs)
-    outputs.push_back(W::CreateWorkerOutput(
-        b, b.CreateString(name),
-        b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                       bytes.size())));
-  auto result = W::CreateWorkerResult(b, b.CreateVector(outputs));
-  W::FinishWorkerMessageBuffer(
-      b, W::CreateWorkerMessage(b, call.call_id, W::WorkerPayload::WorkerResult,
-                                result.Union()));
-  return b;
-}
-
-auto append_output(std::string_view port, const uint8_t* data, size_t size)
-    -> int {
-  if (size > kMaxFrame - g_call->output_bytes) {
-    record_failure(D::FailureKind::output_invalid,
-                   "combined outputs exceed the 16 MiB result frame limit");
-    return 1;
-  }
-  g_call->output_bytes += size;
-  g_call->outputs.emplace_back(
-      port, std::string(reinterpret_cast<const char*>(data), size));
-  return 0;
-}
-
-void validate_required_outputs(Call& call) {
-  if (call.failure) return;
-  for (const auto* port : *call.msg->outputs()) {
-    if (port->optional().value_or(false)) continue;
-    if (std::none_of(call.outputs.begin(), call.outputs.end(),
-                     [&](const auto& output) {
-                       return output.first == port->name()->string_view();
-                     })) {
-      record_failure(D::FailureKind::output_invalid,
-                     "required output " + port->name()->str() + " is missing");
-      // The same argument as core's own check of the result gives.
-      if (call.failure) call.failure->args = {{"port", port->name()->str()}};
-      return;
-    }
+auto read_frame(int fd) -> std::optional<std::string> {
+  try {
+    return frame::Read(fd, kMaxFrame);
+  } catch (const frame::Error&) {
+    return std::nullopt;
   }
 }
 
-auto invalid_display(const std::string& message) -> int {
-  if (g_call) g_call->display_error = message;
-  return 1;
-}
-
-int send_display(
-    const std::function<std::pair<D::DisplayValue, flatbuffers::Offset<void>>(
-        flatbuffers::FlatBufferBuilder&)>& f) {
-  if (!g_call) return 1;
-  flatbuffers::FlatBufferBuilder b;
-  auto [type, value] = f(b);
-  std::vector<flatbuffers::Offset<flatbuffers::String>> segs;
-  std::string card = g_call->card;
-  size_t s = 0;
-  while (true) {
-    size_t e = card.find('/', s);
-    segs.push_back(b.CreateString(
-        card.substr(s, e == std::string::npos ? std::string::npos : e - s)));
-    if (e == std::string::npos) break;
-    s = e + 1;
-  }
-  auto path = D::CreateCardPath(b, b.CreateVector(segs));
-  auto run = b.CreateString(g_call->run_id);
-  D::DisplayBuilder db(b);
-  db.add_card(path);
-  db.add_run_id(run);
-  db.add_invocation(g_call->msg->invocation().value_or(0));
-  db.add_revision(0);
-  db.add_value_type(type);
-  db.add_value(value);
-  auto d = db.Finish();
-  const auto* display = flatbuffers::GetTemporaryPointer(b, d);
-  if (auto error = tsugumi::workerd::validate_display(*display)) {
-    g_call->display_error = *error;
-    return 1;
-  }
-  auto wd = W::CreateWorkerDisplay(b, d);
-  W::WorkerMessageBuilder mb(b);
-  mb.add_call_id(g_call->call_id);
-  mb.add_value_type(W::WorkerPayload::WorkerDisplay);
-  mb.add_value(wd.Union());
-  W::FinishWorkerMessageBuffer(b, mb.Finish());
-  if (b.GetSize() > kMaxFrame) {
-    g_call->display_error = "display frame exceeds 16 MiB";
-    return 1;
-  }
-  send_frame(b);
-  return 0;
-}
-
-auto display_text_impl(const char* text, bool markdown) -> int {
-  if (!text || std::strlen(text) > (1u << 20))
-    return invalid_display("display text exceeds 1 MiB or is missing");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    return std::make_pair(
-        D::DisplayValue::DisplayText,
-        D::CreateDisplayText(b, b.CreateString(text), markdown).Union());
-  });
-}
-
-int display_scalar_impl(double value, const char* label) {
-  if (!label) return invalid_display("display scalar needs a label");
-  std::string l = label;
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto ls = b.CreateString(l);
-    D::DisplayScalarBuilder sb(b);
-    sb.add_value(value);
-    sb.add_label(ls);
-    return std::make_pair(D::DisplayValue::DisplayScalar, sb.Finish().Union());
-  });
-}
-
-struct ChartSeriesConfig {
-  tsugumi::schema::t::String<"id"> id;
-  tsugumi::schema::t::String<"label"> label;
-  tsugumi::schema::t::Uint64<"offset"> offset;
-  tsugumi::schema::t::Uint64<"count"> count;
-};
-struct ChartConfig {
-  tsugumi::schema::t::Array<"series", tsugumi::schema::Obj<ChartSeriesConfig>>
-      series;
-};
-
-// The view module mapping of the Card (--views), set once when the worker
-// starts.
-std::string g_views;
-
-auto display_module_impl(const char*, const char*, const tsugumi_blob*, size_t)
-    -> int;
-
-// All language SDKs keep their line-chart API. Only the common worker encodes
-// its immutable view identity and run data; coordinates never pass through
-// JSON.
-auto display_line_chart_impl(const tsugumi_series* series, size_t count)
-    -> int {
-  const auto invalid = [](const char* message) {
-    if (g_call) g_call->display_error = message;
-    return -1;
-  };
-  if (count && !series) return invalid("missing line series");
-  ChartConfig config;
-  std::string x, y;
-  size_t points = 0, bytes = 0;
-  for (size_t i = 0; i < count; ++i) {
-    const auto& row = series[i];
-    if (!row.id || !row.label || (row.count && (!row.x || !row.y)) ||
-        row.count > 10000 - points)
-      return invalid("invalid line series or more than 10,000 points");
-    bytes += row.count * 16 + std::strlen(row.id) + std::strlen(row.label);
-    if (bytes > (1u << 20)) return invalid("line chart exceeds 1 MiB");
-    ChartSeriesConfig meta;
-    *meta.id = row.id;
-    *meta.label = row.label;
-    *meta.offset = points;
-    *meta.count = row.count;
-    config.series->push_back(std::move(meta));
-    for (size_t j = 0; j < row.count; ++j) {
-      if (!std::isfinite(row.x[j]) || !std::isfinite(row.y[j]))
-        return invalid("line coordinates must be finite");
-      const double xv = flatbuffers::EndianScalar(row.x[j]);
-      const double yv = flatbuffers::EndianScalar(row.y[j]);
-      x.append(reinterpret_cast<const char*>(&xv), sizeof xv);
-      y.append(reinterpret_cast<const char*>(&yv), sizeof yv);
-    }
-    points += row.count;
-  }
-  const auto json = tsugumi::schema::encode(config);
-  const tsugumi_blob blobs[] = {
-      {"x", reinterpret_cast<const uint8_t*>(x.data()), x.size()},
-      {"y", reinterpret_cast<const uint8_t*>(y.data()), y.size()}};
-  const auto status = display_module_impl("line-chart", json.c_str(), blobs, 2);
-  return status == 0 ? 0
-                     : invalid("the built-in line-chart module is unavailable");
-}
-
-int display_table_impl(const char* const* columns, size_t column_count,
-                       const char* const* cells, size_t row_count) {
-  if (column_count == 0 || column_count > 64 || row_count > 10000 || !columns ||
-      (row_count && !cells))
-    return invalid_display(
-        "a table needs 1 to 64 columns and at most 10,000 rows");
-  size_t bytes = 0;
-  const auto fits = [&](const char* text) {
-    if (!text) return false;
-    const auto size = ::strnlen(text, 4097);
-    bytes +=
-        size + 16;  // Include per-string metadata before allocating copies.
-    return size <= 4096 && bytes <= kMaxFrame;
-  };
-  for (size_t i = 0; i < column_count; ++i)
-    if (!fits(columns[i]))
-      return invalid_display(
-          "table strings exceed 4 KiB or the display frame exceeds 16 MiB");
-  for (size_t i = 0; i < column_count * row_count; ++i)
-    if (!fits(cells[i]))
-      return invalid_display(
-          "table strings exceed 4 KiB or the display frame exceeds 16 MiB");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    std::vector<std::string> cols(columns, columns + column_count);
-    std::vector<flatbuffers::Offset<D::TableRow>> rows;
-    for (size_t r = 0; r < row_count; ++r) {
-      std::vector<std::string> row(cells + r * column_count,
-                                   cells + (r + 1) * column_count);
-      rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(row)));
-    }
-    auto c = b.CreateVectorOfStrings(cols);
-    return std::make_pair(
-        D::DisplayValue::DisplayTable,
-        D::CreateDisplayTable(b, c, b.CreateVector(rows)).Union());
-  });
-}
-
-int display_image_impl(const char* media_type, const uint8_t* data, size_t size,
-                       const char* alt) {
-  if (!media_type || !data || size > (8u << 20))
-    return invalid_display("an image exceeds 8 MiB or is missing");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto mt = b.CreateString(media_type);
-    auto d = b.CreateVector(data, size);
-    auto a = b.CreateString(alt ? alt : "");
-    return std::make_pair(D::DisplayValue::DisplayImage,
-                          D::CreateDisplayImage(b, mt, d, a).Union());
-  });
-}
-
-int display_points_impl(const float* x, const float* y, const float* z,
-                        const uint32_t* colors, size_t count) {
-  if (count > 1000000 || (count && (!x || !y || !z)))
-    return invalid_display(
-        "a point cloud needs x, y and z, up to 1,000,000 points");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto xv = b.CreateVector(x, count);
-    auto yv = b.CreateVector(y, count);
-    auto zv = b.CreateVector(z, count);
-    auto cv = b.CreateVector(colors, colors ? count : 0);
-    return std::make_pair(
-        D::DisplayValue::DisplayPointCloud,
-        D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
-  });
-}
-
-auto display_module_impl(const char* name, const char* config_json,
-                         const tsugumi_blob* blobs, size_t count) -> int {
-  if (!name || !config_json || std::strlen(config_json) > (1u << 20) ||
-      count > 64 || (count && !blobs))
-    return -1;
-  size_t bytes = 0;
-  for (size_t i = 0; i < count; ++i) {
-    if (!blobs[i].name || std::strlen(blobs[i].name) > 128 ||
-        (!blobs[i].data && blobs[i].size) || blobs[i].size > (8u << 20) - bytes)
-      return -1;
-    bytes += blobs[i].size;
-  }
-  std::string identity = name;
-  if (!identity.starts_with("/nix/store/")) {
-    if (g_views.empty()) return -1;
-    tsugumi::schema::v::Mapping<tsugumi::schema::v::String,
-                                tsugumi::schema::v::String>
-        views;
-    if (tsugumi::schema::decode(g_views, views)) return -1;
-    bool found = false;
-    for (const auto& [key, value] : views.value())
-      if (key == identity) {
-        identity = value;
-        found = true;
-        break;
-      }
-    if (!found) return -1;
-  }
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(identity);
-    auto d = b.CreateString(config_json);
-    std::vector<flatbuffers::Offset<D::DisplayBlob>> values;
-    for (size_t i = 0; i < count; ++i)
-      values.push_back(
-          D::CreateDisplayBlob(b, b.CreateString(blobs[i].name),
-                               b.CreateVector(blobs[i].data, blobs[i].size)));
-    return std::make_pair(
-        D::DisplayValue::DisplayModule,
-        D::CreateDisplayModule(b, n, d, b.CreateVector(values)).Union());
-  });
-}
-
-void log_impl(void*, const char* message) {
-  std::fprintf(stderr, "%s\n", message);
-  std::fflush(stderr);
-}
-
-int cancelled_impl(void*) { return g_cancel.load() ? 1 : 0; }
-
-auto fail_at_impl(void*, const char* kind, const char* message,
-                  const char* source, uint32_t line, const char* cell) -> void {
-  if (!g_call || g_call->failure) return;
-  record_failure(kind_from_name(kind).value_or(D::FailureKind::worker_failed),
-                 message ? message : "");
-  if (source && *source && line > 0) {
-    g_call->failure->args = {{"card", g_call->card},
-                             {"source", source},
-                             {"line", std::to_string(line)}};
-    if (cell && *cell) g_call->failure->args.emplace_back("cell", cell);
-  }
-}
-
-void fail_impl(void*, const char* kind, const char* message) {
-  auto k = kind_from_name(kind).value_or(D::FailureKind::worker_failed);
-  record_failure(k, message ? message : "");
-}
-
-// Runs bash (argv after the interpreter); returns exit status. Kills the
-// process group on cancel or deadline.
-int run_shell(const std::string& bash, const std::vector<std::string>& args,
-              const std::vector<std::string>& env, const std::string& cwd,
-              Call& call, bool* timed_out) {
-  std::vector<char*> envp;
-  for (const auto& e : env) envp.push_back(const_cast<char*>(e.c_str()));
-  envp.push_back(nullptr);
-  std::vector<const char*> argv = {bash.c_str(), "-e", "-o", "pipefail"};
-  for (const auto& a : args) argv.push_back(a.c_str());
-  argv.push_back(nullptr);
-  pid_t pid = ::fork();
-  if (pid < 0) return -1;
-  if (pid == 0) {
-    ::setpgid(0, 0);
-    ::signal(SIGPIPE, SIG_DFL);
-    if (::chdir(cwd.c_str()) != 0) ::_exit(126);
-    ::close(kData);
-    ::close(kControl);
-    ::execve(bash.c_str(), const_cast<char**>(argv.data()), envp.data());
-    ::_exit(127);
-  }
-  ::setpgid(pid, pid);
-  g_child = pid;
-  int status = 0;
-  bool term = false;
-  auto kill_at = std::chrono::steady_clock::time_point::max();
-  while (true) {
-    pid_t r = ::waitpid(pid, &status, WNOHANG);
-    if (r == pid) break;
-    auto now = std::chrono::steady_clock::now();
-    if (!term &&
-        (g_cancel.load() || (call.has_deadline && now >= call.deadline))) {
-      if (!g_cancel.load()) *timed_out = true;
-      ::kill(-pid, SIGTERM);
-      term = true;
-      // A cancelled shell step can ignore TERM and hold the worker.
-      kill_at = now + std::chrono::seconds(1);
-    } else if (term && now >= kill_at) {
-      ::kill(-pid, SIGKILL);
-    }
-    ::usleep(2000);
-  }
-  ::kill(-pid, SIGKILL);  // no stray children after the step
-  g_child = 0;
-  return status;
-}
-
-// The pipe preRun's environment comes back through. A reader thread drains
-// it while preRun runs, so a large environment never blocks the shell; once
-// the step has ended, what it wrote is read and the pipe closed, even if a
-// detached process still holds the write end.
-class EnvDump {
- public:
-  EnvDump() {
-    int ends[2];
-    if (::pipe(ends) != 0) return;
-    reader_ = ends[0];
-    writer_ = ends[1];
-    ::fcntl(reader_, F_SETFD, FD_CLOEXEC);
-    ::fcntl(reader_, F_SETFL, O_NONBLOCK);
-    thread_ = std::thread([this] {
-      for (;;) {
-        pollfd ready{reader_, POLLIN, 0};
-        ::poll(&ready, 1, 20);
-        if (drain() || done_.load()) break;
-      }
-      drain();
-    });
-  }
-  EnvDump(const EnvDump&) = delete;
-  auto operator=(const EnvDump&) -> EnvDump& = delete;
-  ~EnvDump() { finish(); }
-  auto writer() const -> int { return writer_; }
-  auto finish() -> std::string {
-    if (writer_ >= 0) ::close(writer_);
-    writer_ = -1;
-    done_ = true;
-    if (thread_.joinable()) thread_.join();
-    if (reader_ >= 0) ::close(reader_);
-    reader_ = -1;
-    return std::move(data_);
-  }
-
- private:
-  // Reads what is available; true at end of file.
-  auto drain() -> bool {
-    char buffer[65536];
-    for (;;) {
-      const auto n = ::read(reader_, buffer, sizeof buffer);
-      if (n > 0) {
-        data_.append(buffer, static_cast<size_t>(n));
-        continue;
-      }
-      if (n < 0 && errno == EINTR) continue;
-      return n == 0;
-    }
-  }
-  int reader_ = -1, writer_ = -1;
-  std::atomic<bool> done_{false};
-  std::string data_;
-  std::thread thread_;
-};
-
-std::vector<std::string> parse_env_dump(const std::string& dump) {
-  std::vector<std::string> out;
-  size_t s = 0;
-  while (s < dump.size()) {
-    size_t e = dump.find('\0', s);
-    if (e == std::string::npos) e = dump.size();
-    std::string kv = dump.substr(s, e - s);
-    if (kv.find('=') != std::string::npos &&
-        !kv.starts_with("TSUGUMI_ENV_DUMP_FD=") && !kv.starts_with("BASH_") &&
-        !kv.starts_with("SHLVL=") && !kv.starts_with("_="))
-      out.push_back(kv);
-    s = e + 1;
-  }
-  return out;
-}
-
-void set_env(std::vector<std::string>& env, const std::string& key,
-             const std::string& value) {
-  std::string prefix = key + "=";
-  for (auto& e : env)
-    if (e.starts_with(prefix)) {
-      e = prefix + value;
-      return;
-    }
-  env.push_back(prefix + value);
-}
-
-// Parsers by schema and root type, shared by bash and in-memory language
-// adapters.
-flatbuffers::Parser* parser_for(const flatbuffers::Vector<uint8_t>* bfbs,
-                                const std::string& root) {
-  static std::map<std::string, std::unique_ptr<flatbuffers::Parser>> cache;
-  std::string key =
-      root + '\0' +
-      std::string(reinterpret_cast<const char*>(bfbs->data()), bfbs->size());
-  if (auto it = cache.find(key); it != cache.end()) return it->second.get();
-  flatbuffers::IDLOptions o;
-  o.strict_json = true;
-  o.natural_utf8 = true;
-  o.output_default_scalars_in_json = true;
-  auto p = std::make_unique<flatbuffers::Parser>(o);
-  p->known_attributes_["tsugumi"] = true;
-  if (!p->Deserialize(bfbs->data(), bfbs->size()) ||
-      !p->SetRootType(root.c_str()))
-    return nullptr;
-  tsugumi::flatbuffer_schema::restore_reflection_fields(
-      *p, *reflection::GetSchema(bfbs->data()), /*restore_deprecated=*/false);
-  return (cache[key] = std::move(p)).get();
-}
-
-auto params_json_impl(void*) -> const char* {
-  if (g_call->params_json) return g_call->params_json->c_str();
-  const auto* params = g_call->msg->params();
-  auto* parser = parser_for(params->schema_bfbs(), params->root_type()->str());
-  std::string json;
-  if (!parser || tsugumi::message_json::gen_language_text(
-                     *parser, params->bytes()->data(), &json)) {
-    record_failure(D::FailureKind::worker_failed, "cannot decode params");
-    return nullptr;
-  }
-  return g_call->params_json.emplace(std::move(json)).c_str();
-}
-
-auto input_port(const char* name) -> const W::WorkerInput* {
-  for (const auto* port : *g_call->msg->inputs())
-    if (port->name()->string_view() == name) return port;
-  return nullptr;
-}
-
-auto input_impl(void*, const char* name, size_t* size) -> const uint8_t* {
-  const auto* port = input_port(name);
-  *size = port ? port->value()->bytes()->size() : 0;
-  return port ? port->value()->bytes()->data() : nullptr;
-}
-
-auto input_kind_impl(void*, const char* name) -> uint32_t {
-  const auto* port = input_port(name);
-  return port ? static_cast<uint32_t>(port->kind()) : 0;
-}
-
-auto inputs_json_impl(void*) -> const char* {
-  if (g_call->inputs_json) return g_call->inputs_json->c_str();
-  std::string json = "{";
-  for (const auto* port : *g_call->msg->inputs()) {
-    const auto* value = port->value();
-    auto* parser = parser_for(value->schema_bfbs(), value->root_type()->str());
-    std::string text;
-    if (!parser || tsugumi::message_json::gen_language_text(
-                       *parser, value->bytes()->data(), &text)) {
-      record_failure(D::FailureKind::worker_failed,
-                     "cannot decode input " + port->name()->str());
-      return nullptr;
-    }
-    if (json.size() > 1) json += ',';
-    json += tsugumi::schema::text(
-        tsugumi::schema::string_value(port->name()->str()));
-    json += ':';
-    json += text;
-  }
-  json += '}';
-  return g_call->inputs_json.emplace(std::move(json)).c_str();
-}
-
-auto writable_output(std::string_view name) -> const D::Port* {
-  if (g_call->failure) return nullptr;
-  if (g_call->phase != TSUGUMI_RUN) {
-    record_failure(D::FailureKind::output_invalid,
-                   "outputs may only be sent during run");
-    return nullptr;
-  }
-  for (const auto* port : *g_call->msg->outputs()) {
-    if (port->name()->string_view() != name) continue;
-    if (std::ranges::none_of(g_call->outputs, [&](const auto& output) {
-          return output.first == name;
-        }))
-      return port;
-    record_failure(D::FailureKind::output_invalid,
-                   "output " + std::string(name) + " emitted twice");
-    return nullptr;
-  }
-  record_failure(D::FailureKind::output_invalid,
-                 "unknown output port " + std::string(name));
-  return nullptr;
-}
-
-auto output_impl(void*, const char* name, const uint8_t* data, size_t size)
-    -> int {
-  const auto* port = writable_output(name);
-  if (!port) return 1;
-  const auto* schema = reflection::GetSchema(port->schema_bfbs()->data());
-  if (!data || size > kMaxFrame ||
-      !flatbuffers::Verify(*schema, *schema->root_table(), data, size)) {
-    record_failure(D::FailureKind::output_invalid,
-                   "output " + std::string(name) + " does not match its type");
-    return 1;
-  }
-  return append_output(name, data, size);
-}
-
-auto output_json(std::string_view name, std::string_view json) -> int {
-  const auto* port = writable_output(name);
-  if (!port) return 1;
-  auto* parser = parser_for(port->schema_bfbs(), port->root_type()->str());
-  if (!parser || !tsugumi::message_json::parse_json(*parser, json)) {
-    record_failure(D::FailureKind::output_invalid,
-                   "output " + std::string(name) +
-                       " JSON does not match its type" +
-                       (parser ? ": " + parser->error_ : ""));
-    return 1;
-  }
-  return append_output(name, parser->builder_.GetBufferPointer(),
-                       parser->builder_.GetSize());
-}
-
-auto output_json_impl(void*, const char* name, const char* json) -> int {
-  return output_json(name, json);
-}
-
-auto display_impl(void*, uint32_t kind, const void* payload) -> int;
-
-// Package libraries and language state are initialized during the first call.
-void* g_lib = nullptr;
-tsugumi_main_fn g_main = nullptr;
-bool g_card_loaded = false;
-std::string g_load_error;
-std::string g_last_run;
-auto process_env() -> std::vector<std::string> {
-  std::vector<std::string> out;
-  for (char** e = environ; *e; ++e) out.emplace_back(*e);
-  return out;
-}
-
-auto env_value(const std::vector<std::string>& env, const std::string& name)
-    -> std::optional<std::string> {
-  for (const auto& e : env)
-    if (e.starts_with(name + "=")) return e.substr(name.size() + 1);
-  return std::nullopt;
-}
-
-class StepEnvironment {
- public:
-  using Value = std::optional<std::string>;
-
-  auto set(const std::string& name, Value value) -> void {
-    const char* previous = ::getenv(name.c_str());
-    changes_.try_emplace(name, previous ? Value(previous) : std::nullopt,
-                         std::move(value));
-    apply(name, changes_.at(name).second);
-  }
-
-  auto adopt(const std::vector<std::string>& before,
-             const std::vector<std::string>& after) -> void {
-    for (const auto& entry : before) {
-      const auto name = entry.substr(0, entry.find('='));
-      if (!env_value(after, name) && ::getenv(name.c_str())) set(name, {});
-    }
-    for (const auto& entry : after) {
-      const auto eq = entry.find('=');
-      const auto name = entry.substr(0, eq);
-      auto value = entry.substr(eq + 1);
-      if (env_value(before, name) != value) set(name, std::move(value));
-    }
-  }
-
-  auto reapply() const -> void {
-    for (const auto& [name, values] : changes_) apply(name, values.second);
-  }
-
-  ~StepEnvironment() {
-    for (auto& [name, values] : changes_) {
-      apply(name, values.first);
-      if (values.first) tsugumi::workerd::clear_secret(*values.first);
-      if (values.second) tsugumi::workerd::clear_secret(*values.second);
-    }
-  }
-
- private:
-  static auto apply(const std::string& name, const Value& value) -> void {
-    if (value)
-      ::setenv(name.c_str(), value->c_str(), 1);
-    else
-      ::unsetenv(name.c_str());
-  }
-
-  std::map<std::string, std::pair<Value, Value>> changes_;
-};
-
-class StepDirectory {
- public:
-  auto enter(const std::string& path) -> bool {
-    previous_ = ::open(".", O_RDONLY | O_DIRECTORY | O_CLOEXEC);
-    return previous_ >= 0 && ::chdir(path.c_str()) == 0;
-  }
-  ~StepDirectory() {
-    if (previous_ < 0) return;
-    if (::fchdir(previous_) != 0) ::_exit(126);
-    ::close(previous_);
-  }
-
- private:
-  int previous_ = -1;
-};
-
-void open_package(const std::string& lib) {
-  g_lib = ::dlopen(lib.c_str(), RTLD_NOW | RTLD_LOCAL);
-  if (!g_lib) {
-    g_load_error = std::string("cannot load ") + lib + ": " + ::dlerror();
-    return;
-  }
-  g_main = reinterpret_cast<tsugumi_main_fn>(::dlsym(g_lib, "tsugumi_main"));
-  if (!g_main) {
-    g_load_error = lib + " does not export tsugumi_main";
-    return;
-  }
-  std::fflush(stdout);
-  std::fflush(stderr);
-}
-
-constexpr tsugumi_host kEffects{
-    .display = display_impl,
-    .log = log_impl,
-    .cancelled = cancelled_impl,
-    .remaining_ms = remaining_ms_impl,
-    .fail = fail_impl,
-    .input = input_impl,
-    .output = output_impl,
-    .inputs_json = inputs_json_impl,
-    .params_json = params_json_impl,
-    .input_kind = input_kind_impl,
-    .output_json = output_json_impl,
-    .fail_at = fail_at_impl,
-};
-
-auto make_call(const Call& call, const std::string& work,
-               const std::string& tmp, const std::string& out_dir)
-    -> tsugumi_call {
-  const auto* m = call.msg;
-  return {
-      .abi_version = TSUGUMI_ABI_VERSION,
-      .phase = TSUGUMI_PREPARE,
-      .run_id = call.run_id.c_str(),
-      .card = call.card.c_str(),
-      .invocation = m->invocation().value_or(0),
-      .params = m->params()->bytes()->data(),
-      .params_size = m->params()->bytes()->size(),
-      .working_directory = work.c_str(),
-      .temporary_directory = tmp.c_str(),
-      .output_directory = out_dir.c_str(),
-      .host = nullptr,
-      .effects = &kEffects,
-  };
-}
-
-auto invoke(tsugumi_call& call, tsugumi_phase phase, const char* name) -> bool {
-  call.phase = phase;
-  g_call->phase = phase;
-  const int rc = g_main(&call);
-  if (rc != 0) {
-    record_failure(g_cancel.load() ? D::FailureKind::cancelled
-                                   : D::FailureKind::worker_failed,
-                   std::string(name) + " returned " + std::to_string(rc));
+auto send_frame(Host& host, const flatbuffers::FlatBufferBuilder& b) -> bool {
+  std::lock_guard guard(host.write_mutex);
+  try {
+    frame::Write(
+        kData,
+        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+        kMaxFrame);
+    return true;
+  } catch (const frame::Error&) {
     return false;
   }
-  return !g_call->failure;
 }
 
-// Inputs of a bash body: JSON files and File / Directory paths.
-void bash_inputs(const W::WorkerCall* m, const std::string& tmp,
-                 std::vector<std::string>& env) {
-  namespace sc = tsugumi::schema;
-  for (const auto* in : *m->inputs()) {
-    std::string port = in->name()->str();
-    std::string up = upper(port);
-    auto* p =
-        parser_for(in->value()->schema_bfbs(), in->value()->root_type()->str());
-    std::string json;
-    if (!p || tsugumi::message_json::gen_text(*p, in->value()->bytes()->data(),
-                                              &json)) {
-      record_failure(D::FailureKind::worker_failed,
-                     "cannot convert input " + port + " to JSON");
-      return;
-    }
-    std::string json_path = tmp + "/input-" + port + ".json";
-    write_text(json_path, json);
-    set_env(env, "JSON_" + up, json_path);
-    if (in->kind() == D::PortKind::File ||
-        in->kind() == D::PortKind::Directory) {
-      // The message's string `value` is the path inside this environment.
-      sc::v::Mapping<sc::v::String, sc::Json> fields;
-      if (!sc::decode(json, fields))
-        for (const auto& [k, value] : fields.value().entries()) {
-          sc::v::String path;
-          if (k == "value" && !sc::decode(value, path))
-            set_env(env,
-                    (in->kind() == D::PortKind::File ? "FILE_" : "DIR_") + up,
-                    path.value());
-        }
-    }
-  }
-}
-
-// {"port": {...message JSON...}, ...} written by a bash body -> one FlatBuffer
-// per port.
-void bash_outputs(const std::string& out_json) {
-  namespace sc = tsugumi::schema;
-  if (::access(out_json.c_str(), R_OK) != 0) return;
-  sc::v::Mapping<sc::v::String, sc::Json> doc;
-  if (auto err = sc::decode(read_text(out_json), doc)) {
-    record_failure(
-        D::FailureKind::output_invalid,
-        "$TSUGUMI_OUTPUT is not a JSON object of ports: " + err->message);
-    return;
-  }
-  for (const auto& [name, value] : doc.value().entries())
-    if (output_json(name, sc::text(value))) return;
-}
-
-// A display object from bash or an in-memory language adapter. A relative image
-// path is resolved against the working directory.
-struct BashDisplayTable {
-  tsugumi::schema::Opt<"columns",
-                       tsugumi::schema::v::Array<tsugumi::schema::v::String>>
-      columns;
-  tsugumi::schema::Opt<
-      "rows", tsugumi::schema::v::Array<
-                  tsugumi::schema::v::Array<tsugumi::schema::v::String>>>
-      rows;
-};
-struct BashDisplayImage {
-  tsugumi::schema::Opt<"path", tsugumi::schema::v::String> path;
-  tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
-};
-struct BashDisplayModule {
-  tsugumi::schema::Opt<"module", tsugumi::schema::v::String> module;
-  tsugumi::schema::Opt<"config", tsugumi::schema::Json> config;
-  tsugumi::schema::Opt<"blobs",
-                       tsugumi::schema::v::Mapping<tsugumi::schema::v::String,
-                                                   tsugumi::schema::v::String>>
-      blobs;
-};
-struct BashDisplay {
-  tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
-  tsugumi::schema::Opt<"markdown", tsugumi::schema::v::String> markdown;
-  tsugumi::schema::Opt<"table", tsugumi::schema::Obj<BashDisplayTable>> table;
-  tsugumi::schema::Opt<"image", tsugumi::schema::Obj<BashDisplayImage>> image;
-  tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>>
-      module;
-};
-
-auto json_display(const std::string& json, const std::string& cwd) -> int {
-  namespace sc = tsugumi::schema;
-  auto invalid = [](const std::string& why) {
-    if (g_call) g_call->display_error = why;
+auto send_display(void* context, const char* view, const uint8_t* bytes,
+                  size_t size) -> int {
+  if (!view || (!bytes && size != 0) || size > kMaxFrame) return 1;
+  const auto name_size = ::strnlen(view, kMaxFrame);
+  if (name_size >= kMaxFrame || size > kMaxFrame - name_size) return 1;
+  try {
+    flatbuffers::FlatBufferBuilder b;
+    const auto update = W::CreateWorkerDisplay(
+        b, b.CreateString(view, name_size), b.CreateVector(bytes, size));
+    W::FinishWorkerMessageBuffer(
+        b, W::CreateWorkerMessage(b, 0, W::WorkerPayload::WorkerDisplay,
+                                  update.Union()));
+    return send_frame(*static_cast<Host*>(context), b) ? 0 : 1;
+  } catch (const std::exception&) {
     return 1;
-  };
-  BashDisplay d;
-  if (auto err = sc::decode(json, d)) return invalid(err->message);
-  if (const auto* t = sc::get(d.text)) {
-    return display_text_impl(t->c_str(), false);
-  } else if (const auto* m = sc::get(d.markdown)) {
-    return display_text_impl(m->c_str(), true);
-  } else if (const auto* table = sc::get(d.table)) {
-    const auto* columns = sc::get(table->columns);
-    if (!columns) return invalid("a table needs columns");
-    std::vector<const char*> names, cells;
-    for (const auto& c : *columns) names.push_back(c.c_str());
-    size_t row_count = 0;
-    if (const auto* rows = sc::get(table->rows))
-      for (const auto& row : *rows) {
-        if (row.size() != names.size())
-          return invalid("a table row has " + std::to_string(row.size()) +
-                         " cells, not " + std::to_string(names.size()));
-        for (const auto& c : row) cells.push_back(c.c_str());
-        ++row_count;
-      }
-    return display_table_impl(names.data(), names.size(), cells.data(),
-                              row_count);
-  } else if (const auto* image = sc::get(d.image)) {
-    const auto* file = sc::get(image->path);
-    if (!file) return invalid("an image needs a path");
-    std::string full = file->starts_with("/") ? *file : cwd + "/" + *file;
-    if (::access(full.c_str(), R_OK) != 0)
-      return invalid("cannot read the image " + *file);
-    std::string bytes = read_text(full);
-    const char* media = bytes.starts_with("\x89PNG")    ? "image/png"
-                        : bytes.starts_with("\xFF\xD8") ? "image/jpeg"
-                                                        : nullptr;
-    if (!media) return invalid(*file + " is neither PNG nor JPEG");
-    const auto* alt = sc::get(image->alt);
-    return display_image_impl(media,
-                              reinterpret_cast<const uint8_t*>(bytes.data()),
-                              bytes.size(), alt ? alt->c_str() : "");
-  } else if (const auto* module = sc::get(d.module)) {
-    const auto* name = sc::get(module->module);
-    const auto* data = sc::get(module->config);
-    if (!name || !data) return invalid("a module needs module and config");
-    std::vector<std::pair<std::string, std::string>> owned;
-    if (const auto* blobs = sc::get(module->blobs))
-      for (const auto& [key, file] : *blobs) {
-        const auto full = file.starts_with("/") ? file : cwd + "/" + file;
-        if (::access(full.c_str(), R_OK) != 0)
-          return invalid("cannot read blob " + file);
-        owned.emplace_back(key, read_text(full));
-      }
-    std::vector<tsugumi_blob> blobs;
-    for (const auto& [key, bytes] : owned)
-      blobs.push_back({key.c_str(),
-                       reinterpret_cast<const uint8_t*>(bytes.data()),
-                       bytes.size()});
-    if (display_module_impl(name->c_str(), sc::text(*data).c_str(),
-                            blobs.data(), blobs.size()))
-      return invalid("unknown view module; declare it in views");
-  } else {
-    return invalid("name one of text, markdown, table, image or module");
-  }
-  return 0;
-}
-
-auto bash_display(const std::string& path, const std::string& cwd) -> void {
-  if (::access(path.c_str(), R_OK) == 0 && json_display(read_text(path), cwd))
-    record_failure(D::FailureKind::output_invalid,
-                   "$TSUGUMI_REPORT: " + g_call->display_error);
-}
-
-auto display_impl(void*, uint32_t kind, const void* payload) -> int {
-  if (!payload) return invalid_display("display payload is missing");
-  switch (kind) {
-    case TSUGUMI_DISPLAY_TEXT:
-    case TSUGUMI_DISPLAY_MARKDOWN:
-      return display_text_impl(static_cast<const char*>(payload),
-                               kind == TSUGUMI_DISPLAY_MARKDOWN);
-    case TSUGUMI_DISPLAY_SCALAR: {
-      const auto& data = *static_cast<const tsugumi_scalar*>(payload);
-      return display_scalar_impl(data.value, data.label);
-    }
-    case TSUGUMI_DISPLAY_LINE_CHART: {
-      const auto& data = *static_cast<const tsugumi_chart*>(payload);
-      return display_line_chart_impl(data.series, data.count);
-    }
-    case TSUGUMI_DISPLAY_TABLE: {
-      const auto& data = *static_cast<const tsugumi_table*>(payload);
-      return display_table_impl(data.columns, data.column_count, data.cells,
-                                data.row_count);
-    }
-    case TSUGUMI_DISPLAY_IMAGE: {
-      const auto& data = *static_cast<const tsugumi_image*>(payload);
-      return display_image_impl(data.media_type, data.data, data.size,
-                                data.alt);
-    }
-    case TSUGUMI_DISPLAY_POINTS: {
-      const auto& data = *static_cast<const tsugumi_points*>(payload);
-      return display_points_impl(data.x, data.y, data.z, data.colors,
-                                 data.count);
-    }
-    case TSUGUMI_DISPLAY_MODULE: {
-      const auto& data = *static_cast<const tsugumi_module*>(payload);
-      return display_module_impl(data.name, data.config_json, data.blobs,
-                                 data.count);
-    }
-    case TSUGUMI_DISPLAY_JSON: {
-      char* cwd = ::getcwd(nullptr, 0);
-      const int status =
-          json_display(static_cast<const char*>(payload), cwd ? cwd : ".");
-      std::free(cwd);
-      return status;
-    }
-    default:
-      return invalid_display("unknown display kind");
   }
 }
 
-auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
-  if (call.failure) return flatbuffers::FlatBufferBuilder();
-  auto result = result_frame(call);
-  if (result.GetSize() > kMaxFrame)
-    record_failure(D::FailureKind::output_invalid,
-                   "combined outputs exceed the 16 MiB result frame limit");
-  validate_required_outputs(call);
-  return result;
+auto cancelled(void* context) -> int {
+  const auto& host = *static_cast<Host*>(context);
+  return host.cancelled_id.load() == host.call_id.load();
 }
 
-void execute(const Options& opt, Call& call,
-             flatbuffers::FlatBufferBuilder& result) {
-  const auto* m = call.msg;
-  // The outer WorkerMessage verifier only sees the message as bytes.
-  for (const auto* input : *m->inputs()) {
-    const auto* value = input->value();
-    const auto* bfbs = value->schema_bfbs();
-    flatbuffers::Verifier verifier(bfbs->data(), bfbs->size());
-    if (reflection::VerifySchemaBuffer(verifier)) {
-      const auto& schema = *reflection::GetSchema(bfbs->data());
-      const auto* root =
-          schema.objects()->LookupByKey(value->root_type()->c_str());
-      const auto* bytes = value->bytes();
-      if (root && !root->is_struct() &&
-          flatbuffers::Verify(schema, *root, bytes->data(), bytes->size()))
-        continue;
-    }
-    record_failure(
-        D::FailureKind::type_mismatch,
-        "input " + input->name()->str() + " does not match its type");
-    return;
-  }
-  std::string work = m->working_directory()->str();
-  std::string tmp = m->temporary_directory()->str();
-  std::string out_dir =
-      m->output_directory() ? m->output_directory()->str() : "";
-  StepEnvironment parameters;
-  for (const auto* e : *m->environment())
-    if (e->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      parameters.set("TSUGUMI_PARAMS_JSON", e->value()->str());
-  std::vector<std::string> env;
-  if (!opt.pre.empty() || !opt.run.empty() || !opt.post.empty())
-    env = process_env();
-  StepEnvironment pre_overrides;
-  StepDirectory pre_directory;
-  bool timed_out = false;
-  std::string cwd = work;
-  // Nothing starts after a cancel or once the single call deadline passed.
-  auto may_start = [&](const char* step) {
-    if (g_cancel.load()) {
-      record_failure(D::FailureKind::cancelled,
-                     std::string(step) + " not started: cancelled");
-      return false;
-    }
-    if (call.has_deadline &&
-        std::chrono::steady_clock::now() >= call.deadline) {
-      record_failure(D::FailureKind::timeout,
-                     std::string(step) + " not started: the deadline passed");
-      return false;
-    }
-    return true;
-  };
-  auto step_failed = [&](const char* step, int status) {
-    if (g_cancel.load())
-      record_failure(D::FailureKind::cancelled,
-                     std::string(step) + " cancelled");
-    else if (timed_out)
-      record_failure(D::FailureKind::timeout,
-                     std::string(step) + " exceeded the deadline");
-    else
-      record_failure(
-          D::FailureKind::worker_failed,
-          std::string(step) + " failed with " +
-              (WIFEXITED(status)
-                   ? "exit status " + std::to_string(WEXITSTATUS(status))
-                   : "signal " + std::to_string(WTERMSIG(status))));
-  };
-  if (!opt.pre.empty() && may_start("preRun")) {
-    // The environment comes back through a pipe, never a file: it holds the
-    // call's Card secrets.
-    EnvDump dump;
-    auto pre_env = env;
-    set_env(pre_env, "TSUGUMI_ENV_DUMP_FD", std::to_string(dump.writer()));
-    // Sourced, so that its exports and `cd` can be read back afterwards.
-    int st = run_shell(opt.bash,
-                       {"-c",
-                        ". \"$0\"; exec \"$TSUGUMI_WORKER\" --dump-env "
-                        "\"$TSUGUMI_ENV_DUMP_FD\"",
-                        opt.pre},
-                       pre_env, cwd, call, &timed_out);
-    auto dumped = dump.finish();
-    if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
-      step_failed("preRun", st);
-    } else {
-      auto next = parse_env_dump(dumped);
-      if (!next.empty()) {
-        if (!opt.package.empty()) pre_overrides.adopt(env, next);
-        for (auto& entry : env) tsugumi::workerd::clear_secret(entry);
-        env = std::move(next);
-      }
-      // A `cd` in preRun carries over (bash keeps PWD current).
-      if (auto pwd = get_env(env, "PWD"); !pwd.empty()) cwd = pwd;
-    }
-    tsugumi::workerd::clear_secret(dumped);
-    for (auto& entry : pre_env) tsugumi::workerd::clear_secret(entry);
-  }
-  if (!call.failure && !opt.package.empty() && may_start("run")) {
-    if (cwd != work && !pre_directory.enter(cwd))
-      record_failure(D::FailureKind::worker_failed,
-                     "cannot enter working directory " + cwd);
-    if (!call.failure) {
-      auto c = make_call(call, work, tmp, out_dir);
-      if (!g_card_loaded && g_load_error.empty() &&
-          may_start("source loading")) {
-        open_package(opt.package + "/lib/main.so");
-        if (g_main) {
-          if (!invoke(c, TSUGUMI_PREPARE, "language runtime initialization"))
-            g_load_error =
-                "cannot initialize the language runtime (see stderr)";
-          pre_overrides.reapply();
-          if (g_load_error.empty() &&
-              !invoke(c, TSUGUMI_LOAD, "Card source loading"))
-            g_load_error = "Card source loading failed (see stderr)";
-          g_card_loaded = true;
-          std::fflush(stdout);
-          std::fflush(stderr);
-        }
-      }
-      pre_overrides.reapply();
-      if (!g_load_error.empty())
-        record_failure(D::FailureKind::worker_failed, g_load_error);
-      if (!call.failure && may_start("run-start hook") &&
-          call.run_id != g_last_run)
-        invoke(c, TSUGUMI_RUN_START, "onRunStart");
-      g_last_run = call.run_id;
-      if (!call.failure && may_start("main")) {
-        invoke(c, TSUGUMI_RUN, "main.so");
-        std::fflush(stdout);
-        std::fflush(stderr);
-      }
-    }
-  }
-  if (!call.failure && !opt.run.empty() && may_start("run")) {
-    call.phase = TSUGUMI_RUN;
-    auto run_env = env;
-    bash_inputs(m, tmp, run_env);
-    std::string out_json = tmp + "/output.json";
-    ::unlink(out_json.c_str());
-    set_env(run_env, "TSUGUMI_OUTPUT", out_json);
-    std::string display_json = tmp + "/display.json";
-    ::unlink(display_json.c_str());
-    set_env(run_env, "TSUGUMI_REPORT", display_json);
-    if (!call.failure) {
-      int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
-      if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
-        step_failed("run", st);
-      } else {
-        bash_display(display_json, cwd);
-        if (!call.failure) bash_outputs(out_json);
-      }
-    }
-    for (auto& entry : run_env) tsugumi::workerd::clear_secret(entry);
-  }
-  result = finish_outputs(call);
-  // postRun also runs after a failed step (cleanup), but never after a
-  // cancel or the deadline; its success never clears an earlier failure.
-  bool stopped =
-      call.failure && (call.failure->kind == D::FailureKind::cancelled ||
-                       call.failure->kind == D::FailureKind::timeout);
-  if (!opt.post.empty() && !stopped && may_start("postRun")) {
-    bool post_timeout = false;
-    auto post_env = env;
-    set_env(post_env, "TSUGUMI_FAILED", call.failure ? "1" : "0");
-    std::string sent;
-    for (const auto& [name, _] : call.outputs)
-      sent += (sent.empty() ? "" : " ") + name;
-    set_env(post_env, "TSUGUMI_OUTPUTS", sent);
-    int st =
-        run_shell(opt.bash, {opt.post}, post_env, cwd, call, &post_timeout);
-    for (auto& entry : post_env) tsugumi::workerd::clear_secret(entry);
-    if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
-      timed_out = post_timeout;
-      step_failed("postRun", st);
-    }
-  }
-  for (auto& entry : env) tsugumi::workerd::clear_secret(entry);
+auto remaining_ms(void* context) -> int64_t {
+  const auto deadline =
+      Clock::duration(static_cast<Host*>(context)->deadline.load());
+  if (deadline == Clock::duration::max()) return -1;
+  const auto remaining = Clock::time_point(deadline) - Clock::now();
+  return remaining <= Clock::duration::zero()
+             ? 0
+             : std::chrono::ceil<std::chrono::milliseconds>(remaining).count();
 }
 
-void reply(const Call& call, flatbuffers::FlatBufferBuilder& result) {
-  if (!call.failure) {
-    send_frame(result);
-    return;
+constexpr tsugumi_effects kEffects{send_display, cancelled, remaining_ms};
+
+auto control_loop(Host& host) -> void {
+  while (auto bytes = read_frame(kControl)) {
+    flatbuffers::Verifier verifier(
+        reinterpret_cast<const uint8_t*>(bytes->data()), bytes->size());
+    if (!W::VerifyWorkerMessageBuffer(verifier)) continue;
+    const auto* message = W::GetWorkerMessage(bytes->data());
+    if (message->value_as_WorkerCancel() && message->call_id())
+      host.cancelled_id =
+          std::max(host.cancelled_id.load(), *message->call_id());
   }
-  flatbuffers::FlatBufferBuilder b;
-  auto diag = b.CreateString(call.failure->message);
-  std::vector<flatbuffers::Offset<D::KeyValue>> entries;
-  for (const auto& [key, value] : call.failure->args)
-    entries.push_back(
+}
+
+auto load_card(const std::string& package, std::string& error)
+    -> tsugumi_main_fn {
+  const auto file = package + "/lib/main.so";
+  // Retain the image for the lifetime of Card threads and the effects table.
+  void* image = ::dlopen(file.c_str(), RTLD_NOW | RTLD_LOCAL);
+  if (!image) {
+    error = ::dlerror();
+    return nullptr;
+  }
+  auto entry =
+      reinterpret_cast<tsugumi_main_fn>(::dlsym(image, "tsugumi_main"));
+  if (!entry) error = "main.so does not export tsugumi_main";
+  return entry;
+}
+
+using Payload = flatbuffers::Vector<uint8_t>;
+
+auto aligned_payload(flatbuffers::FlatBufferBuilder& b, const Payload& data)
+    -> flatbuffers::Offset<Payload> {
+  b.ForceVectorAlignment(data.size(), sizeof(uint8_t),
+                         FLATBUFFERS_MAX_ALIGNMENT);
+  return b.CreateVector(data.data(), data.size());
+}
+
+auto failure_frame(flatbuffers::FlatBufferBuilder& b, uint64_t id,
+                   const Failure& failure) -> void {
+  std::vector<flatbuffers::Offset<D::KeyValue>> args;
+  for (const auto& [key, value] : failure.args)
+    args.push_back(
         D::CreateKeyValue(b, b.CreateString(key), b.CreateString(value)));
-  auto args = b.CreateVector(entries);
-  auto failure = D::CreateFailure(b, call.failure->kind, args, diag);
-  auto value = W::CreateWorkerFailure(b, failure);
+  const auto encoded = D::CreateFailure(b, failure.kind, b.CreateVector(args),
+                                        b.CreateString(failure.message));
+  const auto payload = W::CreateWorkerFailure(b, encoded);
   W::FinishWorkerMessageBuffer(
-      b, W::CreateWorkerMessage(
-             b, call.call_id, W::WorkerPayload::WorkerFailure, value.Union()));
-  if (b.GetSize() > kMaxFrame)
-    throw std::runtime_error("worker frame exceeds 16 MiB");
-  send_frame(b);
+      b, W::CreateWorkerMessage(b, id, W::WorkerPayload::WorkerFailure,
+                                payload.Union()));
 }
 
-void control_loop() {
-  while (true) {
-    auto frame = read_frame(kControl);
-    if (!frame) return;
-    flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(frame->data()),
-                            frame->size());
-    if (!W::VerifyWorkerMessageBuffer(v)) continue;
-    const auto* m = W::GetWorkerMessage(frame->data());
-    if (m->value_type() == W::WorkerPayload::WorkerCancel) {
-      g_cancel = true;
-      if (pid_t c = g_child.load()) ::kill(-c, SIGTERM);
+auto card_failure(const C::CardFailure& value) -> Failure {
+  auto kind = value.kind();
+  if (kind == D::FailureKind::unspecified || !*D::EnumNameFailureKind(kind))
+    kind = D::FailureKind::worker_failed;
+  const auto text = [](const flatbuffers::String* field) -> std::string {
+    return field ? std::string(field->string_view().substr(0, 4096)) : "";
+  };
+  Failure failure{kind, text(value.message())};
+  if (value.source()) failure.args.emplace_back("source", text(value.source()));
+  if (value.line())
+    failure.args.emplace_back("line", std::to_string(value.line()));
+  if (value.cell()) failure.args.emplace_back("cell", text(value.cell()));
+  return failure;
+}
+
+auto make_result(const C::CardResult& result, const W::WorkerCall& call,
+                 const std::map<std::string_view, std::string_view>& input_paths,
+                 uint64_t id, flatbuffers::FlatBufferBuilder& b)
+    -> std::optional<Failure> {
+  if (const auto* failure = result.failure()) return card_failure(*failure);
+  std::map<std::string_view, const W::WorkerPort*> missing;
+  for (const auto* port : *call.outputs())
+    missing.emplace(port->name()->string_view(), port);
+  std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
+  if (const auto* ports = result.outputs()) {
+    for (const auto* output : *ports) {
+      const auto name = output->name()->string_view();
+      const auto invalid = [&](std::string message) {
+        return Failure{D::FailureKind::output_invalid, std::move(message),
+                       {{"port", std::string(name)}}};
+      };
+      const auto found = missing.find(name);
+      const auto* port = found == missing.end() ? nullptr : found->second;
+      if (!port || output->kind() != port->kind())
+        return invalid("unknown, duplicate, or wrong-kind output " +
+                       std::string(name));
+      flatbuffers::Offset<Payload> bytes;
+      flatbuffers::Offset<flatbuffers::String> path, forwarded;
+      if (port->kind() == D::PortKind::Path) {
+        const auto* value = output->path();
+        if (!value || value->size() == 0 ||
+            value->string_view().find('\0') != std::string_view::npos)
+          return invalid("output " + std::string(name) + " has no path");
+        if (output->bytes() && output->bytes()->size() != 0)
+          return invalid("Path output " + std::string(name) + " carries bytes");
+        path = b.CreateString(value->string_view());
+        if (const auto in = input_paths.find(value->string_view());
+            in != input_paths.end())
+          forwarded = b.CreateString(in->second);
+      } else {
+        if (output->path())
+          return invalid("FlatBuffer output " + std::string(name) +
+                         " carries a path");
+        if (const auto* value = output->bytes())
+          bytes = aligned_payload(b, *value);
+      }
+      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(name), bytes,
+                                              path, forwarded));
+      missing.erase(found);
+      if (b.GetSize() > kMaxFrame)
+        return Failure{D::FailureKind::output_invalid,
+                       "outputs exceed the worker frame limit"};
     }
   }
+  for (const auto& [name, port] : missing)
+    if (port->required())
+      return Failure{D::FailureKind::output_invalid,
+                     "required output " + std::string(name) + " is missing",
+                     {{"port", std::string(name)}}};
+  const auto payload = W::CreateWorkerResult(b, b.CreateVector(outputs));
+  W::FinishWorkerMessageBuffer(
+      b, W::CreateWorkerMessage(b, id, W::WorkerPayload::WorkerResult,
+                                payload.Union()));
+  if (b.GetSize() > kMaxFrame)
+    return Failure{D::FailureKind::output_invalid,
+                   "outputs exceed the worker frame limit"};
+  return std::nullopt;
+}
+
+auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
+             const std::string& package, tsugumi_main_fn& entry,
+             std::string& load_error, flatbuffers::FlatBufferBuilder& reply)
+    -> std::optional<Failure> {
+  const auto stop = [&]() -> std::optional<Failure> {
+    if (cancelled(&host))
+      return Failure{D::FailureKind::cancelled, "the invocation was cancelled"};
+    if (remaining_ms(&host) == 0)
+      return Failure{D::FailureKind::timeout,
+                     "the Card exceeded timeoutSeconds"};
+    return std::nullopt;
+  };
+  // The input and params bytes belong to the Card's SDK: they are copied
+  // aligned, never opened.
+  flatbuffers::FlatBufferBuilder b;
+  std::vector<flatbuffers::Offset<C::CardPort>> inputs;
+  std::map<std::string_view, std::string_view> input_paths;
+  for (const auto* input : *call.inputs()) {
+    flatbuffers::Offset<Payload> bytes;
+    flatbuffers::Offset<flatbuffers::String> path;
+    const auto* location = input->path();
+    const auto* payload = input->bytes();
+    if (input->kind() == D::PortKind::Path && location &&
+        location->string_view().starts_with("/") &&
+        location->string_view().find('\0') == std::string_view::npos &&
+        (!payload || payload->size() == 0)) {
+      input_paths.emplace(location->string_view(), input->name()->string_view());
+      path = b.CreateString(location->string_view());
+    } else if (input->kind() == D::PortKind::FlatBuffer && !location) {
+      if (payload) bytes = aligned_payload(b, *payload);
+    } else {
+      return Failure{D::FailureKind::input_missing,
+                     "invalid Card input envelope",
+                     {{"port", input->name()->str()}}};
+    }
+    inputs.push_back(C::CreateCardPort(
+        b, b.CreateString(input->name()->string_view()), input->kind(), bytes,
+        path));
+  }
+  const auto payload = aligned_payload(b, *call.params());
+  b.Finish(C::CreateCardInput(b, b.CreateVector(inputs), payload));
+
+  if (auto failure = stop()) return failure;
+  if (!entry && load_error.empty()) entry = load_card(package, load_error);
+  if (!entry) return Failure{D::FailureKind::worker_failed, load_error};
+  if (auto failure = stop()) return failure;
+  const tsugumi_call abi{TSUGUMI_ABI_VERSION,
+                         {b.GetBufferPointer(), b.GetSize()},
+                         &host,
+                         &kEffects};
+  tsugumi_bytes returned{};
+  const int status = entry(&abi, &returned);
+  if (auto failure = stop()) return failure;
+  if (status != 0)
+    return Failure{D::FailureKind::worker_failed,
+                   "tsugumi_main returned " + std::to_string(status)};
+  if (!returned.data || returned.size > kMaxFrame)
+    return Failure{D::FailureKind::output_invalid, "invalid CardResult length"};
+  flatbuffers::Verifier verifier(returned.data, returned.size);
+  if (!verifier.VerifyBuffer<C::CardResult>(nullptr))
+    return Failure{D::FailureKind::output_invalid, "invalid CardResult buffer"};
+  return make_result(*flatbuffers::GetRoot<C::CardResult>(returned.data), call,
+                     input_paths, id, reply);
+}
+
+auto serve(const std::string& package) -> int {
+  // A process-lifetime host context. serve exits the process without running
+  // static destructors while Card threads can still enter send.
+  Host host;
+  std::thread(control_loop, std::ref(host)).detach();
+  tsugumi_main_fn entry = nullptr;
+  std::string load_error;
+  uint64_t last_call = 0;
+  bool started = false;
+  while (auto frame = read_frame(kData)) {
+    flatbuffers::Verifier verifier(
+        reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
+    if (!W::VerifyWorkerMessageBuffer(verifier)) std::_Exit(2);
+    const auto* message = W::GetWorkerMessage(frame->data());
+    if (const auto* start = message->value_as_WorkerStart();
+        start && !started) {
+      started = true;
+      bool success = true;
+      for (const auto* env : *start->environment())
+        success &=
+            ::setenv(env->name()->c_str(), env->value()->c_str(), 1) == 0;
+      tsugumi::workerd::clear_secret(*frame);
+      if (!success) std::_Exit(2);
+      continue;
+    }
+    started = true;
+    const auto* call = message->value_as_WorkerCall();
+    if (!call || !message->call_id() || *message->call_id() <= last_call)
+      std::_Exit(2);
+    last_call = *message->call_id();
+    const auto now = Clock::now();
+    const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
+                             Clock::time_point::max() - now)
+                             .count();
+    const auto delay = std::min(call->deadline_ms().value_or(UINT64_MAX),
+                                static_cast<uint64_t>(maximum));
+    host.deadline = call->deadline_ms()
+                        ? (now + std::chrono::milliseconds(delay))
+                              .time_since_epoch()
+                              .count()
+                        : Clock::duration::max().count();
+    host.call_id = last_call;
+    flatbuffers::FlatBufferBuilder reply;
+    if (const auto failure = execute(*call, host, last_call, package, entry,
+                                     load_error, reply)) {
+      reply.Clear();
+      failure_frame(reply, last_call, *failure);
+    }
+    std::fflush(stdout);
+    std::fflush(stderr);
+    if (!send_frame(host, reply)) break;
+  }
+  std::_Exit(0);
 }
 
 }  // namespace
 
 int main(int argc, char** argv) {
+  if (argc != 3 || std::string_view(argv[1]) != "--package") return 2;
   ::signal(SIGPIPE, SIG_IGN);
-  ::signal(
-      SIGTERM, +[](int number) {
-        if (const pid_t child = g_child.load()) ::kill(-child, SIGKILL);
-        ::_exit(128 + number);
-      });
-  if (argc == 3 && std::string(argv[1]) == "--dump-env") {
-    // Used after preRun to carry its environment into the next steps,
-    // written to the worker's pipe.
-    std::string out;
-    for (char** e = environ; *e; ++e) {
-      out += *e;
-      out.push_back('\0');
-    }
-    const int fd = std::atoi(argv[2]);
-    for (size_t written = 0; written < out.size();) {
-      const auto n = ::write(fd, out.data() + written, out.size() - written);
-      if (n < 0 && errno == EINTR) continue;
-      if (n <= 0) return 1;
-      written += static_cast<size_t>(n);
-    }
-    tsugumi::workerd::clear_secret(out);
-    return 0;
-  }
-  Options opt;
-  if (!::getenv("TSUGUMI_WORKER")) ::setenv("TSUGUMI_WORKER", argv[0], 1);
-  for (int i = 1; i + 1 < argc; i += 2) {
-    std::string k = argv[i];
-    if (k == "--bash")
-      opt.bash = argv[i + 1];
-    else if (k == "--package")
-      opt.package = argv[i + 1];
-    else if (k == "--pre")
-      opt.pre = argv[i + 1];
-    else if (k == "--run")
-      opt.run = argv[i + 1];
-    else if (k == "--post")
-      opt.post = argv[i + 1];
-    else if (k == "--views")
-      g_views = argv[i + 1];
-  }
-  // Standby starts only the worker executable. No package-controlled code,
-  // including constructors or an alleged SDK adapter, runs before a call.
-  std::thread(control_loop).detach();
-  uint64_t last_call = 0;
-  bool started = false;
-  while (true) {
-    auto frame = read_frame(kData);
-    if (!frame) return 0;
-    flatbuffers::Verifier v(reinterpret_cast<const uint8_t*>(frame->data()),
-                            frame->size());
-    if (!W::VerifyWorkerMessageBuffer(v)) return 2;
-    const auto* m = W::GetWorkerMessage(frame->data());
-    if (m->value_type() == W::WorkerPayload::WorkerStart && !started) {
-      started = true;
-      bool success = true;
-      for (const auto* e : *m->value_as_WorkerStart()->environment())
-        success &= ::setenv(e->name()->c_str(), e->value()->c_str(), 1) == 0;
-      tsugumi::workerd::clear_secret(*frame);
-      if (!success) return 2;
-      continue;
-    }
-    started = true;
-    if (m->value_type() != W::WorkerPayload::WorkerCall || !m->call_id() ||
-        *m->call_id() <= last_call)
-      return 2;
-    const auto* wc = m->value_as_WorkerCall();
-    Call call;
-    call.msg = wc;
-    call.call_id = *m->call_id();
-    last_call = call.call_id;
-    call.run_id = wc->run_id()->str();
-    for (const auto* s : *wc->card()->segments())
-      call.card += (call.card.empty() ? "" : "/") + s->str();
-    if (wc->deadline_ms()) {
-      call.has_deadline = true;
-      call.deadline = std::chrono::steady_clock::now() +
-                      std::chrono::milliseconds(*wc->deadline_ms());
-    }
-    g_cancel = false;
-    g_call = &call;
-    flatbuffers::FlatBufferBuilder result;
-    execute(opt, call, result);
-    std::fflush(stdout);
-    std::fflush(stderr);
-    reply(call, result);
-    g_call = nullptr;
-  }
+  // Card subprocesses use stdout/stderr but do not inherit the ABI sockets.
+  ::fcntl(kData, F_SETFD, FD_CLOEXEC);
+  ::fcntl(kControl, F_SETFD, FD_CLOEXEC);
+  return serve(argv[2]);
 }

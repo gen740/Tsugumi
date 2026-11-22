@@ -1,20 +1,15 @@
-"""Public RPC regressions for saved inputs, cancellation and display identity."""
+"""Public RPC regressions for saved inputs and cancellation."""
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
 
-from harness.fixtures import add_worker
 from harness.observations import decode_scalar
-from harness.scenario import Project
-from harness.values import recorded_input_json
 from projects import FILE_FBS, SINK, card, conn, run_and_wait, write
-from tsugumi_client import RpcFailure, change, new_id, path, text
+from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 
 def file_fanout_project(root: Path) -> None:
@@ -78,14 +73,14 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
 
 def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_factory):
     """A partial merge run preserves a saved file value from a long source name."""
-    # A long producer name exercises a saved File value whose path must change.
+    # A long producer name exercises a saved Path value whose path must change.
     src = "source-" + "x" * 80
     root = tmp_path / "p"
     write(root,
           defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
-                        "_outputs": FILE_FBS},
+                        "_outputs": FILE_FBS, "retainArtifact": True},
                 "join": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
-                "sink": dict(SINK, recordIO=True)},
+                "sink": dict(SINK, retainArtifact=True)},
           cards=[card(src, "doc"), card("join", "join"), card("out", "sink")],
           conns=[conn(src, "doc", "join", "a"), conn("join", "out", "out", "in")],
           files={"definitions/doc/report.txt": "quarterly numbers\n"})
@@ -96,9 +91,10 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
     # The merge reruns from its saved value; the sink records the path it received.
     run_id, st2 = run_and_wait(c, "join")
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
-    received = recorded_input_json(c, tmp_path / "decode", run_id, "out")
-    assert received["value"]["value"].endswith("/report.txt")
-    assert received["value_type"] == "a"
+    record = c.call("RunRecordRequest", runId=run_id, card=path("out"), invocation=1).record
+    received, = record.inputs
+    assert Path(text(received.filePath)).name == "report.txt"
+    assert Path(text(received.filePath)).read_text() == "quarterly numbers\n"
 
 
 
@@ -129,98 +125,3 @@ root_type Outputs;
         payload = bytes(record.inputs[0].inlineBytes)
         assert decode_scalar(payload, "double", field=0) == 0.042169650342858
         assert decode_scalar(payload, "double", field=1) == 1e-20
-
-
-class FreedNames:
-    """A Card that has shown something, and the saves around it."""
-
-    def __init__(self, root: Path, core_factory):
-        write(root, {}, [], [])
-        daemon = core_factory(project_root=root, mocked_builds=True, mocked_worker=True)
-        self.c = daemon.connect()
-        add_worker(Project(root), "out", root.parent / "display-worker",
-                   [{"op": "display_text", "text": "the old result"}]).save(self.c)
-        opened = self.c.open()
-        self.sub = text(opened.subscriptionId)
-        definition = next(d for d in opened.snapshot.definitions if text(d.id) == "out")
-        self.definition = json.loads(text(definition.cardJson))
-        self.sources = {}
-        for source in opened.snapshot.sources:
-            filename = text(source.path)
-            if filename.startswith("definitions/out/") and filename != "definitions/out/_card.json":
-                self.sources[filename] = bytes(self.c.call("ProjectFileReadRequest", path=filename).bytes)
-        _, st = run_and_wait(self.c, "out")
-        assert st.state == RunState.succeeded
-
-    def restore(self):
-        changes = [change("PutDefinition", id="out", cardJson=json.dumps(self.definition, separators=(",", ":")))]
-        changes.extend(change("PutSource", path=filename, bytes=source) for filename, source in self.sources.items())
-        self.save(["out"], *changes)
-
-    def shown(self, card: str):
-        """What the core sends for a Card that becomes visible: its text and its Card."""
-        self.c.notifications.clear()
-        self.c.call("ViewSetVisibleRequest", subscriptionId=self.sub, cards=[path(card)])
-        # The initial display is queued by the visibility update before any
-        # subsequent reply on this connection.
-        self.c.call("ProjectInspectRequest")
-        n = next((n for n in self.c.notifications.copy()
-                  if n.valueType == NotificationPayload.DisplayUpdated), None)
-        if n is None:
-            return None
-        return text(n.value.display.value.text), "/".join(text(s) for s in n.value.display.card.segments)
-
-    def save(self, cards: list, *changes):
-        snap = self.c.call("ProjectInspectRequest")
-        project = json.loads(text(snap.projectJson))
-        project["canvas"]["cards"] = [{"id": i} for i in cards]
-        project["canvas"]["connections"] = []
-        self.c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                    changes=[change("SetProject", json=json.dumps(project)), *changes])
-
-
-def test_a_renamed_card_keeps_its_display(tmp_path, core_factory):
-    """Renaming preserves a display at its permanent identifier."""
-    from test_definitions import rename
-    t = FreedNames(tmp_path / "p", core_factory)
-    before = t.shown("out")
-    assert before == ("the old result", "out")
-    rename(t.c, "out", "kept")
-    assert t.shown("out") == before
-    assert t.shown("kept") is None
-    new_id = text(t.c.call("CardIdRequest", stem="kept").id)
-    t.save(["out", new_id], change("PutDefinition", id=new_id, cardJson=json.dumps(SINK), metaJson='{"name":"kept"}'))
-    assert t.shown(new_id) is None
-
-
-def test_a_card_under_a_deleted_cards_name_does_not_get_its_display(tmp_path, core_factory):
-    """A different card reusing a deleted name does not inherit the old display."""
-    t = FreedNames(tmp_path / "p", core_factory)
-    assert "the old result" in t.shown("out")[0]
-    t.save([], change("RemoveDefinition", id="out"))
-    # A Card made otherwise: nothing, from the last run's history either, and
-    # asking again does not bring it back.
-    t.save(["out"], change("PutDefinition", id="out", cardJson=json.dumps(SINK)))
-    assert t.shown("out") is None
-    assert t.shown("out") is None
-
-
-def test_renaming_another_card_cannot_revive_a_deleted_display(tmp_path, core_factory):
-    """Matching a human name does not match a past Card's identity."""
-    from test_definitions import rename
-    t = FreedNames(tmp_path / "p", core_factory)
-    t.save([], change("RemoveDefinition", id="out"))
-    t.save(["other"], change("PutDefinition", id="other", cardJson=json.dumps(SINK)))
-    rename(t.c, "other", "out")
-    assert t.shown("other") is None
-
-
-def test_a_card_put_back_as_it_was_has_its_display_again(tmp_path, core_factory):
-    """Restoring an equivalent card restores its matching recorded display."""
-    t = FreedNames(tmp_path / "p", core_factory)
-    assert "the old result" in t.shown("out")[0]
-    t.save([], change("RemoveDefinition", id="out"))
-    # Written with other spacing than the file it came from: the same Card all the same.
-    t.restore()
-    got = t.shown("out")
-    assert got and "the old result" in got[0]

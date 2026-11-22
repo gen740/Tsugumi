@@ -53,7 +53,9 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// A value travelling on a port. `type` is the port message type.
+// A value travelling on a port. A FlatBuffer value carries `bytes` of the
+// port message `type`; the core never opens them. A Path value carries `path`
+// (a regular file or a directory, decided from lstat when needed) and no bytes.
 struct Value {
   std::string name;  // port name
   PortKind kind = PortKind::FlatBuffer;
@@ -62,20 +64,12 @@ struct Value {
   std::optional<std::string> artifact_id;
   // Project state-relative history path, carried independently of staging.
   std::optional<std::string> recorded_path = std::nullopt;
+  std::string path = {};
 };
 
-auto with_path(const Value& value, const std::string& path) -> Value;
-auto path_value(const Value& value) -> std::optional<std::string>;
-
-// The core owns only the address and revision. Presentation remains an opaque
-// verified FlatBuffer, including any shared tables and strings inside it.
-struct DisplayData {
-  CardPath card;
-  std::string run_id;
-  uint64_t invocation = 0;
-  uint64_t revision = 0;
+struct WorkerDisplayData {
+  std::string view;
   std::string bytes;
-  size_t root_offset = 0;
 };
 
 }  // namespace tsugumi

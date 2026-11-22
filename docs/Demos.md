@@ -7,6 +7,10 @@ Draft entries with a finished counterpart declare both language-qualified counte
 
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
+## TODO: port the demos to Card ABI 9
+
+The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for Card ABI 8: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
+
 | Demo | Subject | What it shows |
 | --- | --- | --- |
 | [Data to report](#data-to-report-report) | Aggregating a sales table into a report | Reproduction by seed, failure and `blocked`, rerunning one Card with saved inputs, artifacts, child Workflows |
@@ -35,7 +39,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 | [Dynamical systems gallery](#dynamical-systems-gallery-dynamics-draft) | Six dynamical systems | The Agent splits independent Drafts among helpers and implements them at the same time |
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
-The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), fork (the same value to several Cards), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-results-and-reports)).
+The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), fork (the same value to several Cards), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
 Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
 
 ## The basics
@@ -330,7 +334,7 @@ A demo that has the Agent implement the same problem as [MNIST · comparing clas
 
 ## csharp-calibration
 
-The **Cross-language calibration (C#)** demo passes three C++ readings (1.25, 2.5, 3.75) through a C# Card with `factor = 1.6`, then summarizes the typed result in Python and retains a CSV. The expected calibrated values are 2, 4 and 6: sum 12 and mean 4. Change `calibrate.factor` to 2 and rerun; the sum becomes 15 and mean 5. The C# log uses a fixed-hash Newtonsoft.Json dependency. Each Card's source and the saved CSV remain available to inspect. See [C# Cards](CSharp.md) for the SDK and worker lifetime.
+The **Cross-language calibration (C#)** demo passes three C++ readings (1.25, 2.5, 3.75) through a C# Card with `factor = 1.6`, then summarizes the typed result in Python and retains a CSV. The expected calibrated values are 2, 4 and 6: sum 12 and mean 4. Change `calibrate.factor` to 2 and rerun; the sum becomes 15 and mean 5. The C# log uses a fixed-hash Newtonsoft.Json dependency. Each Card's source and the saved CSV remain available to inspect. See the [C# SDK guide](https://github.com/gen740/tsugumi-kit/blob/main/sdk/csharp/README.md) for the SDK and worker lifetime.
 
 ## Visualization → report (`visualization`)
 

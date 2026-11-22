@@ -8,7 +8,7 @@ import type { FlowDirection } from '../src/model/prefs'
 const root = process.argv[2]
 type Wire = { a: Pt; b: Pt; name: string }
 type Scene = { name: string; flow: FlowDirection; obstacles: Rect[]; wires: Wire[] }
-type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; displays?: Record<string, Partial<Rect> & { hidden?: boolean }>; boundary?: Record<string, Pt> }
+type Layout = { flow?: string; cards?: Record<string, Partial<Pt> & { collapsed?: boolean }>; boundary?: Record<string, Pt> }
 
 const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync(file, 'utf8')) : undefined)
 

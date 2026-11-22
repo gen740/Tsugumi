@@ -116,7 +116,6 @@ export function broadcastPages(v: unknown) {
 export interface SetupStatus {
   tsugumid: { path: string; ok: boolean }
   worker: { path: string; ok: boolean }
-  sdk: { path: string; ok: boolean }
   nix: { ok: boolean }
   repo: string
 }

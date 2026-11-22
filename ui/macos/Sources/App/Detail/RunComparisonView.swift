@@ -143,7 +143,7 @@ struct ComparedRunField: Identifiable {
   static func valueDifference(_ a: Tsugumi_Data_NamedValueT?, _ b: Tsugumi_Data_NamedValueT?) -> ComparedDifference {
     guard let a, let b else { return a == nil && b == nil ? .same : .unknown }
     if a.kind != b.kind || a.rootType != b.rootType || a.schemaBfbs != b.schemaBfbs { return .changed }
-    if a.kind == .file {
+    if a.kind == .path {
       guard let x = a.fileContentHash, !x.isEmpty, let y = b.fileContentHash, !y.isEmpty else { return .unknown }
       return x == y ? .same : .changed
     }
@@ -267,18 +267,6 @@ struct ComparedRunField: Identifiable {
                             difference: a == nil || b == nil ? .unknown : left?.target.path == right?.target.path && (left?.propagate != false) == (right?.propagate != false) ? .same : .changed)
   }
 
-  static func sameDisplay(_ a: DisplaySnapshot?, _ b: DisplaySnapshot?) -> Bool {
-    switch (a?.content, b?.content) {
-    case (nil, nil), (.unavailable?, .unavailable?): return true
-    case let (.text(x)?, .text(y)?), let (.markdown(x)?, .markdown(y)?): return x == y
-    case let (.scalar(x, xl)?, .scalar(y, yl)?): return x == y && xl == yl
-    case let (.table(xc, xr)?, .table(yc, yr)?): return xc == yc && xr == yr
-    case let (.image(xm, xd, xa)?, .image(ym, yd, ya)?): return xm == ym && xd == yd && xa == ya
-    case let (.module(xn, xj, xb)?, .module(yn, yj, yb)?): return xn == yn && xj == yj && xb == yb
-    case let (.points(xx, xy, xz, xc)?, .points(yx, yy, yz, yc)?): return xx == yx && xy == yy && xz == yz && xc == yc
-    default: return false
-    }
-  }
 }
 
 struct RunComparisonView: View {
@@ -397,10 +385,6 @@ private struct ComparedRunCardView: View {
   @State private var shown: ComparedRunRow?
   private var row: ComparedRunRow { shown ?? latest }
   private var batch: Bool { RunComparison.inBatch(latest.left?.summary) || RunComparison.inBatch(latest.right?.summary) }
-  @State private var leftDisplays = RecordedDisplays()
-  @State private var rightDisplays = RecordedDisplays()
-  private var leftDisplay: DisplaySnapshot? { leftDisplays.display }
-  private var rightDisplay: DisplaySnapshot? { rightDisplays.display }
   private let changed = Color.accentColor.opacity(0.09)
 
   var body: some View {
@@ -432,17 +416,6 @@ private struct ComparedRunCardView: View {
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
           ComparedFieldsView(title: "出力", values: RunComparison.values(true, row.left, row.right),
                              unavailable: RunComparison.valuesUnavailable(row.left, row.right))
-          HStack(alignment: .top, spacing: 12) {
-            VStack { DisplayRecordPicker(history: leftDisplays) }.frame(maxWidth: .infinity)
-            VStack { DisplayRecordPicker(history: rightDisplays) }.frame(maxWidth: .infinity)
-          }
-          if leftDisplay != nil || rightDisplay != nil {
-            HStack { Text("表示").bold(); if !RunComparison.sameDisplay(leftDisplay, rightDisplay) { Text("相違あり").font(.caption) } }
-            HStack(alignment: .top, spacing: 12) {
-              retainedDisplay(leftDisplay)
-              retainedDisplay(rightDisplay)
-            }.background(RunComparison.sameDisplay(leftDisplay, rightDisplay) ? .clear : changed)
-          }
         }.padding(.top, 8)
       } label: {
         HStack {
@@ -456,14 +429,6 @@ private struct ComparedRunCardView: View {
     }
     .task(id: "\(leftRun)|\(rightRun)|\(latest.card)") { await loadMembers() }
     .task(id: member) { await loadMember() }
-    .task(id: "\(leftRun)|\(latest.card)") {
-      await leftDisplays.load(rpc: session.rpc, run: leftRun, card: path(latest.card), known: latest.left?.record)
-    }
-    .task(id: "\(rightRun)|\(latest.card)") {
-      await rightDisplays.load(rpc: session.rpc, run: rightRun, card: path(latest.card), known: latest.right?.record)
-    }
-    .task(id: leftDisplays.selection) { await leftDisplays.show(rpc: session.rpc, run: leftRun, card: path(latest.card)) }
-    .task(id: rightDisplays.selection) { await rightDisplays.show(rpc: session.rpc, run: rightRun, card: path(latest.card)) }
   }
 
   private func loadMembers() async {
@@ -500,13 +465,6 @@ private struct ComparedRunCardView: View {
     let right = await load(rightRun, pair.right, latest.right)
     guard !Task.isCancelled else { return }
     shown = ComparedRunRow(card: latest.card, left: left, right: right)
-  }
-
-  @ViewBuilder private func retainedDisplay(_ display: DisplaySnapshot?) -> some View {
-    Group {
-      if let display { DisplayView(display: display) }
-      else { Text("表示の記録がありません").foregroundStyle(.secondary) }
-    }.frame(maxWidth: .infinity).frame(height: display == nil ? 60 : 360).clipped()
   }
 
   @ViewBuilder private func status(_ side: ComparedRunCard?) -> some View {

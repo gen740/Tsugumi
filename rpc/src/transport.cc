@@ -300,7 +300,7 @@ bool TransportServer::fill_write(Conn& c) {
     body = std::move(o.raw);
   }
   trace::Observe(c.trace_link, opts_.trace_endpoint, c.peer, true, body,
-                 opts_.trace_codec, o.trace);
+                 opts_.trace_codec, o.note ? o.note->trace : o.trace);
   if (c.websocket) {
     std::string h;
     h += static_cast<char>(0x82);  // FIN + binary

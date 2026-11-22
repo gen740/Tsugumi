@@ -2,7 +2,7 @@
 
 import pytest
 
-from harness.fixtures import add_worker, worker_project
+from harness.fixtures import mock_plan, add_worker, worker_project
 from harness.observations import decode_scalar, read_output
 from harness.scenario import STRING_OUTPUT, Gate, Project, run, wait_run
 from tsugumi_client import path, text
@@ -85,7 +85,6 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     add_worker(graph, "sink", tmp_path / "sink", [
         gate.action(),
         {"op": "echo", "input": "in", "port": "out"},
-        {"op": "display_text", "text": "received input"},
     ], inputs=[{"name": "in"}], executionService="local")
     graph.connect("source", "out", "sink", "in").save(client)
 
@@ -102,7 +101,6 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     assert read_output(client, run_id, card="sink") == read_output(client, run_id, card="source")
     record = client.call("RunRecordRequest", runId=run_id, card=path("sink"), invocation=1).record
     assert [text(segment) for segment in record.inputSources[0].card.segments] == ["source"]
-    assert text(record.display.value.text) == "received input"
 
 
 def test_timeout_ends_a_worker_that_ignores_cancellation(core_factory, project, tmp_path):
@@ -187,7 +185,7 @@ def test_build_wait_can_be_interrupted(core_factory, project, cancel):
     gate = Gate(daemon.gates, "build")
     Project(project).card(
         "work", {"type": "code", "sandbox": {"filesystem": False}, "buildTimeoutSeconds": 10 if cancel else 1},
-        outputs=STRING_OUTPUT, manifest={"run": {"bash": "true"}}, plan={"gate": "build"},
+        outputs=STRING_OUTPUT, plan=mock_plan(["/unused"], gate="build"),
     ).save(client)
 
     run_id = run(client)

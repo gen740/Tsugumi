@@ -212,7 +212,8 @@ auto WebPages::Handle(const RequestIn& request, const H::Request& r)
     };
     result.tsugumid = file(home_.tsugumid, f::exists(home_.tsugumid, error));
     result.worker = file(home_.worker, f::exists(home_.worker, error));
-    result.sdk = file(home_.sdk, f::exists(home_.sdk / "nix", error));
+    result.nix_dir =
+        file(home_.nix_dir, f::exists(home_.nix_dir / "card-entry.nix", error));
     return wire::HostReply(request.request_id, std::move(result));
   }
   if (const auto* reveal = r.value_as_HostRevealRequest()) {

@@ -3,12 +3,20 @@
 import json
 import shutil
 import sqlite3
+from pathlib import Path
 
 import pytest
-from harness.fixtures import worker_project
-from harness.scenario import HOST_BASH, STRING_OUTPUT, Project, run, wait_run
+from harness.scenario import STRING_OUTPUT, Project, run, wait_run
+from test_run_lists import mock_plan, scripted_implementations
 from Tsugumi.Data.RunState import RunState
 from tsugumi_client import RpcFailure, new_id, path, text
+
+
+def worker_project(client, project, directory, actions):
+    Project(project).card(
+        "work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
+        outputs=STRING_OUTPUT, plan=mock_plan(scripted_implementations(directory, [actions])),
+    ).save(client)
 
 
 def inventory(client, run_id, card="work"):
@@ -141,7 +149,7 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     graph = Project(project).card("start", {"type": "trigger"})
     for name in ["a", "b"]:
         graph.card(name, {"type": "code", "sandbox": {"filesystem": False}, "inputs": [{"name": "start"}]},
-                   outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}})
+                   outputs=STRING_OUTPUT, plan=mock_plan([str(package)]))
         graph.connect("start", "out", name, "start")
     graph.save(client)
     first = run(client, "start")
@@ -160,8 +168,9 @@ def test_cards_share_one_environment_and_changed_builds_get_separate_entries(cor
     latest = client.call("RunLatestInvocationsRequest", runId=first).records
     ids = {"/".join(text(x) for x in row.card.segments): text(row.environmentId) for row in latest}
     assert ids == {"start": None, "a": original_id, "b": original_id}
+    changed, = scripted_implementations(tmp_path / "changed", [[]])
     graph.card("b", {"type": "code", "sandbox": {"filesystem": False}, "inputs": [{"name": "start"}]},
-               outputs=STRING_OUTPUT, manifest={"run": {"package": str(package)}, "preRun": "true"})
+               outputs=STRING_OUTPUT, plan=mock_plan([changed]))
     graph.save(client)
     second = run(client, "start")
     assert wait_run(client, second).state == RunState.succeeded
@@ -338,35 +347,45 @@ def test_dependency_search_is_literal_case_insensitive_and_paginated(core_factor
         assert set(found) == expected
 
 
-def test_local_worker_uses_manifest_shell_and_path(core_factory, project, tmp_path):
-    """The manifest controls the shell and PATH for both hooks and the body, also after reuse."""
+def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_path):
+    """Each ABI 9 package and its declared view are in the recorded closure."""
+    from harness.daemon import ROOT
+    from harness.native_card import STATIC_RESULT_ENTRY, card_source
     from harness.observations import decode_scalar, read_output
+    from harness.values import encode_message
+    from Tsugumi.Data.PortKind import PortKind
 
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory().connect()
     graph = Project(project)
     inventories = []
+    abi_header = (ROOT / "protocol/include/tsugumi/card_abi.h").read_text()
     for version in ["first", "changed"]:
-        tools = tmp_path / version
-        tools.mkdir()
-        shell = tools / "bash"
-        shell.write_text(f'#!/bin/sh\nexport DEFINITION_SHELL={version}\nexec {HOST_BASH} "$@"\n')
-        shell.chmod(0o755)
-        jq = tools / "jq"
-        jq.write_text(f'#!/bin/sh\nprintf %s {version}\n')
-        jq.chmod(0o755)
-        check = f'test "$DEFINITION_SHELL" = {version} && test "$(jq)" = {version} || exit 42\n'
-        body = check + 'printf \'{"out":{"value":"%s"}}\' "$(jq)" > "$TSUGUMI_OUTPUT"'
-        graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True, "reuseWorker": True},
-                   outputs=STRING_OUTPUT,
-                   plan={"closure": [str(tools)]},
-                   manifest={"shell": str(shell), "path": str(tools), "run": {"bash": body},
-                             "preRun": check + "echo pre", "postRun": check + "echo post"}).save(client)
+        message = encode_message(tmp_path / "encode", STRING_OUTPUT, {"value": version},
+                                 root_type="Value")
+        sources = {
+            "tsugumi/card_abi.h": abi_header,
+            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", PortKind.FlatBuffer, message)]),
+            "view.html": "<p>Version " + version + "</p>",
+            "default.nix": """{ pkgs, ... }: {
+              run = pkgs.runCommandCC "recorded-plan-card" { } ''
+                mkdir -p "$out/lib"
+                "$CC" -shared -fPIC -I${./.} ${./main.c} -o "$out/lib/main.so"
+              '';
+              views = [{ name = "view"; type = "html"; blob = ./view.html; }];
+            }""",
+        }
+        graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
+                            "reuseWorker": True}, outputs=STRING_OUTPUT, sources=sources).save(client)
         for _ in range(2):
             run_id = run(client)
             assert wait_run(client, run_id).state == RunState.succeeded
             assert decode_scalar(read_output(client, run_id)) == version
             _, paths = inventory(client, run_id)
-            assert str(tools) in paths
+            environment, = client.call("RunEnvironmentsRequest", runId=run_id).environments
+            plan = json.loads(Path(text(environment.manifest)).read_text())
+            view, = plan["views"]
+            assert Path(view["blob"]).read_text() == sources["view.html"]
+            assert {*plan["runs"], view["blob"]} <= paths
             inventories.append(paths)
     assert inventories[0] == inventories[1]
     assert inventories[2] == inventories[3]

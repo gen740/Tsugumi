@@ -168,6 +168,17 @@ public extension RPCClient {
     return out
   }
 
+  /// One page of the file of entry `index` of a Card's views list, which must be named `name`.
+  func readCardView(card: [String], index: Int, name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
+    let r = Tsugumi_RPC_CardViewReadRequestT()
+    r.card = cardPath(card)
+    r.index = UInt32(index)
+    r.name = name
+    r.offset = offset
+    r.limitBytes = 1 << 20
+    return try await call(.cardviewreadrequest, r)
+  }
+
   func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
     let r = Tsugumi_RPC_ViewSetVisibleRequestT()
     r.subscriptionId = subscription
@@ -184,21 +195,13 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
-  /// Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
-  /// for one revision and returns the file list when ready.
-  func generatedContracts(card: [String], atRev: UInt64) async throws -> [Tsugumi_RPC_SDKFileT] {
-    let r = Tsugumi_RPC_CardSDKPrepareRequestT()
+  /// Builds the saved Card from its current wiring and returns the files its
+  /// builder placed under share/tsugumi/api/, or the build failure and log.
+  func cardApi(card: [String], atRev: UInt64) async throws -> Tsugumi_RPC_CardApiResultT {
+    let r = Tsugumi_RPC_CardApiRequestT()
     r.card = cardPath(card)
     r.atRev = atRev
-    r.opId = UUID().uuidString.lowercased()
-    var res: Tsugumi_RPC_CardSDKPrepareResultT = try await call(.cardsdkpreparerequest, r)
-    for _ in 0..<100 where res.state == .pending {
-      try await Task.sleep(for: .milliseconds(100))
-      let s = Tsugumi_RPC_CardSDKStatusRequestT()
-      s.opId = res.opId
-      res = try await call(.cardsdkstatusrequest, s)
-    }
-    return res.files.compactMap { $0 }
+    return try await call(.cardapirequest, r)
   }
 
   /// Each Card's latest invocation of a run.

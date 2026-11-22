@@ -271,7 +271,7 @@ TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
     ADD_FAILURE() << diagnostic.code << ": " << diagnostic.message;
 }
 
-TEST_F(OpaqueMetadata, RealEmptyConditionIsStillInvalidBesideADraft) {
+TEST_F(OpaqueMetadata, BranchConditionInheritsItsUpstreamSchema) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"branch"}],"connections":[
@@ -284,13 +284,14 @@ TEST_F(OpaqueMetadata, RealEmptyConditionIsStillInvalidBesideADraft) {
                    R"({"type":"branch"})");
   Store store({root, ""});
   store.open();
-  const auto& diagnostics =
-      store.current()->resolution->find({"branch"})->diags;
-  ASSERT_EQ(diagnostics.size(), 1);
-  EXPECT_EQ(diagnostics.front().code, "invalid_condition");
+  const auto& graph = *store.current()->resolution;
+  const auto* branch = graph.find({"branch"});
+  EXPECT_EQ(branch->input("condition")->type,
+            graph.find({"start"})->output("out")->type);
+  EXPECT_TRUE(branch->diags.empty());
 }
 
-TEST_F(OpaqueMetadata, DraftEmptyCannotMaskARealTypeDerivedSeveralStepsLater) {
+TEST_F(OpaqueMetadata, ADraftAndARealSourceCannotShareAnInput) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"plan"},{"id":"sink"},{"id":"relay"},{"id":"condition"}],"connections":[
@@ -314,11 +315,9 @@ TEST_F(OpaqueMetadata, DraftEmptyCannotMaskARealTypeDerivedSeveralStepsLater) {
   Store store({root, ""});
   store.open();
   const auto* sink = store.current()->resolution->find({"sink"});
-  const auto* source = store.current()->resolution->find({"condition"});
-  ASSERT_TRUE(source->output("value")->type);
-  EXPECT_EQ(sink->input("value")->type, source->output("value")->type);
-  EXPECT_EQ(sink->output("a")->type, source->output("value")->type);
-  EXPECT_TRUE(sink->diags.empty());
+  EXPECT_EQ(sink->input("value")->type, types::empty_type());
+  ASSERT_EQ(sink->diags.size(), 1);
+  EXPECT_EQ(sink->diags.front().code, "multiple_input_wires");
 }
 
 TEST_F(OpaqueMetadata,

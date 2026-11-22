@@ -657,13 +657,6 @@ private struct GeneralCategory: View {
       }
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("実行") {
-          if model.kind == .code {
-            Picker("trigger", selection: string("trigger", fallback: "allInputs")) {
-              Text("すべての入力が揃ったとき").tag("allInputs")
-              Text("入力が届くたび").tag("eachInput")
-            }
-            .help("allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。")
-          }
           numberField("maxRuns", label: "最大発火回数", fallback: "1")
             .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
@@ -968,8 +961,8 @@ private struct ParamRow: View {
     let sweep = param["sweep"]?.array
     let sweepText = draft ?? JSONValue.array(sweep ?? []).serialized(pretty: false)
     let parsed = (try? JSONValue.parse(sweepText))?.array
-    let fileInput = model.kind == .input && name == "value" && type == "string" &&
-      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .file } ?? false)
+    let pathInput = model.kind == .input && name == "value" && type == "string" &&
+      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .path } ?? false)
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         if sweep != nil {
@@ -981,6 +974,15 @@ private struct ParamRow: View {
           Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
         } else {
           TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
+          if pathInput, let folder = model.session.definitionDir(model.cardKey) {
+            Menu("ファイルかフォルダを選択…") {
+              ForEach(pathChoices(model.session.sourcePaths, definitionDir: folder), id: \.self) { p in
+                Button(p) { set(.string(p)) }
+              }
+            }
+            .fixedSize()
+            .help("プロジェクトのファイルかフォルダを選びます。")
+          }
         }
         Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
           .guideTarget("param:\(name)")
@@ -997,7 +999,7 @@ private struct ParamRow: View {
           if type.hasSuffix("[]") { Text("リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。") }
         }.font(.caption).foregroundStyle(.secondary)
       }
-      if fileInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
+      if pathInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
         Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
           .font(.caption).foregroundStyle(.secondary)
         if sweep == nil {
@@ -1075,13 +1077,13 @@ private struct PortsCategory: View {
               TextField("用途", text: note("inputs", name), prompt: Text("用途（何を受け取るか）"))
                 .textFieldStyle(.roundedBorder).labelsHidden()
                 .help("このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。")
-              Text(r?.inputs.first { $0.name == name }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
+              Text(r?.inputs.first { $0.name == name }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
           }
           Button("入力を追加") { editInputs { $0.append(.object([("name", .string("in\($0.count + 1)"))])) } }
         } else {
-          ForEach(r?.inputs ?? [], id: \.name) { p in LabeledContent(p.name, value: p.rootType ?? String(localized: "未解決")) }
+          ForEach(r?.inputs ?? [], id: \.name) { p in LabeledContent(p.name, value: p.typeName ?? String(localized: "未解決")) }
           if (r?.inputs ?? []).isEmpty { Text("入力はありません").foregroundStyle(.secondary) }
         }
       } header: { Text("入力ポート") } footer: {
@@ -1092,14 +1094,13 @@ private struct PortsCategory: View {
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("記録と成果物") {
           recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
-          recordingOverride("recordDisplays", label: "記録指定のある表示を記録")
           recordingOverride("recordIO", label: "入出力の値を記録")
           recordingOverride("retainArtifact", label: "出力ファイルと成果物を保持")
-          // Only File / Directory outputs can be kept as artifacts.
-          let keepable = (r?.outputs ?? []).filter { $0.kind == .file || $0.kind == .directory }
+          // Only Path outputs can be kept as artifacts.
+          let keepable = (r?.outputs ?? []).filter { $0.kind == .path }
           if keepable.isEmpty {
             LabeledContent("成果物にする出力") {
-              Text(r == nil ? "出力の型がまだ解決されていません" : "File / Directory の出力がないため、保持できる出力はありません")
+              Text(r == nil ? "出力の型がまだ解決されていません" : "Path の出力がないため、保持できる出力はありません")
                 .font(.callout).foregroundStyle(.secondary)
             }
           } else {
@@ -1108,7 +1109,7 @@ private struct PortsCategory: View {
               set: { model.definition?["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
               Text("なし").tag("")
               ForEach(keepable, id: \.name) { p in
-                Text("\(p.name)（\(p.kind == .file ? "File" : "Directory")）").tag(p.name)
+                Text(p.name).tag(p.name)
               }
             }
           }
@@ -1175,7 +1176,7 @@ private struct ForkOutputsSection: View {
             .help("出力ポートの名前")
           TextField("用途", text: portNote(model, "outputs", names[i]), prompt: Text("用途（何を出すか）"))
             .textFieldStyle(.roundedBorder).labelsHidden()
-          Text(r?.outputs.first { $0.name == names[i] }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
+          Text(r?.outputs.first { $0.name == names[i] }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             .disabled(names.count <= 1)
             .help("出力を削除")
@@ -1217,23 +1218,23 @@ private struct OutputPortsSection: View {
           Text(p.name).font(.body.monospaced()).frame(maxWidth: 120, alignment: .leading)
           TextField("用途", text: portNote(model, "outputs", p.name), prompt: Text("用途（何を出すか）"))
             .textFieldStyle(.roundedBorder).labelsHidden()
-          if types.isEmpty || model.outputsPath == nil {
-            Text((p.rootType ?? String(localized: "未解決")) + (p.optional ? String(localized: "（省略可）") : ""))
+          let selection = p.kind == .path ? "string" : p.rootType ?? ""
+          if model.outputsPath == nil {
+            Text(p.typeName ?? String(localized: "未解決"))
               .font(.caption).foregroundStyle(.secondary)
           } else {
-            Picker("型", selection: Binding(get: { p.rootType ?? "" }, set: { set(p.name, type: $0, kind: p.kind) })) {
-              if p.rootType == nil { Text("未解決").tag("") }
+            Picker("型", selection: Binding(get: { selection }, set: {
+              set(p.name, type: $0, kind: $0 == "string" ? .path : .flatbuffer)
+            })) {
+              if selection.isEmpty { Text("未解決").tag("").disabled(true) }
+              if p.kind != .path, let type = p.rootType, !types.contains(type) {
+                Text(short(type)).tag(type)
+              }
+              Text("Path").tag("string").help("Path の出力は、ファイルかフォルダ 1 つを渡します")
               ForEach(types, id: \.self) { Text(short($0)).tag($0).help($0) }
             }
             .labelsHidden().frame(maxWidth: 150)
             .help("_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）")
-            Picker("種類", selection: Binding(get: { p.kind }, set: { set(p.name, type: p.rootType ?? "", kind: $0) })) {
-              Text("値").tag(Tsugumi_Data_PortKind.flatbuffer)
-              Text("File").tag(Tsugumi_Data_PortKind.file)
-              Text("Directory").tag(Tsugumi_Data_PortKind.directory)
-            }
-            .labelsHidden().frame(maxWidth: 100)
-            .help("File / Directory は、型に文字列の value（パス）がある場合に選べます")
           }
         }
       }
@@ -1496,8 +1497,25 @@ private struct ContextCategory: View {
   }
 }
 
+/// What the last "build SDK" returned: the files of share/tsugumi/api/ by
+/// their shown name, or the build failure and its log. Held only while the
+/// editor shows the sources.
+private struct SdkBuild {
+  struct File: Identifiable {
+    let id: String
+    let name: String
+    let text: String
+  }
+
+  var building = false
+  var files: [File]?
+  var failure: String?
+  var log: String?
+}
+
 /// File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
-/// `default.nix`, with formatting, errors in place and the generated inputs.
+/// `default.nix`, with formatting, errors in place and the Card's generated
+/// API (the "SDK" section: what the builder placed under share/tsugumi/api/).
 /// The open files, the shown one and the expanded folders live on the model,
 /// so switching categories or applying keeps them.
 private struct SourceCategory: View {
@@ -1508,10 +1526,10 @@ private struct SourceCategory: View {
   @State private var formatting = false
   @State private var formatMessage: String?
   @State private var formatMarkers: [EditorMarker] = []
-  @State private var generated: [String: String] = [:]
-  @State private var generatedError: String?
+  @State private var sdk = SdkBuild()
 
-  static let generatedPrefix = "generated:"
+  static let sdkPrefix = "sdk:"
+  static let sdkLog = "sdk:log"
 
   private var prefix: String { model.session.definitionDir(model.cardKey) ?? "" }
 
@@ -1523,14 +1541,7 @@ private struct SourceCategory: View {
           VStack(alignment: .leading, spacing: 0) {
             FileTreeRows(nodes: FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), depth: 0,
                          model: model, open: open, contextMenu: menu)
-            if model.kind == .code {
-              Text("生成").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .padding(.leading, 10).padding(.top, 12).padding(.bottom, 2)
-              ForEach(["_inputs.fbs", "_params.fbs"], id: \.self) { name in
-                FileRow(name: name, icon: "lock.doc", depth: 0, folder: nil,
-                        selected: model.shownFile == Self.generatedPrefix + name, readOnly: true) { open(Self.generatedPrefix + name) }
-              }
-            }
+            if model.kind == .code { sdkSection }
           }
           .padding(.vertical, 4)
         }
@@ -1538,9 +1549,9 @@ private struct SourceCategory: View {
         HStack {
           Button { showNew = true; newName = "src/" } label: { Image(systemName: "plus") }.help("ファイルを作成")
           Button {
-            if let s = model.shownFile, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); model.closeFile(s) }
+            if let s = model.shownFile, !s.hasPrefix(Self.sdkPrefix) { model.removeFile(s); model.closeFile(s) }
           } label: { Image(systemName: "minus") }
-            .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.generatedPrefix)).help("表示中のファイルを削除")
+            .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.sdkPrefix)).help("表示中のファイルを削除")
           Spacer()
         }
         .buttonStyle(.borderless).padding(6)
@@ -1585,6 +1596,67 @@ private struct SourceCategory: View {
 
   private func open(_ path: String) { model.openFile(path) }
 
+  /// The "SDK" section: builds the saved definition with the current wiring
+  /// (the Card API request the Agent uses) and lists share/tsugumi/api/.
+  @ViewBuilder private var sdkSection: some View {
+    HStack {
+      Text("SDK").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+      Spacer()
+      Button(sdk.building ? String(localized: "ビルドしています…") : String(localized: "SDK をビルド")) { Task { await buildSdk() } }
+        .controlSize(.small).disabled(sdk.building || model.session.rpc == nil)
+        .help("保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します")
+    }
+    .padding(.leading, 10).padding(.trailing, 6).padding(.top, 12).padding(.bottom, 2)
+    if let failure = sdk.failure {
+      Text("ビルドできませんでした: \(failure)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+        .padding(.horizontal, 10).padding(.vertical, 2)
+      if let log = sdk.log, !log.isEmpty {
+        FileRow(name: String(localized: "ビルドログ"), icon: "doc.text", depth: 0, folder: nil,
+                selected: model.shownFile == Self.sdkLog, readOnly: true) { open(Self.sdkLog) }
+      }
+    }
+    if let files = sdk.files {
+      if files.isEmpty {
+        Text("ビルドで生成された SDK ファイルはありません").font(.caption).foregroundStyle(.secondary)
+          .padding(.horizontal, 10).padding(.vertical, 2)
+      }
+      ForEach(files) { file in
+        FileRow(name: file.name, icon: "lock.doc", depth: 0, folder: nil,
+                selected: model.shownFile == file.id, readOnly: true) { open(file.id) }
+          .help(file.name)
+      }
+    }
+  }
+
+  private func buildSdk() async {
+    guard let rpc = model.session.rpc, !sdk.building else { return }
+    sdk = SdkBuild(building: true)
+    do {
+      let result = try await rpc.cardApi(card: path(model.cardKey), atRev: model.session.rev)
+      let implementations = result.implementations.compactMap { $0 }
+      if let failure = result.failure {
+        sdk = SdkBuild(failure: failure.diagnostic ?? "\(failure.kind)", log: result.log)
+      } else {
+        let files = implementations.enumerated().flatMap { position, implementation in
+          let label = implementation.label ?? ""
+          let base = implementations.count > 1 ? (label.isEmpty ? "#\(position + 1)" : label) + "/" : ""
+          return implementation.files.compactMap { $0 }.map { file in
+            SdkBuild.File(id: Self.sdkPrefix + "\(position)/" + file.path,
+                          name: base + file.path, text: String(decoding: file.content, as: UTF8.self))
+          }
+        }
+        sdk = SdkBuild(files: files)
+      }
+    } catch {
+      sdk = SdkBuild(failure: "\(error)")
+    }
+  }
+
+  private func sdkName(_ f: String) -> String {
+    if f == Self.sdkLog { return String(localized: "ビルドログ") }
+    return sdk.files?.first(where: { $0.id == f })?.name ?? (f as NSString).lastPathComponent
+  }
+
   @ViewBuilder private func menu(_ node: FileNode) -> some View {
     if node.children == nil {
       Button("開く") { open(node.path) }
@@ -1603,7 +1675,7 @@ private struct SourceCategory: View {
         ForEach(model.openFiles, id: \.self) { f in
           let shown = model.shownFile == f
           HStack(spacing: 5) {
-            Image(systemName: f.hasPrefix(Self.generatedPrefix) ? "lock.doc" : FileNode.icon(f)).font(.caption)
+            Image(systemName: f.hasPrefix(Self.sdkPrefix) ? "lock.doc" : FileNode.icon(f)).font(.caption)
             Text(displayName(f)).font(.caption).lineLimit(1)
             if model.isEdited(f) { Circle().fill(Color.orange).frame(width: 6, height: 6).help("未適用の変更") }
             Button { model.closeFile(f) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
@@ -1623,12 +1695,12 @@ private struct SourceCategory: View {
   }
 
   private func displayName(_ f: String) -> String {
-    f.hasPrefix(Self.generatedPrefix) ? String(f.dropFirst(Self.generatedPrefix.count)) : (f as NSString).lastPathComponent
+    ((f.hasPrefix(Self.sdkPrefix) ? sdkName(f) : f) as NSString).lastPathComponent
   }
 
   /// Header: the file's name and where it is (definition › folders).
   private func header(_ path: String, generatedFile: Bool) -> some View {
-    let rel = generatedFile ? String(path.dropFirst(Self.generatedPrefix.count)) : String(path.dropFirst(prefix.count))
+    let rel = generatedFile ? sdkName(path) : String(path.dropFirst(prefix.count))
     let parts = rel.split(separator: "/").map(String.init)
     return HStack(spacing: 6) {
       Image(systemName: generatedFile ? "lock.doc" : FileNode.icon(path)).foregroundStyle(.secondary)
@@ -1641,7 +1713,7 @@ private struct SourceCategory: View {
         }
       }
       .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-      if generatedFile { ReadOnlyMark(why: String(localized: "接続から生成されるファイルです（手で編集しません）")) }
+      if generatedFile { ReadOnlyMark(why: String(localized: "Card のビルドが生成したファイルです（手で編集しません）")) }
       if model.created.contains(path) { Text("新規").font(.caption2).foregroundStyle(.orange) }
       else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
       Spacer()
@@ -1660,14 +1732,14 @@ private struct SourceCategory: View {
 
   @ViewBuilder private func editorPane(files: [String]) -> some View {
     VStack(spacing: 0) {
-      if let selected = model.shownFile, selected.hasPrefix(Self.generatedPrefix) {
-        let name = String(selected.dropFirst(Self.generatedPrefix.count))
+      if let selected = model.shownFile, selected.hasPrefix(Self.sdkPrefix) {
         header(selected, generatedFile: true)
-        if let e = generatedError {
-          Text(e).font(.callout).foregroundStyle(.red).padding()
+        if let text = selected == Self.sdkLog ? sdk.log : sdk.files?.first(where: { $0.id == selected })?.text {
+          CodeEditor(text: .constant(text), language: selected == Self.sdkLog ? "" : (selected as NSString).pathExtension,
+                     editable: false, documentID: selected)
+        } else {
+          ContentUnavailableView("SDK をビルドすると表示されます", systemImage: "doc.text")
         }
-        CodeEditor(text: .constant(generated[name] ?? ""), language: "fbs", editable: false, documentID: selected)
-          .task(id: selected) { await loadGenerated() }
       } else if let selected = model.shownFile, model.files.contains(selected) {
         let markers = coreMarkers(for: selected) + formatMarkers
         let loaded = model.loadedText(selected) != nil
@@ -1716,21 +1788,6 @@ private struct SourceCategory: View {
   private func coreMarkers(for file: String) -> [EditorMarker] {
     let diags = model.session.resolution[model.cardKey]?.diagnostics ?? []
     return diags.filter { $0.path == file }.map { EditorMarker(offset: $0.offset ?? 0, message: $0.message) }
-  }
-
-  private func loadGenerated() async {
-    guard let rpc = model.session.rpc else { return }
-    do {
-      let files = try await rpc.generatedContracts(card: path(model.cardKey), atRev: model.session.rev)
-      for f in files {
-        let name = (f.path as NSString).lastPathComponent
-        guard name.hasSuffix(".fbs") else { continue }
-        generated[name] = String(decoding: try await rpc.readFile(path: f.path, atRev: model.session.rev), as: UTF8.self)
-      }
-      generatedError = nil
-    } catch {
-      generatedError = String(localized: "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ") + "\(error)"
-    }
   }
 
   private func canFormat(_ path: String) -> Bool {
@@ -1812,7 +1869,7 @@ private struct FileRow: View {
       Image(systemName: icon).font(.callout).foregroundStyle(folder != nil ? Color.accentColor : .secondary).frame(width: 16)
       Text(name).lineLimit(1).truncationMode(.middle)
       Spacer(minLength: 0)
-      if readOnly { ReadOnlyMark(why: String(localized: "接続から生成されるファイルです（手で編集しません）")) }
+      if readOnly { ReadOnlyMark(why: String(localized: "読み取り専用")) }
       if edited { Circle().fill(Color.orange).frame(width: 6, height: 6) }
     }
     .padding(.leading, 8 + CGFloat(depth) * 14).padding(.trailing, 8).padding(.vertical, 3)
@@ -1869,5 +1926,26 @@ struct FileNode: Identifiable, Hashable {
       FileNode(name: d, path: base + d + "/", children: tree(dirs[d]!, base: base + d + "/"))
     }
     return folders + leaves.sorted().map { FileNode(name: $0, path: base + $0, children: nil) }
+  }
+}
+
+/// Choices for an Input Card's Path source: every project file and folder of
+/// the Card's project, written as the core reads them (relative to the Card's
+/// definition folder, or project:<path> from the project root).
+func pathChoices(_ sourcePaths: [String], definitionDir: String) -> [String] {
+  let components = definitionDir.split(separator: "/")
+  guard components.count >= 2, components[components.count - 2] == "definitions" else { return [] }
+  let root = components.dropLast(2).map { $0 + "/" }.joined()
+  var paths = Set<String>()
+  for source in sourcePaths where source.hasPrefix(root) {
+    let rel = source.dropFirst(root.count)
+    // A nested project's files belong to that project.
+    let parts = rel.split(separator: "/")
+    if parts.isEmpty || parts[0] == "externals" { continue }
+    for n in 1...parts.count { paths.insert(root + parts[..<n].joined(separator: "/")) }
+  }
+  paths.remove(String(definitionDir.dropLast()))
+  return paths.sorted().map {
+    $0.hasPrefix(definitionDir) ? String($0.dropFirst(definitionDir.count)) : "project:" + $0.dropFirst(root.count)
   }
 }

@@ -6,6 +6,7 @@ import sys
 import pytest
 
 from harness.daemon import WORKERD
+from harness.fixtures import mock_plan
 from harness.file_events import wait_for_exit
 from harness.scenario import Gate, Project, run, wait_run
 from tsugumi_client import RpcFailure, path, text
@@ -40,7 +41,7 @@ def test_core_crash_ends_the_service_owning_an_active_worker(core_factory, proje
     gate = Gate(tmp_path, "active")
     Project(project).card(
         "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": resident},
-        outputs="table Outputs {} root_type Outputs;", manifest={"run": {"package": str(project / "definitions/work")}},
+        outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
     run_id = run(client)
@@ -65,7 +66,7 @@ def test_resident_connection_returns_with_its_call_counter(core_factory, project
     gate.release()
     Project(project).card(
         "work", {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True},
-        outputs="table Outputs {} root_type Outputs;", manifest={"run": {"package": str(project / "definitions/work")}},
+        outputs="table Outputs {} root_type Outputs;", plan=mock_plan([str(project / "definitions/work")]),
         sources={"scenario.json": json.dumps({"actions": [gate.action()]})},
     ).save(client)
     observations = []
@@ -100,7 +101,7 @@ def test_running_card_rejects_definition_edit_and_retires_after_save(core_factor
     def project_with(script):
         return Project(project).card(
             "work", definition, outputs="table Outputs {} root_type Outputs;",
-            manifest={"run": {"package": str(project / "definitions/work")}},
+            plan=mock_plan([str(project / "definitions/work")]),
             sources={"scenario.json": json.dumps({"actions": [gate.action()]}), "src/version.txt": script})
 
     project_with("old").save(client)

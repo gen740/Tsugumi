@@ -100,8 +100,8 @@ TEST(ModelCatalog, FamilyModesRespectRolesAndRejectUnknownArguments) {
   const Catalog catalog;
   EXPECT_EQ(catalog.FamilyTool("runs", "status", ModelRole::Guide),
             "run_status");
-  EXPECT_EQ(catalog.FamilyTool("sdk", "prepare", ModelRole::ScopedHelper),
-            "card_s_d_k_prepare");
+  EXPECT_EQ(catalog.FamilyTool("sdk", "api", ModelRole::ScopedHelper),
+            "card_api");
   EXPECT_THROW(catalog.FamilyTool("runs", "cancel", ModelRole::Guide),
                host::Failure);
   EXPECT_THROW(

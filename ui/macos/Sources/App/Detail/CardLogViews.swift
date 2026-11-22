@@ -120,7 +120,6 @@ struct DependenciesCategory: View {
             VStack(alignment: .leading, spacing: 2) {
               Text(session.displayPath(path(ref.target)))
               Text(ref.expression).font(.caption.monospaced()).foregroundStyle(.secondary).textSelection(.enabled)
-              if !ref.valid { Text("参照を解決できません。Nix 定義と診断を確認してください。").font(.caption).foregroundStyle(.orange) }
             }
           }
         }

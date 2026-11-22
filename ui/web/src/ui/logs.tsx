@@ -233,7 +233,7 @@ export function StageLogView({ session, runId, card, invocation, focus }: {
 
   const code = session.kind(k) === 'code'
   const groups: StageGroup[] = [
-    ...(code ? [{ id: 'build' as const, title: L('SDK 準備・Nix 評価・build'), stages: [Stage.prepare, Stage.evaluate, Stage.build] }] : []),
+    ...(code ? [{ id: 'build' as const, title: L('スキーマ生成・Nix 評価・ビルド'), stages: [Stage.prepare, Stage.evaluate, Stage.build] }] : []),
     { id: 'execute', title: L('実行'), stages: [Stage.execute] },
     { id: 'save', title: L('出力検証・保存'), stages: [Stage.validate, Stage.save] },
   ]

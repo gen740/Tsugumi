@@ -81,13 +81,13 @@ inline constexpr char kLocalExecutionService[] = "local";
 struct Settings {
   std::string name;  // the Card id
   std::string symbol;
-  bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
   bool record_logs = true;
-  bool record_displays = true;
   uint64_t log_limit_bytes = schema::kDefaultLogLimitBytes;
+  uint64_t output_limit_bytes = schema::kDefaultOutputLimitBytes;
+  uint64_t output_limit_entries = schema::kDefaultOutputLimitEntries;
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;
@@ -105,7 +105,6 @@ struct Settings {
 
 struct InputDef {
   std::string name;
-  bool optional = false;
 };
 
 // An Input Card's value sweep. Members follow the param order, with the last
@@ -127,7 +126,6 @@ struct NixSourceRef {
 struct CardNixReference {
   CardPath target;
   std::string name;
-  bool valid = false;
 };
 
 struct Node {
@@ -151,6 +149,7 @@ struct Node {
   std::vector<InputDef> input_defs;
   std::vector<types::PortType> inputs;
   std::vector<types::PortType> outputs;
+  std::map<std::string, uint8_t> merge_tags;
   std::vector<Diag> diags;       // structure diagnostics
   std::vector<Diag> exec_diags;  // additional diagnostics for executable mode
   bool is_virtual = false;       // subgraph container, never executed
@@ -170,7 +169,7 @@ struct Resolution {
   std::vector<Node> nodes;
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;              // between executable nodes only
-  std::vector<std::map<std::string, std::vector<size_t>>> incoming;
+  std::vector<std::map<std::string, size_t>> incoming;
   std::vector<std::vector<size_t>> outgoing;
   std::vector<Diag> diags;
   // Boundary aliases produced by the same leaf resolution as executable wires.

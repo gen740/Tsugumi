@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 53 requests.
+There are 52 requests.
 
 ## Connection
 
@@ -192,29 +192,21 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
-## Card SDKs and types
+## Card API and types
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
-| [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
+| [`CardApi`](#cardapi) | CardApiResult | Build a Code Card from its current definition and wiring (the build a run uses) and return the files its builder placed under share/tsugumi/api/ of each run implementation: the generated API its code is written against, read without interpretation (regular files; symlinks are not followed). A failed build returns failure and the build log. Unsaved edits are not part of the build. |
 | [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
 | [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
-### CardSDKPrepare
+### CardApi
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `card` | `CardPath` | yes |  |
 | `at_rev` | `uint64` |  |  |
-| `op_id` | `string` | yes |  |
-
-### CardSDKStatus
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
 
 ### InputTypes
 
@@ -446,7 +438,7 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`ModuleRead`](#moduleread) | FileContent | Read immutable display-module source in pages. |
+| [`CardViewRead`](#cardviewread) | FileContent | Read a page of the file of one view declaration: entry `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name` must be that entry's name, so a read made against a list that has since changed fails with not_found instead of serving another declaration. Names may repeat; the core never chooses between declarations by name. Only declared regular files that resolve inside the Nix store are served, read from one open descriptor, and their bytes are relayed without being interpreted. Neither RPC trace records these requests or their replies. FileContent.name is the view name and hash is the declared store path, which names immutable content. offset defaults to 0 and limit_bytes to 1 MiB (1..1048576). |
 
 ### ViewSetVisible
 
@@ -464,13 +456,15 @@ No fields.
 | `base_view_rev` | `uint64` |  |  |
 | `view_json` | `string` | yes |  |
 
-### ModuleRead
+### CardViewRead
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `module` | `string` | yes |  |
+| `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
+| `index` | `uint32` |  |  |
 
 ## Versions
 
@@ -552,6 +546,8 @@ Sent from `tsugumid` to connected clients.
 - `LogAvailable`
 - `TraceChanged`
 - `RunCategoryDeleteResult`
+- `CardViewsUpdated`
+- `DisplayRunStateChanged`
 
 ### Run events
 

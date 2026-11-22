@@ -3,12 +3,11 @@
 from contextlib import ExitStack
 import hashlib
 import json
-import shlex
-import time
 
 import pytest
 
-from harness.fixtures import worker_project
+from harness.fixtures import mock_plan, worker_project
+from harness.native_card import native_card
 from harness.proxy import ReplyProxy
 from harness.scenario import Project, STRING_OUTPUT, wait_run
 from projects import builtin_project, start_run, wait_for_log
@@ -16,7 +15,6 @@ from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.Data.SDKState import SDKState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.ReceiptValue import ReceiptValue
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -143,8 +141,8 @@ def test_session_requires_hello_and_matching_project(daemon):
         assert error.value.kind == "invalid_request"
         negotiated = connect().call("SessionHelloRequest")
         capabilities = {text(capability) for capability in negotiated.capabilities}
-        assert {f"display:Display{kind}" for kind in
-                ("Text", "Scalar", "Table", "Image", "PointCloud", "Module")} <= capabilities
+        assert "ViewSetVisible" in capabilities
+        assert not any(cap.startswith("display:") for cap in capabilities)
         assert not any(cap.startswith("format:") for cap in capabilities)
         with pytest.raises(RpcFailure) as error:
             connect().hello(project=new_id())
@@ -448,38 +446,20 @@ def test_history_pagination_and_cursor_checks(builtin_client):
     assert e.value.kind == "invalid_cursor"
 
 
-def test_sdk_prepare_status_and_read(builtin_client):
-    """Prepared SDK files can be read and become stale after the project changes."""
+def test_card_api_needs_a_code_card_at_the_current_revision(builtin_client):
+    """The Card API builds only a Code Card, at the revision asked for; nothing is kept."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
+    for card, kind in ((path("missing"), "not_found"), (path("src"), "invalid_request"),
+                       (path("merge"), "not_found")):
+        with pytest.raises(RpcFailure) as e:
+            c.call("CardApiRequest", card=card, atRev=rev)
+        assert e.value.kind == kind
     op = new_id()
-    acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
-    assert text(acc.opId) == op
-    # SDK preparation has a status RPC but emits no completion notification.
-    while True:
-        st = c.call("CardSDKStatusRequest", opId=op)
-        if st.state == SDKState.ready:
-            break
-        assert st.state == SDKState.pending
-        time.sleep(0.02)
-    names = {text(f.path).rsplit("/", 1)[1]: f for f in st.files}
-    assert {"_inputs.fbs", "_outputs.fbs", "_params.fbs"} <= set(names)
-    got = c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev)
-    assert b"table Outputs" in bytes(got.bytes)
-    # Replay returns the receipt; an unknown job is not_found.
-    again = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
-    assert text(again.opId) == op
+    save_name(c, rev, "changed", op)
     with pytest.raises(RpcFailure) as e:
-        c.call("CardSDKStatusRequest", opId=new_id())
-    assert e.value.kind == "not_found"
-    # A later revision makes the prepared SDK stale for FileRead.
-    doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
-    doc["name"] = "changed"
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t", changes=[change("SetProject", json=json.dumps(doc))])
-    with pytest.raises(RpcFailure) as e:
-        c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev + 1)
+        c.call("CardApiRequest", card=path("src"), atRev=rev)
     assert e.value.kind == "revision_conflict"
-    # Operation receipts are visible through OperationGet.
     got = c.call("OperationGetRequest", opId=op)
     assert got.state == OperationState.completed and got.receipt is not None
     # Cache clear never touches documents or history.
@@ -488,21 +468,33 @@ def test_sdk_prepare_status_and_read(builtin_client):
     assert c.call("ProjectInspectRequest").rev == rev + 1
 
 
+def save_logging_card(client, project, tmp_path, body):
+    package = native_card(tmp_path / "logging-card", """
+#include <stdio.h>
+#include <unistd.h>
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    (void)call;
+""" + body + """
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+""")
+    Project(project).card("work", {"type": "code", "sandbox": {
+        "filesystem": False, "pid": False, "ipc": False, "identity": False,
+    }}, outputs="table Outputs {} root_type Outputs;", plan=mock_plan([package])).save(client)
+
+
 def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path, core_factory):
     from Tsugumi.Data.CardState import CardState
 
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
-    import os
     release = tmp_path / "release"
-    os.mkfifo(release)
-    body = f"""
-        printf '1234567890'
-        read -r release < {shlex.quote(str(release))}
-        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
-    """
-    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
-                          manifest={"run": {"bash": body}}).save(client)
+    save_logging_card(client, project, tmp_path, f"""
+        fputs("1234567890", stdout);
+        fflush(stdout);
+        while (access({json.dumps(str(release))}, F_OK) != 0) usleep(1000);
+    """)
     snap = client.call("ProjectInspectRequest")
     config = project_json(snap)
     config["logLimitBytes"] = 7
@@ -523,9 +515,7 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         live_stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True, live=True)
         assert text(live_stdout.text) == "1234567890" and live_stdout.logTruncatedAtBytes is None
     finally:
-        if client.call("RunStatusRequest", runId=run_id).state == RunState.running:
-            with release.open("w") as gate:
-                gate.write("release\n")
+        release.touch()
     assert wait_run(client, run_id).state == RunState.succeeded
     journal = client.call("LogRangeRequest", **args, stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
@@ -577,35 +567,28 @@ def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, co
 
 
 def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):
-    import os
-
     client = core_factory(mocked_builds=True).connect()
     enter, redraw = tmp_path / "enter", tmp_path / "redraw"
-    os.mkfifo(enter)
-    os.mkfifo(redraw)
-    body = f"""
-        printf 'first\\nabcdef'
-        read -r gate < {shlex.quote(str(enter))}
-        printf '\\r'
-        read -r gate < {shlex.quote(str(redraw))}
-        printf '%s' '雪Y'
-        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
-    """
-    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
-                          manifest={"run": {"bash": body}}).save(client)
+    save_logging_card(client, project, tmp_path, f"""
+        fputs("first\\nabcdef", stdout);
+        fflush(stdout);
+        while (access({json.dumps(str(enter))}, F_OK) != 0) usleep(1000);
+        fputc('\\r', stdout);
+        fflush(stdout);
+        while (access({json.dumps(str(redraw))}, F_OK) != 0) usleep(1000);
+        fputs("雪Y", stdout);
+    """)
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
     wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 12)
     initial = client.call("LogRangeRequest", **args, terminal=True, tail=True)
     assert text(initial.text) == "first\nabcdef"
-    with enter.open("w") as gate:
-        gate.write("start redraw\n")
+    enter.touch()
     wait_for_log(client, run_id, "work", LogStream.standard_output, lambda page: page.sizeBytes == 13)
     cursor = client.call("LogRangeRequest", **args, terminal=True, offset=initial.nextOffset,
                          terminalSince=initial.rawSizeBytes)
     assert not cursor.reset and cursor.nextOffset == initial.nextOffset
-    with redraw.open("w") as gate:
-        gate.write("write replacement\n")
+    redraw.touch()
     assert wait_run(client, run_id).state == RunState.succeeded
 
     replaced = client.call("LogRangeRequest", **args, terminal=True, offset=cursor.nextOffset,
@@ -615,21 +598,18 @@ def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, t
     assert text(client.call("LogRangeRequest", **args).text) == "first\nabcdef\r雪Y"
 
 
-def test_card_log_ui_page_sizes(project, core_factory):
+def test_card_log_ui_page_sizes(project, core_factory, tmp_path):
     tail_limit = 1 << 20
     forward_limit = 256 << 10
     prefix, end = "first\n日本", "\nend\n"
     fill = tail_limit - len("日本".encode())
     expected = prefix.encode() + b"x" * fill + end.encode()
     client = core_factory(mocked_builds=True).connect()
-    body = f"""
-        printf '%s' {shlex.quote(prefix)}
-        head -c {fill} /dev/zero | tr '\\000' x
-        printf '%s' {shlex.quote(end)}
-        printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
-    """
-    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
-                          manifest={"run": {"bash": body}}).save(client)
+    save_logging_card(client, project, tmp_path, f"""
+        fputs({json.dumps(prefix, ensure_ascii=False)}, stdout);
+        for (size_t byte = 0; byte < {fill}; ++byte) fputc('x', stdout);
+        fputs({json.dumps(end)}, stdout);
+    """)
     run_id = start_run(client, "work", propagate=False)
     assert wait_run(client, run_id).state == RunState.succeeded
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
@@ -672,25 +652,20 @@ def test_card_log_ui_page_sizes(project, core_factory):
     assert e.value.kind == "invalid_range"
 
 
-def test_run_logs_and_display(project, tmp_path, core_factory):
-    """A worker run publishes its display, paged UTF-8 log and completed history."""
+def test_run_logs_and_history(project, tmp_path, core_factory):
+    """A worker run publishes a paged UTF-8 log and completed history."""
     message = "日本語のログ" * 50
     c = core_factory(mocked_builds=True, mocked_worker=True).connect()
     worker_project(c, project, tmp_path, [
-        {"op": "display_text", "text": message},
         {"op": "log", "stream": "stdout", "text": message},
     ], recordIO=False)
     shown = path("work")
     opened = c.open()
-    sub = text(opened.subscriptionId)
-    c.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[shown])
     acc = c.call("RunRequest", baseRev=opened.snapshot.rev, opId=new_id(), origin="t", card=shown)
     run_id = text(acc.run.runId)
     fin = c.wait_notification(lambda n: n.valueType == NotificationPayload.RunEvent and
                               n.value.valueType == RunEventValue.RunFinished)
     assert fin.value.value.summary.status.state == RunState.succeeded
-    disp = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated)
-    assert "日本語のログ" in text(disp.value.display.value.text)
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.

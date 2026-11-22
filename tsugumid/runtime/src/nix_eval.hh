@@ -19,7 +19,7 @@
 #include <vector>
 
 #include "tsugumi/util/process.hh"
-#include "tsugumi/workerd/store_result.hh"
+#include "tsugumi/workerd/derivation.hh"
 
 namespace tsugumi {
 
@@ -35,7 +35,8 @@ using NixOutput = std::function<void(proc::LineChunk)>;
 struct NixCall {
   std::string pin_url;   // nixpkgs: a fetchTarball URL
   std::string pin_hash;  // nixpkgs: its sha256 (SRI)
-  std::string args;  // Nix expression of the entry's arguments (sdk, gen, card)
+  std::string args;  // Nix expression of the entry's arguments (Nix directory,
+                     // generated files, Card)
   // Confirmed definition sources, also available to alternative build backends
   // without parsing the Nix expression above.
   std::filesystem::path definition_dir;
@@ -48,6 +49,7 @@ struct NixCall {
   std::string root_prefix;
   std::optional<uint32_t> jobs;
   std::optional<uint32_t> cores;
+  bool views_only = false;
   uint32_t max_implementations = kMaxExecutionBatchSize;
   std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;
@@ -61,7 +63,11 @@ struct NixCall {
   }
 };
 
-struct NixResult : WorkerStoreResult {
+struct NixResult {
+  WorkerDerivation derivation;
+  std::string plan_json;
+  std::vector<std::string> closure;
+  bool built = false;
   bool execution_list = false;
   uint32_t implementation_count = 1;
   // One per implementation, in run list order; "" for an unlabeled one.
@@ -86,7 +92,8 @@ class NixEvaluator {
   // Dispatch the private build-client mode before starting the evaluator.
   static auto build_client(int argc, char** argv) -> std::optional<int>;
   // `entry` is the entry function's source; `allowed` the folders evaluation
-  // may read (restricted mode): the SDK and the evaluation folder.
+  // may read (restricted mode): the packaged Nix sources and the evaluation
+  // folder.
   NixEvaluator(std::string entry, std::vector<std::string> allowed);
   ~NixEvaluator();
 

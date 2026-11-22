@@ -63,7 +63,7 @@ await import("./freeSpot")
 
 
 
-await import("./draftDisplays")
+await import("./liveViews")
 await import("./definitionErrors")
 
 await import("./nixSources")
@@ -80,19 +80,15 @@ await import('./environments')
 
 await import('./runComparison')
 
-await import('./moduleViewer')
-await import('./wasmView.mjs')
 await import('./nixReferences')
 await import('./nixReferenceOverlay')
 
 
-await import("./lineChart")
 
 await import("./runScratch")
 await import('./cardIdentity')
 await import('./agentAppearance')
 
-await import("./invalidDisplays")
 
 
 

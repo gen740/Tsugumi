@@ -1,5 +1,7 @@
 # SDK rebuild plan (decided 2026-11-18)
 
+> **Historical (superseded by Card ABI 9, 2026-11-22).** Do not follow this plan. Worker-side JSON conversion, shared built-in views, `Outputs` as one buffer, the worker's side-effect table and the in-tree `sdk/` are gone. The current contracts are [The core and the language SDKs](../docs/CoreAndSDK.md), [Card ABI 9](../docs/CardABI.md) and [The sandbox contract](../docs/SandboxContract.md); the language SDKs live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit). The plan stays as the record of what was decided on 2026-11-18.
+
 ABI 8 supersedes this plan's ABI 7 choice of a single `Outputs` buffer. The worker and language adapters now exchange individual port buffers at the Card ABI boundary.
 
 Goal: adding or changing a Card builds only that Card's share, and every language's Card has the same shape.

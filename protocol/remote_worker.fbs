@@ -4,6 +4,7 @@
 // One request and reply per connection. Transfers use independent <= 1 MiB
 // chunks, with explicit offset/total; no unframed body follows a message.
 // Worker connections use TLS 1.3 with mutually pinned Ed25519 SPKI keys.
+include "worker.fbs";
 namespace Tsugumi.RemoteWorker;
 attribute "trace_secret";
 
@@ -18,8 +19,6 @@ table JobSpec {
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   network:bool;
-  // Reserve this contract 12 slot. The R SDK reads the parameter buffer.
-  r_params_environment:bool (deprecated);
   // Core recording policy for captured stdout and stderr bytes. Zero keeps
   // live transport available and disables persisted stdout/stderr.
   log_limit_bytes:ulong;
@@ -27,6 +26,9 @@ table JobSpec {
   // never part of the spec: they arrive in a JobSecretsRequest just before the
   // process starts and are kept only in memory.
   secrets:[string];
+  // Output budget for new Path outputs (forwards do not count).
+  output_limit_bytes:ulong = 68719476736;
+  output_limit_entries:ulong = 1000;
 }
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
@@ -68,7 +70,7 @@ table Request {
 table Capabilities {
   server_id:string (required); instance_id:string; native_system:string (required);
   systems:[string] (required); resource_limits:bool; max_jobs:uint;
-  // Zero means no advertised contract; writers explicitly send contract 12.
+  // Zero means no advertised contract. Writers explicitly send contract 14.
   worker_contract:uint;
   active_jobs:uint;
   requires_filesystem:bool = true; requires_pid:bool = true;
@@ -83,7 +85,10 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   log_offset:ulong; log_size:ulong; log_bytes:[ubyte];
   // The running job has built its environment and waits for the values of
   // its spec's Card secrets (JobSecretsRequest) before its process starts.
-  secrets_wanted:bool; }
+  secrets_wanted:bool;
+  // Transient view bytes sent since the previous status, in order. Never
+  // stored with the job or its result, and never traced by the broker.
+  displays:[Tsugumi.Worker.WorkerDisplay]; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }

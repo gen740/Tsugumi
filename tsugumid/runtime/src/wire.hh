@@ -19,6 +19,7 @@ CardPath card_arg(const D::CardPath* p, const char* field = "card");
 Off<D::Diagnostic> diagnostic(FBB& b, const Diag& d);
 Off<flatbuffers::Vector<Off<D::Diagnostic>>> diagnostics(
     FBB& b, const std::vector<Diag>& d);
+auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port>;
 Off<R::ResolvedCard> resolved(FBB& b, const Node& n);
 Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,
                                                           const Resolution& r);

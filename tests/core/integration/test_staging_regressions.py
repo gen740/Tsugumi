@@ -3,26 +3,32 @@
 import hashlib
 from pathlib import Path
 
-from harness.real_cards import bash, log
+from harness.real_cards import log
 from projects import FILE_FBS, card, conn, run_and_wait, write
+from test_worker_loading import native_card
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
 
 def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path):
-    """A File with MNIST's byte count crosses worker output and next-worker input staging."""
+    """A file with MNIST's byte count crosses both worker boundaries."""
     size = 47040016
     digest = hashlib.sha256(b"x" * size).hexdigest()
-    make = bash(
-        f'head -c {size} /dev/zero | tr "\\000" x > "$TSUGUMI_OUTPUT_DIR/dense"; '
-        f'test "$(wc -c < "$TSUGUMI_OUTPUT_DIR/dense")" -eq {size} || exit 21; '
-        'printf \'{"doc":{"value":"%s/dense"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-        outputs=FILE_FBS, recordIO=True, retainArtifact=True)
-    read = bash(
-        f'test "$(wc -c < "$FILE_DOC")" -eq {size} || exit 22; '
-        f'test "$(sha256sum "$FILE_DOC" | cut -d " " -f 1)" = {digest} || exit 23; '
-        'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-        inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True)
+    make = native_card(f'''
+        std::ofstream file("dense", std::ios::binary);
+        for (size_t remaining = {size}; remaining;) {{
+          const std::string block(std::min<size_t>(remaining, 65536), 'x');
+          file.write(block.data(), block.size());
+          remaining -= block.size();
+        }}
+        if (!file) return 21;
+        out.path("dense");
+    ''', outputs=FILE_FBS, recordIO=True, retainArtifact=True)
+    read = native_card(f'''
+        const auto file = input_path(in);
+        if (fs::file_size(file) != {size}) return 22;
+        out.path(file);
+    ''', inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
@@ -38,12 +44,14 @@ def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path
 
 
 def test_mode_zero_scratch_does_not_fail_a_successful_call(core_factory, tmp_path):
-    """A mode-000 nested directory is cleared without turning a successful result into a cleanup failure."""
-    definition = bash('mkdir -p "$TSUGUMI_TMP_DIR/private/nested"; '
-                      'echo private > "$TSUGUMI_TMP_DIR/private/nested/data"; '
-                      'chmod 000 "$TSUGUMI_TMP_DIR/private/nested" "$TSUGUMI_TMP_DIR/private"; '
-                      'printf \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-                      reuseWorker=True, recordIO=True)
+    """A mode-000 nested directory is cleared between calls."""
+    definition = native_card(r'''
+        const auto temp = fs::path(std::getenv("TMPDIR")) / "private";
+        fs::create_directories(temp / "nested");
+        std::ofstream(temp / "nested/data") << "private";
+        if (chmod((temp / "nested").c_str(), 0) || chmod(temp.c_str(), 0)) return 1;
+        out.number(1);
+    ''', reuseWorker=True, recordIO=True)
     write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     for _ in range(2):
@@ -52,41 +60,23 @@ def test_mode_zero_scratch_does_not_fail_a_successful_call(core_factory, tmp_pat
 
 
 def test_sparse_output_and_staged_input_keep_their_holes(core_factory, tmp_path):
-    """A sparse File remains sparse through output transfer, recording and the downstream input copy."""
-    source = r'''
-#include <tsugumi/sdk/abi.h>
-#include <fcntl.h>
-#include <stdio.h>
-#include <unistd.h>
-int tsugumi_main(const tsugumi_call* c) {
-  if (c->phase != TSUGUMI_RUN) return 0;
-  char path[4096], json[8192];
-  snprintf(path, sizeof path, "%s/sparse", c->output_directory);
-  int fd = open(path, O_WRONLY | O_CREAT | O_EXCL, 0600);
-  if (fd < 0 || ftruncate(fd, (off_t)4 * 1024 * 1024 * 1024) ||
-      pwrite(fd, "data", 4, (off_t)2 * 1024 * 1024 * 1024) != 4) return 1;
-  close(fd);
-  snprintf(json, sizeof json, "{\"value\":\"%s\"}", path);
-  return c->effects->output_json(c->host, "doc", json);
-}
-'''
-    make = {
-        "type": "code", "retainArtifact": True, "_outputs": FILE_FBS,
-        "_nix": '''{ pkgs, inputs, params }: {
-  run = pkgs.runCommandCC "sparse-output" {} ''
-    mkdir -p $out/lib
-    $CC -shared -fPIC -I${inputs.tsugumi.runtime}/include ${./src/main.c} -o $out/lib/main.so
-  '';
-}
-''',
-    }
-    read = bash('du -k "$FILE_DOC" | { read -r allocated ignored; test "$allocated" -lt 1024; } || exit 23; '
-                'printf \'{"text":"%s"}\' "$FILE_DOC" > "$TSUGUMI_REPORT"; '
-                'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-                inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True, reuseWorker=True)
+    """A sparse File stays sparse through transfer, recording and later input staging."""
+    make = native_card(r'''
+        const int fd = open("sparse", O_WRONLY | O_CREAT | O_EXCL, 0600);
+        if (fd < 0 || ftruncate(fd, 4ll << 30) ||
+            pwrite(fd, "data", 4, 2ll << 30) != 4) return 1;
+        close(fd);
+        out.path("sparse");
+    ''', outputs=FILE_FBS, retainArtifact=True)
+    read = native_card(r'''
+        const auto staged = input_path(in);
+        struct stat info;
+        if (stat(staged.c_str(), &info) || info.st_blocks * 512 >= 1024 * 1024) return 23;
+        out.path(staged);
+    ''', inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True, reuseWorker=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
-          [conn("make", "doc", "read", "doc")], {"definitions/make/src/main.c": source})
+          [conn("make", "doc", "read", "doc")])
     scratch = tmp_path / "scratch"
     c = core_factory(project_root=root, args=["--run-scratch-dir", str(scratch)]).connect()
     run_id, st = run_and_wait(c, "make")

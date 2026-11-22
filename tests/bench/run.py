@@ -22,14 +22,12 @@ from projects import SINK, card, conn, write
 
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
-PYTHON_RUN = '''inputs.tsugumi.pythonCard {
-    sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
-    src = ./src;
-  }'''
-VALUE = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-FILE = ('attribute "tsugumi"; table File { value:string; } '
-        'table Outputs { out:File (required, tsugumi:"file"); } root_type Outputs;')
-DIRECTORY = FILE.replace('tsugumi:"file"', 'tsugumi:"directory"')
+PYTHON_RUN = 'inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = ./src; }'
+# Every benchmark Card returns its own metrics as the declared `metrics` output.
+METRICS = 'namespace bench; table Metrics { value:string; } '
+VALUE = METRICS + 'table Number { value:ulong; } table Outputs { out:Number (required); metrics:Metrics (required); } root_type Outputs;'
+PATH = ('attribute "tsugumi"; ' + METRICS +
+        'table Outputs { out:string (tsugumi: "path"); metrics:Metrics (required); } root_type Outputs;')
 
 # Metrics are emitted by the benchmark Card, not added to the product's SDK.
 BODY = '''import hashlib
@@ -38,15 +36,19 @@ import os
 from pathlib import Path
 import time
 
+from card import Output
+from outputs.metrics.bench.Metrics import MetricsT
+
 OP = __OP__
 SIZE = 1 << 30
 
-def main(inputs, report, run):
+def run(input):
     begin = time.perf_counter_ns()
     logical = allocated = read_bytes = 0
-    result = {"out": {"value": 1}}
+    out = None
     if OP in ("file-1gib", "file-sparse-1gib", "source"):
-        target = Path(run.output_directory) / "large.bin"
+        # Path outputs are created under the working directory.
+        target = Path("large.bin")
         with target.open("wb") as stream:
             if OP == "file-sparse-1gib":
                 stream.truncate(SIZE)
@@ -56,9 +58,9 @@ def main(inputs, report, run):
                     stream.write(block)
         stat = target.stat()
         logical, allocated = stat.st_size, stat.st_blocks * 512
-        result = {"out": {"value": str(target)}}
+        out = str(target)
     elif OP == "directory-10000":
-        target = Path(run.output_directory) / "small"
+        target = Path("small")
         target.mkdir()
         for index in range(10000):
             member = target / f"{index:05d}.txt"
@@ -66,21 +68,23 @@ def main(inputs, report, run):
             stat = member.stat()
             logical += stat.st_size
             allocated += stat.st_blocks * 512
-        result = {"out": {"value": str(target)}}
+        out = str(target)
     elif OP == "file-input-1gib":
         digest = hashlib.sha256()
-        with open(os.fsdecode(inputs.doc.value), "rb") as stream:
+        with open(input.doc, "rb") as stream:
             while block := stream.read(1 << 20):
                 digest.update(block)
                 read_bytes += len(block)
         if read_bytes != SIZE:
             raise ValueError(f"expected {SIZE} input bytes, got {read_bytes}")
-        result = {"out": {"value": read_bytes}}
+    if out is None:
+        from outputs.out.bench.Number import NumberT
+        out = NumberT(value=read_bytes or 1)
     elapsed = (time.perf_counter_ns() - begin) / 1e6
-    report.text(json.dumps({"body_ms": elapsed, "pid": os.getpid(),
-                           "output_logical_bytes": logical, "output_allocated_bytes": allocated,
-                           "input_read_bytes": read_bytes}))
-    return result
+    metrics = json.dumps({"body_ms": elapsed, "pid": os.getpid(),
+                          "output_logical_bytes": logical, "output_allocated_bytes": allocated,
+                          "input_read_bytes": read_bytes})
+    return Output(out=out, metrics=MetricsT(value=metrics))
 '''
 
 
@@ -92,11 +96,12 @@ def workspace(out):
 
 def python_card(operation, *, service=None, resident=False, run_list=False):
     expression = f"builtins.genList (_: {PYTHON_RUN}) 100" if run_list else PYTHON_RUN
+    # recordIO keeps the small metrics value for RunValueRead.
     result = {"type": "code", "sandbox": {},
-              "reuseWorker": resident, "recordIO": False,
-              "_outputs": FILE if operation in ("file-1gib", "file-sparse-1gib", "source") else
-              DIRECTORY if operation == "directory-10000" else VALUE,
-              "_nix": "{ pkgs, inputs, params }: { run = " + expression + "; }\n"}
+              "reuseWorker": resident, "recordIO": True,
+              "_outputs": PATH if operation in ("file-1gib", "file-sparse-1gib", "source", "directory-10000")
+              else VALUE,
+              "_nix": "{ pkgs, params, inputs, schemas }: { run = " + expression + "; }\n"}
     if service:
         result["executionService"] = service
     if operation == "file-input-1gib":
@@ -192,12 +197,14 @@ class Remote:
 
 
 def fixture_metrics(client, run):
+    """Each invocation's declared `metrics` output, read back as a recorded value."""
+    from harness.observations import decode_scalar, read_pages
+    from Tsugumi.Data.ValueSide import ValueSide
     for row in run["invocations"]:
-        record = client.call("RunRecordRequest", runId=run["run_id"], card=path(*row["card"].split("/")),
-                             invocation=row["invocation"]).record
-        if not record or not record.display:
-            raise RuntimeError("benchmark Card did not report its metrics")
-        metrics = json.loads(text(record.display.value.text))
+        payload = read_pages(client, "RunValueReadRequest", page_bytes=1 << 20, runId=run["run_id"],
+                             card=path(*row["card"].split("/")), invocation=row["invocation"],
+                             side=ValueSide.output, port="metrics")
+        metrics = json.loads(decode_scalar(payload))
         row["fixture"] = metrics
         row["metrics"]["run_ms"] = metrics["body_ms"]
         for key in ("output_logical_bytes", "output_allocated_bytes", "input_read_bytes"):
@@ -269,25 +276,7 @@ def stage_project(root, scenario):
         connections.append(conn(previous, "value", "sink", "in"))
         write(root, definitions, cards, connections)
         return root
-    # Keep the original Python -> C++ -> shell cross-language value workload.
-    # Load only the data literals, not the VM/pytest module and its fixtures.
-    import ast
-    source = ast.parse((ROOT / "tests/python/test_cards_shared_vm.py").read_text())
-    constants = {node.targets[0].id: ast.literal_eval(node.value) for node in source.body
-                 if isinstance(node, ast.Assign) and isinstance(node.targets[0], ast.Name)
-                 and node.targets[0].id in ("RICH", "PY_MAKE", "CPP_CHECK")}
-    from harness.real_cards import bash
-    definitions = {"trigger": {"type": "trigger"},
-                   "make": {**python_card("value-fresh"), "_outputs": constants["RICH"].format(ns="a") +
-                            'attribute "tsugumi"; table Doc { value:string; } table Outputs { rich:Rich (required); doc:Doc (required, tsugumi:"file"); } root_type Outputs;'},
-                   "check": {"type": "code", "inputs": [{"name": "rich"}, {"name": "doc"}],
-                             "_outputs": constants["RICH"].format(ns="b") + 'table Outputs { checked:Rich (required); } root_type Outputs;',
-                             "_nix": '{ pkgs, inputs, params }: { run = inputs.tsugumi.cppCard { sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; src = ./src; }; }'},
-                   "shell": bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
-    write(root, definitions, [card(name, name if name != "start" else "trigger") for name in ("start", "make", "check", "shell")],
-          [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in")],
-          {"definitions/make/src/main.py": constants["PY_MAKE"], "definitions/check/src/card.cc": constants["CPP_CHECK"]})
-    return root
+    raise ValueError(f"unknown stage scenario {scenario}")
 
 
 def provenance(build_type):

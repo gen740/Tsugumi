@@ -1,4 +1,4 @@
-add_library(tsugumi_worker_values STATIC src/values.cc src/value_wire.cc src/module_source.cc)
+add_library(tsugumi_worker_values STATIC src/values.cc src/value_wire.cc)
 target_include_directories(tsugumi_worker_values PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)
 target_link_libraries(tsugumi_worker_values PUBLIC tsugumi_document tsugumi_util)
 

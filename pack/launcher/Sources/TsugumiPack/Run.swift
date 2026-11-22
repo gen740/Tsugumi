@@ -25,7 +25,7 @@ struct AppRun {
              \(name) --describe
 
       Runs the Workflow "\(manifest["project"] as? String ?? name)" offline and writes each
-      Card's outputs, display and logs under DIR (default ./\(name) results <time>).
+      Card's outputs and logs under DIR (default ./\(name) results <time>).
       VALUE is JSON (a bare word is a string). Parameters:
 
       """

@@ -55,36 +55,6 @@ import Testing
     #expect(missing[2].difference == .unknown && missing[2].right == nil)
   }
 
-  @Test func retainedDisplayEqualityIgnoresIdentityButChecksContent() {
-    let first = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .table(columns: ["Band", "Photons"], rows: [["red", "101187"]]))
-    let equal = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: first.value)
-    let changed = DisplaySnapshot(runId: "right", invocation: 3, revision: 9, value: .table(columns: ["Band", "Photons"], rows: [["red", "104821"]]))
-    #expect(RunComparison.sameDisplay(first, equal))
-    #expect(!RunComparison.sameDisplay(first, changed))
-    #expect(!RunComparison.sameDisplay(first, nil))
-    let image = DisplaySnapshot(runId: "left", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 2]), alt: "rgb"))
-    let other = DisplaySnapshot(runId: "right", invocation: 1, revision: 1, value: .image(mediaType: "image/png", data: Data([1, 3]), alt: "rgb"))
-    #expect(!RunComparison.sameDisplay(image, other))
-    let sameImage = DisplaySnapshot(runId: "right", invocation: 2, revision: 9, value: image.content)
-    #expect(RunComparison.sameDisplay(image, sameImage))
-  }
-
-  @Test func recordedDisplayDoesNotNeedALiveSession() {
-    let value = Tsugumi_Data_DisplayTableT()
-    value.columns = ["Band", "Photons"]
-    let row = Tsugumi_Data_TableRowT()
-    row.cells = ["red", "101187"]
-    value.rows = [row]
-    let display = Tsugumi_Data_DisplayT()
-    display.runId = "old-run"
-    display.invocation = 7
-    display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytable)
-    let decoded = recordedDisplay(display)
-    #expect(decoded?.runId == "old-run" && decoded?.invocation == 7)
-    guard case .table(let columns, let rows) = decoded?.value else { Issue.record("expected a retained table"); return }
-    #expect(columns == ["Band", "Photons"] && rows == [["red", "101187"]])
-  }
-
   @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
     func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
       let value = Tsugumi_Data_NamedValueT()
@@ -121,7 +91,7 @@ import Testing
 @MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
   func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
     let v = Tsugumi_Data_NamedValueT()
-    v.name = "file"; v.kind = .file; v.rootType = "File"; v.schemaBfbs = [1]
+    v.name = "file"; v.kind = .path
     v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
     return v
   }

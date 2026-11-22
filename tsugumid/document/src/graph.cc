@@ -11,7 +11,6 @@
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
-#include "tsugumi/document/nix_refs.hh"
 
 namespace tsugumi {
 
@@ -283,14 +282,15 @@ class Builder {
     res_->incoming.resize(res_->nodes.size());
     res_->outgoing.resize(res_->nodes.size());
     for (const auto& edge : res_->edges) {
-      res_->incoming[edge.to][edge.to_port].push_back(edge.from);
+      res_->incoming[edge.to].emplace(edge.to_port, edge.from);
       res_->outgoing[edge.from].push_back(edge.to);
     }
     resolve_types();
     resolve_execution_shapes();
+    resolve_boundary_types();
     finish_checks();
     compute_guarantees();
-    check_nix_references();
+    resolve_nix_inputs();
     return res_;
   }
 
@@ -331,13 +331,6 @@ class Builder {
       if (const auto* v = schema::get(f)) out = *v;
     };
     str(d.symbol, s.symbol);
-    if (const auto* t = schema::get(d.trigger)) {
-      if (*t == "allInputs" || *t == "eachInput")
-        s.any_mode = *t == "eachInput";
-      else
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "trigger must be allInputs or eachInput"));
-    }
     if (const auto* ins = schema::get(d.inputs);
         ins && n.kind != CardType::Draft) {
       std::set<std::string> seen;
@@ -351,8 +344,7 @@ class Builder {
         if (!seen.insert(*name).second)
           n.diags.push_back(
               diag(n.path, "invalid_setting", "duplicate input " + *name));
-        const auto* opt = schema::get(in.optional);
-        n.input_defs.push_back({*name, opt && *opt});
+        n.input_defs.push_back({*name});
       }
     }
     if (const auto* v = schema::get(d.max_runs)) {
@@ -368,7 +360,6 @@ class Builder {
     timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds),
             s.build_timeout_seconds);
     boolean(d.record_logs, s.record_logs);
-    boolean(d.record_displays, s.record_displays);
     boolean(d.record_io, s.record_io);
     boolean(d.retain_artifact, s.retain_artifact);
     if (const auto* sandbox = schema::get(d.sandbox)) {
@@ -671,13 +662,17 @@ class Builder {
       // An unreadable definition is already diagnosed above; it declares no
       // ports and cannot run, like a Draft.
       n.kind = def ? card_type_of(*def) : CardType::Draft;
-      // The accepted Document owns this resolution. Edits only affect later runs.
+      // The accepted Document owns this resolution. Edits only affect later
+      // runs.
       n.settings.record_logs = project.record_logs->value_or(true);
-      n.settings.record_displays = project.record_displays->value_or(true);
       n.settings.record_io = project.record_io->value_or(false);
       n.settings.retain_artifact = project.retain_artifact->value_or(false);
       n.settings.log_limit_bytes =
           project.log_limit_bytes->value_or(schema::kDefaultLogLimitBytes);
+      n.settings.output_limit_bytes = project.output_limit_bytes->value_or(
+          schema::kDefaultOutputLimitBytes);
+      n.settings.output_limit_entries = project.output_limit_entries->value_or(
+          schema::kDefaultOutputLimitEntries);
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -691,7 +686,7 @@ class Builder {
           // Optional start input: connected, the value is produced when the
           // start signal arrives (e.g. from the trigger); unconnected, the
           // Card is a source that fires once per run.
-          n.input_defs = {{"start", true}};
+          n.input_defs = {{"start"}};
           load_catalog(n);
           break;
         case CardType::Trigger:
@@ -699,13 +694,13 @@ class Builder {
               {"out", PortKind::FlatBuffer, false, types::empty_type()});
           break;
         case CardType::Branch:
-          n.input_defs = {{"value", false}, {"condition", false}};
-          n.outputs = {{"a", PortKind::FlatBuffer, true, nullptr},
-                       {"b", PortKind::FlatBuffer, true, nullptr}};
+          n.input_defs = {{"value"}, {"condition"}};
+          n.outputs = {{"a", PortKind::FlatBuffer, false, nullptr},
+                       {"b", PortKind::FlatBuffer, false, nullptr}};
           break;
         case CardType::Fork: {
           // Every output always receives the value, unlike a Branch's.
-          n.input_defs = {{"value", false}};
+          n.input_defs = {{"value"}};
           std::set<std::string> seen;
           for (const auto& name : fork_outputs(*def)) {
             if (!valid_id(name))
@@ -723,16 +718,13 @@ class Builder {
           break;
         }
         case CardType::Merge:
-          n.settings.any_mode = true;
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           if (n.input_defs.empty())
             n.diags.push_back(
                 diag(n.path, "invalid_setting", "merge needs declared inputs"));
-          for (auto& in : n.input_defs) in.optional = true;
           break;
         case CardType::Collect:
-          n.input_defs = {{"in", false}};
-          n.settings.any_mode = true;
+          n.input_defs = {{"in"}};
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           break;
         case CardType::Draft:
@@ -748,8 +740,7 @@ class Builder {
           break;
       }
       for (const auto& in : n.input_defs)
-        n.inputs.push_back(
-            {in.name, PortKind::FlatBuffer, in.optional, nullptr});
+        n.inputs.push_back({in.name, PortKind::FlatBuffer, false, nullptr});
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
@@ -843,10 +834,10 @@ class Builder {
       if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
         if (const auto* ins = schema::get(b->inputs))
           for (const auto& [name, _] : ins->entries())
-            n.inputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
+            n.inputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
         if (const auto* outs = schema::get(b->outputs))
           for (const auto& [name, _] : outs->entries())
-            n.outputs.push_back({name, PortKind::FlatBuffer, true, nullptr});
+            n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
       }
     }
     for (const auto& node : res_->nodes) {
@@ -857,7 +848,7 @@ class Builder {
                               "boundary", false))
             res_->endpoints[{path_key(node.path), port.name, output}] = *end;
     }
-    std::set<std::tuple<size_t, std::string, size_t, std::string>> wires;
+    std::set<std::pair<size_t, std::string>> wired_inputs;
     for (const auto& e : raw_) {
       CardPath from = e.scope;
       CardPath to = e.scope;
@@ -918,12 +909,12 @@ class Builder {
       check(sn, src->second, true);
       check(dn, dst->second, false);
       if (!ok) continue;
-      if (sn.kind != CardType::Draft && dn.kind != CardType::Draft &&
-          !wires.emplace(src->first, src->second, dst->first, dst->second)
-               .second) {
-        dn.diags.push_back(diag(dn.path, "duplicate_wire",
-                                wire + ": " + src->second + " -> " +
-                                    dst->second + " repeats a connection"));
+      if (dn.kind != CardType::Draft &&
+          !wired_inputs.emplace(dst->first, dst->second).second) {
+        dn.diags.push_back(diag(dn.path, "multiple_input_wires",
+                                wire + ": input " + dst->second +
+                                    " already has a wire; use a Merge Card "
+                                    "to combine arrivals"));
         continue;
       }
       res_->edges.push_back({src->first, src->second, dst->first, dst->second});
@@ -942,61 +933,30 @@ class Builder {
   }
 
   void resolve_types() {
-    std::set<std::pair<size_t, std::string>> mismatch_reported;
-    // Resolve real producers first. Draft placeholders must neither constrain
-    // a real producer nor replace a type that can be derived without a Draft.
-    for (const bool include_drafts : {false, true}) {
-      for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
-        bool changed = false;
-        for (const auto& e : res_->edges) {
-          if (res_->nodes[e.to].kind == CardType::Draft) continue;
-          const bool from_draft = res_->nodes[e.from].kind == CardType::Draft;
-          if (from_draft && !include_drafts) continue;
-          types::PortType draft{"", PortKind::FlatBuffer, true,
+    const types::PortType draft{"", PortKind::FlatBuffer, false,
                                 types::empty_type()};
-          auto* src =
-              from_draft ? &draft : out_port(res_->nodes[e.from], e.from_port);
-          auto* dst = in_port(res_->nodes[e.to], e.to_port);
-          if (!src || !dst || !src->type) continue;
-          const bool provisional = from_draft || provisional_outputs_.contains(
-                                                     {e.from, e.from_port});
-          if (!dst->type) {
-            dst->type = src->type;
-            dst->kind = src->kind;
-            if (provisional) provisional_inputs_.insert({e.to, e.to_port});
-            changed = true;
-          } else if (!provisional && dst->type != src->type &&
-                     !types::compatible(*dst->type, *src->type) &&
-                     mismatch_reported.insert({e.to, e.to_port}).second) {
-            auto& dn = res_->nodes[e.to];
-            dn.diags.push_back(diag(
-                dn.path, "type_mismatch",
-                "input " + e.to_port + " receives incompatible types " +
-                    dst->type->root_type + " and " + src->type->root_type));
-          }
-        }
-        for (size_t i = 0; i < res_->nodes.size(); ++i) {
-          auto& n = res_->nodes[i];
-          if (!derive(n)) continue;
-          changed = true;
-          bool provisional = false;
-          for (const auto& input : n.inputs) {
-            // A Branch's output type follows value, not condition.
-            if (n.kind == CardType::Branch && input.name != "value") continue;
-            provisional |= provisional_inputs_.contains({i, input.name});
-          }
-          if (provisional)
-            for (const auto& output : n.outputs)
-              provisional_outputs_.insert({i, output.name});
-        }
-        if (!changed) break;
+    for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
+      bool changed = false;
+      for (const auto& e : res_->edges) {
+        if (res_->nodes[e.to].kind == CardType::Draft) continue;
+        const auto* src = res_->nodes[e.from].kind == CardType::Draft
+                              ? &draft
+                              : out_port(res_->nodes[e.from], e.from_port);
+        auto* dst = in_port(res_->nodes[e.to], e.to_port);
+        if (!src || !src->resolved() || !dst || dst->resolved()) continue;
+        dst->type = src->type;
+        dst->kind = src->kind;
+        dst->merge_member_types = src->merge_member_types;
+        changed = true;
       }
+      for (auto& n : res_->nodes) changed |= derive(n);
+      if (!changed) break;
     }
     for (auto& n : res_->nodes) {
       if (n.is_virtual) continue;
       for (auto& p : n.outputs)
-        if (!p.type && n.kind != CardType::Code && n.kind != CardType::Input &&
-            connected_out(n, p.name))
+        if (!p.resolved() && n.kind != CardType::Code &&
+            n.kind != CardType::Input && connected_out(n, p.name))
           n.diags.push_back(diag(n.path, "unresolved_type",
                                  "output " + p.name +
                                      " type cannot be derived (unresolved "
@@ -1041,7 +1001,8 @@ class Builder {
           shape = Shape::single;
         else if (node.kind == CardType::Input && has_value_sweep(node.settings))
           shape = Shape::list;
-        else if (lists > 0 && (!node.settings.any_mode || lists == connected))
+        else if (lists > 0 &&
+                 (node.kind != CardType::Merge || lists == connected))
           shape = Shape::list;
         else if (node.kind != CardType::Code &&
                  node.kind != CardType::Subgraph && singles == connected)
@@ -1056,30 +1017,50 @@ class Builder {
     }
   }
 
+  auto resolve_boundary_types() -> void {
+    for (auto& node : res_->nodes) {
+      if (!node.is_virtual) continue;
+      auto inherit = [&](auto& ports, bool output) {
+        for (auto& port : ports) {
+          const auto end = res_->endpoint(node.path, port.name, output);
+          if (!end) continue;
+          const auto& leaf = res_->nodes[end->first];
+          const auto* resolved =
+              output ? leaf.output(end->second) : leaf.input(end->second);
+          if (!resolved) continue;
+          port.kind = resolved->kind;
+          port.type = resolved->type;
+          port.execution_shape = resolved->execution_shape;
+          port.merge_member_types = resolved->merge_member_types;
+        }
+      };
+      inherit(node.inputs, false);
+      inherit(node.outputs, true);
+    }
+  }
+
   bool derive(Node& n) {
     bool changed = false;
     switch (n.kind) {
       case CardType::Branch:
       case CardType::Fork: {
         const auto* v = n.input("value");
-        if (v && v->type)
+        if (v && v->resolved())
           for (auto& o : n.outputs)
-            if (!o.type) {
+            if (!o.resolved()) {
               o.type = v->type;
               o.kind = v->kind;
+              o.merge_member_types = v->merge_member_types;
               changed = true;
             }
         break;
       }
       case CardType::Collect: {
         const auto* in = n.input("in");
-        if (!in || !in->type || n.outputs[0].type) break;
+        if (!in || !in->resolved() || n.outputs[0].resolved()) break;
         std::string error;
-        if (auto type = collect_output_type(*in, error)) {
+        if (auto type = collect_output_type(error)) {
           n.outputs[0].type = std::move(type);
-          n.outputs[0].kind = in->kind == PortKind::FlatBuffer
-                                  ? PortKind::FlatBuffer
-                                  : PortKind::Directory;
           changed = true;
         } else if (derive_failed_.insert(path_key(n.path)).second) {
           n.diags.push_back(
@@ -1088,25 +1069,21 @@ class Builder {
         break;
       }
       case CardType::Merge: {
-        if (n.outputs[0].type || derive_failed_.count(path_key(n.path))) break;
-        std::vector<std::pair<std::string, TypeRef>> ins;
-        bool ready = true;
-        size_t idx = res_->index.at(path_key(n.path));
-        for (const auto& p : n.inputs) {
-          bool connected = false;
-          for (const auto& e : res_->edges)
-            if (e.to == idx && e.to_port == p.name) connected = true;
-          if (!connected) continue;
-          if (!p.type) {
-            ready = false;
-            break;
-          }
-          ins.emplace_back(p.name, p.type);
-        }
-        if (!ready || ins.empty()) break;
+        auto& out = n.outputs.front();
+        if (out.resolved() || derive_failed_.contains(path_key(n.path))) break;
+        const size_t idx = res_->index.at(path_key(n.path));
+        std::vector<const types::PortType*> ins;
+        for (const auto& p : n.inputs)
+          if (res_->incoming[idx].contains(p.name)) ins.push_back(&p);
+        if (ins.empty() ||
+            !std::ranges::all_of(ins, &types::PortType::resolved))
+          break;
         std::string err;
-        if (auto t = types::merged_type(ins, &err)) {
-          n.outputs[0].type = *t;
+        if (auto merged = types::merged_type(ins, &err)) {
+          out.type = std::move(merged->type);
+          out.kind = ins.front()->kind;
+          out.merge_member_types = std::move(merged->member_types);
+          n.merge_tags = std::move(merged->tags);
           changed = true;
         } else {
           derive_failed_.insert(path_key(n.path));
@@ -1124,27 +1101,10 @@ class Builder {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       Node& n = res_->nodes[i];
       if (n.is_virtual) continue;
-      for (const auto& p : n.inputs) {
-        bool connected = false;
-        for (const auto& e : res_->edges)
-          if (e.to == i && e.to_port == p.name) connected = true;
-        if (!connected && !p.optional)
-          n.exec_diags.push_back(
-              diag(n.path, "input_missing",
-                   "required input " + p.name + " is not connected"));
-        else if (connected && !p.type)
+      for (const auto& p : n.inputs)
+        if (res_->incoming[i].contains(p.name) && !p.resolved())
           n.diags.push_back(diag(n.path, "unresolved_type",
                                  "input " + p.name + " type is unresolved"));
-      }
-      if (n.kind == CardType::Branch) {
-        const auto* c = n.input("condition");
-        if (c && c->type && !provisional_inputs_.contains({i, "condition"}) &&
-            !types::is_condition(*c->type))
-          n.diags.push_back(
-              diag(n.path, "invalid_condition",
-                   "branch condition must be a message with value:bool, got " +
-                       c->type->root_type));
-      }
       if (n.settings.retain_artifact && n.settings.artifact_output) {
         const auto* o = n.output(*n.settings.artifact_output);
         if (!o)
@@ -1153,27 +1113,22 @@ class Builder {
                                      *n.settings.artifact_output +
                                      " is not an output"));
         else if (o->kind == PortKind::FlatBuffer)
-          n.diags.push_back(
-              diag(n.path, "invalid_setting",
-                   "artifactOutput must be a File or Directory port"));
+          n.diags.push_back(diag(n.path, "invalid_setting",
+                                 "artifactOutput must be a Path port"));
       }
     }
   }
 
   // Must-analysis over the flattened graph (greatest fixpoint, so feedback
   // loops converge): a node is guaranteed before n when it lies on every way
-  // n can fire. One port: common to all edges into it. all: union over the
-  // ports needed to fire. any: common to all connected ports. A branch side
-  // therefore never leaks past a merge with the other side.
+  // n can fire. Most Cards need every connected input. Merge guarantees
+  // only the producers common to all its connected inputs.
   void compute_guarantees() {
     size_t n = res_->nodes.size();
     using Set = std::vector<char>;
     auto in = res_->incoming;
-    for (size_t i = 0; i < n; ++i) {
-      for (auto& [port, froms] : in[i]) std::erase(froms, i);
-      std::erase_if(in[i],
-                    [](const auto& port) { return port.second.empty(); });
-    }
+    for (size_t i = 0; i < n; ++i)
+      std::erase_if(in[i], [i](const auto& port) { return port.second == i; });
     // Only nodes that can ever fire take part; others guarantee nothing.
     std::vector<char> reach(n, 0);
     std::vector<size_t> stack;
@@ -1198,33 +1153,17 @@ class Builder {
       changed = false;
       for (size_t i = 0; i < n; ++i) {
         if (!reach[i] || in[i].empty()) continue;
-        const Node& node = res_->nodes[i];
-        std::vector<Set> ports;
-        std::vector<bool> required;
-        for (const auto& [port, froms] : in[i]) {
-          Set s(n, 1);
-          bool any_from = false;
-          for (size_t u : froms) {
-            if (!reach[u]) continue;
-            any_from = true;
-            for (size_t k = 0; k < n; ++k) s[k] &= g[u][k] || k == u;
+        const bool any = res_->nodes[i].kind == CardType::Merge;
+        Set r(n, any ? 1 : 0);
+        for (const auto& [_, from] : in[i]) {
+          if (!reach[from]) continue;
+          for (size_t k = 0; k < n; ++k) {
+            const bool guaranteed = g[from][k] || k == from;
+            if (any)
+              r[k] &= guaranteed;
+            else
+              r[k] |= guaranteed;
           }
-          if (!any_from) continue;
-          const auto* p = node.input(port);
-          ports.push_back(std::move(s));
-          required.push_back(p && !p->optional);
-        }
-        Set r(n, 0);
-        bool any_required = false;
-        for (bool b : required) any_required |= b;
-        if (node.settings.any_mode || !any_required) {
-          r.assign(n, ports.empty() ? 0 : 1);
-          for (const auto& s : ports)
-            for (size_t k = 0; k < n; ++k) r[k] &= s[k];
-        } else {
-          for (size_t j = 0; j < ports.size(); ++j)
-            if (required[j])
-              for (size_t k = 0; k < n; ++k) r[k] |= ports[j][k];
         }
         r[i] = 0;
         if (r != g[i]) {
@@ -1240,8 +1179,7 @@ class Builder {
           res_->guaranteed[i].push_back(k);
   }
 
-  // Direct inputs.<port> names are resolved from the same edges and
-  // guarantees used by the evaluator, including when Nix accesses an alias.
+  // Follow transparent built-ins to the producers of declared inputs.
   auto trace_nix_producers(size_t source, std::set<size_t>& visiting,
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
@@ -1265,11 +1203,10 @@ class Builder {
     visiting.erase(source);
   }
 
-  auto check_nix_references() -> void {
+  auto resolve_nix_inputs() -> void {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       auto& node = res_->nodes[i];
       if (node.kind != CardType::Code) continue;
-      const auto file = node.def_dir + "default.nix";
       const auto allowed = res_->nix_upstream(i);
       std::map<std::string, std::set<size_t>> producers;
       for (const auto& edge : res_->edges) {
@@ -1286,39 +1223,9 @@ class Builder {
         }
         if (from.size() != 1) continue;
         const size_t producer = *from.begin();
-        if (std::ranges::find(allowed, producer) != allowed.end())
+        if (std::ranges::find(allowed, producer) != allowed.end()) {
           node.nix_inputs.emplace(name, producer);
-      }
-      if (!doc_.sources.count(file)) continue;
-      auto text = read_(file);
-      if (!text) continue;
-      std::set<std::string> seen;
-      for (const auto& name : nix_references(*text)) {
-        if (!seen.insert(name).second) continue;
-        const auto from = producers.find(name);
-        const auto alias = node.nix_inputs.find(name);
-        if (alias != node.nix_inputs.end()) {
-          node.nix_references.push_back(
-              {res_->nodes[alias->second].path, name, true});
-        } else if (from == producers.end()) {
-          node.nix_references.push_back({{}, name, false});
-          node.diags.push_back(diag(node.path, "nix_reference_unknown",
-                                    "default.nix references inputs." + name +
-                                        " without a connected input",
-                                    true, file));
-        } else if (from->second.size() != 1) {
-          node.nix_references.push_back({{}, name, false});
-          node.diags.push_back(diag(
-              node.path, "nix_reference_ambiguous",
-              "inputs." + name + " has more than one producer", true, file));
-        } else {
-          const auto& target = res_->nodes[*from->second.begin()].path;
-          node.nix_references.push_back({target, name, false});
-          node.diags.push_back(diag(
-              node.path, "nix_reference_not_guaranteed",
-              "inputs." + name +
-                  " requires a Code Card that always runs before this Card",
-              true, file));
+          node.nix_references.push_back({res_->nodes[producer].path, name});
         }
       }
     }
@@ -1331,8 +1238,6 @@ class Builder {
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
   std::set<std::string> derive_failed_;
-  std::set<std::pair<size_t, std::string>> provisional_inputs_;
-  std::set<std::pair<size_t, std::string>> provisional_outputs_;
 };
 
 }  // namespace
