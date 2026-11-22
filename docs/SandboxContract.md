@@ -14,7 +14,7 @@ Each **Before P1** note records the behavior at `24fc2d2c`, the revision the con
 - The contract states what the worker **provides**. It does not defend against the Card's own code: `main.so` shares the worker's address space.
 - Nothing about identity is left for the Card to see. `tsugumid`, not the worker, stamps display messages with the Card and the run, and `WorkerCall` carries no `run_id`, invocation or Card ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
 - The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
-- The Card's process gets no implicit shell and no implicit `PATH`: there is no `/bin/sh` for it to rely on. A Card that runs other programs declares them to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), and the builder puts them on the Card's `PATH`. [The language SDK guides](https://github.com/gen740/tsugumi-kit) describe the attribute.
+- The Card's process gets no implicit shell and no implicit `PATH`: there is no `/bin/sh` for it to rely on. A Card that runs other programs declares them to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone (and leaves it unset when there is none). [The language SDK guides](https://github.com/gen740/tsugumi-kit) describe the attribute.
 
 **Before P1 (`24fc2d2c`).**
 

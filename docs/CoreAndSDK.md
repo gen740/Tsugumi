@@ -25,7 +25,7 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 - The contract between the core and a language SDK is the common [Card ABI](CardABI.md).
 - The worker comes from the core, including the build of a worker for a foreign system or a remote host. Across versions, the promise is the Card ABI.
 - Bash-bodied Cards, `preRun` and `postRun` are abolished. If they return, it will be as an extension of a language SDK, not in the core.
-- The Card's process gets no implicit `/bin/sh` and no implicit `PATH`. A Card declares the programs it runs to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), and the builder puts them on the Card's `PATH` ([The sandbox contract](SandboxContract.md#the-worker-builds-what-the-card-sees)).
+- The Card's process gets no implicit `/bin/sh` and no implicit `PATH`. A Card declares the programs it runs to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone ([The sandbox contract](SandboxContract.md#the-worker-builds-what-the-card-sees)).
 
 ## What the core evaluates
 
