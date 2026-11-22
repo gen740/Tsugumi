@@ -1001,7 +1001,7 @@ void History::complete_invocation(sql::Db& db,
           if (std::filesystem::is_regular_file(status))
             file_content_hash = fs::sha256_file(content);
           else if (std::filesystem::is_directory(status))
-            file_content_hash = fs::sha256_tree(content);
+            file_content_hash = "tree:" + fs::sha256_tree(content);
         }
       }
       const auto& stored = path ? v.recorded_path.value_or("") : v.bytes;

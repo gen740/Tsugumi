@@ -411,8 +411,12 @@ std::string sha256_tree(const stdfs::path& p) {
     hash.update(std::string_view("\n", 1));
   };
   for (const auto& name : listing.directories) entry("d", name);
-  for (const auto& name : listing.files)
-    entry("f", name, sha256_file(p / name));
+  for (const auto& name : listing.files) {
+    crypto::Sha256 file;
+    stream_beneath(p, name, UINT64_MAX,
+                   [&](std::string_view chunk) { file.update(chunk); });
+    entry("f", name, file.finish_hex());
+  }
   for (const auto& name : listing.links) entry("l", name);
   for (const auto& name : listing.special) entry("s", name);
   return hash.finish_hex();

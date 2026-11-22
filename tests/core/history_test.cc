@@ -21,7 +21,7 @@ TEST(RunHistory, NotebookFailurePositionRoundtrip) {
   EXPECT_EQ(restored->kind, failure.kind);
 }
 
-TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
+TEST(RunHistory, PathContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   const auto directory = std::filesystem::temp_directory_path() /
                          ("tsugumi-history-" + crypto::uuid4());
   std::filesystem::create_directories(directory);
@@ -33,18 +33,22 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
   History restored(directory / "original.sqlite");
   const std::string bytes("\0\xff\x80\xc3(\n", 6);
   std::vector<std::string> runs, hashes, contents;
-  // Two equal files, one different file and one directory tree.
-  for (int i = 0; i < 4; ++i) {
+  // Two equal files, an empty file, a nonempty tree and an empty tree.
+  for (int i = 0; i < 5; ++i) {
     const auto run_id = std::to_string(i + 1);
     const auto relative = std::filesystem::path("runs") / run_id / "values/file";
     const auto file = directory / relative;
-    if (i == 3) {
-      fs::write_atomic(file / "nested/data", bytes);
-      std::filesystem::create_directories(file / "empty");
-      contents.push_back(fs::sha256_tree(file));
+    if (i >= 3) {
+      std::filesystem::create_directories(file);
+      if (i == 3) {
+        fs::write_atomic(file / "nested/data", bytes);
+        std::filesystem::create_directories(file / "empty");
+      }
+      contents.push_back("tree:" + fs::sha256_tree(file));
     } else {
-      fs::write_atomic(file, i == 2 ? "other" : bytes);
-      contents.push_back(crypto::sha256_hex(i == 2 ? "other" : bytes));
+      const auto content = i == 2 ? std::string_view{} : std::string_view(bytes);
+      fs::write_atomic(file, content);
+      contents.push_back(crypto::sha256_hex(content));
     }
     // A Path value has no type and no bytes; history records its path.
     Value value{"file", PortKind::Path, nullptr, {}, {},
@@ -70,7 +74,8 @@ TEST(RunHistory, FileContentDigestsSurviveMissingFilesAndDatabaseRestart) {
     std::filesystem::remove_all(file);
   }
   ASSERT_NE(hashes[0], hashes[1]);
-  ASSERT_NE(contents[3], contents[0]);
+  ASSERT_NE(contents[3], contents[4]);
+  ASSERT_NE(contents[4], contents[2]);
   for (size_t i = 0; i < runs.size(); ++i) {
     for (const bool input : {false, true}) {
       restored.read([&](sql::Db& db) {
