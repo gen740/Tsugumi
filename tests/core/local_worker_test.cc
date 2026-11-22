@@ -3,8 +3,10 @@
 #include <sys/socket.h>
 #include <unistd.h>
 
+#include <future>
 #include <thread>
 
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/workerd/local.hh"
 
@@ -91,6 +93,61 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
     EXPECT_FALSE(returned);
   }
   EXPECT_TRUE(returned);
+}
+
+TEST(LocalWorker, DiscardsStaleRepliesAndReceivesDataWhileIdle) {
+  namespace W = Tsugumi::Worker;
+  std::array<SocketPair, 4> channels;
+  std::array<int, 4> descriptors;
+  for (size_t i = 0; i < channels.size(); ++i) {
+    descriptors[i] = ::dup(channels[i].fd[0]);
+    ASSERT_GE(descriptors[i], 0);
+    ::fcntl(descriptors[i], F_SETFL, O_NONBLOCK);
+  }
+  std::promise<WorkerDisplayData> received;
+  WorkerProc worker({descriptors, {}, 7, 1, false, [] {}, [](bool) {}, [] {}});
+  auto data = received.get_future();
+  worker.set_display([&](const auto& value) { received.set_value(value); });
+  const auto send = [&](uint64_t id, W::WorkerPayload kind,
+                        flatbuffers::FlatBufferBuilder& builder,
+                        flatbuffers::Offset<void> value) {
+    W::FinishWorkerMessageBuffer(
+        builder, W::CreateWorkerMessage(builder, id, kind, value));
+    rpc::frame::Write(
+        channels[0].fd[1],
+        {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+         builder.GetSize()},
+        4096);
+  };
+  auto peer = std::async(std::launch::async, [&] {
+    const auto call = rpc::frame::Read(channels[0].fd[1], 4096);
+    EXPECT_EQ(call, "call");
+    flatbuffers::FlatBufferBuilder b;
+    const auto output =
+        b.CreateVector(std::vector<flatbuffers::Offset<W::WorkerOutput>>{});
+    const auto result = W::CreateWorkerResult(b, output);
+    send(7, W::WorkerPayload::WorkerResult, b, result.Union());
+    b.Clear();
+    const auto current = W::CreateWorkerResult(
+        b, b.CreateVector(std::vector<flatbuffers::Offset<W::WorkerOutput>>{}));
+    send(8, W::WorkerPayload::WorkerResult, b, current.Union());
+  });
+  const auto deadline =
+      std::chrono::steady_clock::now() + std::chrono::seconds(3);
+  EXPECT_FALSE(
+      worker.call("call", worker.next_call_id(), nullptr, deadline).failure);
+  peer.get();
+  worker.idle();
+  flatbuffers::FlatBufferBuilder b;
+  const uint8_t bytes[] = {0, 255, 128};
+  const auto display = W::CreateWorkerDisplay(b, b.CreateString("unknown"),
+                                              b.CreateVector(bytes, 3));
+  send(0, W::WorkerPayload::WorkerDisplay, b, display.Union());
+  ASSERT_EQ(data.wait_for(std::chrono::seconds(3)), std::future_status::ready);
+  const auto value = data.get();
+  EXPECT_EQ(value.view, "unknown");
+  EXPECT_EQ(value.bytes, std::string("\0\xff\x80", 3));
+  worker.set_display({});
 }
 
 TEST(LocalWorker, AnInvalidatedLeaseCannotReturnItsResident) {

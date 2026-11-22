@@ -8,7 +8,6 @@
 #include <algorithm>
 #include <atomic>
 #include <cerrno>
-#include <deque>
 #include <memory>
 #include <stdexcept>
 #include <string>
@@ -152,6 +151,11 @@ auto entry_kind(mode_t mode) -> std::string {
 
 auto open_entry(int parent, const std::string& name,
                 const std::filesystem::path& path) -> Handle {
+  struct stat entry{};
+  if (::fstatat(parent, name.c_str(), &entry, AT_SYMLINK_NOFOLLOW) == 0 &&
+      !S_ISREG(entry.st_mode) && !S_ISDIR(entry.st_mode))
+    reject(path, entry_kind(entry.st_mode),
+           "only regular files and directories are allowed");
   const int fd = ::openat(parent, name.c_str(),
                           O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC);
   if (fd < 0) {
@@ -176,86 +180,20 @@ auto check_copy_cancel(const std::atomic<bool>& cancel) -> void {
   if (cancel.load()) throw std::runtime_error("output transfer cancelled");
 }
 
-// Return a pinned target and its physical path relative to the declared root.
-// Keeping that path matters for a directory alias containing another ../ link.
-struct Resolved {
-  Handle handle;
-  std::filesystem::path path;
-};
-
-auto resolve_entry(int root, const std::filesystem::path& relative,
-                   const std::filesystem::path& label,
-                   const std::atomic<bool>& cancel) -> Resolved {
-  std::vector<Handle> parents;
-  parents.push_back(open_entry(root, ".", label));
-  std::filesystem::path physical;
-  std::deque<std::string> pending;
-  for (const auto& part : relative) pending.push_back(part.string());
-  unsigned links = 0;
-  while (!pending.empty()) {
-    check_copy_cancel(cancel);
-    const auto name = pending.front();
-    pending.pop_front();
-    if (name.empty() || name == ".") continue;
-    if (name == "..") {
-      if (parents.size() == 1)
-        reject(label, "symbolic link",
-               "target escapes the declared Directory output");
-      parents.pop_back();
-      physical = physical.parent_path();
-      continue;
-    }
-    struct stat st{};
-    if (::fstatat(parents.back().get(), name.c_str(), &st,
-                  AT_SYMLINK_NOFOLLOW) != 0)
-      reject(label, "missing or unreadable entry",
-             "fstatat: " + std::generic_category().message(errno));
-    if (S_ISLNK(st.st_mode)) {
-      if (++links > 40)
-        reject(label, "symbolic link", "cyclic or excessive link chain");
-      std::vector<char> buffer(65536);
-      const auto count = ::readlinkat(parents.back().get(), name.c_str(),
-                                      buffer.data(), buffer.size());
-      if (count < 0)
-        reject(label, "symbolic link",
-               "readlinkat: " + std::generic_category().message(errno));
-      if (static_cast<size_t>(count) == buffer.size())
-        reject(label, "symbolic link", "target is too long");
-      const std::filesystem::path target(
-          std::string(buffer.data(), static_cast<size_t>(count)));
-      if (target.is_absolute())
-        reject(label, "symbolic link", "absolute target is not allowed");
-      // readlinkat captured one string even if the link was exchanged. Never
-      // open the link itself after validation; expand only that captured text.
-      for (auto it = target.end(); it != target.begin();)
-        pending.push_front((--it)->string());
-      continue;
-    }
-    if (!S_ISREG(st.st_mode) && !S_ISDIR(st.st_mode))
-      reject(label, entry_kind(st.st_mode),
-             "only regular files and directories are allowed");
-    auto opened = open_entry(parents.back().get(), name, label);
-    // The inode may have changed since fstatat.
-    st = status_of(opened.get(), label);
-    physical /= name;
-    if (pending.empty()) return {std::move(opened), physical};
-    if (!S_ISDIR(st.st_mode))
-      reject(label, entry_kind(st.st_mode), "expected a directory component");
-    parents.push_back(std::move(opened));
-  }
-  return {std::move(parents.back()), physical};
-}
-
-using Inode = std::pair<dev_t, ino_t>;
-
-auto copy_entry(int root, int source, const std::filesystem::path& physical,
-                const std::filesystem::path& label,
+auto copy_entry(int source, const std::filesystem::path& label,
                 const std::filesystem::path& destination,
-                const std::atomic<bool>& cancel, std::vector<Inode>& ancestors,
-                const TransferProgress& progress) -> void {
+                const std::atomic<bool>& cancel,
+                const TransferProgress& progress, OutputBudget& budget)
+    -> void {
   check_copy_cancel(cancel);
   const auto st = status_of(source, label);
+  if (budget.entries == 0)
+    reject(label, entry_kind(st.st_mode), "output entry budget exceeded");
+  --budget.entries;
   if (S_ISREG(st.st_mode)) {
+    const auto total = static_cast<uint64_t>(st.st_size);
+    if (total > budget.bytes)
+      reject(label, "regular file", "output byte budget exceeded");
     // Overlapping declared outputs can copy a file twice. The destination is
     // core-owned, contains no symlinks, and is never exposed to the worker.
     const int fd =
@@ -264,25 +202,21 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
     if (fd < 0) failed("open destination", destination);
     Handle written(fd);
     uint64_t done = 0;
-    const auto total = static_cast<uint64_t>(st.st_size);
     if (progress) progress(label, 0, total);
-    copy_sparse_file(source, fd, label, destination,
-                     [&](std::string_view chunk) {
-                       check_copy_cancel(cancel);
-                       done += chunk.size();
-                       if (progress) progress(label, done, total);
-                     });
+    copy_sparse_file(
+        source, fd, label, destination, [&](std::string_view chunk) {
+          check_copy_cancel(cancel);
+          if (chunk.size() > budget.bytes)
+            reject(label, "regular file", "output byte budget exceeded");
+          budget.bytes -= chunk.size();
+          done += chunk.size();
+          if (progress) progress(label, done, total);
+        });
     return;
   }
   if (!S_ISDIR(st.st_mode))
     reject(label, entry_kind(st.st_mode),
            "only regular files and directories are allowed");
-  const Inode inode{st.st_dev, st.st_ino};
-  if (ancestors.size() >= 256 ||
-      std::find(ancestors.begin(), ancestors.end(), inode) != ancestors.end())
-    reject(label, "directory symbolic link",
-           "cyclic or excessive directory traversal");
-  ancestors.push_back(inode);
   std::filesystem::create_directories(destination);
   const int scan =
       ::openat(source, ".", O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
@@ -304,11 +238,10 @@ auto copy_entry(int root, int source, const std::filesystem::path& physical,
     }
     const std::string name = entry->d_name;
     if (name == "." || name == "..") continue;
-    auto child = resolve_entry(root, physical / name, label / name, cancel);
-    copy_entry(root, child.handle.get(), child.path, label / name,
-               destination / name, cancel, ancestors, progress);
+    auto child = open_entry(source, name, label / name);
+    copy_entry(child.get(), label / name, destination / name, cancel, progress,
+               budget);
   }
-  ancestors.pop_back();
 }
 
 }  // namespace
@@ -330,7 +263,8 @@ auto clear_staging(const std::filesystem::path& path,
 auto copy_staging_output(int staging, const std::filesystem::path& relative,
                          const std::filesystem::path& destination,
                          bool directory, const std::atomic<bool>& cancel,
-                         const TransferProgress& progress) -> void {
+                         const TransferProgress& progress, OutputBudget* budget)
+    -> void {
   if (relative.empty() || relative.is_absolute())
     reject(relative, "output path", "expected a path relative to staging");
   std::vector<Handle> parents;
@@ -350,9 +284,9 @@ auto copy_staging_output(int staging, const std::filesystem::path& relative,
         relative, entry_kind(st.st_mode),
         directory ? "expected a Directory output" : "expected a File output");
   std::filesystem::create_directories(destination.parent_path());
-  std::vector<Inode> ancestors;
-  copy_entry(source, source, {}, relative, destination, cancel, ancestors,
-             progress);
+  OutputBudget defaults;
+  copy_entry(source, relative, destination, cancel, progress,
+             budget ? *budget : defaults);
 }
 
 }  // namespace tsugumi::fs

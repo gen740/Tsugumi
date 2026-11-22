@@ -23,6 +23,7 @@
 #include <chrono>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <fstream>
 #include <functional>
@@ -33,9 +34,11 @@
 #include <span>
 #include <sstream>
 #include <thread>
+#include <utility>
 #include <vector>
 
 #include "journal.hh"
+#include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_socket.hh"
 #include "tsugumi/util/crypto.hh"
@@ -58,11 +61,95 @@ struct Fd {
   Fd() = default;
   explicit Fd(int fd) : value(fd) {}
   Fd(const Fd&) = delete;
+  Fd(Fd&& other) noexcept : value(std::exchange(other.value, -1)) {}
   auto operator=(const Fd&) -> Fd& = delete;
   ~Fd() {
     if (value >= 0) ::close(value);
   }
 };
+// One socket carries only transient view bytes from the job's adapter.
+class DisplayChannel {
+ public:
+  using Batch = std::vector<std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>>;
+
+  explicit DisplayChannel(Fd&& descriptor)
+      : socket_(std::move(descriptor)), thread_([this] { read(); }) {}
+  ~DisplayChannel() {
+    ::shutdown(socket_.value, SHUT_RDWR);
+    join();
+  }
+
+  auto take(bool finished) -> Batch {
+    // The supervisor has waited for the adapter, so EOF follows its final
+    // bytes even if the listener's reader has not caught up yet.
+    if (finished) join();
+    std::lock_guard lock(mutex_);
+    Batch batch;
+    batch.reserve(pending_.size());
+    for (auto& entry : pending_) batch.push_back(std::move(entry.value));
+    pending_.clear();
+    size_ = 0;
+    return batch;
+  }
+
+  auto expired() -> bool {
+    std::lock_guard lock(mutex_);
+    return closed_ && std::chrono::steady_clock::now() - *closed_ > 10s;
+  }
+
+ private:
+  struct Entry {
+    std::unique_ptr<Tsugumi::Worker::WorkerDisplayT> value;
+    size_t size;
+  };
+
+  auto join() -> void {
+    std::lock_guard lock(join_mutex_);
+    if (thread_.joinable()) thread_.join();
+  }
+
+  auto read() -> void {
+    using Tsugumi::Worker::WorkerDisplay;
+    try {
+      while (auto frame =
+                 rpc::frame::Read(socket_.value, kRemoteDisplayBytes)) {
+        flatbuffers::Verifier verifier(
+            reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
+        if (!verifier.VerifyBuffer<WorkerDisplay>(nullptr)) continue;
+        auto value = std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>(
+            flatbuffers::GetRoot<WorkerDisplay>(frame->data())->UnPack());
+        std::lock_guard lock(mutex_);
+        const auto old =
+            std::ranges::find_if(pending_, [&](const Entry& entry) {
+              return entry.value->view == value->view;
+            });
+        if (old != pending_.end()) {
+          size_ -= old->size;
+          pending_.erase(old);
+        }
+        while (size_ + frame->size() > kRemoteDisplayBytes) {
+          size_ -= pending_.front().size;
+          pending_.pop_front();
+        }
+        size_ += frame->size();
+        pending_.push_back({std::move(value), frame->size()});
+      }
+    } catch (const std::exception&) {
+      ::shutdown(socket_.value, SHUT_RD);
+    }
+    std::lock_guard lock(mutex_);
+    closed_ = std::chrono::steady_clock::now();
+  }
+
+  Fd socket_;
+  std::mutex mutex_;
+  std::deque<Entry> pending_;
+  size_t size_ = 0;
+  std::optional<std::chrono::steady_clock::time_point> closed_;
+  std::mutex join_mutex_;
+  std::thread thread_;
+};
+
 auto log(const std::string& line) -> void {
   std::cerr << "tsugumi-workerd: " << line << '\n';
 }
@@ -310,6 +397,9 @@ class Daemon {
             status.transfer_total = *progress.total;
           }
         }
+        const bool finished = status.state == R::JobState::Succeeded;
+        if (const auto channel = display_channel(*journal, q.job_id))
+          status.displays = channel->take(finished);
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {
@@ -326,6 +416,10 @@ class Daemon {
       }
       case R::RequestBody::ReleaseRequest:
         journal->release(q.job_id, q.body.AsReleaseRequest()->fingerprint);
+        {
+          std::lock_guard guard(channel_mutex_);
+          displays_.erase(channel_key(*journal, q.job_id));
+        }
         return reply(R::AckT{});
       case R::RequestBody::JobSecretsRequest:
         deliver_secrets(*journal, q.job_id, q.core_life_id,
@@ -354,6 +448,11 @@ class Daemon {
     }
   }
   auto tick() -> void {
+    {
+      std::lock_guard guard(channel_mutex_);
+      std::erase_if(displays_,
+                    [](const auto& item) { return item.second->expired(); });
+    }
     while (::waitpid(-1, nullptr, WNOHANG) > 0) {
     }
     for (const auto& entry :
@@ -433,6 +532,12 @@ class Daemon {
   static auto channel_key(const Journal& journal, const std::string& job)
       -> std::string {
     return journal.root().string() + '\n' + job;
+  }
+  auto display_channel(const Journal& journal, const std::string& job)
+      -> std::shared_ptr<DisplayChannel> {
+    std::lock_guard guard(channel_mutex_);
+    const auto found = displays_.find(channel_key(journal, job));
+    return found == displays_.end() ? nullptr : found->second;
   }
   auto close_channel(const Journal& journal, const std::string& job) -> void {
     std::lock_guard guard(channel_mutex_);
@@ -514,9 +619,23 @@ class Daemon {
     } catch (const std::exception&) {
       return false;
     }
+    int pair[2];
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
+      return false;
+    Fd display_reader(pair[0]), display_writer(pair[1]);
+    Fd adapter_display(::fcntl(display_writer.value, F_DUPFD_CLOEXEC, 10));
+    if (adapter_display.value < 0) return false;
+    std::shared_ptr<DisplayChannel> display;
+    try {
+      display = std::make_shared<DisplayChannel>(std::move(display_reader));
+    } catch (const std::exception&) {
+      return false;
+    }
     posix_spawn_file_actions_t actions;
     posix_spawn_file_actions_init(&actions);
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
+    posix_spawn_file_actions_adddup2(&actions, adapter_display.value,
+                                     kDisplayChannelFd);
     if (channel)
       posix_spawn_file_actions_adddup2(&actions, channel_reader.value,
                                        kSecretChannelFd);
@@ -543,9 +662,11 @@ class Daemon {
         ::posix_spawn(&pid, argv[0], &actions, &attr, argv.data(), environ);
     posix_spawn_file_actions_destroy(&actions);
     posix_spawnattr_destroy(&attr);
-    if (rc == 0 && channel) {
+    if (rc == 0) {
       std::lock_guard guard(channel_mutex_);
-      channels_[channel_key(p, job)] = std::move(channel);
+      const auto key = channel_key(p, job);
+      if (channel) channels_[key] = std::move(channel);
+      displays_[key] = std::move(display);
     }
     return rc == 0;
   }
@@ -557,6 +678,7 @@ class Daemon {
   std::mutex channel_mutex_;
   // Write ends of the Card secret pipes of running jobs, by journal and job.
   std::map<std::string, std::shared_ptr<Fd>> channels_;
+  std::map<std::string, std::shared_ptr<DisplayChannel>> displays_;
 };
 
 auto supervise(const std::string& self, const stdfs::path& root,
@@ -621,6 +743,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
       ::_exit(127);
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
+    ::close(kDisplayChannelFd);
     int status = 0;
     for (;;) {
       const auto current = journal.status(job);

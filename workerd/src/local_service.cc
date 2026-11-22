@@ -29,7 +29,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           auto& source = *request.spawn;
           WorkerSpawn spawn;
           spawn.worker_binary = source.worker_binary;
-          spawn.bash = source.bash;
           spawn.path = source.path;
           spawn.closure = source.closure;
           spawn.shared_vm = source.shared_vm;
@@ -42,11 +41,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
             clear_spawn_secrets(*packet.message);
           }
           spawn.store_path = source.store_path;
-          if (!source.package.empty()) spawn.program.package = source.package;
-          if (source.has_script) spawn.program.bash = source.script;
-          spawn.program.pre_run = source.pre_run;
-          spawn.program.post_run = source.post_run;
-          spawn.program.views = source.views;
+          spawn.package = source.package;
+          spawn.channels_borrowed = true;
           spawn.sandbox = {
               source.filesystem,
               source.pid,

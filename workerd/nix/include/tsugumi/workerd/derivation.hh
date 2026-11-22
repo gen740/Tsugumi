@@ -21,7 +21,7 @@ struct ExecutionTarget {
 
 struct WorkerDerivation {
   std::string path;    // .drv path, with its input closure made available
-  std::string output;  // expected Card manifest output
+  std::string output;  // expected Card build plan output
   std::string system;
 };
 

@@ -2,6 +2,7 @@
 
 #include <array>
 #include <filesystem>
+#include <map>
 #include <mutex>
 
 #include "tsugumi/protocol/local_worker_generated.h"
@@ -44,6 +45,10 @@ class LocalWorkers {
   std::filesystem::path binary_;
   std::filesystem::path scratch_;
   std::mutex mutex_;
+  // Serialize lease transitions with reader ownership. workerd still owns
+  // eviction and termination. Retired sockets are removed after commands.
+  std::mutex leases_mutex_;
+  std::map<std::string, std::unique_ptr<WorkerProc>> idle_;
   int fd_ = -1;
   pid_t pid_ = -1;
 };

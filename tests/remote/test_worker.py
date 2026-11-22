@@ -21,11 +21,13 @@ import pytest
 from harness import remote_worker as R
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
-from Tsugumi.Data.CardPath import CardPathT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.FlatBufferData import FlatBufferDataT
 from Tsugumi.Data.LogStream import LogStream
-from Tsugumi.Worker.EnvVar import EnvVarT
+from Tsugumi.Data.Port import PortT
+from Tsugumi.Data.PortKind import PortKind
+from Tsugumi.Worker.WorkerInput import WorkerInputT
+from test_worker_loading import PARAMS, card_package, wire_value
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
@@ -235,43 +237,36 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
     assert result.returncode != 0
 
 
-def deadline_spec(peer, job, budget_ms):
-    # Reference only the pinned Bash and standalone SDK worker outputs. The
-    # Card blocks on a Bash coprocess pipe with both ends open.
-    seed = json.loads(Path(os.environ["TSUGUMI_REMOTE_TEST_SEED_MANIFEST"]).read_text())
-    expression = r'''
-      { system, bashRoot, workerRoot }:
+def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
+              output_budget=None):
+    nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
+    if not nix_directory:
+        pytest.skip("needs the installed ABI 9 worker build sources")
+    expression = """
+      { system, nixDirectory }:
       let
-        shell = builtins.storePath bashRoot + "/bin/bash";
-      in
-      builtins.derivation {
-        name = "remote-test-card-deadline";
-        inherit system;
-        builder = shell;
-        args = [ "-c" ''printf '%s' "$manifest" > "$out"'' ];
-        manifest = builtins.toJSON {
-          inherit shell;
-          path = "";
-          run = {
-            worker = builtins.storePath workerRoot + "/bin/tsugumi-worker";
-            bash = ''
-              printf '%s\n' deadline-card-started
-              coproc { read -r line; }
-              read -r line <&"${"$"}{COPROC[0]}"
-            '';
-          };
-        };
-      }
-    '''
+        pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
+        worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
+        card = """ + card_package(body) + """;
+      in pkgs.writeText "remote-abi9-card-plan" (builtins.toJSON {
+        runs = [ "${card}" ];
+        views = [];
+        worker = "${worker}/bin/tsugumi-worker";
+      })
+    """
     derivation = subprocess.check_output(
-        ["nix-instantiate", "--expr", expression,
+        ["nix-instantiate", "--extra-experimental-features", "flakes",
+         "--impure", "--expr", expression,
          "--argstr", "system", R.string(peer.caps.nativeSystem),
-         "--argstr", "bashRoot", str(Path(seed["shell"]).parents[1]),
-         "--argstr", "workerRoot", str(Path(seed["run"]["worker"]).parents[1])],
+         "--argstr", "nixDirectory", nix_directory],
         text=True,
     ).strip()
-    output = subprocess.check_output(["nix-store", "--query", "--outputs", derivation], text=True).strip()
-    closure = subprocess.check_output(["nix-store", "--query", "--requisites", derivation], text=True).splitlines()
+    output = subprocess.check_output(
+        ["nix-store", "--query", "--outputs", derivation], text=True,
+    ).strip()
+    closure = subprocess.check_output(
+        ["nix-store", "--query", "--requisites", derivation], text=True,
+    ).splitlines()
     archive = peer.root / "card.archive"
     with archive.open("wb") as stream:
         subprocess.run(["nix-store", "--export", *closure], stdout=stream, check=True)
@@ -282,34 +277,21 @@ def deadline_spec(peer, job, budget_ms):
         for offset in range(0, total, 1 << 20):
             peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
 
-    schema = peer.root / "params.fbs"
-    schema.write_text("table Params {} root_type Params;")
-    params = peer.root / "params.json"
-    params.write_text("{}")
-    flatc = os.environ.get("TSUGUMI_FLATC", "flatc")
-    subprocess.run([flatc, "--binary", "--schema", "-o", str(peer.root), str(schema)], check=True)
-    subprocess.run([flatc, "--binary", "-o", str(peer.root), str(schema), str(params)], check=True)
-    # Only the Card's call budget can release the blocked body.
     call = WorkerCallT(
-        runId="1", card=CardPathT(segments=["deadline"]), invocation=1,
-        inputs=[], params=FlatBufferDataT(
-            schemaBfbs=schema.with_suffix(".bfbs").read_bytes(), rootType="Params",
-            bytes=params.with_suffix(".bin").read_bytes(),
-        ),
-        outputs=[], workingDirectory="", temporaryDirectory="",
-        environment=[EnvVarT(name="TSUGUMI_PARAMS_JSON", value="{}")],
-        deadlineMs=budget_ms,
+        inputs=list(inputs), outputs=list(outputs),
+        params=wire_value(peer.root, "Params", "table Params {}", PARAMS),
+        deadlineMs=deadline_ms,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
     invocation = peer.upload(job, json.dumps({
         "call_sha256": call_digest, "archive_sha256": archive_digest,
-        "files": [], "directories": [], "implementation_index": 1,
+        "files": list(files), "directories": [], "implementation_index": 1,
     }).encode())
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
-        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation],
-        logLimitBytes=8 << 20,
+        invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
+        logLimitBytes=8 << 20, **(output_budget or {}),
     ))
 
 
@@ -324,7 +306,7 @@ def test_global_cap_reconnects_within_one_core_life_and_enforces_call_budget(tmp
     os.mkfifo(gate)
     blocker, next_job, deadline_job = [str(n) * 64 for n in (4, 5, 6)]
     # The first two adapters hold their slots on a FIFO until cancelled. The
-    # deadline job uses the real namespace launcher and executes a Bash Card.
+    # deadline job uses the real namespace launcher and executes a native Card.
     launcher.write_text('''#!/bin/sh
 for arg do
     case "$arg" in
@@ -365,7 +347,13 @@ read -r line < "$TEST_GATE"
         peer.wait_state(blocker, R.JobState.Cancelled)
         peer.wait_state(next_job, R.JobState.Running)
         budget_ms = 1000
-        submit(deadline_job, deadline_spec(peer, deadline_job, budget_ms))
+        submit(deadline_job, card_spec(peer, deadline_job, r"""
+            puts("deadline-card-started");
+            fflush(stdout);
+            while (!call.effects->cancelled(call.host) &&
+                   call.effects->remaining_ms(call.host) != 0)
+              usleep(1000);
+        """, deadline_ms=budget_ms))
         # A job held in the queue emits no event when its prospective Card
         # budget elapses. Keep the slot occupied for at least one such budget.
         time.sleep(budget_ms / 1000)
@@ -401,6 +389,109 @@ read -r line < "$TEST_GATE"
             peer.close()
 
 
+@pytest.mark.parametrize("case", [
+    "forward-and-snapshot", "symlink", "byte-budget", "entry-budget", "configured-budget",
+])
+def test_real_remote_output_boundary(worker, case):
+    from harness.observations import decode_scalar
+    from doubles.worker import scalar
+
+    peer = worker
+    job = "9" * 64
+    directory = case in ("symlink", "entry-budget")
+    kind = PortKind.Directory if directory else PortKind.File
+    compiled = wire_value(peer.root, "Path", "table Path { value:string; }",
+                          scalar("string", "inputs/0/original"))
+    inputs, files = [], []
+    output = PortT(name="doc", kind=kind, schemaBfbs=compiled.schemaBfbs,
+                   rootType=compiled.rootType)
+    outputs = [output]
+    if case == "forward-and-snapshot":
+        payload = b"original input bytes"
+        digest = peer.upload(job, payload)
+        files = [{"path": "inputs/0/original", "sha256": digest, "size": len(payload)}]
+        inputs = [WorkerInputT(name="doc", kind=PortKind.File, value=compiled)]
+        outputs.append(PortT(name="new_file", kind=PortKind.File,
+                             schemaBfbs=compiled.schemaBfbs, rootType=compiled.rootType))
+        body = """
+          static const uint8_t latest[] = {0, 255, 128, 'v'};
+          static const uint8_t superseded[] = {0, 0};
+          if (call.effects->send(call.host, "unlisted", superseded, sizeof(superseded)) ||
+              call.effects->send(call.host, "unlisted", latest, sizeof(latest))) return 1;
+          std::ofstream("new-file") << "snapshot";
+          std::ofstream("unused") << "ignore";
+          out.file(input_path(in));
+          out.file("new-file", "new_file");
+        """
+    elif case == "symlink":
+        body = """
+          fs::create_directory("tree");
+          std::ofstream("tree/regular") << "data";
+          fs::create_symlink("regular", "tree/link");
+          out.directory("tree");
+        """
+    elif case == "byte-budget":
+        body = """
+          std::ofstream("huge").close();
+          fs::resize_file("huge", (64ull << 30) + 1);
+          out.file("huge");
+        """
+    elif case == "entry-budget":
+        body = """
+          fs::create_directory("tree");
+          for (int i = 0; i < 1000; ++i)
+            std::ofstream(fs::path("tree") / std::to_string(i)).close();
+          out.directory("tree");
+        """
+    else:
+        body = 'std::ofstream("file") << "four"; out.file("file");'
+    budget = {"outputLimitBytes": 3, "outputLimitEntries": 1} if case == "configured-budget" else None
+    spec = card_spec(peer, job, body, outputs=outputs, inputs=inputs, files=files, output_budget=budget)
+    fingerprint = hashlib.sha256(spec).hexdigest()
+    try:
+        response = peer.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
+        assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
+        record = peer.wait_state(job, R.JobState.Succeeded)
+
+        status = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body
+        if case == "forward-and-snapshot":
+            display, = status.displays
+            assert R.string(display.view) == "unlisted"
+            assert bytes(display.bytes) == b"\x00\xff\x80v"
+            next_status = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body
+            assert not next_status.displays
+        else:
+            assert not status.displays
+
+        def result_bytes(digest):
+            response = peer.call(R.RequestBody.GetBlobRequest,
+                                 R.GetBlobRequestT(digest=digest), job=job)
+            assert response.bodyType == R.ReplyBody.BlobChunk
+            return bytes(response.body.bytes)
+
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(record["result"]))
+        entries = {R.string(entry.path): R.string(entry.sha256) for entry in manifest.outputs}
+        assert all("display" not in name for name in entries)
+        result = WorkerMessageT.InitFromPackedBuf(
+            result_bytes(R.string(manifest.invocationResultSha256)))
+        if case == "forward-and-snapshot":
+            assert result.valueType == WorkerPayload.WorkerResult
+            assert {R.string(v.name): decode_scalar(bytes(v.bytes)) for v in result.value.outputs} == {
+                "doc": "inputs/0/original", "new_file": "out/new-file",
+            }
+            assert result_bytes(entries["files/out/new-file"]) == b"snapshot"
+            assert not any("original" in name or "unused" in name for name in entries)
+        else:
+            assert result.valueType == WorkerPayload.WorkerFailure
+            assert result.value.failure.kind == FailureKind.output_invalid
+            diagnostic = R.string(result.value.failure.diagnostic)
+            assert {"symlink": "symbolic link", "byte-budget": "byte budget",
+                    "entry-budget": "entry budget", "configured-budget": "byte budget"}[case] in diagnostic
+            assert not any(name.startswith("files/") for name in entries)
+    finally:
+        peer.call(R.RequestBody.ReleaseRequest, R.ReleaseRequestT(fingerprint=fingerprint), job=job)
+
+
 def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     binary = os.environ.get("TSUGUMI_REMOTE_TEST_RAW_WORKER")
     if not binary:
@@ -417,7 +508,7 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     def log_slice(job, offset, limit=1 << 20):
         reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
-        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes or b"")
+        return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes) if reply.body.logBytes is not None else b""
 
     # Like the invocation, append a flushed JSONL entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'

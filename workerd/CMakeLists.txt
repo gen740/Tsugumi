@@ -5,7 +5,7 @@ include(cmake/runtime.cmake)
 include(cmake/native.cmake)
 include(cmake/service.cmake)
 include(cmake/nix.cmake)
-include(cmake/sdk-install.cmake)
+include(cmake/worker-source-install.cmake)
 
 add_library(tsugumi_worker_authorization STATIC src/authorized_keys.cc)
 target_include_directories(tsugumi_worker_authorization PUBLIC ${CMAKE_CURRENT_SOURCE_DIR}/include)

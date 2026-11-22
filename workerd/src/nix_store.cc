@@ -131,31 +131,31 @@ auto RemoteWorkerStore::realise(
     result.built = true;
   }
   if (!store->isValidPath(out))
-    throw std::runtime_error("remote Nix build produced no Card manifest");
+    throw std::runtime_error("remote Nix build produced no Card build plan");
   nix::StorePathSet closure;
   store->computeFSClosure(out, closure);
   for (const auto& path : closure)
     result.closure.push_back(store->printStorePath(path));
   std::sort(result.closure.begin(), result.closure.end());
-  const auto manifest =
+  const auto plan =
       store_root / std::filesystem::path(derivation.output).relative_path();
   const int fd =
-      ::open(manifest.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
+      ::open(plan.c_str(), O_RDONLY | O_CLOEXEC | O_NOFOLLOW | O_NONBLOCK);
   if (fd < 0)
-    throw std::runtime_error("cannot open the remote Nix Card manifest");
+    throw std::runtime_error("cannot open the remote Nix Card build plan");
   nix::AutoCloseFD file{fd};
   struct stat info{};
   if (::fstat(fd, &info) != 0 || !S_ISREG(info.st_mode) || info.st_size < 0 ||
       info.st_size > 16 * 1024 * 1024)
-    throw std::runtime_error("invalid remote Nix Card manifest size or type");
-  result.manifest.resize(static_cast<size_t>(info.st_size));
+    throw std::runtime_error("invalid remote Nix Card build plan size or type");
+  result.plan.resize(static_cast<size_t>(info.st_size));
   size_t offset = 0;
-  while (offset < result.manifest.size()) {
-    const ssize_t n = ::read(fd, result.manifest.data() + offset,
-                             result.manifest.size() - offset);
+  while (offset < result.plan.size()) {
+    const ssize_t n =
+        ::read(fd, result.plan.data() + offset, result.plan.size() - offset);
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0)
-      throw std::runtime_error("cannot read the remote Nix Card manifest");
+      throw std::runtime_error("cannot read the remote Nix Card build plan");
     offset += static_cast<size_t>(n);
   }
   result.derivation = derivation;

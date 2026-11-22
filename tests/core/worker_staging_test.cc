@@ -259,15 +259,6 @@ auto copy_outputs(const stdfs::path& root) -> void {
   stdfs::create_directories(report / "assets");
   std::ofstream(report / "assets/data") << "inside";
   std::ofstream(staging / "secret") << "outside-output";
-  stdfs::create_symlink("assets/data", report / "file-link");
-  stdfs::create_directory_symlink("assets", report / "directory-link");
-  stdfs::create_symlink("file-link", report / "chain");
-  stdfs::create_symlink("../file-link", report / "assets/up-link");
-  // Resolution must use the physical parent of an aliased directory.
-  stdfs::create_directories(report / "nested/inner");
-  std::ofstream(report / "nested/data") << "physical-parent";
-  stdfs::create_symlink("../data", report / "nested/inner/up");
-  stdfs::create_directory_symlink("nested/inner", report / "alias");
   // These are not declared outputs and must never be walked.
   stdfs::create_symlink("/etc/passwd", staging / "unused-link");
   expect(::mkfifo((staging / "unused-fifo").c_str(), 0600) == 0,
@@ -277,14 +268,11 @@ auto copy_outputs(const stdfs::path& root) -> void {
   const std::atomic<bool> cancel = false;
   const auto destination = root / "saved-report";
   tsugumi::fs::copy_staging_output(fd, "report", destination, true, cancel);
-  for (const auto& name :
-       {"file-link", "directory-link/data", "chain", "assets/up-link"})
-    expect(read_file(destination / name) == "inside",
-           "internal link lost its contents");
-  expect(read_file(destination / "alias/up") == "physical-parent",
-         "resolved from logical rather than physical parent");
-  for (const auto& entry : stdfs::recursive_directory_iterator(destination))
-    expect(!entry.is_symlink(), "copy retained a source symlink");
+  expect(read_file(destination / "assets/data") == "inside", "directory copy");
+  std::ofstream(report / "assets/data") << "changed";
+  expect(read_file(destination / "assets/data") == "inside",
+         "snapshot changed");
+  std::ofstream(report / "assets/data") << "inside";
   tsugumi::fs::copy_staging_output(fd, "report/assets/data",
                                    destination / "direct", false, cancel);
   expect(read_file(destination / "direct") == "inside", "declared File copy");
@@ -310,23 +298,10 @@ auto copy_outputs(const stdfs::path& root) -> void {
   refuse("symbolic link");
   stdfs::create_symlink(staging / "secret", bad);
   refuse("symbolic link");
-  // An innocent-looking chain must not allow an escape through a later link.
-  stdfs::create_symlink("../../secret", report / "assets/escape");
-  stdfs::create_symlink("assets/escape", bad);
-  try {
-    tsugumi::fs::copy_staging_output(fd, "report", root / "chain-rejected",
-                                     true, cancel);
-    throw std::logic_error("accepted escaping chain");
-  } catch (const std::runtime_error& error) {
-    expect(std::string(error.what()).find("symbolic link") != std::string::npos,
-           "chain rejection kind");
-  }
-  stdfs::remove(bad);
-  stdfs::remove(report / "assets/escape");
-  stdfs::create_symlink("bad", bad);
+  stdfs::create_symlink("assets/data", bad);
   refuse("symbolic link");
-  stdfs::create_directory_symlink(".", bad);
-  refuse("directory symbolic link");
+  stdfs::create_directory_symlink("assets", bad);
+  refuse("symbolic link");
   expect(::mkfifo(bad.c_str(), 0600) == 0, "mkfifo output");
   refuse("FIFO");
   ::close(fd);
