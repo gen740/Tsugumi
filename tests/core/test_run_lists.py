@@ -3,13 +3,13 @@
 from itertools import product
 import json
 import shutil
+from pathlib import Path
 
 import pytest
 
 from projects import wait_invocation
-from harness.observations import read_output
 from harness.scenario import Gate, Project, run, wait_run
-from harness.values import recorded_input_json, reference_json
+from harness.values import collected_items as collected, recorded_input_json
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -20,8 +20,8 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; table Directory { value:string; } '
-             'table Outputs { out:Directory (tsugumi: "path"); } root_type Outputs;')
+DIRECTORY = ('attribute "tsugumi"; '
+             'table Outputs { out:string (tsugumi: "path"); } root_type Outputs;')
 
 
 def mock_plan(runs, *, execution_list=False, **options):
@@ -68,13 +68,6 @@ def connect_collect(graph):
 def invocation_page(client, run_id, card):
     return client.call("RunInvocationsRequest", runId=run_id, card=path(card))
 
-
-def collected(client, directory, run_id, card="collect"):
-    record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
-    value, = record.outputs
-    payload = read_output(client, run_id, card=card)
-    return reference_json(directory, bytes(value.schemaBfbs), payload,
-                          root_type=text(value.rootType))["items"]
 
 
 def combinations(client, directory, run_id):
@@ -188,35 +181,35 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
     assert batch.complete and batch.executionList and batch.invocationCount == 0
 
 
-def abi9_card(body, run="package", builder="inputs.tsugumi.cppCard { src = ./.; }"):
-    return {
-        "default.nix": "{ pkgs, inputs, params }: let package = " + builder
-                       + "; in { run = " + run + "; }",
-        "main.cc": ('#include "card.hh"\n#include <filesystem>\n#include <fstream>\n'
-                    '#include <iostream>\n#include <stdexcept>\n' + body),
-    }
-
-
 def test_singleton_run_list_and_vector_value_have_different_execution_shapes(core_factory, project, tmp_path):
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
-    client = core_factory().connect()
+    from harness.native_card import native_card
+    from harness.values import encode_message
+    from Tsugumi.Data.PortKind import PortKind
+
+    client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
+    entry = """
+int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
+  if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
+  *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+  return 0;
+}
+"""
+    vector_run = native_card(tmp_path / "vector", entry, [
+        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", vector,
+                                                    {"items": [1, 2, 3]}, root_type="Vector")),
+    ])
+    work_run = native_card(tmp_path / "work", entry, [
+        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", NUMBER,
+                                                    {"value": 42}, root_type="Number")),
+    ])
     graph.card("vector", {"type": "code", "sandbox": {"filesystem": False}}, outputs=vector,
-               sources=abi9_card("""
-                 auto run(const Card::Inputs&) -> Card::Output {
-                   Card::Output output;
-                   output.out.emplace().items = {1, 2, 3};
-                   return output;
-                 }"""))
+               plan=mock_plan([vector_run]))
     graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True,
                         "inputs": [{"name": "in"}]}, outputs=NUMBER,
-               sources=abi9_card("""
-                 auto run(const Card::Inputs&) -> Card::Output {
-                   Card::Output output;
-                   output.out.emplace().value = 42;
-                   return output;
-                 }""", "[ { label = \"forty-two\"; run = package; } ]"))
+               plan=mock_plan([work_run], execution_list=True, labels=["forty-two"]))
     graph.connect("vector", "out", "work", "in")
     connect_collect(graph)
     graph.save(client)
@@ -331,64 +324,30 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project, 
     assert batch.complete and batch.failed and not batch.outputs
 
 
-def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_factory, project):
-    """Directory batches retain each item's tree during collection and a saved-input rerun."""
-    daemon = core_factory()
+def test_collected_path_members_preserve_saved_batch_order(core_factory, project, tmp_path):
+    """A saved Path batch preserves its file and directory paths through Collect."""
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     graph = Project(project).card("start", {"type": "trigger"})
-    source = abi9_card("""
-      auto run(const Card::Inputs&) -> Card::Output {
-        std::filesystem::create_directories("sample/empty/inner");
-        std::ofstream("sample/data.txt") << VALUE << '\\n';
-        Card::Output output;
-        output.out.emplace().value = "sample";
-        return output;
-      }""", "[ (package 1) (package 2) ]",
-        'number: inputs.tsugumi.cppCard { src = ./.; cxxflags = [ "-DVALUE=${toString number}" ]; }')
-    graph.card("source", {"type": "code", "sandbox": {"filesystem": False}}, outputs=DIRECTORY,
-               sources=source)
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}, "inputs": [{"name": "in"}]},
-               outputs=DIRECTORY, sources=abi9_card("""
-                 auto run(const Card::Inputs& input) -> Card::Output {
-                   const std::filesystem::path folder(input.in.value);
-                   if (!std::filesystem::is_directory(folder / "empty/inner"))
-                     throw std::runtime_error("missing empty directory");
-                   std::cout << std::ifstream(folder / "data.txt").rdbuf();
-                   Card::Output output;
-                   output.out.emplace().value = input.in.value;
-                   return output;
-                 }"""))
-    graph.connect("source", "out", "work", "in")
+    packages = scripted_implementations(tmp_path / "packages", [
+        [{"op": "file", "port": "out", "path": "data.txt", "text": "one"}],
+        [{"op": "directory", "port": "out", "path": "sample", "files": {"data.txt": "two"}}],
+    ])
+    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}},
+               outputs=DIRECTORY, plan=mock_plan(packages, execution_list=True))
     connect_collect(graph)
-    graph.card("check", {"type": "code", "sandbox": {"filesystem": False}, "inputs": [{"name": "in"}]},
-               outputs=NUMBER, sources=abi9_card("""
-                 auto run(const Card::Inputs& input) -> Card::Output {
-                   int files = 0;
-                   int empty = 0;
-                   for (const auto& entry : std::filesystem::recursive_directory_iterator(input.in.value)) {
-                     if (entry.is_directory() && entry.path().filename() == "inner") ++empty;
-                     if (entry.is_regular_file() && entry.path().filename() == "data.txt") ++files;
-                   }
-                   if (files != 2 || empty != 2) throw std::runtime_error("incomplete collection");
-                   Card::Output output;
-                   output.out.emplace().value = files;
-                   return output;
-                 }"""))
-    graph.connect("collect", "out", "check", "in")
     graph.save(client)
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
-    assert len(invocation_page(client, run_id, "check").records) == 1
+    def check(current):
+        first, second = map(Path, collected(current, tmp_path / "decode", run_id))
+        assert first.read_text() == "one"
+        assert (second / "data.txt").read_text() == "two"
+
+    check(client)
     daemon.restart()
-    client = daemon.connect()
-    replay = run(client, "work", propagate=True)
-    assert wait_run(client, replay).state == RunState.succeeded
-    page = invocation_page(client, replay, "work")
-    assert len(page.records) == 2
-    logs = [client.call("LogRangeRequest", runId=replay, card=path("work"), invocation=row.invocation,
-                        stream=LogStream.standard_output) for row in page.records]
-    assert [text(log.text) for log in logs] == ["1\n", "2\n"]
+    check(daemon.connect())
 
 
 def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_factory, project, tmp_path):

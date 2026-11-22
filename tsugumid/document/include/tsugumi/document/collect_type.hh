@@ -7,13 +7,7 @@
 
 namespace tsugumi {
 
-// The output type of a Collect Card whose input port is `source`. FlatBuffer
-// members are collected into the core-owned `tsugumi.builtin.Collected
-// { items:[Tsugumi.Card.CardPort] }`, one opaque envelope per member. Path
-// members are collected into one directory, a Path output whose type is not
-// used. Returns null with `error` set when the type cannot be built.
-auto collect_output_type(const types::PortType& source, std::string& error)
-    -> types::TypeRef;
-auto collected_type() -> types::TypeRef;
+// The fixed Collected table is the output for every member kind.
+auto collect_output_type(std::string& error) -> types::TypeRef;
 
 }  // namespace tsugumi

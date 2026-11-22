@@ -23,8 +23,6 @@ table Collected {
 }
 )";
 
-}  // namespace
-
 auto collected_type() -> types::TypeRef {
   static const types::TypeRef type = [] {
     std::string error;
@@ -37,9 +35,9 @@ auto collected_type() -> types::TypeRef {
   return type;
 }
 
-auto collect_output_type(const types::PortType& source, std::string& error)
-    -> types::TypeRef {
-  if (source.kind == types::PortKind::Path) return types::empty_type();
+}  // namespace
+
+auto collect_output_type(std::string& error) -> types::TypeRef {
   try {
     return collected_type();
   } catch (const std::exception& e) {

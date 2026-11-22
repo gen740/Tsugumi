@@ -5,9 +5,8 @@ import json
 import pytest
 
 from harness.fixtures import mock_plan
-from harness.observations import read_output
 from harness.scenario import Project, run, wait_run
-from harness.values import recorded_input_json, reference_json
+from harness.values import collected_items as collected, recorded_input_json
 from projects import write
 from tsugumi_client import path, text
 from Tsugumi.Data.ExecutionShape import ExecutionShape
@@ -35,13 +34,6 @@ def numeric_plan(directory, values, **options):
 def invocation_page(client, run_id, card):
     return client.call("RunInvocationsRequest", runId=run_id, card=path(card))
 
-
-def collected(client, directory, run_id, card="collect"):
-    record = client.call("RunRecordRequest", runId=run_id, card=path(card)).record
-    value, = record.outputs
-    payload = read_output(client, run_id, card=card)
-    return reference_json(directory, bytes(value.schemaBfbs), payload,
-                          root_type=text(value.rootType))["items"]
 
 
 def label(row):

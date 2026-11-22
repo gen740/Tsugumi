@@ -1934,9 +1934,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         break;
       }
       case CardType::Collect:
-        p.outputs.push_back(collect_values(
-            *node.input("in"), node.outputs.front(), in, svc_.file_roots(),
-            invocation_dir(node, s.invocation) / "out", w.cancellation->stop));
+        p.outputs.push_back(collect_values(node.outputs.front(), in,
+                                           w.cancellation->stop));
         break;
       case CardType::Merge: {
         if (in.size() != 1)

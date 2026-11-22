@@ -1075,11 +1075,12 @@ class Builder {
       }
       case CardType::Collect: {
         const auto* in = n.input("in");
-        if (!in || !in->type || n.outputs[0].type) break;
+        if (!in || (in->kind != PortKind::Path && !in->type) ||
+            n.outputs[0].type)
+          break;
         std::string error;
-        if (auto type = collect_output_type(*in, error)) {
+        if (auto type = collect_output_type(error)) {
           n.outputs[0].type = std::move(type);
-          n.outputs[0].kind = in->kind;
           changed = true;
         } else if (derive_failed_.insert(path_key(n.path)).second) {
           n.diags.push_back(
