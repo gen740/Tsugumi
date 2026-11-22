@@ -1,4 +1,5 @@
 // A version's minimap fits its Cards and draws each with its canvas shape.
+import { layoutBytes } from './documentFixture'
 import assert from 'node:assert/strict'
 import { VersionCommentT } from '../shared/gen/tsugumi/rpc/version-comment'
 
@@ -104,7 +105,7 @@ assert.equal(cardKindNamed('something new'), 'invalid')
 // The UI asks only for the change record. No client-side diff, model or note write.
 const { ProjectSession } = await import('../src/model/session')
 const { layoutHost } = await import('../src/wire/hostLayout')
-const rawCanvas = { layoutJson: '{"cards":{"plan":{"x":120,"y":80}}}', cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
+const rawCanvas = { layout: layoutBytes('{"cards":{"plan":{"x":120,"y":80}}}'), cards: [{ id: 'plan', kind: 'draft', fan: 0 }], wires: [] }
 const hostCanvas = { cards: [card('plan', 120, 80, 'draft')], wires: [], flow: 'topToBottom' }
 const fetchBefore = globalThis.fetch
 let failNote = false

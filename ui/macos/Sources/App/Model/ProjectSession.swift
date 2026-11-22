@@ -122,7 +122,9 @@ struct TimelineEntry: Identifiable, Hashable {
   var stages: [StageRecord] = []
 }
 
-/// Draft of one Card's definition (_card.json and optional _meta.json).
+/// Draft of one Card's definition: _card.json, and its notes (README.md's
+/// description and body and _comments.json, as {description, content,
+/// comments}; see Documents.swift).
 struct DefinitionDraft: Equatable {
   var card: JSONValue
   var meta: JSONValue?
@@ -134,7 +136,7 @@ struct DefinitionDraft: Equatable {
 struct ExternalProject: Equatable {
   var project: JSONValue
   var layout: JSONValue
-  /// Card id -> its definition files (_card.json and optional _meta.json).
+  /// Card id -> its definition files (_card.json, README.md, _comments.json).
   var definitions: [String: DefinitionDraft]
   /// Removed (the folder goes with it).
 
@@ -217,7 +219,11 @@ final class ProjectSession {
   var cardHelper: [String: String] = [:]
   /// Externals by folder ("externals/<name>/", nested "…/externals/<name>/").
   private(set) var externals: [String: ExternalProject] = [:]
-  @ObservationIgnored private var externalDocuments: [String: JSONValue] = [:]
+  /// Bytes of the files the core carries: nested projects' documents and the
+  /// canvas notes (notes/<id>.md).
+  @ObservationIgnored private var sourceDocuments: [String: [UInt8]] = [:]
+  /// The confirmed layout.bin; confirmedLayout is its view with the notes.
+  @ObservationIgnored private var confirmedLayoutBytes: [UInt8] = []
   private(set) var sources: [String: (hash: String, size: UInt64)] = [:]
   private(set) var resolution: [CardKey: ResolvedCard] = [:]
   private(set) var diagnostics: [Diagnostic] = []
@@ -239,17 +245,15 @@ final class ProjectSession {
   var inlineDraft: InlineDraft?
   @ObservationIgnored var draftFinishTask: Task<CardKey?, Never>?
   var hasUnsavedEdits: Bool {
-    dirty || draftFinishTask != nil || inlineDraft.map { $0.name != $0.initialName || $0.content != $0.initialContent } == true
+    dirty || draftFinishTask != nil || inlineDraft.map { $0.content != $0.initialContent } == true
   }
 
   /// A Draft being written on its Card: its name and content as typed so far.
   struct InlineDraft {
     var card: CardKey
-    var name: String
     var content: String
-    var initialName: String
     var initialContent: String
-    var initialMeta: JSONValue?
+    var initialReadme: String?
     let revision: RevisionEdit
   }
 
@@ -693,26 +697,27 @@ final class ProjectSession {
     executionRev = s.executionRev ?? 0
     executionServices = s.executionServices.compactMap { $0 }
     confirmedProject = (try? JSONValue.parse(s.projectJson)) ?? .object([])
-    confirmedLayout = (try? JSONValue.parse(s.layoutJson)) ?? .object([])
+    confirmedLayoutBytes = s.layout
     confirmedDefinitions = [:]
     confirmedDefinitionMeta = [:]
     for d in s.definitions.compactMap({ $0 }) {
       confirmedDefinitions[d.id] = try? JSONValue.parse(d.cardJson)
-      if let m = d.metaJson { confirmedDefinitionMeta[d.id] = try? JSONValue.parse(m) }
+      confirmedDefinitionMeta[d.id] = Documents.cardNotes(readme: d.readme, comments: d.commentsJson)
     }
     sources = [:]
-    externalDocuments = [:]
+    sourceDocuments = [:]
     externals = [:]
     derivedLayouts = [:]
     for task in layoutTasks.values { task.cancel() }
     layoutTasks = [:]
     applySources(s.sources.compactMap { $0 }, removed: [])
+    confirmedLayout = layout(at: "")
     refreshDerivedLayout()
     applyResolution(s.resolution.compactMap { $0 }, s.diagnostics.compactMap { $0 })
     if currentRunId != s.run.runId { runBatches = [:] }
     runStatus = s.run
     viewRev = s.viewRev ?? 0
-    if let json = s.viewJson, let v = try? JSONDecoder().decode(ClientViewState.self, from: Data(json.utf8)) {
+    if let v = ClientViewState(bytes: s.view) {
       initialScope = v.scope
       for cam in v.cameras where cam.valid { cameras[key(cam.scope)] = (cam.x, cam.y, cam.zoom) }
       initialSelection = Set(v.selected_cards.map { key($0) })
@@ -833,16 +838,17 @@ final class ProjectSession {
     rev = d.rev ?? rev
     executionRev = d.executionRev ?? executionRev
     if let pj = d.projectJson, let v = try? JSONValue.parse(pj) { confirmedProject = v }
-    if let lj = d.layoutJson, let v = try? JSONValue.parse(lj) { confirmedLayout = v }
+    if d.layoutChanged { confirmedLayoutBytes = d.layout }
     for def in d.definitionsRemoved.compactMap({ $0 }) {
       confirmedDefinitions[def] = nil
       confirmedDefinitionMeta[def] = nil
     }
     for def in d.definitionsUpsert.compactMap({ $0 }) {
       confirmedDefinitions[def.id] = try? JSONValue.parse(def.cardJson)
-      confirmedDefinitionMeta[def.id] = def.metaJson.flatMap { try? JSONValue.parse($0) }
+      confirmedDefinitionMeta[def.id] = Documents.cardNotes(readme: def.readme, comments: def.commentsJson)
     }
     applySources(d.sourcesUpsert.compactMap { $0 }, removed: d.sourcesRemoved.compactMap { $0 })
+    confirmedLayout = layout(at: "")
     refreshDerivedLayout()
     applyResolution(d.resolution.compactMap { $0 }, d.diagnostics.compactMap { $0 })
     if let presenceBefore { notePresence(d, before: presenceBefore) }
@@ -926,11 +932,11 @@ final class ProjectSession {
     guard !prefix.isEmpty, let before = externals[prefix] else { return }
     var after = before; fn(&after)
     editJSON(prefix + "tsugumi.json", old: before.project, new: after.project)
-    editJSON(prefix + "layout.json", old: before.layout, new: after.layout)
+    editJSON(prefix + "layout.bin", old: before.layout, new: after.layout)
     for (id, d) in after.definitions {
       let old = before.definitions[id], dir = prefix + "definitions/" + id + "/"
       editJSON(dir + "_card.json", old: old?.card, new: d.card)
-      editJSON(dir + "_meta.json", old: old?.meta, new: d.meta)
+      editNotes(dir, old: old?.meta, new: d.meta)
     }
   }
 
@@ -962,6 +968,24 @@ final class ProjectSession {
     let edit = jsonEdit(file, old: old, new: new)
     if commandEdits != nil { commandEdits!.append(edit) }
     else { queueFields { [edit] } }
+  }
+
+  /// Edits of a Card's notes: its README.md (as a JSON string) and _comments.json.
+  func notesEdits(_ dir: String, old: JSONValue?, new: JSONValue?) -> [Tsugumi_Host_ProjectEditT] {
+    let was = Documents.splitCardNotes(old), now = Documents.splitCardNotes(new)
+    var edits: [Tsugumi_Host_ProjectEditT] = []
+    if was.readme != now.readme {
+      edits.append(jsonEdit(dir + "README.md", old: was.readme.map { .string($0) }, new: now.readme.map { .string($0) }))
+    }
+    if was.comments != now.comments { edits.append(jsonEdit(dir + "_comments.json", old: was.comments, new: now.comments)) }
+    return edits
+  }
+
+  private func editNotes(_ dir: String, old: JSONValue?, new: JSONValue?) {
+    let edits = notesEdits(dir, old: old, new: new)
+    guard !edits.isEmpty else { return }
+    if commandEdits != nil { commandEdits!.append(contentsOf: edits) }
+    else { queueFields { edits } }
   }
 
   func appendEdits(_ edits: [Tsugumi_Host_ProjectEditT]) {
@@ -1163,7 +1187,7 @@ final class ProjectSession {
         ClientViewState.Camera(scope: path(k), x: c.x, y: c.y, zoom: c.zoom)
       }, selectedCards: selection.sorted().map { path($0) })
       do {
-        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: try v.json())
+        let r = try await client.saveView(viewId: viewId, baseRev: viewRev, view: v.bytes())
         viewRev = r.viewRev ?? viewRev
       } catch let f as RPCFailure where f.kind == .revisionConflict {
         viewRev = f.currentRev ?? viewRev
@@ -1320,7 +1344,7 @@ final class ProjectSession {
   func updateLayout(of scope: [String], _ fn: (inout JSONValue) -> Void) {
     guard let prefix = projectPrefix(scope) else { return }
     let before = layout(of: scope); var after = before
-    fn(&after); editJSON(prefix + "layout.json", old: before, new: after)
+    fn(&after); editJSON(prefix + "layout.bin", old: before, new: after)
   }
 
   /// A Card's key in the layout of its scope.
@@ -1345,7 +1369,7 @@ final class ProjectSession {
     return d.card
   }
 
-  /// The Card's _meta.json.
+  /// The Card's notes: {description, content, comments}.
   func cardMeta(_ k: CardKey) -> JSONValue? { cardDefinitionDraft(k)?.meta }
 
   /// Sets a Card's definition files in the draft (nil removes them).
@@ -1353,7 +1377,7 @@ final class ProjectSession {
     guard let dir = definitionDir(k), let d else { return }
     let before = cardDefinitionDraft(k)
     editJSON(dir + "_card.json", old: before?.card, new: d.card)
-    editJSON(dir + "_meta.json", old: before?.meta, new: d.meta)
+    editNotes(dir, old: before?.meta, new: d.meta)
   }
 
   /// The external project of a Card in Card ("externals/<name>/…"), if it is one.
@@ -1378,7 +1402,12 @@ final class ProjectSession {
   /// A Card in Card's ports: its external's boundary.
   func boundary(_ k: CardKey) -> JSONValue? {
     guard let ext = cardExternal(k) else { return nil }
-    return external(ext)?.project["boundary"]
+    guard let boundary = external(ext)?.project["boundary"] else { return nil }
+    return .object(["inputs", "outputs"].map { side in
+      (side, .object((boundary[side]?.array ?? []).compactMap { port in
+        port["name"]?.string.map { ($0, port) }
+      }))
+    })
   }
 
   /// Changes a Card's _card.json in the draft.
@@ -1388,7 +1417,7 @@ final class ProjectSession {
     setCardDefinition(k, d)
   }
 
-  /// Changes a Card's _meta.json in the draft.
+  /// Changes a Card's notes in the draft.
   func updateMeta(_ k: CardKey, _ fn: (inout JSONValue) -> Void) {
     guard var d = cardDefinitionDraft(k) else { return }
     var meta = d.meta ?? .object([])
@@ -1397,7 +1426,7 @@ final class ProjectSession {
     setCardDefinition(k, d)
   }
 
-  // MARK: - Comments on a Card (its _meta.json)
+  // MARK: - Comments on a Card (its _comments.json)
 
   /// What the user asks of this Card, in the order written.
   func comments(_ k: CardKey) -> [CardComment] { CardComment.list(in: cardMeta(k)) }
@@ -1445,7 +1474,7 @@ final class ProjectSession {
         guard c["id"]?.string == id else { return c }
         var n = c
         n["text"] = .string(t)
-        n["editedBy"] = .string("user")
+        n["edited_by"] = .string("user")
         return n
       }
     }
@@ -1458,7 +1487,7 @@ final class ProjectSession {
         guard c["id"]?.string == id else { return c }
         var n = c
         n["resolved"] = resolved ? .bool(true) : nil
-        n["stateBy"] = .string("user")
+        n["state_by"] = .string("user")
         if !resolved {
           n["resolution"] = nil
           n["cards"] = nil
@@ -1530,39 +1559,57 @@ final class ProjectSession {
     return CGPoint(x: derived?["x"]?.double ?? 0, y: derived?["y"]?.double ?? 0)
   }
 
+  /// The text of a carried file.
+  private func carriedText(_ path: String) -> String? {
+    sourceDocuments[path].map { String(decoding: $0, as: UTF8.self) }
+  }
+
+  /// The layout view of a project ("" or "externals/<p>/…"): its layout.bin
+  /// and the text of its notes.
+  private func layout(at prefix: String) -> JSONValue {
+    var notes: [String: String] = [:]
+    for path in sourceDocuments.keys {
+      guard let id = Documents.noteId(prefix: prefix, path: path),
+            path.dropFirst(prefix.count).split(separator: "/").count == 2 else { continue }
+      notes[id] = carriedText(path) ?? ""
+    }
+    return Documents.layoutView(prefix.isEmpty ? confirmedLayoutBytes : sourceDocuments[prefix + "layout.bin"] ?? [], notes: notes)
+  }
+
   private func applySources(_ upserts: [Tsugumi_RPC_SourceInfoT], removed: [String]) {
     var changed = false
     for path in removed {
       sources[path] = nil
-      if externalDocuments.removeValue(forKey: path) != nil { changed = true }
+      if sourceDocuments.removeValue(forKey: path) != nil { changed = true }
     }
     for source in upserts {
       sources[source.path] = (source.hash ?? "", source.sizeBytes ?? 0)
-      guard let text = source.documentJson else { continue }
+      // A carried file: a nested project's documents or a note (which may be empty).
+      let notes = source.path.range(of: "notes/", options: .backwards).map { String(source.path[..<$0.lowerBound]) } ?? ""
+      guard !source.document.isEmpty || Documents.noteId(prefix: notes, path: source.path) != nil else { continue }
       changed = true
-      do {
-        externalDocuments[source.path] = try JSONValue.parse(text)
-      } catch {
-        externalDocuments[source.path] = nil
-        notice = "\(source.path): \(error)"
-      }
+      sourceDocuments[source.path] = source.document
     }
     guard changed else { return }
-    var found: [String: ExternalProject] = [:]
-    for (path, project) in externalDocuments where path.hasSuffix("/tsugumi.json") {
-      let prefix = String(path.dropLast("tsugumi.json".count))
-      found[prefix] = ExternalProject(
-        project: project, layout: externalDocuments[prefix + "layout.json"] ?? .object([]),
-        definitions: [:])
+    func json(_ path: String) -> JSONValue? {
+      guard let text = carriedText(path) else { return nil }
+      do { return try JSONValue.parse(text) } catch { notice = "\(path): \(error)"; return nil }
     }
-    for (path, card) in externalDocuments where path.hasSuffix("/_card.json") {
+    var found: [String: ExternalProject] = [:]
+    for path in sourceDocuments.keys where path.hasSuffix("/tsugumi.json") {
+      let prefix = String(path.dropLast("tsugumi.json".count))
+      guard let project = json(path) else { continue }
+      found[prefix] = ExternalProject(project: project, layout: layout(at: prefix), definitions: [:])
+    }
+    for path in sourceDocuments.keys where path.hasSuffix("/_card.json") {
+      guard let card = json(path) else { continue }
       let dir = path.dropLast("_card.json".count)
       let parent = dir.dropLast()
       guard let split = parent.lastIndex(of: "/") else { continue }
       let id = String(parent[parent.index(after: split)...])
       let prefix = String(parent[...split].dropLast("definitions/".count))
       found[prefix]?.definitions[id] = DefinitionDraft(
-        card: card, meta: externalDocuments[String(dir) + "_meta.json"])
+        card: card, meta: Documents.cardNotes(readme: carriedText(String(dir) + "README.md"), comments: carriedText(String(dir) + "_comments.json")))
     }
     let previous = externals
     externals = found

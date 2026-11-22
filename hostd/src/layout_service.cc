@@ -8,7 +8,8 @@
 #include "agent/wire.hh"
 #include "host/layout.hh"
 #include "host/layout_saving.hh"
-#include "host/layout_schema.hh"
+#include "host/layout_file.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::host {
@@ -16,14 +17,6 @@ namespace R = Tsugumi::Host;
 namespace {
 [[noreturn]] auto invalid_layout(const std::string& message) -> void {
   throw LayoutFailure(message);
-}
-auto decode_layout(const std::string& text) -> layout_schema::Layout {
-  if (text.size() > 8 * 1024 * 1024)
-    invalid_layout("layout.json exceeds 8 MiB");
-  layout_schema::Layout out;
-  if (auto error = schema::decode(text, out))
-    invalid_layout("layout.json: " + error->message);
-  return out;
 }
 // Reject non-finite/unbounded geometry before sorting or converting to integer
 // grid constraints. The transport already validates all required
@@ -119,27 +112,13 @@ auto MeasuredScene(const R::LayoutSceneT& scene) -> layout::Scene {
       *flatbuffers::GetRoot<R::LayoutScene>(builder.GetBufferPointer()));
 }
 
-auto parse_layout_json(const std::string& text) -> layout_schema::Layout {
-  auto l = decode_layout(text);
-  if (const auto* cards = schema::get(l.cards))
-    for (const auto& [key, pos] : cards->entries())
-      if (pos.x->has_value() != pos.y->has_value())
-        invalid_layout("layout.json: card " + key + " needs both x and y");
-  if (const auto* notes = schema::get(l.notes))
-    for (const auto& n : *notes)
-      if (!n.id->has_value() || !n.text->has_value() || !n.x->has_value() ||
-          !n.y->has_value())
-        invalid_layout("layout.json: notes need id, text, x and y");
-  return l;
-}
-
 auto layout_without_cards(const std::string& text,
                           const std::set<std::string>& gone) -> std::string {
   using Object = schema::v::Mapping<schema::v::String, schema::Json>;
   using hosq::json::GenericDom;
   auto as = []<class S>(const GenericDom<>& value, S& out) {
     if (auto err = schema::decode(value, out))
-      invalid_layout("layout.json: " + err->message);
+      invalid_layout("layout: " + err->message);
   };
   bool changed = false;
   // Where a key or id of a Card goes; nothing when its Card is gone.
@@ -207,18 +186,23 @@ auto layout_without_cards(const std::string& text,
 
 auto ValidateLayout(const std::string& text,
                     const std::set<std::string>& removed) -> std::string {
-  parse_layout_json(text);
+  if (text.size() > 8 * 1024 * 1024) invalid_layout("layout exceeds 8 MiB");
+  SplitLayoutView(text);
   return layout_without_cards(text, removed);
 }
 
 auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
   R::VersionCanvasT result;
-  layout_schema::Layout saved;
-  if (schema::decode(in.layout_json()->str(), saved)) saved = {};
-  std::map<std::string, const layout_schema::Position*> positions;
-  if (const auto* entries = schema::get(saved.cards))
-    for (const auto& [id, position] : entries->entries())
-      positions.emplace(id, &position);
+  // A version's layout.bin; nothing is placed when it cannot be read.
+  Tsugumi::Layout::LayoutT saved;
+  if (const auto* bytes = in.layout(); bytes && bytes->size()) {
+    const std::string layout(reinterpret_cast<const char*>(bytes->data()),
+                             bytes->size());
+    if (document_text::verify(document_text::Schema::Layout, layout))
+      document_text::root<Tsugumi::Layout::Layout>(layout).UnPackTo(&saved);
+  }
+  std::map<std::string, const Tsugumi::Layout::CardPlaceT*> positions;
+  for (const auto& place : saved.cards) positions.emplace(place->key, place.get());
   layout::Scene scene;
   std::vector<std::string> missing;
   std::map<std::string, size_t> index;
@@ -231,11 +215,9 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
       card->fan = entry->fan();
       const auto at = positions.find(card->id);
       const auto* position = at != positions.end() ? at->second : nullptr;
-      const auto* x = position ? schema::get(position->x) : nullptr;
-      const auto* y = position ? schema::get(position->y) : nullptr;
-      const auto* collapsed = position ? schema::get(position->collapsed)
-                                       : nullptr;
-      card->collapsed = collapsed && *collapsed;
+      const auto x = position ? position->x : std::nullopt;
+      const auto y = position ? position->y : std::nullopt;
+      card->collapsed = position && position->collapsed.value_or(false);
       if (x && y) {
         card->x = *x;
         card->y = *y;
@@ -263,9 +245,9 @@ auto VersionCanvas(const R::VersionCanvasRequest& in) -> R::VersionCanvasT {
         down += std::abs(b.y - a.y);
       }
     }
-  const auto* flow = schema::get(saved.flow);
-  scene.top_to_bottom = flow && (*flow == "topToBottom" || *flow == "leftToRight")
-                            ? *flow == "topToBottom"
+  const auto& flow = saved.flow;
+  scene.top_to_bottom = flow == "topToBottom" || flow == "leftToRight"
+                            ? flow == "topToBottom"
                             : down > 0 && down >= across;
   result.flow = scene.top_to_bottom ? "topToBottom" : "leftToRight";
   if (!missing.empty()) {
@@ -298,7 +280,7 @@ auto LayoutHandle(const R::Request& req, uint64_t id) -> std::string {
         ::tsugumi::json::Object(v->definitions_json()->str());
     R::LayoutValidatedT result;
     result.json = CompleteLayout(
-        v->project_json()->str(), v->layout_json()->str(),
+        v->project_json()->str(), v->layout()->str(),
         [&](const std::string& path) -> std::optional<LayoutFile> {
           const auto id = path.substr(12, path.size() - 23);
           if (!definitions.contains(id)) return std::nullopt;

@@ -1,5 +1,8 @@
 #include "host/environment.hh"
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
+
 #include <signal.h>
 #include <sys/stat.h>
 #include <sys/wait.h>
@@ -142,18 +145,16 @@ struct Environments::Impl {
       entry->state.ready_file =
           (std::filesystem::path(entry->state.control_dir) / "server.ready")
               .string();
-      for (const auto* name : {"origins", "folders"}) {
-        try {
-          const auto file = std::filesystem::path(entry->state.control_dir) /
-                            (std::string(name) == "origins" ? "origins.json"
-                                                            : "attached.json");
-          if (const auto raw = fs::read_file(file))
-            for (const auto& value :
-                 json::Array(json::Get(json::Object(*raw), name, "[]")))
-              (std::string(name) == "origins" ? entry->origins : entry->folders)
-                  .push_back(json::String(value));
-        } catch (const std::exception&) {
-        }
+      const auto control = std::filesystem::path(entry->state.control_dir);
+      if (const auto raw = fs::read_file(control / "origins"))
+        if (const auto list = flat::decode<Tsugumi::State::Origins>(*raw))
+          entry->origins = list->origins;
+      try {
+        if (const auto raw = fs::read_file(control / "attached.json"))
+          for (const auto& value :
+               json::Array(json::Get(json::Object(*raw), "folders", "[]")))
+            entry->folders.push_back(json::String(value));
+      } catch (const std::exception&) {
       }
       entry->state.folders = entry->folders;
       // A State query may rediscover a resident daemon after hostd restarts.
@@ -228,10 +229,19 @@ struct Environments::Impl {
       entry.state.message +=
           "\n" + log.substr(log.size() > 4096 ? log.size() - 4096 : 0);
     }
-    entry.state.startup_error_json =
-        fs::read_file(std::filesystem::path(entry.state.control_dir) /
-                      "server.startup-error.json")
-            .value_or("");
+    entry.state.startup_error.reset();
+    if (const auto raw =
+            fs::read_file(std::filesystem::path(entry.state.control_dir) /
+                          "server.startup-error"))
+      if (const auto error = flat::decode<Tsugumi::State::StartupError>(*raw)) {
+        auto out = std::make_unique<H::StartupErrorT>();
+        out->kind = error->kind;
+        out->found = error->found;
+        out->expected = error->expected;
+        out->source = error->source;
+        out->message = error->message;
+        entry.state.startup_error = std::move(out);
+      }
     Notify(entry);
   }
   auto Alive(int64_t pid, bool child) -> bool {
@@ -272,14 +282,15 @@ struct Environments::Impl {
   auto ReadReady(Entry& entry) -> bool {
     try {
       const auto raw = fs::read_file(entry.state.ready_file);
-      if (!raw) return false;
-      const auto object = json::Object(*raw);
+      const auto file =
+          raw ? flat::decode<Tsugumi::State::ServerReady>(*raw) : std::nullopt;
+      if (!file) return false;
       State ready(entry.state);
-      ready.pid = static_cast<int64_t>(json::UInt(json::Get(object, "pid")));
-      ready.endpoint = json::Text(object, "endpoint");
-      ready.token = json::Text(object, "token");
-      ready.project_id = json::Text(object, "project_id");
-      ready.unix_socket = json::Text(object, "unix_socket");
+      ready.pid = file->pid;
+      ready.endpoint = file->endpoint;
+      ready.token = file->token;
+      ready.project_id = file->project_id;
+      ready.unix_socket = file->unix_socket;
       const auto handle = options.process->Inspect(ready);
       if (!handle) return false;
       if (options.process->Guest() && entry.mounted.empty()) {
@@ -303,7 +314,7 @@ struct Environments::Impl {
       ready.message.clear();
       ready.recovery.clear();
       ready.log.clear();
-      ready.startup_error_json.clear();
+      ready.startup_error.reset();
       ready.failure_code = H::EnvironmentFailureCode::None;
       entry.state = std::move(ready);
       return true;
@@ -384,9 +395,10 @@ struct Environments::Impl {
       std::sort(entry.origins.begin(), entry.origins.end());
     } else
       entry.origins = request.origins;
-    fs::write_atomic(
-        std::filesystem::path(entry.state.control_dir) / "origins.json",
-        json::Encode(json::Members{{"origins", Strings(entry.origins)}}), 0600);
+    Tsugumi::State::OriginsT origins;
+    origins.origins = entry.origins;
+    fs::write_atomic(std::filesystem::path(entry.state.control_dir) / "origins",
+                     flat::encode<Tsugumi::State::Origins>(origins), 0600);
     WriteFolders(entry, entry.folders);
     CheckDeath(entry);
     if (ReadReady(entry)) {
@@ -420,7 +432,7 @@ struct Environments::Impl {
     entry.state.phase = H::EnvironmentPhase::Starting;
     entry.state.message = "Starting tsugumid";
     entry.state.log.clear();
-    entry.state.startup_error_json.clear();
+    entry.state.startup_error.reset();
     entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
     Stage(entry, "starting tsugumid");
@@ -428,7 +440,7 @@ struct Environments::Impl {
       const auto control = std::filesystem::path(entry.state.control_dir);
       const auto sockets = options.socket_directory / entry.state.key;
       PrivateDirectory(sockets);
-      for (const auto* file : {"server.ready", "server.startup-error.json"})
+      for (const auto* file : {"server.ready", "server.startup-error"})
         std::filesystem::remove(control / file);
       std::filesystem::remove(sockets / "s");
       const auto roots = options.directory.parent_path() / "build-roots";
@@ -553,7 +565,7 @@ struct Environments::Impl {
     entry.state.message.clear();
     entry.state.recovery.clear();
     entry.state.log.clear();
-    entry.state.startup_error_json.clear();
+    entry.state.startup_error.reset();
     entry.state.failure_code = H::EnvironmentFailureCode::None;
     Notify(entry);
   }

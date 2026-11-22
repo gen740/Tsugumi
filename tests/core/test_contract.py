@@ -12,6 +12,7 @@ from harness.proxy import ReplyProxy
 from harness.scenario import Project, STRING_OUTPUT, wait_run
 from projects import builtin_project, start_run, wait_for_log
 from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
+from harness.document import build_buffer, layout_bytes
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
@@ -250,7 +251,7 @@ def test_operation_conflict_and_required_fields(client):
     assert e.value.kind == "operation_conflict"
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectSaveRequest", opId=new_id(), origin="t",
-                    changes=[change("SetLayout", json="{}")])
+                    changes=[change("SetLayout", layout=layout_bytes({}))])
     assert e.value.kind == "invalid_request"
     with pytest.raises(RpcFailure) as e:
         client.call("ProjectSaveRequest", baseRev=1, opId=new_id(), origin="t", changes=[])
@@ -330,15 +331,15 @@ def test_external_change_and_reload(daemon, client):
 def test_view_save_cas(client):
     """View state persists and rejects edits based on an old view revision."""
     view_id = new_id()
-    v = '{ "scope":[], "cameras":[{"zoom":-1}], "client_extension":true }'
-    r1 = client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=v)
+    v = build_buffer("tsugumi", "Tsugumi.RPC.ClientView", {"scope": [], "cameras": [{"zoom": -1}]})
+    r1 = client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=v)
     assert r1.viewRev == 1
     with pytest.raises(RpcFailure) as e:
-        client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=v)
+        client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=v)
     assert e.value.kind == "revision_conflict" and e.value.failure.currentRev == 1
     opened = client.open(view_id=view_id)
     assert opened.snapshot.viewRev == 1
-    assert text(opened.snapshot.viewJson) == v
+    assert bytes(opened.snapshot.view) == v
 
 
 def test_validate_revision(client):
@@ -362,17 +363,18 @@ def test_ui_layout_fields_and_draft_outputs(client):
                     "outputs": [{"card": "src", "port": "msg"}]}],
     }
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                      changes=[change("SetLayout", json=json.dumps(layout))])
-    assert json.loads(text(res.delta.layoutJson))["groups"][0]["name"] == "G"
+                      changes=[change("SetLayout", layout=layout_bytes(layout)),
+                               change("PutSource", path="notes/n.md", bytes=b"**memo**")])
+    assert bytes(res.delta.layout) == layout_bytes(layout)
     assert res.executionRev == snap.executionRev  # layout never re-resolves computation
-    assert json.loads(text(res.delta.layoutJson))["cards"]["src"]["inputOrder"] == ["b", "a"]
+    assert bytes(client.call("ProjectFileReadRequest", path="notes/n.md").bytes) == b"**memo**"
 
     doc = project_json(client.call("ProjectInspectRequest"))
     doc["canvas"]["cards"].append({"id": "plan"})
     fbs = 'namespace d;\ntable SummaryValue { value:string; }\ntable Outputs { summary:SummaryValue; }\nroot_type Outputs;\n'
     res2 = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps({"type": "draft", "inputs": [{"name": "in"}]}),
-               metaJson=json.dumps({"description": "d", "content": "p", "context": "why"})),
+               readme="---\ndescription: d\n---\n\np"),
         change("PutSource", path="definitions/plan/_outputs.fbs", bytes=list(fbs.encode())),
         change("SetProject", json=json.dumps(doc)),
     ])
@@ -380,7 +382,7 @@ def test_ui_layout_fields_and_draft_outputs(client):
     assert [text(p.name) for p in plan.outputs] == [], [(text(d.code), text(d.message)) for d in plan.diagnostics]
     assert [text(p.name) for p in plan.inputs] == []
     meta = next(d for d in res2.delta.definitionsUpsert if text(d.id) == "plan")
-    assert json.loads(text(meta.metaJson))["context"] == "why"
+    assert text(meta.readme) == "---\ndescription: d\n---\n\np"
     v = client.call("ProjectValidateRequest", atRev=res2.rev, targets=[path("plan")])
     assert "draft" in [text(d.code) for d in v.diagnostics]
 
@@ -391,7 +393,7 @@ def test_uint64_max_and_original_spelling_preserved(builtin_client):
     snap = c.open().snapshot
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "b"})
-    raw = '{"type": "input", "params": [{"name": "n", "type": "uint64", "data": 18446744073709551615}]}'
+    raw = '{"type": "input", "params": [{"name": "n", "type": "uint64", "data": {"uint64": 18446744073709551615}}]}'
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                  changes=[change("SetProject", json=json.dumps(doc)), change("PutDefinition", id="b", cardJson=raw)])
     assert "18446744073709551615" in text(next(x for x in res.delta.definitionsUpsert if text(x.id) == "b").cardJson)
@@ -698,30 +700,30 @@ def test_run_logs_and_history(project, tmp_path, core_factory):
 
 
 
-def test_empty_metadata_keeps_the_file(client):
-    """Empty metadata preserves the existing file and its user-authored intent."""
+def test_empty_readme_keeps_the_file(client):
+    """Empty README text preserves the existing file and its user-authored intent."""
     snap = client.call("ProjectInspectRequest")
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "plan"})
-    meta = json.dumps({"description": "d", "content": "the user's intent"})
+    readme = "---\ndescription: d\n---\n\nthe user's intent"
     card = {"type": "draft", "inputs": [{"name": "in"}]}
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=json.dumps(card), metaJson=meta),
+        change("PutDefinition", id="plan", cardJson=json.dumps(card), readme=readme),
         change("SetProject", json=json.dumps(doc)),
     ])
     card["inputs"].append({"name": "more"})
-    blank = change("PutDefinition", id="plan", cardJson=json.dumps(card), metaJson="")
+    blank = change("PutDefinition", id="plan", cardJson=json.dumps(card), readme="")
     # The same in a check and in a save.
     v = client.call("ProjectValidateRequest", changes=[blank])
     assert "invalid_document" not in [text(d.code) for d in v.diagnostics]
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[blank])
     saved = next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan")
     assert json.loads(text(saved.cardJson))["inputs"][1]["name"] == "more"
-    assert json.loads(text(saved.metaJson))["content"] == "the user's intent"
+    assert text(saved.readme) == readme
     # Leaving it out still removes it, as the contract says.
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
         change("PutDefinition", id="plan", cardJson=json.dumps(card))])
-    assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").metaJson is None
+    assert next(d for d in res.delta.definitionsUpsert if text(d.id) == "plan").readme is None
 
 
 
@@ -736,14 +738,14 @@ def test_draft_resolution_ignores_meta_schema_and_layout(client):
     doc["canvas"]["cards"].append({"id": "plan"})
     draft = json.dumps({"type": "draft", "inputs": [{"name": "in"}]})
     res = client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "first"}]})),
+        change("PutDefinition", id="plan", cardJson=draft, readme="A planned port called first."),
         change("SetProject", json=json.dumps(doc))])
     assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-                      changes=[change("SetLayout", json=json.dumps({"cards": {"plan": {"x": 5, "y": 5}}}))])
+                      changes=[change("SetLayout", layout=layout_bytes({"cards": {"plan": {"x": 5, "y": 5}}}))])
     assert ports(res, "plan") == []
     res = client.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t", changes=[
-        change("PutDefinition", id="plan", cardJson=draft, metaJson=json.dumps({"description": "d", "outputs": [{"name": "second"}]}))])
+        change("PutDefinition", id="plan", cardJson=draft, readme="A planned port called second.")])
     assert ports(res, "plan") == []
     fbs = "namespace d;\ntable {t} {{ value:string; }}\ntable Outputs {{ summary:{t}; }}\nroot_type Outputs;\n"
     prev = None

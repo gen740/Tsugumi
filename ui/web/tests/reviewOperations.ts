@@ -1,3 +1,4 @@
+import { definitionFixture, layoutFixture, textBytes } from './documentFixture'
 // Focused regressions: advance replies and external reads explicitly, without timers.
 import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
@@ -23,8 +24,8 @@ function session() {
   s.projectId = 'p'; s.connected = true; s.client = {}
   s.refreshDerivedLayout = () => {}; s.refreshVisibleDisplays = async () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 0n,
-    projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
-    definitions: [new R.DefinitionT('a', '{"type":"input","params":[{"name":"value","type":"int","data":1}]}', '{"content":"before"}')],
+    projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: [],
+    definitions: [definitionFixture('a', '{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":1}}]}', '{"content":"before"}')],
   }))
   return s
 }
@@ -43,15 +44,15 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   edit.begin('1', s.rev)
   edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   const changed = Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [new R.DefinitionT('a', '{"type":"input","params":[{"name":"value","type":"int","data":2}]}', '{"content":"before"}')] })
+    definitionsUpsert: [definitionFixture('a', '{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":2}}]}', '{"content":"before"}')] })
   s.applyDelta(changed)
   const guards: number[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     const edit = (request.body as H.ProjectEditsT).edits[0]
     const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
     const before = parse(String(field.oldValue!.json))
-    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(field.oldValue!.json)
-      : Number(serialize(get(arr(get(before, 'params'))![0], 'data')!))
+    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(numText(get(before, 'int64')))
+      : Number(serialize(get(arr(get(before, 'params'))![0], 'data', 'int64')!))
     guards.push(old)
     if (old !== 2) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
     return saved(s, request)
@@ -65,13 +66,13 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
   await draft.startDraftEdit('a')
   draft.inlineDraft.content = 'mine'
   draft.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [new R.DefinitionT('a', '{"type":"draft"}', '{"content":"agent","description":"unrelated"}')] }))
+    definitionsUpsert: [definitionFixture('a', '{"type":"draft"}', '{"content":"agent","description":"unrelated"}')] }))
   const bases: string[] = []
   draft.operateProject = async (request: H.ProjectOperateRequestT) => {
     const json = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectJSONEditT
-    bases.push(JSON.parse(String(json.oldValue!.json)).content)
+    bases.push(String(JSON.parse(String(json.oldValue!.json))).split('\n').at(-1))
     if (bases.at(-1) !== 'agent') throw new RPCFailure({ kind: D.FailureKind.value_conflict })
-    assert.equal(JSON.parse(String(json.newValue!.json)).description, 'unrelated')
+    assert.match(JSON.parse(String(json.newValue!.json)), /description: unrelated/)
     return saved(draft, request)
   }
   await draft.finishDraftEdit()
@@ -87,11 +88,11 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
 for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
-  const card = (value: number) => `{"type":"input","params":[{"name":"value","type":"int","data":${value}}]}`
+  const card = (value: number) => `{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":${value}}}]}`
   s.confirmedDefinitions.set('sub', parse('{"type":"subgraph","external":"sub"}'))
   s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
   const source = (file: string, documentJson: string) =>
-    Object.assign(new R.SourceInfoT(), { path: prefix + file, documentJson })
+    Object.assign(new R.SourceInfoT(), { path: prefix + file, document: textBytes(documentJson) })
   s.applySources([
     source('tsugumi.json', '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}'),
     source('definitions/a/_card.json', card(1)),
@@ -102,8 +103,8 @@ for (const echoFirst of [false, true]) {
     const edit = (request.body as H.ProjectEditsT).edits[0]
     const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
     const before = parse(String(field.oldValue!.json))
-    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(field.oldValue!.json)
-      : Number(serialize(get(arr(get(before, 'params'))![0], 'data')!))
+    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(numText(get(before, 'int64')))
+      : Number(serialize(get(arr(get(before, 'params'))![0], 'data', 'int64')!))
     assert.equal(old, ++calls)
     const result = saved(s, request, inverse('internal'), { sourcesUpsert: [
       source('definitions/a/_card.json', card(calls + 1)),
@@ -116,7 +117,7 @@ for (const echoFirst of [false, true]) {
   await Promise.all([first, second])
   await s.save()
   assert.equal(calls, 2)
-  assert.equal(numText(get(arr(get(s.cardDefinition('sub/a'), 'params'))![0], 'data')), '3')
+  assert.equal(numText(get(arr(get(s.cardDefinition('sub/a'), 'params'))![0], 'data', 'int64')), '3')
   assert.equal(s.saveError, undefined)
 }
 
@@ -166,8 +167,8 @@ for (const draft of [false, true]) {
   edit.begin('1', s.rev)
   edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   if (draft) { await s.startDraftEdit('a'); s.inlineDraft.content = 'mine' }
-  const fields = (n: number) => ({ definitionsUpsert: [new R.DefinitionT('a',
-    `{"type":"input","params":[{"name":"value","type":"int","data":${n}}]}`,
+  const fields = (n: number) => ({ definitionsUpsert: [definitionFixture('a',
+    `{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":${n}}}]}`,
     JSON.stringify({ content: String(n), description: 'unrelated' }))] })
   const publish = (n: number) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(n) }))
   publish(2)
@@ -176,11 +177,11 @@ for (const draft of [false, true]) {
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT | H.ProjectJSONEditT
     const before = parse(String(field.oldValue!.json))
-    const guard = draft ? String(get(before, 'content')) : numText(before)!
+    const guard = draft ? String(before).split('\n').at(-1)! : numText(get(before, 'int64'))!
     guards.push(guard)
     if (guard !== String(actual)) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
-    if (draft) assert.equal(get(parse(String(field.newValue!.json)), 'description'), 'unrelated')
-    return saved(s, request, inverse('inline'), draft ? { definitionsUpsert: [new R.DefinitionT('a', serialize(s.cardDefinition('a')), '{"content":"mine","description":"unrelated"}')] } : fields(3))
+    if (draft) assert.match(JSON.parse(String(field.newValue!.json)), /description: unrelated/)
+    return saved(s, request, inverse('inline'), draft ? { definitionsUpsert: [definitionFixture('a', serialize(s.cardDefinition('a')), '{"content":"mine","description":"unrelated"}')] } : fields(3))
   }
   const save = async (overwrite: boolean) => {
     if (draft) { await s.finishDraftEdit(overwrite); return !s.inlineDraft }
@@ -192,21 +193,28 @@ for (const draft of [false, true]) {
   assert.equal(guards.at(-1), '2')
   assert.equal(await save(true), true)
   assert.equal(guards.at(-1), '4')
-  assert.equal(draft ? get(s.cardMeta('a'), 'content') : numText(get(arr(get(s.cardDefinition('a'), 'params'))![0], 'data')), draft ? 'mine' : '3')
+  assert.equal(draft ? get(s.cardMeta('a'), 'content') : numText(get(arr(get(s.cardDefinition('a'), 'params'))![0], 'data', 'int64')), draft ? 'mine' : '3')
 }
 
 // Each entity editor uses the same field working-copy path as its UI closure.
 // A third delta after the notice must fail, then the newly shown value can be overwritten.
-for (const kind of ['note', 'group', 'name', 'comment'] as const) {
+for (const kind of ['note', 'group', 'comment'] as const) {
   for (const third of [false, true]) {
     const s = session(), edit = new InlineParamEdit()
-    const file = kind === 'note' || kind === 'group' ? 'layout.json' : 'definitions/a/_meta.json'
+    const file = kind === 'note' || kind === 'group' ? 'layout.bin' : 'definitions/a/_comments.json'
     const field = kind === 'note' ? 'notes' : kind === 'group' ? 'groups' : 'comments'
-    const selector = kind === 'name' ? ['name'] : [field, obj([['id', 'item']])]
-    const value = (text: string): J => kind === 'name' ? text : obj([['id', 'item'], [kind === 'group' ? 'name' : 'text', text]])
-    const document = (text: string) => kind === 'name' ? obj([['name', text]]) : obj([[field, [value(text)]]])
-    const fields = (text: string) => file === 'layout.json' ? { layoutJson: serialize(document(text)) }
-      : { definitionsUpsert: [new R.DefinitionT('a', serialize(s.cardDefinition('a')), serialize(document(text)))] }
+    const selector = [field, obj([['id', 'item']])]
+    const value = (text: string): J => obj([['id', 'item'], [kind === 'group' ? 'name' : 'text', text]])
+    const document = (text: string) => obj([[field, [value(text)]]])
+    const fields = (text: string) => {
+      const encoded = serialize(document(text))
+      if (file !== 'layout.bin') return { definitionsUpsert: [definitionFixture('a', serialize(s.cardDefinition('a')), encoded)] }
+      const { bytes, notes } = layoutFixture(encoded)
+      const sourcesUpsert = [...notes].map(([id, contents]) => Object.assign(new R.SourceInfoT(), {
+        path: `notes/${id}.md`, document: textBytes(contents),
+      }))
+      return { layout: bytes, layoutChanged: true, sourcesUpsert }
+    }
     const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
       baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(text),
     }))
@@ -232,7 +240,7 @@ for (const kind of ['note', 'group', 'name', 'comment'] as const) {
     }
     assert.equal(await save(true), true, kind + ': overwrite must save')
     assert.equal(guards.at(-1), serialize(value(actual)))
-    assert.equal(file === 'layout.json' ? serialize(s.layout) : serialize(s.cardMeta('a')), serialize(document('mine')))
+    assert.equal(file === 'layout.bin' ? serialize(s.layout) : serialize(s.cardMeta('a')), serialize(document('mine')))
     if (kind === 'name') {
       actual = 'mine'; wanted = 'again'
       assert.equal(await save(false), true, 'the next edit uses the value just saved')
@@ -252,7 +260,7 @@ for (const source of [false, true]) {
     else editor.setSetting('symbol', 'mine')
     const publish = (text: string) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), {
       baseRev: s.rev, rev: s.rev + 1n, origin: 'agent',
-      definitionsUpsert: [new R.DefinitionT('a', serialize(obj([['type', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
+      definitionsUpsert: [definitionFixture('a', serialize(obj([['type', 'input'], ['symbol', text]])), serialize(s.cardMeta('a')))],
       sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: text, sizeBytes: 1n })],
     }))
     publish('agent')
@@ -267,7 +275,7 @@ for (const source of [false, true]) {
       if (guard !== actual) throw new RPCFailure({ kind: source ? D.FailureKind.source_changed : D.FailureKind.value_conflict })
       if (source) assert.equal(new TextDecoder().decode(new Uint8Array(put!.bytes)), 'mine')
       else assert.equal(get(parse(String(card.newValue!.json)), 'symbol'), 'mine')
-      return saved(s, request, inverse('settings'), { definitionsUpsert: [new R.DefinitionT('a', String(card.newValue!.json), serialize(s.cardMeta('a')))],
+      return saved(s, request, inverse('settings'), { definitionsUpsert: [definitionFixture('a', String(card.newValue!.json), serialize(s.cardMeta('a')))],
         sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path: file, hash: 'mine', sizeBytes: 4n })] })
     }
     assert.equal(await editor.apply(), false)
@@ -289,9 +297,9 @@ for (const third of [false, true]) {
     const body = request.body as H.ProjectReplaceDocumentsT
     revisions.push(body.expectedRev)
     if (body.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
-    return saved(s, request, inverse('raw'), { definitionsUpsert: [new R.DefinitionT('a', '{"type":"draft"}', '{"content":"mine"}')] })
+    return saved(s, request, inverse('raw'), { definitionsUpsert: [definitionFixture('a', '{"type":"draft"}', '{"content":"mine"}')] })
   }
-  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"type":"draft"}')], ['definitions/a/_meta.json', parse('{"content":"mine"}')]], overwrite)
+  const save = (overwrite: boolean) => edit.replaceDocuments(s, [['definitions/a/_card.json', parse('{"type":"draft"}')], ['definitions/a/README.md', 'mine']], overwrite)
   assert.equal(await save(false), false)
   assert.equal(edit.conflictRev, 1n)
   assert.equal(edit.error, undefined)

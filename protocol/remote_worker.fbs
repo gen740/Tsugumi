@@ -33,8 +33,9 @@ table JobSpec {
 // Spec bytes are a FlatBuffer rooted at JobSpec. Keeping the exact buffer
 // makes the fingerprint independent of packing and supports uncertain submits.
 table SubmitRequest { spec:[ubyte] (required); }
-// The core's cursor into the job's combined JSONL log (work/result/logs.jsonl):
-// the number of bytes it has already received. A reply carries at most
+// The core's cursor into the job's combined log (work/result/logs, a sequence
+// of size-prefixed LogEntry buffers): the number of bytes it has already
+// received. A reply carries at most
 // log_limit (capped at 256 KiB) bytes from that offset, so a running job's log
 // arrives while it runs. The completed result's logs.jsonl stays authoritative.
 table StatusRequest { log_offset:ulong; log_limit:uint; }
@@ -81,7 +82,7 @@ table Catalog { services:[Target] (required); }
 table BlobChunk { digest:string (required); total:ulong; offset:ulong; bytes:[ubyte] (required); }
 table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diagnostic:string; transfer_name:string; transfer_done:ulong; transfer_total:ulong; log_truncated:bool;
   // Echo of the requested cursor, the log's current size, and its bytes from
-  // log_offset. Bytes may end inside a JSONL entry. Status and Cancel replies.
+  // log_offset. Bytes may end inside an entry. Status and Cancel replies.
   log_offset:ulong; log_size:ulong; log_bytes:[ubyte];
   // The running job has built its environment and waits for the values of
   // its spec's Card secrets (JobSecretsRequest) before its process starts.
@@ -101,5 +102,35 @@ table Message { payload:Payload (required); }
 // Result manifest is a separate FlatBuffer root stored as a job blob.
 table ResultFile { path:string (required); sha256:string (required); size:ulong; }
 table ResultManifest { invocation_result_sha256:string (required); outputs:[ResultFile] (required); }
+
+// ---- Job files ----------------------------------------------------------------
+// Each is one FlatBuffer root: a blob the core submits, a file of the job's
+// folder, or a member of its result.
+
+/// The invocation blob (JobSpec.invocation_sha256): what to stage and run.
+table InvocationFile { path:string (required); sha256:string (required); size:ulong; }
+table Invocation {
+  call_sha256:string (required); archive_sha256:string (required);
+  files:[InvocationFile]; directories:[string]; implementation_index:ulong;
+}
+/// work/progress: the input transfer in progress.
+table TransferProgress { name:string; done:ulong; total:ulong; }
+/// The result's environment member: the Card's build environment.
+table ResultEnvironment { paths:[string]; directories:[string]; built:bool; log_truncated:bool; }
+/// One entry of the result's logs member: a LogStream value and its bytes.
+/// The member is a sequence of entries, each a uint32 little-endian size and
+/// then its buffer.
+table LogEntry { stream:ubyte; text:[ubyte]; }
+/// A job's state in the worker's journal (jobs/<id>/state).
+table JournalState {
+  state:JobState; fingerprint:string; result:string; diagnostic:string;
+  pid:ulong; start:ulong; boot:string; core_life_id:string;
+}
 root_type Message;
 file_identifier "TSR1";
+
+// Published after the listener binds, for launcher and test discovery.
+table WorkerReady {
+  port:ushort;
+  pid:ulong;
+}

@@ -380,7 +380,7 @@ TEST(HelperScope, InspectionDoesNotLeakOtherCardsOrProjectWideState) {
             R"([{"id":"visible","card_json":"VISIBLE"},{"id":"SECRET","card_json":"SECRET"}])"},
            {"sources",
             R"([{"path":"definitions/visible/a"},{"path":"definitions/SECRET/b"}])"},
-           {"layout_json", json::Quote("SECRET")},
+           {"layout", json::Quote("SECRET")},
            {"run", R"({"failure":"SECRET"})"},
            {"diagnostics", R"([{"message":"SECRET"}])"}})}});
   const auto filtered = scope.Inspect(result, kRead);
@@ -543,7 +543,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
     if (path == "definitions/outer/_card.json")
       return R"({"type":"subgraph","external":"storage"})";
     if (path == "externals/storage/tsugumi.json")
-      return R"({"boundary":{"inputs":{"visible":{"card":"draft","port":""},"hidden":{"card":"secret","port":"in"}},"outputs":{}},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
+      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft","port":""},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
     return "";
   };
   HelperScope scope(json::Object(
@@ -556,7 +556,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
       scope.Graph(read("externals/storage/tsugumi.json"), "outer/"));
   EXPECT_EQ(json::Encode(graph).find("secret"), std::string::npos);
   graph["boundary"] =
-      R"({"inputs":{"visible":{"card":"draft","port":"real"}},"outputs":{}})";
+      R"({"inputs":[{"name":"visible","card":"draft","port":"real"}],"outputs":[]})";
   auto canvas = json::Object(graph.at("canvas"));
   canvas["cards"] = R"([{"id":"draft"},{"id":"mine"}])";
   graph["canvas"] = json::Encode(canvas);
@@ -590,7 +590,7 @@ TEST(HelperGraphScope, SaveReceiptFiltersOtherHelpersCards) {
   HelperScope scope(json::Object(
       R"({"read_cards":["mine"],"write_cards":["mine"],"run_cards":[]})"));
   const auto result =
-      R"({"reply":"SaveResult","value":{"rev":"2","delta":{"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"mine\"},{\"id\":\"SECRET\"}],\"connections\":[]}}","layout_json":"SECRET","definitions_upsert":[],"sources_upsert":[],"resolution":[{"card":{"segments":["mine"]},"diagnostics":[]},{"card":{"segments":["SECRET"]}}],"diagnostics":[{"message":"SECRET"}]}}})";
+      R"({"reply":"SaveResult","value":{"rev":"2","delta":{"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"mine\"},{\"id\":\"SECRET\"}],\"connections\":[]}}","layout":"SECRET","definitions_upsert":[],"sources_upsert":[],"resolution":[{"card":{"segments":["mine"]},"diagnostics":[]},{"card":{"segments":["SECRET"]}}],"diagnostics":[{"message":"SECRET"}]}}})";
   const auto filtered = scope.SaveResult(result, kRead);
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_NE(filtered.find("mine"), std::string::npos);

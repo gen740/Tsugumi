@@ -40,7 +40,7 @@ The demos under `demos/en` and `demos/ja`, including the Drafts, are still writt
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
 The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), fork (the same value to several Cards), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
-Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
+Every Card has a summary in `README.md`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
 
 ## The basics
 

@@ -1,6 +1,8 @@
 // Card evaluation and builds, and the build cache.
 #pragma once
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -128,7 +130,8 @@ class NixRunner {
   // entries, and deleted Cards are pruned.
   std::mutex evaluations_mu_;
   std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
-  std::optional<std::map<std::string, schema::PreparedCard>> prepared_;
+  std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>>
+      prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;

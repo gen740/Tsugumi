@@ -1,3 +1,4 @@
+import { splitCardNotes } from '../model/documents'
 import { arr, clone, get, J, jeq, JObj, str } from '../../shared/json'
 import { L } from '../i18n'
 import { Observable, useObserve } from '../model/observable'
@@ -19,18 +20,21 @@ export class RevisionEdit extends Observable {
   /** Freeze comparison values when the conflict is shown, not on retry. */
   private recordConflict(session: ProjectSession) {
     this.conflictRev = session.rev
-    this.conflictDocuments = new Map([['tsugumi.json', clone(session.project)], ['layout.json', clone(session.layout)]])
+    this.conflictDocuments = new Map([['tsugumi.json', clone(session.project)], ['layout.bin', clone(session.layout)]])
     const definitions = (prefix: string, values: ProjectSession['definitionDrafts']) => {
       for (const [id, d] of values) {
         const dir = `${prefix}definitions/${id}/`
         this.conflictDocuments.set(dir + '_card.json', clone(d.card))
-        this.conflictDocuments.set(dir + '_meta.json', clone(d.meta))
+        const { readme, comments } = splitCardNotes(d.meta)
+        this.conflictDocuments.set(dir + '#notes', clone(d.meta))
+        if (comments !== undefined) this.conflictDocuments.set(dir + '_comments.json', clone(comments))
+        if (readme !== undefined) this.conflictDocuments.set(dir + 'README.md', readme)
       }
     }
     definitions('', session.definitionDrafts)
     for (const [prefix, external] of session.externals) {
       this.conflictDocuments.set(prefix + 'tsugumi.json', clone(external.project))
-      this.conflictDocuments.set(prefix + 'layout.json', clone(external.layout))
+      this.conflictDocuments.set(prefix + 'layout.bin', clone(external.layout))
       definitions(prefix, external.definitions)
     }
     this.conflictHashes = new Map([...session.sources].map(([file, source]) => [file, source.hash]))

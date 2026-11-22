@@ -383,7 +383,7 @@ public actor CoreHostClient {
 
   public func completeLayout(project: String, layout: String, definitions: [String: String]) async throws -> String {
     let request = Tsugumi_Host_LayoutCompleteRequestT()
-    request.projectJson = project; request.layoutJson = layout
+    request.projectJson = project; request.layout = layout
     request.definitionsJson = String(decoding: try JSONEncoder().encode(definitions), as: UTF8.self)
     let result: Tsugumi_Host_LayoutValidatedT = try await hostCall(.layoutcompleterequest, request)
     return result.json

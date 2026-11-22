@@ -185,7 +185,6 @@ TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
   Write(
       project / "tsugumi.json",
       R"({"name":"Environment","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(project / "layout.json", "{}");
   struct Startup {
     std::mutex mutex;
     std::condition_variable changed;

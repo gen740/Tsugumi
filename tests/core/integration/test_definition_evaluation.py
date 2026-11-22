@@ -83,7 +83,7 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
             files[changed_file] = "second"
             first, second = second, first
     elif changed_input == "nix-param":
-        settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": "first"}]
+        settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": {"string": "first"}}]
         files = {"default.nix": expression("params.message")}
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data="second")]})
@@ -91,7 +91,7 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
         # A builder generates the Card's API from these exact schemas. Observe
         # them in the body as well so a stale directory cannot pass unnoticed.
         files = {"default.nix": expression(schema_says("_params.fbs", "second", "second", "first"))}
-        settings["params"] = [{"name": "first", "type": "string", "data": "value"}]
+        settings["params"] = [{"name": "first", "type": "string", "data": {"string": "value"}}]
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], name="second")]})
     elif changed_input == "output-schema":

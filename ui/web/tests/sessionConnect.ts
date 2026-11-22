@@ -50,7 +50,7 @@ const open = async (fail: () => Error) => {
     session.refreshProjectTrust = async () => {}
     session.environmentHost = { ...session.environmentHost, start: async () =>
       environmentState(Object.assign(new H.EnvironmentStateT(), {
-        phase: H.EnvironmentPhase.Failed, startupErrorJson: JSON.stringify(mismatch),
+        phase: H.EnvironmentPhase.Failed, startupError: Object.assign(new H.StartupErrorT(), mismatch),
       })),
     }
     session.openTransport = async () => { assert.fail('Failed environment cannot open a project transport') }

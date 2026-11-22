@@ -19,7 +19,7 @@ def card_json(c, cid: str) -> dict:
 
 
 def put(cid: str, body: dict):
-    return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepMeta=True)
+    return change("PutDefinition", id=cid, cardJson=json.dumps(body), keepReadme=True, keepComments=True)
 
 
 def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory):

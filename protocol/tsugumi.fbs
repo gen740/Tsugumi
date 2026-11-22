@@ -25,15 +25,18 @@ table SourceInfo {
   exists:bool = null (id: 2);
   hash:string (id: 3);
   size_bytes:uint64 = null (id: 4);
-  /// Nested project, layout, Card or metadata text in snapshots and deltas.
-  document_json:string (id: 5);
+  /// The bytes of a file carried in snapshots and deltas: a nested project's
+  /// documents and every canvas note (notes/<id>.md).
+  document:[ubyte] (id: 5);
 }
 
-/// definitions/<id>/_card.json. An external field names a Card in Card.
+/// definitions/<id>/: _card.json (whose external field names a Card in
+/// Card), and its optional README.md and _comments.json.
 table Definition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
-  meta_json:string (id: 2);
+  readme:string (id: 2);
+  comments_json:string (id: 3);
 }
 
 /// An authorized Nix input derived from the project wiring. The target path
@@ -132,14 +135,15 @@ table ProjectSnapshot {
   rev:uint64 = null (id: 1);
   execution_rev:uint64 = null (id: 2);
   project_json:string (id: 3, required);
-  layout_json:string (id: 4, required);
+  /// layout.bin (protocol/layout_document.fbs); empty when there is none.
+  layout:[ubyte] (id: 4, required);
   definitions:[Definition] (id: 5, required);
   sources:[SourceInfo] (id: 6, required);
   resolution:[ResolvedCard] (id: 7, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 8, required);
   run:RunStatus (id: 9, required);
   /// Opaque client-owned JSON; the core never interprets camera or selection.
-  view_json:string (id: 10);
+  view:[ubyte] (id: 10);
   view_id:string (id: 11);
   view_rev:uint64 = null (id: 12);
   execution_services:[ExecutionService] (id: 13);
@@ -164,14 +168,18 @@ table ProjectHostRequirementsRequest {}
 // ---- Document changes --------------------------------------------------------
 
 table SetProject { json:string (id: 0, required); }
-table SetLayout { json:string (id: 0, required); }
+/// The new layout.bin; empty removes it.
+table SetLayout { layout:[ubyte] (id: 0, required); }
 table PutDefinition {
   id:string (id: 0, required);
   card_json:string (id: 1, required);
-  /// The new _meta.json; omitted removes it unless keep_meta. Empty keeps it.
-  meta_json:string (id: 2);
-  /// Preserve existing _meta.json when meta_json is omitted.
-  keep_meta:bool = false (id: 3);
+  /// The new README.md; omitted removes it unless keep_readme. Empty keeps it.
+  readme:string (id: 2);
+  keep_readme:bool = false (id: 3);
+  /// The new _comments.json; omitted removes it unless keep_comments. Empty
+  /// keeps it.
+  comments_json:string (id: 4);
+  keep_comments:bool = false (id: 5);
 }
 table RemoveDefinition { id:string (id: 0, required); }
 table PutSource {
@@ -213,13 +221,15 @@ table DocumentDelta {
   op_id:string (id: 3, required);
   origin:string (id: 4, required);
   project_json:string (id: 5);
-  layout_json:string (id: 6);
+  /// The new layout.bin when layout_changed; empty when it was removed.
+  layout:[ubyte] (id: 6);
   definitions_upsert:[Definition] (id: 7, required);
   definitions_removed:[string] (id: 8, required);
   sources_upsert:[SourceInfo] (id: 9, required);
   sources_removed:[string] (id: 10, required);
   resolution:[ResolvedCard] (id: 11, required);
   diagnostics:[Tsugumi.Data.Diagnostic] (id: 12, required);
+  layout_changed:bool (id: 13);
 }
 
 table SaveResult {
@@ -788,11 +798,24 @@ table ViewSetVisibleRequest {
   enabled:bool = null (id: 2);
 }
 
+// A client's viewport, carried by the core as one FlatBuffer.
+table ViewCamera {
+  scope:[string];
+  x:double;
+  y:double;
+  zoom:double;
+}
+table ClientView {
+  scope:[string];
+  cameras:[ViewCamera];
+  selected_cards:[Tsugumi.Data.CardPath];
+}
+
 /// -> ViewSaveResult. CAS on view_rev only.
 table ViewSaveRequest {
   view_id:string (id: 0, required);
   base_view_rev:uint64 = null (id: 1);
-  view_json:string (id: 2, required);
+  view:[ubyte] (id: 2, required);
 }
 
 /// -> FileContent. Read a page of the file of one view declaration: entry
@@ -945,7 +968,8 @@ table VersionCanvasWire {
 table VersionCanvas {
   cards:[VersionCanvasCard] (id: 0, required);
   wires:[VersionCanvasWire] (id: 1, required);
-  layout_json:string (id: 2, required);
+  /// That version's layout.bin; empty when it had none.
+  layout:[ubyte] (id: 2, required);
 }
 
 table VersionNote {

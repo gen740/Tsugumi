@@ -21,7 +21,7 @@ TEST_F(AgentProjectFixture,
             Read(file.path()));
   const auto document = Read(root / "tsugumi.json");
   StartProject(false, document, "{}");
-  const auto saved_layout = Read(root / "layout.json");
+  const auto saved_layout = Read(root / "layout.bin");
   const auto conversation = Conversation("mnist-generate-cards");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -63,13 +63,9 @@ TEST_F(AgentProjectFixture,
                    "type") != "draft")
       continue;
     implemented.push_back(id);
-    auto meta =
-        id == "report"
-            ? json::Members{{"description", Quote("Compare the classifiers")},
-                            {"content", Quote("Present the comparison.")}}
-            : json::Object(Read(root / "definitions" / id / "_meta.json"));
-    meta["context"] =
-        Quote("Implement this Draft for the MNIST classifier comparison.");
+    const auto readme = id == "report"
+        ? "---\ndescription: Compare the classifiers\n---\n\nPresent the comparison."
+        : Read(root / "definitions" / id / "README.md");
     std::set<std::string> inputs, outputs;
     for (const auto& wire_raw : wires) {
       const auto wire = json::Object(wire_raw);
@@ -86,9 +82,9 @@ TEST_F(AgentProjectFixture,
         {"type", Quote("code")},
         {"inputs", json::Encode(input_defs)},
         {"params",
-         R"([{"name":"rate","type":"double","data":0.001},{"name":"regularization","type":"double","data":1.0}])"}});
+         R"([{"name":"rate","type":"double","data":{"double":0.001}},{"name":"regularization","type":"double","data":{"double":1.0}}])"}});
     change("PutDefinition", {{"id", Quote(id)},
-                             {"meta_json", Quote(json::Encode(meta))},
+                             {"readme", Quote(readme)},
                              {"card_json", Quote(definition)}});
     std::string output_schema = "table Data { value:double; }\ntable Outputs {";
     if (outputs.empty()) outputs.insert("data");
@@ -101,7 +97,7 @@ TEST_F(AgentProjectFixture,
                          {"bytes", Quote(output_schema)}});
   }
   // The bundled Japanese text exercises multibyte clipping in tool events.
-  const auto read_arguments = R"({"path":"definitions/boosting/_meta.json"})";
+  const auto read_arguments = R"({"path":"definitions/boosting/README.md"})";
   ModelServer model;
   Configure(model);
   model.Queue(AnthropicTool("inspect", "project_inspect", "{}"));
@@ -123,7 +119,7 @@ TEST_F(AgentProjectFixture,
             json::UInt(json::String(json::Get(snapshot, "rev"),
                                     json::Get(snapshot, "rev"))) +
                 1);
-  EXPECT_EQ(Read(root / "layout.json"), saved_layout);
+  EXPECT_EQ(Read(root / "layout.bin"), saved_layout);
   const auto saved =
       json::Object(json::Object(Read(root / "tsugumi.json")).at("canvas"));
   const auto placed = json::Array(saved.at("cards"));
@@ -136,7 +132,7 @@ TEST_F(AgentProjectFixture,
     EXPECT_EQ(JsonString(definition, "/type"), "code");
     const auto params = json::Array(json::Object(definition).at("params"));
     const auto rate = json::Object(params.front());
-    EXPECT_DOUBLE_EQ(std::stod(rate.at("data")), 0.001);
+    EXPECT_DOUBLE_EQ(std::stod(json::Object(rate.at("data")).at("double")), 0.001);
   }
 }
 }  // namespace

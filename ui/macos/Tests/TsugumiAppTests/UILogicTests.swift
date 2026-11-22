@@ -721,7 +721,7 @@ private final class CountingRuler: LineNumberRuler {
   let session = ProjectSession(identity: try ProjectIdentity(url: dir), environments: EnvironmentManager(image: nil))
   let document = try JSONValue.parse(#"{"canvas":{"cards":[{"id":"plan"},{"id":"start"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}}"#)
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
-  snapshot.projectJson = document.serialized(); snapshot.layoutJson = "{}"
+  snapshot.projectJson = document.serialized(); snapshot.layout = []
   snapshot.definitions = ["plan", "next"].map { id in
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = id; definition.cardJson = #"{"type":"draft"}"#
     return definition

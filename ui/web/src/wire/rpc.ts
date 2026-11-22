@@ -314,8 +314,8 @@ export class RPCClient {
       Object.assign(new R.ViewSetVisibleRequestT(), { subscriptionId, cards: cards.map(cardPath), enabled }),
     )
   }
-  saveView(viewId: string, baseViewRev: bigint, view: string) {
-    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, viewJson: view }))
+  saveView(viewId: string, baseViewRev: bigint, view: number[]) {
+    return this.call<R.ViewSaveResultT>(RequestPayload.ViewSaveRequest, Object.assign(new R.ViewSaveRequestT(), { viewId, baseViewRev, view }))
   }
   /** Each Card's latest invocation of a run. */
   latestInvocations(runId: string) {

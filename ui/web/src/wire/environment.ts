@@ -44,12 +44,11 @@ export function environmentState(value: H.EnvironmentStateT): EnvPublicState {
     case H.EnvironmentPhase.Starting:
       return { state: 'starting', message: L('実行環境を起動しています') }
     case H.EnvironmentPhase.Failed: {
-      let message = s(value.message)
-      let mismatch: HistoryVersionMismatch | undefined
-      if (value.startupErrorJson) {
-        try { mismatch = historyVersionMismatch(JSON.parse(s(value.startupErrorJson))) }
-        catch (error) { message += '\n' + String(error) }
-      }
+      const message = s(value.message)
+      const error = value.startupError
+      const mismatch: HistoryVersionMismatch | undefined = error
+        ? historyVersionMismatch({ kind: s(error.kind), found: s(error.found), expected: s(error.expected) })
+        : undefined
       return { state: 'failed', message, recovery: s(value.recovery), log: s(value.log), historyVersionMismatch: mismatch }
     }
     default:

@@ -24,9 +24,9 @@ struct VersionRunNote {
   std::string state;  // succeeded, failed, cancelled
   std::string ended;  // ISO 8601 (UTC)
   double seconds = 0;
-  // Neutral JSON facts about what actually ran (version_record::Run).
+  // Neutral FlatBuffers facts about what ran (RPC.VersionRunFacts).
   // Empty for a run a demo's history file lists.
-  std::string record_json;
+  std::string facts;
 };
 
 struct VersionCommit {
@@ -40,7 +40,7 @@ struct VersionCommit {
   std::vector<std::string> tags;
   std::vector<VersionRunNote> runs;
   // Card keys ("a", "outer/b") whose files changed from the first parent;
-  // "" for the project's own documents (tsugumi.json, layout.json).
+  // "" for the project's own documents (tsugumi.json, layout.bin, notes/).
   std::vector<std::string> changed;
   std::vector<comments::Change> comments;
 };
@@ -54,12 +54,12 @@ struct VersionCanvasData {
   };
   std::vector<Card> cards;
   std::vector<std::pair<std::string, std::string>> wires;  // from, to
-  std::string layout_json = "{}";
+  std::string layout;  // layout.bin; empty when there is none
 };
 
 struct VersionNoteData {
   std::string commit;
-  std::string record_json;
+  std::string facts;
 };
 
 struct VersionDiffData {
@@ -83,7 +83,7 @@ class Versions {
   bool enabled() const;
   // Makes the folder a repository with a first commit of its definitions and
   // versionPaths opt-ins, always excluding .tsugumi/. A demo's history file
-  // (.tsugumi-history.json) becomes its commits, branches, tags and notes
+  // (.tsugumi-history) becomes its commits, branches, tags and notes
   // instead, ending in what is on disk. Returns HEAD.
   std::string init();
   // Commits saved definitions and versionPaths opt-ins when they differ from
@@ -112,9 +112,7 @@ class Versions {
   auto comment_changes(const std::string& commit)
       -> std::vector<comments::Change>;
 
-  static std::string format_note(const VersionRunNote& r);
   static std::string iso_utc(int64_t ms);
-  static std::vector<VersionRunNote> parse_note(const std::string& text);
   // "definitions/a/x" -> "a", "externals/p/definitions/b/y" -> "p/b",
   // "tsugumi.json" -> "", anything else -> nullopt.
   static std::optional<std::string> card_of(const std::string& path);

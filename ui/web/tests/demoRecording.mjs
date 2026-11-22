@@ -35,7 +35,7 @@ try {
   fs.writeFileSync(document, JSON.stringify(original))
   const child = path.join(root, 'externals', 'collatz-cpp', 'tsugumi.json')
   const inner = read(child)
-  inner.boundary.inputs.n.port = 'half'
+  inner.boundary.inputs.find(port => port.name === 'n').port = 'half'
   fs.writeFileSync(child, JSON.stringify(inner))
   preview = build()
   assert.equal(preview.run, undefined, 'a changed child Workflow boundary invalidates the recording')

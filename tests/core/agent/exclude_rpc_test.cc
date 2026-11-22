@@ -1,3 +1,4 @@
+#include "host/layout_file.hh"
 #include <sys/stat.h>
 
 #include <map>
@@ -100,7 +101,7 @@ TEST_F(AgentExclusionRPC,
       R"({"name":"RCW 86","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"sub"}],"connections":[]}})";
   const std::map<std::string, std::string> files{
       {"tsugumi.json", project},
-      {"layout.json", R"({"cards":{"sub":{"x":10,"y":20}}})"},
+      {"layout.bin", R"({"cards":{"sub":{"x":10,"y":20}}})"},
       {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"data"}],"connections":[]}})"},
@@ -135,12 +136,8 @@ TEST_F(AgentExclusionRPC,
       j::Text(j::Object(Read(destination / "definitions/imported/_card.json")),
               "external"),
       "imported");
-  EXPECT_EQ(
-      j::Text(j::Object(Read(destination / "definitions/imported/_meta.json")),
-              "name"),
-      "RCW 86");
   const auto position = j::Object(
-      j::Object(j::Object(Read(destination / "layout.json")).at("cards"))
+      j::Object(j::Object(host::LayoutView(Read(destination / "layout.bin"))).at("cards"))
           .at("imported"));
   EXPECT_DOUBLE_EQ(std::stod(position.at("x")), 120);
   EXPECT_DOUBLE_EQ(std::stod(position.at("y")), 240);
@@ -252,8 +249,8 @@ TEST_F(AgentExclusionRPC,
   const std::string binary("\0\xff\x80\n", 4);
   Write(folder / "tsugumi.json", project);
   Write(folder / "definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})");
-  Write(folder / "definitions/sub/_meta.json",
-        R"({"name":"Original","description":"Keep this"})");
+  Write(folder / "definitions/sub/README.md",
+        "---\ndescription: Keep this\n---\n");
   Write(folder / "externals/inner/tsugumi.json", project);
   Write(folder / "externals/inner/definitions/next/_card.json",
         R"({"type":"subgraph","external":"deep"})");
@@ -286,18 +283,16 @@ TEST_F(AgentExclusionRPC,
       j::Text(j::Object(Read(destination / "definitions/copied/_card.json")),
               "external"),
       "copied");
-  const auto meta =
-      j::Object(Read(destination / "definitions/copied/_meta.json"));
-  EXPECT_EQ(j::Text(meta, "name"), "Copied Card");
-  EXPECT_EQ(j::Text(meta, "description"), "Keep this");
+  EXPECT_EQ(Read(destination / "definitions/copied/README.md"),
+            "---\ndescription: Keep this\n---\n");
   const auto position = j::Object(
-      j::Object(j::Object(Read(destination / "layout.json")).at("cards"))
+      j::Object(j::Object(host::LayoutView(Read(destination / "layout.bin"))).at("cards"))
           .at("copied"));
   EXPECT_DOUBLE_EQ(std::stod(position.at("x")), 120);
   EXPECT_DOUBLE_EQ(std::stod(position.at("y")), 240);
   EXPECT_EQ(Read(folder / source), binary);
-  EXPECT_EQ(Read(folder / "definitions/sub/_meta.json"),
-            R"({"name":"Original","description":"Keep this"})");
+  EXPECT_EQ(Read(folder / "definitions/sub/README.md"),
+            "---\ndescription: Keep this\n---\n");
 }
 
 TEST_F(AgentExclusionRPC, AttachedCardCopyRefusesExcludedClosureBeforeSaving) {
@@ -427,8 +422,8 @@ TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
       demo / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
   Write(demo / "definitions/step/_card.json", R"({"type":"draft"})");
-  Write(demo / "definitions/step/_meta.json",
-        R"({"name":"Source step","description":"Keep description"})");
+  Write(demo / "definitions/step/README.md",
+        "---\ndescription: Keep description\n---\n");
   Write(demo / "definitions/step/src/note.txt", "COPIED_COMPLETE_SOURCE");
   Write(directory.path / "demos/en/index.json",
         R"({"demos":[{"id":"source","path":"source","title":"Source"}]})");
@@ -439,7 +434,7 @@ TEST_F(AgentExclusionRPC, DemoCardCopySavesItsDefinitionAndSources) {
   ASSERT_EQ(Error(result), "") << result.View();
   EXPECT_EQ(Read(directory.path / "project/definitions/copied/src/note.txt"),
             "COPIED_COMPLETE_SOURCE");
-  EXPECT_NE(Read(directory.path / "project/definitions/copied/_meta.json")
+  EXPECT_NE(Read(directory.path / "project/definitions/copied/README.md")
                 .find("Keep description"),
             std::string::npos);
 }

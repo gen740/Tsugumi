@@ -1,3 +1,4 @@
+import { layoutBytes } from './documentFixture'
 // Run this file alone with esbuild; the transport is advanced explicitly.
 import assert from 'node:assert/strict'
 import { Builder, ByteBuffer } from 'flatbuffers'
@@ -38,7 +39,7 @@ for (const echoFirst of [false, true]) {
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: [],
   }))
   const entered = deferred<H.ProjectOperateRequestT>(), reply = deferred<R.SaveResultT>()
   s.operateProject = (request: H.ProjectOperateRequestT) => { entered.resolve(request); return reply.promise }
@@ -111,7 +112,7 @@ for (const echoFirst of [false, true]) {
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{"flow":"topToBottom"}',
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: layoutBytes('{"flow":"topToBottom"}'),
   }))
   const first = deferred<H.ProjectOperateRequestT>(), second = deferred<H.ProjectOperateRequestT>()
   const firstReply = deferred<R.SaveResultT>(), secondReply = deferred<R.SaveResultT>()
@@ -125,12 +126,12 @@ for (const echoFirst of [false, true]) {
   const one = await first.promise
   const field = (r: H.ProjectOperateRequestT) => (r.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT
   assert.equal(JSON.parse(String(field(one).oldValue!.json)), 'topToBottom')
-  const d1 = delta(0n, String(one.opId), 'old'); d1.layoutJson = '{"flow":"leftToRight"}'
+  const d1 = delta(0n, String(one.opId), 'old'); d1.layoutChanged = true; d1.layout = layoutBytes('{"flow":"leftToRight"}')
   firstReply.resolve(result(d1))
   const two = await second.promise
   assert.equal(JSON.parse(String(field(two).oldValue!.json)), 'leftToRight')
   assert.equal(JSON.parse(String(field(two).newValue!.json)), 'topToBottom')
-  const d2 = delta(1n, String(two.opId), 'old'); d2.layoutJson = '{"flow":"topToBottom"}'
+  const d2 = delta(1n, String(two.opId), 'old'); d2.layoutChanged = true; d2.layout = layoutBytes('{"flow":"topToBottom"}')
   secondReply.resolve(result(d2))
   await complete
   assert.equal(s.rev, 2n)
@@ -146,7 +147,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.refreshDerivedLayout = () => {}
   s.cardIdProvider = async () => 'new-card'
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{"cards":{"a":{"x":0,"y":0}}}',
+    rev: 0n, projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: layoutBytes('{"cards":{"a":{"x":0,"y":0}}}'),
     definitions: [new R.DefinitionT('a', '{"type":"draft"}')],
   }))
   const requests: H.ProjectOperateRequestT[] = []
@@ -208,7 +209,7 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layoutJson: '{}',
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[],"connections":[]}}', layout: [],
   }))
   const entered = deferred<H.ProjectOperateRequestT>(), undoEntered = deferred<H.ProjectOperateRequestT>()
   const reply = deferred<R.SaveResultT>(), undoReply = deferred<R.SaveResultT>()
@@ -240,8 +241,8 @@ for (const action of ['create', 'import', 'copy', 'duplicate', 'convert', 'move'
   s.projectId = 'p'; s.client = {}; s.connected = true
   s.refreshDerivedLayout = () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), {
-    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layoutJson: '{}',
-    definitions: [new R.DefinitionT('a', '{"type":"draft"}', '{"description":"old"}')],
+    rev: 0n, projectJson: '{"name":"old","canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: [],
+    definitions: [new R.DefinitionT('a', '{"type":"draft"}', '---\ndescription: old\n---\n')],
   }))
   const requests: H.ProjectOperateRequestT[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {

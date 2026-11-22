@@ -118,7 +118,8 @@ extension ProjectSession {
   func kind(_ k: CardKey) -> CardKind { definitionKind(cardDefinitionDraft(k)?.card) }
 
   /// The human name; exact addresses keep the permanent identifier.
-  func displayName(_ k: CardKey) -> String { cardMeta(k)?["name"]?.string.flatMap { $0.isEmpty ? nil : $0 } ?? path(k).last ?? k }
+  /// A Card's name: its id, the only name it has.
+  func displayName(_ k: CardKey) -> String { path(k).last ?? k }
 
   /// A human-readable path. Tools and evidence links use the original segments.
   func displayPath(_ segments: [String]) -> String {
@@ -199,7 +200,7 @@ extension ProjectSession {
     let id = try await newCardId(name ?? t.baseName, in: scope)
     let body = Tsugumi_Host_ProjectCreateCardT()
     body.projectPath = (projectPrefix(scope) ?? "").trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    body.id = id; body.kind = t.kind; body.name = name ?? t.baseName
+    body.id = id; body.kind = t.kind
     body.x = point.x; body.y = point.y; body.automaticPlacement = automaticPlacement
     try await operate(.projectcreatecard, body: body)
     forgetResult(key(scope + [id]))
@@ -243,7 +244,7 @@ extension ProjectSession {
     do {
       let id = try await newCardId(base, in: scope)
       let item = Tsugumi_Host_ProjectCopyItemT()
-      item.from = from; item.id = id; item.name = base; item.x = point.x; item.y = point.y
+      item.from = from; item.id = id; item.x = point.x; item.y = point.y
       try await copyCards([item], in: scope)
       return key(scope + [id])
     } catch { notice = error.localizedDescription; return nil }
@@ -294,12 +295,6 @@ extension ProjectSession {
     } catch { notice = error.localizedDescription; return [] }
   }
 
-  /// Names are independent of identifiers and may be shared by several Cards.
-  func cardNameProblem(_ k: CardKey, _ raw: String) -> String? {
-    let name = raw.trimmingCharacters(in: .whitespacesAndNewlines)
-    return name.isEmpty || name.utf8.count > 4096 ? String(localized: "名前を入力してください（4096 バイトまで）。") : nil
-  }
-
   // MARK: - A Draft written on the canvas
 
   /// Whether a Draft has no name of its own: its id is one made for it.
@@ -307,22 +302,18 @@ extension ProjectSession {
     kind(k) == .draft && displayName(k) == "draft"
   }
 
-  /// Starts writing a Draft's name and content on its Card.
+  /// Starts writing a Draft's content on its Card.
   func startDraftEdit(_ k: CardKey, revision existing: RevisionEdit? = nil) async {
     if existing == nil, let current = inlineDraft {
       guard current.card != k else { return }
       _ = await finishDraftEdit()
       guard inlineDraft == nil else { return }
     }
-    let name = draftUntitled(k) ? "" : displayName(k), content = cardMeta(k)?["content"]?.string ?? ""
+    let content = cardMeta(k)?["content"]?.string ?? ""
     let revision = existing ?? RevisionEdit()
     revision.reload(rev)
-    inlineDraft = InlineDraft(card: k, name: name, content: content, initialName: name, initialContent: content, initialMeta: cardMeta(k), revision: revision)
-  }
-
-  /// Why the name typed on a Draft's Card cannot be taken (no name is fine).
-  func draftNameProblem(_ k: CardKey, _ name: String) -> String? {
-    name.trimmingCharacters(in: .whitespaces).isEmpty ? nil : cardNameProblem(k, name)
+    inlineDraft = InlineDraft(card: k, content: content, initialContent: content,
+                              initialReadme: Documents.splitCardNotes(cardMeta(k)).readme, revision: revision)
   }
 
   /// Keeps what was written. A name the Card cannot take stays as it was, with
@@ -350,24 +341,20 @@ extension ProjectSession {
     // advance this editor's base; another client's deltas never do.
     await save()
     guard let e = inlineDraft else { return nil }
-    let contentChanged = e.content != e.initialContent, nameChanged = e.name != e.initialName
-    guard instance(e.card) != nil, contentChanged || nameChanged else { inlineDraft = nil; return nil }
-    let trimmed = e.name.trimmingCharacters(in: .whitespacesAndNewlines)
-    let name = trimmed.isEmpty ? "draft" : trimmed
-    if nameChanged, let problem = cardNameProblem(e.card, name) { notice = problem; e.revision.error = problem; return nil }
+    guard instance(e.card) != nil, e.content != e.initialContent else { inlineDraft = nil; return nil }
     guard let dir = definitionDir(e.card) else { return nil }
-    let before = e.revision.jsonBase(dir + "_meta.json", initial: e.initialMeta, overwrite: overwrite)
-    var after = before ?? .object([])
-    if contentChanged { after["content"] = e.content.isEmpty ? nil : .string(e.content) }
-    if nameChanged { after["name"] = .string(name) }
+    // The README.md as it was when writing began (or as the conflict found it).
+    let before = e.revision.jsonBase(dir + "README.md", initial: e.initialReadme.map { .string($0) }, overwrite: overwrite)?.string
+    let readme = Documents.parseReadme(before ?? "")
+    let after = Documents.printReadme(description: readme.description, body: e.content)
     let ok = await e.revision.apply(self) { s in
-      s.appendEdits([s.jsonEdit(dir + "_meta.json", old: before, new: after)])
+      s.appendEdits([s.jsonEdit(dir + "README.md", old: before.map { .string($0) }, new: after.map { .string($0) })])
     }
     if ok, inlineDraft?.revision === e.revision {
-      if inlineDraft?.name == e.name && inlineDraft?.content == e.content { inlineDraft = nil }
-      else { inlineDraft?.initialName = e.name; inlineDraft?.initialContent = e.content; inlineDraft?.initialMeta = after }
+      if inlineDraft?.content == e.content { inlineDraft = nil }
+      else { inlineDraft?.initialContent = e.content; inlineDraft?.initialReadme = after }
     }
-    return ok && nameChanged ? e.card : nil
+    return nil
   }
 
   func deleteCards(_ keys: Set<CardKey>, in scope: [String]) {
@@ -407,9 +394,9 @@ extension ProjectSession {
           let at = position(k)
           var placed: JSONValue = .object([("x", .real(at.x)), ("y", .real(at.y))])
           if value { placed["collapsed"] = .bool(true) }
-          return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k))], old: nil, new: placed)
+          return fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k))], old: nil, new: placed)
         }
-        return fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string("collapsed")],
+        return fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k)), .string("collapsed")],
                          old: entry?["collapsed"], new: value ? .bool(true) : nil)
       }
     }
@@ -420,7 +407,8 @@ extension ProjectSession {
     queueFields { [self] in
       let definition = cardDefinition(k), match = JSONValue.object([("name", .string(name))])
       if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
-        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"], new: value)]
+        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"],
+                          new: value.map { Documents.paramValue(param["type"]?.string, $0) })]
       }
       throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
     }
@@ -431,14 +419,15 @@ extension ProjectSession {
     if let initial {
       if let dir = definitionDir(k) {
         let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
-        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"], new: value)])
+        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"],
+                                      new: value.map { Documents.paramValue(initial.parameter?["type"]?.string, $0) })])
       }
       return
     }
     updateCard(k) { c in
       var params = c["params"]?.array ?? []
       if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-        params[i]["data"] = value
+        params[i]["data"] = value.map { Documents.paramValue(params[i]["type"]?.string, $0) }
       }
       c["params"] = .array(params)
     }
@@ -455,7 +444,7 @@ extension ProjectSession {
       let id = try await newCardId(name, in: scope)
       let body = Tsugumi_Host_ProjectMakeSubgraphT()
       body.projectPath = prefix.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-      body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id; body.name = name
+      body.cards = keys.compactMap { path($0).last }.sorted(); body.id = id
       try await operate(.projectmakesubgraph, body: body)
       return key(scope + [id])
     } catch { notice = error.localizedDescription; return nil }
@@ -515,7 +504,7 @@ extension ProjectSession {
 
   private func operateLayoutEntity(_ scope: [String], _ field: String, _ id: String, old: JSONValue?, new: JSONValue?) async throws {
     guard let prefix = projectPrefix(scope) else { return }
-    try await operateFields([fieldEdit(prefix + "layout.json", [.string(field), .object([("id", .string(id))])], old: old, new: new)])
+    try await operateFields([fieldEdit(prefix + "layout.bin", [.string(field), .object([("id", .string(id))])], old: old, new: new)])
   }
 
   func updateNote(_ id: String, _ fn: @escaping (inout JSONValue) -> Void) {
@@ -524,7 +513,7 @@ extension ProjectSession {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
       }
       var after = before; fn(&after)
-      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: after)]
+      return [fieldEdit(prefix + "layout.bin", [.string("notes"), .object([("id", .string(id))])], old: before, new: after)]
     }
   }
 
@@ -533,7 +522,7 @@ extension ProjectSession {
       guard let scope = scopeHolding("notes", id), let prefix = projectPrefix(scope), let before = note(id) else {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown note: \(id)")
       }
-      return [fieldEdit(prefix + "layout.json", [.string("notes"), .object([("id", .string(id))])], old: before, new: nil)]
+      return [fieldEdit(prefix + "layout.bin", [.string("notes"), .object([("id", .string(id))])], old: before, new: nil)]
     }
   }
 
@@ -561,7 +550,7 @@ extension ProjectSession {
             let before = groups(in: scope).first(where: { $0["id"]?.string == id }) else {
         throw RPCFailure(kind: .notFound, diagnostic: "Unknown group: \(id)")
       }
-      return [fieldEdit(prefix + "layout.json", [.string("groups"), .object([("id", .string(id))])], old: before, new: nil)]
+      return [fieldEdit(prefix + "layout.bin", [.string("groups"), .object([("id", .string(id))])], old: before, new: nil)]
     }
   }
 
@@ -601,7 +590,7 @@ extension ProjectSession {
 
   func setBoundaryPosition(_ scope: [String], _ side: String, _ p: CGPoint) {
     guard let prefix = projectPrefix(scope) else { return }
-    queueFields { [self] in [fieldEdit(prefix + "layout.json", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
+    queueFields { [self] in [fieldEdit(prefix + "layout.bin", [.string("boundary"), .string(side)], old: layout(of: scope)["boundary"]?[side],
                          new: .object([("x", .real((p.x * 10).rounded() / 10)), ("y", .real((p.y * 10).rounded() / 10)) ]))] }
   }
 
@@ -700,7 +689,7 @@ extension ProjectSession {
       let entry = layout(of: scope)["cards"]?[layoutKey(k)]
       for field in ["inputOrder", "outputOrder"] {
         if let value = entry?[field] {
-          edits.append(fieldEdit(prefix + "layout.json", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
+          edits.append(fieldEdit(prefix + "layout.bin", [.string("cards"), .string(layoutKey(k)), .string(field)], old: value, new: nil))
         }
       }
     }

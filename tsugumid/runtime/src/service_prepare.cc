@@ -1,6 +1,7 @@
 // Building every Card of the project without running any (tsugumid
 // --prepare-cards), for a tool that packages the built project. A core
 // started with --prepared-cards then runs them without evaluating.
+#include <memory>
 #include <ostream>
 #include <string>
 #include <utility>
@@ -9,7 +10,8 @@
 #include "execution_service.hh"
 #include "nix.hh"
 #include "service.hh"
-#include "tsugumi/util/json.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/log.hh"
 
 namespace tsugumi {
@@ -18,6 +20,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
   const auto doc = store_->current();
   const auto& graph = *doc->resolution;
   bool all = true;
+  Tsugumi::State::PreparedCardsT manifest;
   for (const auto& node : graph.nodes) {
     if (node.kind != CardType::Code || node.is_virtual) continue;
     const auto card = path_key(node.path);
@@ -30,54 +33,35 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
         log::info("build " + card + ": " + line);
       if (chunk.truncated) log::info("build " + card + ": log truncated");
     };
-    // One schema::PreparedCard per line.
-    std::vector<std::pair<std::string, hosq::json::GenericDom<>>> fields;
-    fields.emplace_back("card", schema::string_value(card));
+    Tsugumi::State::PreparedCardT card_record;
+    card_record.card = card;
     try {
       // The same evaluation and build as a run of this Card on the local
       // service, whichever branches a run would take.
       auto execution = execution_service(kLocalExecutionService)
                            .prepare(node, run_scratch_, request);
       const auto plan = nix_->build(request);
-      std::string closure = "[";
-      for (const auto& path : plan.common.environment.paths)
-        closure += (closure.size() > 1 ? "," : "") +
-                   schema::text(schema::string_value(path));
-      fields.emplace_back("key", schema::string_value(plan.evaluation_key));
-      fields.emplace_back("derivation",
-                          schema::string_value(plan.common.derivation.path));
-      fields.emplace_back("plan",
-                          schema::string_value(plan.common.derivation.output));
-      fields.emplace_back("system",
-                          schema::string_value(plan.common.derivation.system));
-      fields.emplace_back(
-          "execution_list",
-          schema::capture(plan.execution_list ? "true" : "false"));
-      fields.emplace_back(
-          "implementations",
-          schema::capture(std::to_string(plan.implementations.size())));
-      std::string labels = "[";
-      for (const auto& label : plan.implementation_labels)
-        labels += (labels.size() > 1 ? "," : "") +
-                  schema::text(schema::string_value(label));
-      fields.emplace_back("implementation_labels",
-                          schema::capture(labels + "]"));
-      fields.emplace_back("closure", schema::capture(closure + "]"));
+      card_record.closure = plan.common.environment.paths;
+      card_record.key = plan.evaluation_key;
+      card_record.derivation = plan.common.derivation.path;
+      card_record.plan = plan.common.derivation.output;
+      card_record.system = plan.common.derivation.system;
+      card_record.execution_list = plan.execution_list;
+      card_record.implementations = plan.implementations.size();
+      card_record.implementation_labels = plan.implementation_labels;
     } catch (const Failed& f) {
       all = false;
-      fields.emplace_back(
-          "error", schema::string_value(f.failure.diagnostic.value_or("")));
+      card_record.error = f.failure.diagnostic.value_or("");
     } catch (const std::exception& e) {
       all = false;
-      fields.emplace_back("error", schema::string_value(e.what()));
+      card_record.error = e.what();
     }
-    std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>
-        members;
-    for (const auto& [name, value] : fields) members.emplace_back(name, &value);
-    out << schema::object_text(members) << '\n';
-    out.flush();
+    manifest.cards.push_back(
+        std::make_unique<Tsugumi::State::PreparedCardT>(std::move(card_record)));
   }
-  return all;
+  const auto bytes = flat::encode<Tsugumi::State::PreparedCards>(manifest);
+  out.write(bytes.data(), static_cast<std::streamsize>(bytes.size()));
+  return all && out.good();
 }
 
 }  // namespace tsugumi

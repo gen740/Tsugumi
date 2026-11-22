@@ -26,6 +26,7 @@ import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
+import { paramData, paramValue, splitCardNotes } from '../model/documents'
 import { InlineParamEdit, RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 /** Whether a source file's content is known. A file that could not be read
@@ -122,7 +123,7 @@ export class CardEditorModel extends Observable {
     if (value === 'input' || value === 'input_bool') {
       const type = value === 'input_bool' ? 'bool' : 'double'
       this.definition = obj([['type', 'input'], ['params', [
-        obj([['name', 'value'], ['type', type], ['data', type === 'bool' ? false : new JNum('0')]]),
+        obj([['name', 'value'], ['type', type], ['data', paramValue(type, type === 'bool' ? false : new JNum('0'))]]),
       ]]])
       const p = this.outputsPath
       if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
@@ -143,7 +144,7 @@ export class CardEditorModel extends Observable {
   get files(): string[] {
     const prefix = this.prefix
     if (!prefix) return []
-    const docs = new Set([prefix + '_card.json', prefix + '_meta.json'])
+    const docs = new Set([prefix + '_card.json', prefix + 'README.md', prefix + '_comments.json'])
     const all = new Set([...this.session.sourcePaths.filter((p) => p.startsWith(prefix) && !docs.has(p)), ...this.created])
     for (const p of this.removed) all.delete(p)
     return [...all].sort()
@@ -360,7 +361,8 @@ export class CardEditorModel extends Observable {
   }
 
   get recoveryText(): string {
-    return `_card.json\n${this.definition === undefined ? '' : serialize(this.definition)}\n_meta.json\n${this.meta === undefined ? '' : serialize(this.meta)}` +
+    const notes = splitCardNotes(this.meta)
+    return `_card.json\n${this.definition === undefined ? '' : serialize(this.definition)}\nREADME.md\n${notes.readme ?? ''}\n_comments.json\n${notes.comments === undefined ? '' : serialize(notes.comments)}` +
       [...this.texts].map(([p, t]) => `\n${p}\n${t}`).join('') + [...this.removed].map((p) => `\n- ${p}`).join('')
   }
 
@@ -392,7 +394,7 @@ export class CardEditorModel extends Observable {
     const ok = await this.revisionEdit.apply(session, (x) => {
       const edits: H.ProjectEditT[] = []
       if (def !== undefined) edits.push(x.jsonEdit(prefix + '_card.json', this.revisionEdit.jsonBase(prefix + '_card.json', this.baseDefinition, overwrite), def))
-      edits.push(x.jsonEdit(prefix + '_meta.json', this.revisionEdit.jsonBase(prefix + '_meta.json', this.baseMeta, overwrite), m))
+      edits.push(...x.notesEdits(prefix, this.revisionEdit.jsonBase(prefix + '#notes', this.baseMeta, overwrite), m))
       for (const [to, from] of moves) {
         const hash = this.revisionEdit.hashBase(from, bases.get(to), overwrite)
         if (!hash) throw new Error('Missing source hash: ' + from)
@@ -421,7 +423,7 @@ export class CardEditorModel extends Observable {
       })
       if (ends.some(e => e.boundary !== undefined)) x.updateExternal(x.projectPrefix(scope)!, ext => {
         for (const e of ends) if (e.boundary !== undefined) {
-          const ep = get(ext.project, 'boundary', e.side, e.boundary)
+          const ep = arr(get(ext.project, 'boundary', e.side))?.find(port => str(get(port, 'name')) === e.boundary)
           if (isObj(ep)) ep.set('port', bindings.get(e.id)!.trim())
         }
       })
@@ -613,45 +615,18 @@ export function CardPreview({ session, model, height }: { session: ProjectSessio
 
 // ---- Categories --------------------------------------------------------------------
 
-/** Human name, description, params, when it runs, and
- *  the worker's permissions. */
+/** Id, description, params, when it runs, and the worker's permissions. */
 function GeneralCategory({ model }: { model: CardEditorModel }) {
   const session = model.session
   const def = model.definition
-  const [name, setName] = useState(() => session.displayName(model.cardKey))
-  const [nameEdit] = useState(() => { const e = new InlineParamEdit(); e.beginField(session.displayName(model.cardKey), session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')); return e })
-  const [renaming, setRenaming] = useState(false)
-  const [renameError, setRenameError] = useState<string>()
   // This tsugumid runs on this host: without the sandbox a Card is a process
   // of the user's, so turning it off is the user's knowing choice.
   const [confirmSandboxOff, setConfirmSandboxOff] = useState(false)
-  const currentName = session.displayName(model.cardKey)
-  const previousName = useRef(currentName)
-  useEffect(() => {
-    const before = previousName.current
-    if (name === before) { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }
-    previousName.current = currentName
-  }, [currentName])
-
-  const rename = async (overwrite = false) => {
-    const nw = name.trim()
-    if (nw === session.displayName(model.cardKey)) return
-    setRenaming(true)
-    setRenameError(undefined)
-    try {
-      const problem = session.cardNameProblem(model.cardKey, nw)
-      if (problem) throw new Error(problem)
-      await nameEdit.commitField(session, nw, overwrite, () => nw)
-    } catch (e) {
-      setRenameError(e instanceof RPCFailure ? e.diagnostic ?? errorText(e) : errorText(e))
-    }
-    setRenaming(false)
-  }
   const string = (n: string, fallback?: string) => ({
     value: str(get(def, n)) ?? fallback ?? '',
     onChange: (v: string) => model.setSetting(n, !v || v === fallback ? undefined : v),
   })
-  // A Card's intent is in _meta.json.
+  // A Card's intent is in its README.md.
   const metaString = (n: string) => ({
     value: str(get(model.meta, n)) ?? '',
     onChange: (v: string) => model.update((x) => {
@@ -723,18 +698,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
   return (
     <Form>
       <Section>
-        <Row label={L('名前')} help={L('表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。')}>
-          <div className="row gap6 center">
-            <TextField value={name} onChange={setName} style={{ width: 220 }}
-              onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void rename() }} />
-            {name !== session.displayName(model.cardKey) && (
-              <Button disabled={renaming || !session.isEditable} onClick={() => void rename()}>{L('名前を変更')}</Button>
-            )}
-            {renaming && <Spinner small />}
-          </div>
-        </Row>
-        <RevisionEditNotice edit={nameEdit} text={() => name} overwrite={() => void rename(true)} reload={() => { setName(currentName); nameEdit.beginField(currentName, session, (session.definitionDir(model.cardKey) ?? '') + '_meta.json', ['name'], get(session.cardMeta(model.cardKey), 'name')) }} />
-      {renameError && <Row><span className="caption selectable" style={{ color: 'var(--red)' }}>{renameError}</span></Row>}
+        <Value label="ID" value={session.displayName(model.cardKey)} />
         <Value label={L('種類')} value={KIND_LABEL[kind]} />
         {def !== undefined && (
           <Row label={L('アイコン')}>
@@ -948,10 +912,12 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   const param = (arr(get(model.definition, 'params')) ?? [])[index] ?? obj()
   const name = str(get(param, 'name')) ?? '?'
   const type = str(get(param, 'type')) ?? 'string'
-  const value = get(param, 'data')
+  // Values sit in the field of their type ({"double": 0.5}); this row edits
+  // the values themselves.
+  const value = paramData(get(param, 'data'), type)
   // An Input Card can hand on several values, one invocation each (an
   // execution list). A list-typed value without it stays one vector.
-  const sweep = arr(get(param, 'sweep'))
+  const sweep = arr(get(param, 'sweep'))?.map((v) => paramData(v, type) ?? null)
   const [draft, setDraft] = useState<string>()
   const pathInput = model.kind === 'input' && name === 'value' && type === 'string' &&
     model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
@@ -966,7 +932,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
     change(params[index] as JObj)
     model.setSetting('params', params)
   }
-  const set = (v: J | undefined) => update((p) => p.set('data', v))
+  const set = (v: J | undefined) => update((p) => p.set('data', v === undefined ? undefined : paramValue(type, v)))
   const setSweeping = (on: boolean) => {
     setDraft(undefined)
     update((p) => {
@@ -985,7 +951,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
           {sweep ? <TextField value={sweepText} onChange={(t) => {
             setDraft(t)
             const values = arr(tryParse(t))
-            if (values) update((p) => p.set('sweep', values))
+            if (values) update((p) => p.set('sweep', values.map((v) => paramValue(type, v))))
           }} style={{ width: 220 }} />
             : type === 'bool'
             ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
@@ -1014,7 +980,7 @@ function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
   )
 }
 
-/** A port's purpose in _meta.json. */
+/** A port's purpose in the Card description. */
 function portNote(model: CardEditorModel, list: string, name: string): { value: string; onChange: (v: string) => void } {
   return {
     value: str(get((arr(get(model.meta, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description')) ?? '',
@@ -1060,7 +1026,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                     <TextField value={name} placeholder={L('名前')} mono help={L('入力ポートの名前')} style={{ width: 140 }}
                       onChange={(v) => editInputs((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
                     <TextField {...portNote(model, 'inputs', name)} placeholder={L('用途（何を受け取るか）')} style={{ flex: 1 }}
-                      help={L('このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。')} />
+                      help={L('このポートの用途（README.md の説明）。Agent とほかの人への説明です。')} />
                     <span className="caption secondary nowrap">{portTypeName(r?.inputs.find((p) => p.name === name)) ?? L('未解決')}</span>
                     <Button kind="borderless" iconOnly icon="minus.circle" help={L('入力を削除')} onClick={() => editInputs((a) => a.splice(i, 1))} />
                   </div>
@@ -1269,11 +1235,11 @@ function NotesCategory({ model }: { model: CardEditorModel }) {
   )
 }
 
-/** Free text describing intent and notes, kept in `_meta.json` (`context`). */
+/** Free text describing intent and notes in README.md. */
 function ContextCategory({ model }: { model: CardEditorModel }) {
   return (
     <div className="col gap8 fill pad12">
-      <div className="callout secondary">{L('処理の意図や補足を文章で残します（_meta.json）。チャットで Card を参照したときにも使われます。')}</div>
+      <div className="callout secondary">{L('処理の意図や補足を文章で残します（README.md）。チャットで Card を参照したときにも使われます。')}</div>
       {model.definitionId === undefined ? <div className="secondary">{L('定義を持たない Card には追加コンテキストを置けません。')}</div> : (
         <textarea className="field flex1 cse-context" value={str(get(model.meta, 'context')) ?? ''} onChange={(e) => {
           const v = e.target.value
@@ -1323,13 +1289,13 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   }
   const beginCommentEdit = (id: string, text: string) => {
     const value = arr(get(session.cardMeta(card), 'comments'))?.find(c => str(get(c, 'id')) === id)
-    revisionEdit.beginField(text, session, (session.definitionDir(card) ?? '') + '_meta.json', ['comments', obj([['id', id]])], value)
+    revisionEdit.beginField(text, session, (session.definitionDir(card) ?? '') + '_comments.json', ['comments', obj([['id', id]])], value)
   }
   const saveEdit = async (overwrite = false) => {
     if (!editing) return
     const copy = editing
     if (await revisionEdit.commitField(session, copy.text, overwrite, value => {
-      if (isObj(value) && copy.text.trim()) { value.set('text', copy.text.trim()); value.set('editedBy', 'user') }
+      if (isObj(value) && copy.text.trim()) { value.set('text', copy.text.trim()); value.set('edited_by', 'user') }
       return value
     })) setEditing(undefined)
   }
@@ -1374,7 +1340,7 @@ function CommentsCategory({ session, card }: { session: ProjectSession; card: Ca
   )
   return (
     <div className="col gap8 pad12 scroll fill">
-      <div className="callout secondary">{L('この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。')}</div>
+      <div className="callout secondary">{L('この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_comments.json に保存され、版の履歴に残ります）。')}</div>
       <TextField multiline rows={3} value={text} onChange={setText} placeholder={L('例: y 軸を対数にしてください')} onKeyDown={submitting(add)} />
       <div className="row end">
         <Button kind="prominent" disabled={!text.trim() || !session.connected} help="⌘Return" onClick={add}>{L('コメントを追加')}</Button>

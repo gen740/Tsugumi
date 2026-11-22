@@ -86,12 +86,12 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   // a Draft. No intermediate one-end document is sent to core.
   Document doc;
   doc.project_json = project;
-  doc.project = parse_project_json(project);
+  doc.project_buffer = parse_project_json(project).buffer;
   for (const auto& [id, raw] :
        {std::pair{"knn", "{\"type\":\"code\"}"}, {"compare", "{\"type\":\"draft\"}"}}) {
     DefinitionDoc definition;
     definition.card_json = raw;
-    definition.card = parse_card_json(id, raw);
+    definition.card_buffer = parse_card_json(id, raw).buffer;
     doc.definitions[id] = std::move(definition);
   }
   doc.sources["definitions/knn/_outputs.fbs"] = {"test-outputs", 0};
@@ -122,7 +122,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
       value = {
           {"rev", "\"7\""},
           {"project_json", json::Quote(before)},
-          {"layout_json", "\"{}\""},
+          {"layout", "\"{}\""},
           {"definitions",
            R"([{"id":"knn","card_json":"{\"type\":\"draft\"}"},{"id":"compare","card_json":"{\"type\":\"draft\"}"}])"}};
     } else {
@@ -231,18 +231,18 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     Document doc;
     doc.project_json =
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
-    doc.project = parse_project_json(doc.project_json);
+    doc.project_buffer = parse_project_json(doc.project_json).buffer;
     const auto add = [&](const std::string& id, const std::string& raw) {
       DefinitionDoc definition;
       definition.card_json = raw;
-      definition.card = parse_card_json(id, raw);
+      definition.card_buffer = parse_card_json(id, raw).buffer;
       doc.definitions[id] = std::move(definition);
     };
     add("knn", R"({"type":"trigger"})");
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":3}]})"
+            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":{"double":3}}]})"
             : R"({"type":"code","inputs":[]})");
     const auto resolved = resolve(
         doc, [](const auto&) -> std::optional<std::string> { return {}; });
@@ -385,7 +385,7 @@ TEST(ProjectEdit, AuthorizesEveryReadBeforeMaterializingIt) {
   EXPECT_FALSE(read);
 }
 TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
-  const std::string path = "definitions/a/_meta.json";
+  const std::string path = "definitions/a/_comments.json";
   const std::string meta = R"({"comments":[{"id":"c","text":"first"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
@@ -422,12 +422,12 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   ASSERT_EQ(changes.size(), 1u);
   EXPECT_EQ(
       json::Text(json::Object(json::Get(json::Object(changes[0]), "value")),
-                 "meta_json"),
+                 "comments_json"),
       meta);
 }
 
 TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
-  const std::string path = "definitions/a/_meta.json";
+  const std::string path = "definitions/a/_comments.json";
   const std::string meta = R"({"comments":[{"id":"c","text":"last"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
@@ -451,7 +451,7 @@ TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
   ASSERT_EQ(changes.size(), 1u);
   const auto definition =
       json::Object(json::Get(json::Object(changes[0]), "value"));
-  EXPECT_FALSE(definition.contains("meta_json"));
+  EXPECT_FALSE(definition.contains("comments_json"));
   EXPECT_EQ(json::Text(definition, "card_json"),
             base.files.at("definitions/a/_card.json"));
   base.files[path] = R"({"comments":[{"id":"c","text":"changed"}]})";
@@ -469,12 +469,12 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
     H::ProjectEditsT edits;
     auto entry = std::make_unique<H::ProjectEditT>();
     if (kind == Tsugumi::Data::FailureKind::value_conflict) {
-      auto field = Field({"content"}, "\"stale\"", "\"mine\"");
-      field.file_path = "definitions/a/_meta.json";
+      auto field = Field({"comments"}, "[]", "[]");
+      field.file_path = "definitions/a/_comments.json";
       entry->value.Set(std::move(field));
     } else {
       H::ProjectFileRemoveT remove;
-      remove.file_path = "definitions/a/_meta.json";
+      remove.file_path = "definitions/a/_comments.json";
       remove.expected_hash = crypto::sha256_hex("stale");
       entry->value.Set(std::move(remove));
     }
@@ -489,7 +489,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","meta_json":"{}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
           {}};
     };
     const auto conflict =

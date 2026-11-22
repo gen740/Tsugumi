@@ -20,16 +20,16 @@ table Outputs { out:Message; } root_type Outputs;)";
 auto Graph(const std::string& cards, const std::string& wires, Files files)
     -> std::shared_ptr<const Resolution> {
   Document doc;
-  doc.project = parse_project_json(
+  doc.project_buffer = parse_project_json(
       "{\"pkgsPath\":\"tsugumi:default\",\"canvas\":{\"cards\":" + cards +
-      ",\"connections\":" + wires + "}}");
+      ",\"connections\":" + wires + "}}").buffer;
   for (const auto& [path, text] : files) {
     doc.sources[path] = {crypto::sha256_hex(text), text.size()};
     if (!path.starts_with("definitions/")) continue;
     const auto end = path.find('/', 12);
     const auto id = path.substr(12, end - 12);
     if (path.ends_with("/_card.json")) {
-      doc.definitions[id].card = parse_card_json(id, text);
+      doc.definitions[id].card_buffer = parse_card_json(id, text).buffer;
       doc.definitions[id].card_json = text;
     }
   }
@@ -146,11 +146,11 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
        {"definitions/container/_card.json",
         R"({"type":"subgraph","external":"outer"})"},
        {"externals/outer/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"inner","port":"in"}},"outputs":{"out":{"card":"inner","port":"out"}}}})"},
+        R"({"canvas":{"cards":[{"id":"inner"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"inner","port":"in"}],"outputs":[{"name":"out","card":"inner","port":"out"}]}})"},
        {"externals/outer/definitions/inner/_card.json",
         R"({"type":"subgraph","external":"nested"})"},
        {"externals/outer/externals/nested/tsugumi.json",
-        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"leaf","port":"in"}},"outputs":{"out":{"card":"leaf","port":"out"}}}})"},
+        R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"leaf","port":"in"}],"outputs":[{"name":"out","card":"leaf","port":"out"}]}})"},
        {"externals/outer/externals/nested/definitions/leaf/_card.json",
         R"({"type":"code","inputs":[{"name":"in"}]})"},
        {"externals/outer/externals/nested/definitions/leaf/_outputs.fbs",

@@ -19,12 +19,12 @@
 #include "run_scratch.hh"
 #include "runtime_schema.hh"
 #include "service.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/log.hh"
-#include "version_record.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -1816,16 +1816,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                     const types::PortType& port,
                     const std::vector<ParamDef>& params) -> Value {
     const auto parameter = std::ranges::find(params, "value", &ParamDef::name);
-    schema::v::String relv;
     if (parameter == params.end() || !parameter->data ||
-        schema::decode(*parameter->data, relv))
+        parameter->type != ParamType::String)
       throw Failed(FailureKind::invalid_path,
                    "input " + port.name + " needs a path string `value`");
+    const std::string& relv = parameter->data->string;
     // Card-local by default; project: explicitly selects the Card's own
     // project, including when that project is an external.
-    const bool project_relative = relv.value().starts_with("project:");
-    const std::string file =
-        project_relative ? relv.value().substr(8) : relv.value();
+    const bool project_relative = relv.starts_with("project:");
+    const std::string file = project_relative ? relv.substr(8) : relv;
     const std::string rel =
         (project_relative ? node.project_dir : node.def_dir) + file;
     // A folder is every project source below it.
@@ -1895,15 +1894,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                          "output " + port.name + " has no type");
           // Message fields are filled from params of the same name.
           const auto* root = port.type->root();
-          std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>
-              members;
+          std::vector<ParamDef> fields;
           for (const auto& prm : params)
-            if (prm.data && root->fields()->LookupByKey(prm.name.c_str()))
-              members.emplace_back(prm.name, &*prm.data);
+            if (root->fields()->LookupByKey(prm.name.c_str()))
+              fields.push_back(prm);
           std::string bytes;
           std::string err;
           if (!types::json_to_flatbuffer(
-                  *port.type, schema::object_text(members), &bytes, &err))
+                  *port.type, NixRunner::params_json(fields, false), &bytes,
+                  &err))
             throw Failed(FailureKind::output_invalid,
                          "input " + port.name + ": " + err);
           p.outputs.push_back(
@@ -2061,33 +2060,33 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // outputs do: they are in the run's record.
   auto record(const std::vector<CardState>& final) const -> std::string {
     const auto* target = doc_->resolution->find(p_.card);
-    version_record::Run record;
-    *record.whole = p_.card.empty() || (p_.propagate && target &&
-                                        target->kind == CardType::Trigger);
-    *record.card = path_key(p_.card);
-    *record.propagate = p_.propagate;
+    Tsugumi::RPC::VersionRunFactsT record;
+    record.whole = p_.card.empty() || (p_.propagate && target &&
+                                      target->kind == CardType::Trigger);
+    record.card = path_key(p_.card);
+    record.propagate = p_.propagate;
     for (const auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
       const auto key = path_key(n.node->path);
       if (n.recorded_invocations > 0 &&
-          !(*record.whole && n.node->kind == CardType::Trigger)) {
-        version_record::Count count;
-        *count.card = key;
-        *count.count = n.recorded_invocations;
-        record.ran->push_back(std::move(count));
-        *record.saved_inputs |= n.saved_inputs;
+          !(record.whole && n.node->kind == CardType::Trigger)) {
+        auto count = std::make_unique<Tsugumi::RPC::VersionInvocationCountT>();
+        count->card = key;
+        count->count = n.recorded_invocations;
+        record.ran.push_back(std::move(count));
+        record.saved_inputs |= n.saved_inputs;
       }
       if (n.last_failure && n.last_failure->kind != FailureKind::cancelled) {
-        version_record::Failure failure;
-        *failure.card = key;
-        *failure.kind = failure_kind_name(n.last_failure->kind);
-        record.failed->push_back(std::move(failure));
+        auto failure = std::make_unique<Tsugumi::RPC::VersionRunFailureT>();
+        failure->card = key;
+        failure->kind = failure_kind_name(n.last_failure->kind);
+        record.failures.push_back(std::move(failure));
       } else if (n.activations == 0 && (final[n.idx] == CardState::blocked ||
                                         final[n.idx] == CardState::cancelled)) {
-        record.never->push_back(key);
+        record.never.push_back(key);
       }
     }
-    return schema::encode(record);
+    return flat::encode<Tsugumi::RPC::VersionRunFacts>(record);
   }
 
   void finalize() {

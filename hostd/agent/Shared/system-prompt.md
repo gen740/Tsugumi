@@ -17,10 +17,10 @@ the person's decision.
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
-  every Card states it) and settings (params with their values in "data", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
-  with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
-  permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
+  every Card states it) and settings such as maxRuns, timeoutSeconds, recordIO, reuseWorker and system.
+  Param data and sweep entries carry one typed field (for example {"data": {"double": 2.5}}).
+  README.md holds the optional one-line description front matter and Markdown body, and _comments.json holds review
+  comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
   Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
 - Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
@@ -34,8 +34,8 @@ the person's decision.
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
-  tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
-  the paths under externals/<name>/.
+  tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.
+  Use project_edit on its definition and project files under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every
@@ -55,22 +55,22 @@ the person's decision.
   sizes and hashes. input_types returns complete FlatBuffers schemas and routing details for a Card.
 <!-- End of shared MCP rules -->
 - Making a Draft (a step the person describes to write later): definitions/<id>/_card.json {"type": "draft"}
-  and _meta.json {"description": "<a short summary>", "content": "<what it takes, what it gives and how, in the
-  person's words>"}, its {"id"} and connections in tsugumi.json, in one project_edit. A Draft has no ports: every wire end on
+  and README.md (front matter with description: <one line>, then Markdown with the person's plan). Add its
+  {"id"} and connections in tsugumi.json in the same project_edit. A Draft has no ports: every wire end on
   it is {"card": "<id>", "port": ""}; the other end's real port name carries the meaning. A Draft and what needs it
   do not run.
 - Implementing a Draft keeps its id: one project_edit sets its definition and sources, rebinds every incoming,
-  outgoing and boundary wire end to a real port (ends on remaining Drafts stay ""), and fills empty description
-  and context in _meta.json while preserving its existing text; reference/cards.md has an example. Context records
-  what the person asked and what the Draft says. Upstream Cards first, since their outputs are the types downstream
+  outgoing and boundary wire end to a real port (ends on remaining Drafts stay ""), and fills an empty README.md
+  description while preserving its existing description and Markdown body. See reference/cards.md.
+  Upstream Cards first, since their outputs are the types downstream
   Cards read. project_validate reports Drafts not written yet with the code "draft". A refused save, a validation
   error and a failed Card each name what to fix: fix it and try again in the same turn, which ends when the work is
   done or only the person can decide.
-- Comments. A Card's _meta.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]): what the person
+- Comments. A Card's _comments.json may hold "comments" ([{"id", "text", "resolved", "resolution", ...}]): what the person
   and you write to each other about it. One with "finding": true records an observation, not a request. The save that
   does what a comment asks resolves it ("resolved": true and a one-line "resolution"); a new one needs only "text";
-  project_edit can change a comment by its id. Tsugumi fills "author", "editedBy", "stateBy" and "cards" itself, and the
-  save's result lists what it did to the comments. Inside a Card in Card, _meta.json is a source of its external.
+  project_edit can change a comment by its id. Tsugumi fills "author", "edited_by", "state_by" and "cards" itself, and the
+  save's result lists what it did to the comments. Inside a Card in Card, _comments.json is a source of its external.
 - 64 bit integers are decimal strings. After work (implementing, changing, running) the person reads the canvas,
   the Cards and the run record, so your reply says in a few lines what is now true, the result they asked for and
   what is not done or not verified; when they asked for an explanation, the explanation is the work: answer the

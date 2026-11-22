@@ -313,24 +313,15 @@ def last_draft_task(messages):
     return None, -1
 
 
-def implement(definition, meta):
+def implement(definition):
     """A bash Card that fulfils a Draft: its planned outputs carry a short text."""
     card = {**definition, "type": "code"}
-    outs = [o["name"] for o in (meta or {}).get("outputs", [])] or ["out"]
+    outs = ["out"]
     fbs = "namespace generated;\ntable Text { value:string; }\ntable Outputs { " + \
         " ".join(f"{o}:Text;" for o in outs) + " }\nroot_type Outputs;\n"
     payload = json.dumps({o: {"value": "done"} for o in outs})
     nix = "{ pkgs, inputs, params, ... }:\n{\n  run = ''\n    echo '" + payload + "' > \"$TSUGUMI_OUTPUT\"\n  '';\n}\n"
     return card, fbs, nix
-
-
-def completed_intent(meta):
-    """_meta.json as the save implementing a Draft leaves it: all it had, and
-    what was empty written from it."""
-    meta = dict(meta)
-    meta["description"] = meta.get("description") or "Implements the Draft"
-    meta["context"] = meta.get("context") or f"From the Draft: {meta['description']}. {meta.get('content', '')}".strip()
-    return meta
 
 
 def decide_drafts(messages, text, start):
@@ -344,11 +335,11 @@ def decide_drafts(messages, text, start):
         changes = []
         for _, def_id in DRAFT_LINE.findall(text):
             d = defs[def_id]
-            meta = json.loads(d["meta_json"]) if d.get("meta_json") else {}
-            card, fbs, nix = implement(json.loads(d["card_json"]), meta)
-            # The intent and the port purposes stay in _meta.json.
+            card, fbs, nix = implement(json.loads(d["card_json"]))
+            # Preserve the Draft’s README and give an untitled plan a summary.
             changes.append({"value_type": "PutDefinition", "value": {
-                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(completed_intent(meta))}})
+                "id": def_id, "card_json": json.dumps(card), "keep_readme": True, "keep_comments": True,
+                "fill_description": "Implements the Draft"}})
             for rel, body in (("_outputs.fbs", fbs), ("default.nix", nix)):
                 changes.append({"value_type": "PutSource", "value": {
                     "path": f"definitions/{def_id}/{rel}", "bytes": body}})
@@ -399,7 +390,7 @@ def decide_comments(messages, text, start):
         changes, added = [], []
         for _, def_id, lines in COMMENT_CARD.findall(text):
             d = defs[def_id]
-            meta = json.loads(d["meta_json"])
+            meta = json.loads(d["comments_json"])
             asked = {m.group(1): m.group(2) for m in re.finditer(r"^  \* (\S+): (.*)$", lines, re.M)}
             for c in meta["comments"]:
                 if c["id"] in asked:
@@ -412,10 +403,10 @@ def decide_comments(messages, text, start):
             card = json.loads(d["card_json"]) if d.get("card_json") else {}
             card["symbol"] = "checkmark"
             changes.append({"value_type": "PutDefinition", "value": {
-                "id": def_id, "card_json": json.dumps(card), "meta_json": json.dumps(meta)}})
+                "id": def_id, "card_json": json.dumps(card), "comments_json": json.dumps(meta), "keep_readme": True}})
         for cid in added:
             changes.append({"value_type": "PutDefinition", "value": {"id": cid, "card_json": json.dumps(
-                {"type": "input", "params": [{"name": "text", "type": "string", "data": "x"}]})}})
+                {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "x"}}]})}})
             changes.append({"value_type": "PutSource", "value": {
                 "path": f"definitions/{cid}/_outputs.fbs",
                 "bytes": "namespace added;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n"}})
@@ -457,7 +448,7 @@ def decide_permission(messages, card, start):
         d = next(x for x in value["definitions"] if x["id"] == card)
         body = dict(json.loads(d["card_json"]), grants={"network": True})
         return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
-            {"value_type": "PutDefinition", "value": {"id": card, "card_json": json.dumps(body), "keep_meta": True}}]})
+            {"value_type": "PutDefinition", "value": {"id": card, "card_json": json.dumps(body), "keep_readme": True, "keep_comments": True}}]})
     if name == "project_save":
         return ("text", "Network access was declined; nothing was saved." if is_error else f"Saved: {card} may reach the network.")
     return ("text", "Done.")
@@ -585,10 +576,9 @@ def decide(messages, system="", tools=()):
             v = json.loads(value)
         except ValueError:
             v = value
-        next(p for p in card["params"] if p["name"] == param)["data"] = v
-        change = {"id": d["id"], "card_json": json.dumps(card)}
-        if d.get("meta_json"):
-            change["meta_json"] = d["meta_json"]
+        parameter = next(p for p in card["params"] if p["name"] == param)
+        parameter["data"] = {parameter["type"].replace("[]", "s"): v}
+        change = {"id": d["id"], "card_json": json.dumps(card), "keep_readme": True, "keep_comments": True}
         return ("tool", "project_save", {
             "base_rev": str(value_obj["rev"]),
             "changes": [{"value_type": "PutDefinition", "value": change}],

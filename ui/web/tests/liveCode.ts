@@ -39,7 +39,7 @@ for (let cut = 1; cut < patchArgs.length; cut++) {
   assert.equal(p.at(100.1)?.text, 'あ\u{1F600}')
 }
 assert.deepEqual(fileOfCard('definitions/a/src/m.py'), { card: 'a', file: 'src/m.py' })
-assert.equal(fileOfCard('layout.json'), undefined)
+assert.equal(fileOfCard('layout.bin'), undefined)
 const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `definitions/${card}/m.py`, bytes } }) + ','
 
 {
@@ -83,8 +83,8 @@ const file = (card: string, bytes = 'code') => JSON.stringify({ value: { path: `
 // What is not a Card's file never shows, and the next call starts afresh.
 {
   const p = new LiveCodePlayer()
-  p.input(0, '{"changes":[{"value":{"path":"layout.json","bytes":"{', 100)
-  assert.equal(p.at(100), undefined, 'layout.json is not code being written')
+  p.input(0, '{"changes":[{"value":{"path":"layout.bin","bytes":"{', 100)
+  assert.equal(p.at(100), undefined, 'layout.bin is not code being written')
   p.input(0, '\\"cards\\":{}}"}}]}', 100.1)
   assert.equal(p.at(100.1), undefined)
   p.input(1, file('c'), 101)

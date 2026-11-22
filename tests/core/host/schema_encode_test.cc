@@ -34,7 +34,7 @@ TEST(SchemaDecode, DefinitionLoaderNamesUnknownSettingsAndTheFile) {
 TEST(SchemaDecode, EveryCardStatesAKnownType) {
   for (const auto& [text, message] : {
            std::pair{R"({})", R"("type" is required)"},
-           std::pair{R"({"type":"none"})", R"(unknown type "none")"},
+           std::pair{R"({"type":"none"})", "unknown enum value: none"},
            std::pair{R"({"type":"code","external":"inner"})",
                      R"("external" needs "type": "subgraph")"},
            std::pair{R"({"type":"subgraph"})", R"(a subgraph needs "external")"},
@@ -105,15 +105,11 @@ TEST(SchemaEncode, NonFiniteNumbersNameTheTypeAndNestedField) {
   }
 }
 
-TEST(SchemaEncode, InvalidUtf8EmptyOptionalAndUnassignedDomAreIdentified) {
-  StartupError record;
-  *record.message = std::string(1, static_cast<char>(0xff));
-  const auto utf8 = failure(record);
-  EXPECT_FALSE(utf8.empty());
-  const auto optional = failure(InvocationDetailJson{});
-  EXPECT_FALSE(optional.empty());
-  const auto dom = failure(Json{});
-  EXPECT_FALSE(dom.empty());
+TEST(SchemaEncode, InvalidUtf8AndUnassignedDomAreIdentified) {
+  v::String input;
+  input.value() = std::string(1, static_cast<char>(0xff));
+  EXPECT_FALSE(failure(input).empty());
+  EXPECT_FALSE(failure(Json{}).empty());
 }
 
 TEST(SchemaEncode, MappingKeysAreEscapedAndMessagesStayOnOneLine) {

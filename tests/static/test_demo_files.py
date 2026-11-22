@@ -30,7 +30,7 @@ def test_localized_demos_share_executable_definitions(demo):
     assert docs[0] == docs[1]
     localized_report = Path("definitions/summary/default.nix")
     for file in japanese.joinpath("definitions").rglob("*"):
-        if not file.is_file() or file.name == "_meta.json":
+        if not file.is_file() or file.name in {"README.md", "_comments.json"}:
             continue
         relative = file.relative_to(japanese)
         other = english / relative

@@ -27,7 +27,7 @@ Off<R::SourceInfo> source_info(FBB& b, const std::string& path,
                                D::SourceKind kind, bool exists,
                                const std::optional<std::string>& hash,
                                std::optional<uint64_t> size,
-                               const std::string* document_json = nullptr);
+                               const std::string* document = nullptr);
 Off<R::Definition> definition(FBB& b, const std::string& id,
                               const DefinitionDoc& d);
 Off<R::RunStatus> run_status(

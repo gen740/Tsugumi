@@ -1,5 +1,7 @@
 #include "tsugumi/util/json.hh"
 
+#include <charconv>
+#include <cmath>
 #include <stdexcept>
 
 #include "tsugumi/util/json_object.hh"
@@ -127,6 +129,30 @@ std::string text(const hosq::json::GenericDom<>& value) {
   return std::string(value[""].source());
 }
 
+namespace {
+// A number's value, whatever its spelling: 20, 20.0 and 2e1 are the same.
+// Integers keep their digits; other numbers are the shortest text of their
+// double, written as an integer when they are one.
+auto canonical_number(std::string_view raw) -> std::string {
+  if (raw.empty() || !(raw.front() == '-' || (raw.front() >= '0' &&
+                                              raw.front() <= '9')))
+    return std::string(raw);  // true, false, null
+  if (raw.find_first_of(".eE") == std::string_view::npos)
+    return raw == "-0" ? "0" : std::string(raw);
+  double value = 0;
+  const auto [end, ec] =
+      std::from_chars(raw.data(), raw.data() + raw.size(), value);
+  if (ec != std::errc() || end != raw.data() + raw.size())
+    return std::string(raw);
+  if (value == 0) return "0";
+  if (std::trunc(value) == value && std::abs(value) < 9007199254740992.0)
+    return std::to_string(static_cast<int64_t>(value));
+  char buffer[64];
+  const auto [out, error] = std::to_chars(buffer, buffer + sizeof buffer, value);
+  return error == std::errc() ? std::string(buffer, out) : std::string(raw);
+}
+}  // namespace
+
 auto canonical_text(const hosq::json::GenericDom<>& value) -> std::string {
   const auto raw = value[""].source();
   switch (raw.front()) {
@@ -156,7 +182,7 @@ auto canonical_text(const hosq::json::GenericDom<>& value) -> std::string {
       return encode(string);
     }
     default:
-      return std::string(raw);
+      return canonical_number(raw);
   }
 }
 

@@ -5,9 +5,9 @@ import TsugumiRPC
 /// Builds the canvas data of Cards from a project session (and, for previews
 /// in Card settings, from unapplied working copies).
 extension ProjectSession {
-  // Inferring a missing flow from Card places is presentation of layout.json:
+  // Inferring a missing flow from Card places is presentation of the layout:
   // each UI does it itself rather than asking hostd.
-  /// The direction this project's Cards are laid out in (layout.json
+  /// The direction this project's Cards are laid out in (the layout's
   /// "flow"; projects without it follow the app's default).
   /// Without one, it is read from where the wired Cards sit (mostly to the
   /// right of their sources: left to right), else the app's default.
@@ -25,7 +25,7 @@ extension ProjectSession {
   }
 
   func setFlow(_ f: FlowDirection) {
-    queueFields { [self] in [fieldEdit("layout.json", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
+    queueFields { [self] in [fieldEdit("layout.bin", [.string("flow")], old: layout["flow"], new: .string(f.rawValue))] }
   }
 
   /// Ports for drawing: resolved ports when available, else declared inputs.
@@ -36,10 +36,8 @@ extension ProjectSession {
 
   func portData(_ k: CardKey, definition: JSONValue? = nil, meta: JSONValue? = nil) -> (inputs: [PortData], outputs: [PortData]) {
     let def = definition ?? cardDefinition(k)
-    let m = meta ?? cardMeta(k)
-    func note(_ list: String, _ name: String) -> String? {
-      m?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string
-    }
+    // Ports have no notes of their own: a Card's README.md describes them.
+    func note(_ list: String, _ name: String) -> String? { nil }
     let draft = definitionKind(def) == .draft
     if draft || definitionKind(def) == .invalid { return ([], []) }
     if kind(k) == .collect {
@@ -69,7 +67,7 @@ extension ProjectSession {
             ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }
       // Swept values are edited in the Card's settings, where the list is visible.
       if p["sweep"] != nil { return nil }
-      let v = p["data"]
+      let v = Documents.paramData(p["data"], type: type)
       let text: String
       switch v {
       case .string(let s)?: text = s
@@ -238,7 +236,7 @@ extension ProjectSession {
     return prefs.showGrid ? CGPoint(x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize)) : p
   }
 
-  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // Shown ports and their order (layout.bin inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private func visualPorts(_ k: CardKey, _ ports: [PortData], output: Bool) -> [PortData] {
     guard [.code, .draft, .input, .subgraph].contains(kind(k)) else { return ports }

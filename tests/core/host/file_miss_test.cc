@@ -11,7 +11,7 @@ auto Snapshot(const std::string& kind) -> json::Members {
            json::Encode(std::vector<std::string>{json::Encode(json::Members{
                {"id", "\"share\""},
                {"card_json", json::Quote("{\"type\":\"" + kind + "\"}")},
-               {"meta_json", "\"{}\""}})})}};
+               {"readme", "\"Card description\""}})})}};
 }
 TEST(FileMiss, BuiltinSchemasDescribeTheCardFilesAndResolvedTypeTool) {
   for (const auto* kind :
@@ -43,7 +43,7 @@ TEST(FileMiss, LargeFoldersHaveABoundedListAndTotal) {
   EXPECT_GT(listed, 0u);
   EXPECT_LT(listed, sources.size());
   EXPECT_NE(diagnostic.find(std::to_string(sources.size() + 2)),
-            std::string::npos);
+            std::string::npos) << diagnostic;
   EXPECT_EQ(DescribeFileMiss("definitions/share/__fixture_0__", snapshot, {}),
             "");
   EXPECT_EQ(DescribeFileMiss("definitions/absent/missing", snapshot, {}), "");
@@ -74,7 +74,7 @@ TEST(FileMiss, ExternalCardMetadataIsReadAtTheInspectionRevision) {
                       json::Encode(json::Members{
                           {"path", json::Quote(root + "_card.json")}}),
                       json::Encode(json::Members{
-                          {"path", json::Quote(root + "_meta.json")}})})}};
+                          {"path", json::Quote(root + "README.md")}})})}};
   int reads = 0;
   const auto diagnostic = DescribeFileMiss(
       root + "_outputs.fbs", snapshot,

@@ -326,7 +326,7 @@ struct EnvironmentProblemView: View {
                       message: m, recovery: recovery.isEmpty ? nil : recovery, log: log)
       p.cause = Self.cause(in: log)
       if let c = p.cause, c.contains("cannot open the project") {
-        p.recovery = String(localized: "プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。")
+        p.recovery = String(localized: "プロジェクトのファイル（tsugumi.json・layout.bin・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。")
       }
       return p
     case .stopped:

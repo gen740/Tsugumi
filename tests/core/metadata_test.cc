@@ -7,17 +7,16 @@
 
 namespace tsugumi {
 namespace {
-class OpaqueMetadata : public ::testing::Test {
+class DocumentStorage : public ::testing::Test {
  protected:
   std::filesystem::path root = std::filesystem::temp_directory_path() /
-                               ("opaque-meta-" + crypto::uuid4());
+                               ("document-storage-" + crypto::uuid4());
   auto SetUp() -> void override {
     fs::write_atomic(
         root / "tsugumi.json",
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})");
     fs::write_atomic(root / "definitions/start/_card.json",
                      R"({"type":"trigger"})");
-    fs::write_atomic(root / "layout.json", "{}");
   }
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto commit(Store& store, std::vector<ChangeIn> changes) -> DocumentPtr {
@@ -27,38 +26,36 @@ class OpaqueMetadata : public ::testing::Test {
     return store.current();
   }
 };
-TEST_F(OpaqueMetadata,
-       UnknownAndMalformedPresentationFieldsSurviveLoadSaveAndResolution) {
-  const std::string meta =
-      R"({"name":[],"description":false,"comments":"not a list","outputs":false,"future":{"x":1}})";
-  fs::write_atomic(root / "definitions/start/_meta.json", meta);
+TEST_F(DocumentStorage, EditingReadmeAndCommentsKeepsExecutionIdentity) {
+  const std::string readme = "---\ndescription: Start the run\n---\n";
+  fs::write_atomic(root / "definitions/start/README.md", readme);
   Store store({root, ""});
   store.open();
-  auto before = store.current();
-  ASSERT_EQ(before->definitions.at("start").meta_json, meta);
-  ASSERT_TRUE(before->resolution->nodes.front().diags.empty());
+  const auto before = store.current();
+  ASSERT_EQ(before->definitions.at("start").readme, readme);
   ChangeIn put{};
   put.kind = ChangeIn::Kind::PutDefinition;
   put.id = "start";
-  put.json = R"({"type":"trigger","displayMode":{"future":true}})";
-  put.meta_json = R"({"comments":[false],"unknown":12})";
-  auto after = commit(store, {put});
+  put.json = R"({"type":"trigger"})";
+  put.readme = readme + "\nRun notes.\n";
+  put.comments_json = R"({"comments":[{"id":"one","text":"Review this."}]})";
+  const auto after = commit(store, {put});
+  EXPECT_EQ(after->resolution, before->resolution);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
-  EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
-  EXPECT_EQ(after->definitions.at("start").meta_json, put.meta_json);
-  EXPECT_TRUE(after->resolution->nodes.front().diags.empty());
-  EXPECT_TRUE(after->resolution->nodes.front().exec_diags.empty());
-}
-TEST_F(OpaqueMetadata, ExecutionFingerprintKeepsCanonicalBytes) {
-  Document document;
-  document.project_json =
-      R"( { "name": "presentation", "value": {"z": [1, 1.0, -0, 2e+1], "\u0061": "\u0062\n"}, "agentExclude": [] } )";
-  EXPECT_EQ(execution_fingerprint(document),
-            crypto::sha256_hex(
-                R"({"value":{"a":"b\n","z":[1,1.0,-0,2e+1]}})"));
+  EXPECT_EQ(after->definitions.at("start").readme, put.readme);
+  EXPECT_EQ(after->definitions.at("start").comments_json,
+            parse_comments_json("_comments.json", *put.comments_json).text);
 }
 
-TEST_F(OpaqueMetadata, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
+TEST_F(DocumentStorage, CanonicalTextPreservesWhitespaceInsideStrings) {
+  const auto parsed = parse_project_json(
+      R"({"name":"[ ] { } [\" ]","canvas":{"connections":[],"cards":[]},"pkgsPath":"tsugumi:default"})");
+  EXPECT_EQ(parse_project_json(parsed.text).text, parsed.text);
+  EXPECT_EQ(document_text::root<Tsugumi::Document::Project>(parsed.buffer).name()->str(),
+            R"([ ] { } [" ])");
+}
+
+TEST_F(DocumentStorage, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({
@@ -68,7 +65,7 @@ TEST_F(OpaqueMetadata, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
           "name": "science",
           "type": "flake",
           "ref": "github:org/science/revision?narHash=sha256-pin",
-          "overrides": {"tool": {"override": {"z": [1.0, 1, null], "\u0061": "\u0062"}}}
+          "overrides": [{"package":"tool","override":{"z":[1.5,1,null],"a":"b"}}]
         }]
       })");
   Store store({root, ""});
@@ -76,10 +73,10 @@ TEST_F(OpaqueMetadata, ResolvedNixSourceKeepsCanonicalOverrideBytes) {
   const auto& sources = store.current()->resolution->nodes.front().nix_sources;
   ASSERT_EQ(sources.size(), 1u);
   EXPECT_EQ(sources.front().overrides,
-            R"({"tool":{"override":{"a":"b","z":[1.0,1,null]}}})");
+            R"({"tool":{"override":{ "a": "b", "z": [ 1.5, 1, null ] }}})");
 }
 
-TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
+TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
   // A wire to an undeclared input of a code Card and an unknown param type:
   // each message carries the fix (the inputs entry, the valid types) on one
   // line.
@@ -88,7 +85,7 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
   fs::write_atomic(
       root / "definitions/b/_card.json",
-      R"({"type":"code","params":[{"name":"x","type":"float","data":1}]})");
+      R"({"type":"code","params":[{"name":"x","type":"float","data":{"double":1}}]})");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();
@@ -102,7 +99,7 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
   EXPECT_TRUE(port);
   EXPECT_TRUE(param);
 }
-TEST_F(OpaqueMetadata,
+TEST_F(DocumentStorage,
        AnEmptyEndOnAnImplementedCardAsksForAPortNotAnInputsEntry) {
   fs::write_atomic(
       root / "tsugumi.json",
@@ -122,18 +119,18 @@ TEST_F(OpaqueMetadata,
     }
   EXPECT_TRUE(port);
 }
-TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
+TEST_F(DocumentStorage, ProjectNameDoesNotChangeExecution) {
   Store store({root, ""});
   store.open();
   auto before = store.current();
   ChangeIn project{};
   project.kind = ChangeIn::Kind::SetProject;
   project.json =
-      R"({"name":{"future":"anything"},"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})";
+      R"({"name":"Renamed","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"}],"connections":[]}})";
   auto after = commit(store, {project});
   EXPECT_EQ(after->execution_rev, before->execution_rev);
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
-  EXPECT_EQ(after->project_json, project.json);
+  EXPECT_EQ(after->project_json, parse_project_json(project.json).text);
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
@@ -142,7 +139,7 @@ TEST_F(OpaqueMetadata, ProjectNameIsOptionalOpaqueAndDoesNotChangeExecution) {
   EXPECT_NE(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_GT(after->execution_rev, before->execution_rev);
 }
-TEST_F(OpaqueMetadata,
+TEST_F(DocumentStorage,
        ClientReformattingAlongWithPresentationKeepsTheSameFingerprint) {
   Store store({root, ""});
   store.open();
@@ -154,19 +151,19 @@ TEST_F(OpaqueMetadata,
   ChangeIn card{};
   card.kind = ChangeIn::Kind::PutDefinition;
   card.id = "start";
-  card.json = R"({"displayMode":false, "type": "trigger"})";
+  card.json = R"({"displayMode":"live", "type": "trigger"})";
   auto after = commit(store, {project, card});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
 }
-TEST_F(OpaqueMetadata, MetadataMustStillBeABoundedJsonObject) {
-  for (const auto& bad : {"[]", "null", "{", "{\"x\":NaN}"})
-    EXPECT_THROW(check_meta_json(bad), DocumentError);
-  EXPECT_THROW(
-      check_meta_json("{\"x\":\"" + std::string(1u << 20, 'a') + "\"}"),
-      DocumentError);
+TEST_F(DocumentStorage, ReadmeAndCommentsValidateTheirFormats) {
+  EXPECT_THROW(check_readme("README.md", "---\ntitle: Old title\n---\n"),
+               DocumentError);
+  for (const auto& bad : {"[]", "null", "{", "{\"comments\":[false]}"})
+    EXPECT_THROW(parse_comments_json("_comments.json", bad), DocumentError);
 }
-TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
+
+TEST_F(DocumentStorage, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"outer"}],"connections":[]}})");
@@ -174,12 +171,12 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   fs::write_atomic(root / "definitions/outer/_card.json",
                    R"({"type":"subgraph","external":"library"})");
   const std::string project =
-      R"({"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":{},"outputs":{}}})";
+      R"({"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":[],"outputs":[]}})";
   fs::write_atomic(root / "externals/library/tsugumi.json", project);
   fs::write_atomic(root / "externals/library/definitions/start/_card.json",
                    R"({"type":"trigger"})");
-  fs::write_atomic(root / "externals/library/definitions/start/_meta.json",
-                   R"({"name":false,"outputs":[false],"unknown":1})");
+  fs::write_atomic(root / "externals/library/definitions/start/README.md",
+                   "Original description");
   Store store({root, ""});
   store.open();
   const auto before = store.current();
@@ -194,11 +191,11 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
   auto after = commit(
       store,
       {put("externals/library/tsugumi.json",
-           R"({"name":false,"canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":{},"outputs":{}}})"),
+           R"({"name":"Renamed","canvas":{"cards":[{"id":"start"}],"connections":[]},"boundary":{"inputs":[],"outputs":[]}})"),
        put("externals/library/definitions/start/_card.json",
-           R"({"type":"trigger","displayMode":false})"),
-       put("externals/library/definitions/start/_meta.json",
-           R"({"future":12,"comments":false})")});
+           R"({"type":"trigger","displayMode":"live"})"),
+       put("externals/library/definitions/start/README.md",
+           "Updated description")});
   EXPECT_EQ(after->execution_fingerprint, before->execution_fingerprint);
   EXPECT_EQ(after->execution_rev, before->execution_rev);
   ASSERT_NE(after->resolution->find({"outer", "start"}), nullptr);
@@ -207,12 +204,12 @@ TEST_F(OpaqueMetadata, ExternalPresentationUsesTheSameBoundaryAndPendingBytes) {
                              R"({"type":"trigger","maxRuns":2})")});
   EXPECT_NE(after->execution_fingerprint, before->execution_fingerprint);
 }
-TEST_F(OpaqueMetadata, DraftHasNoPortsFromMetadataOrSchema) {
+TEST_F(DocumentStorage, DraftHasNoPortsFromMetadataOrSchema) {
   fs::write_atomic(root / "definitions/start/_card.json",
                    R"({"type":"draft"})");
   fs::write_atomic(
-      root / "definitions/start/_meta.json",
-      R"({"name":false,"comments":12,"outputs":[{"name":"planned","description":false,"future":1},false]})");
+      root / "definitions/start/README.md",
+      "A future port called planned.");
   fs::write_atomic(root / "definitions/start/_outputs.fbs", "not a schema");
   Store store({root, ""});
   store.open();
@@ -225,12 +222,12 @@ TEST_F(OpaqueMetadata, DraftHasNoPortsFromMetadataOrSchema) {
   put.kind = ChangeIn::Kind::PutDefinition;
   put.id = "start";
   put.json = R"({"type":"draft"})";
-  put.meta_json = R"({"outputs":[{"name":"different"}]})";
+  put.readme = "A future port called different.";
   auto after = commit(store, {put});
   EXPECT_EQ(after->resolution, before->resolution);
 }
 
-TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
+TEST_F(DocumentStorage, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"condition"},{"id":"plan"},{"id":"next"},{"id":"branch"},{"id":"collect"}],"connections":[
@@ -271,7 +268,7 @@ TEST_F(OpaqueMetadata, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
     ADD_FAILURE() << diagnostic.code << ": " << diagnostic.message;
 }
 
-TEST_F(OpaqueMetadata, BranchConditionInheritsItsUpstreamSchema) {
+TEST_F(DocumentStorage, BranchConditionInheritsItsUpstreamSchema) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"branch"}],"connections":[
@@ -291,7 +288,7 @@ TEST_F(OpaqueMetadata, BranchConditionInheritsItsUpstreamSchema) {
   EXPECT_TRUE(branch->diags.empty());
 }
 
-TEST_F(OpaqueMetadata, ADraftAndARealSourceCannotShareAnInput) {
+TEST_F(DocumentStorage, ADraftAndARealSourceCannotShareAnInput) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"plan"},{"id":"sink"},{"id":"relay"},{"id":"condition"}],"connections":[
@@ -320,7 +317,7 @@ TEST_F(OpaqueMetadata, ADraftAndARealSourceCannotShareAnInput) {
   EXPECT_EQ(sink->diags.front().code, "multiple_input_wires");
 }
 
-TEST_F(OpaqueMetadata,
+TEST_F(DocumentStorage,
        ImplementingRequiresExplicitInputAndOutputInTheSameSave) {
   const std::string project =
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[
@@ -369,7 +366,7 @@ TEST_F(OpaqueMetadata,
   EXPECT_TRUE(after->resolution->find({"next"})->inputs.empty());
 }
 
-TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
+TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
@@ -382,7 +379,7 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
                    R"({"type":"draft"})");
   fs::write_atomic(
       root / "externals/child/tsugumi.json",
-      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"plan","port":""}},"outputs":{"out":{"card":"plan","port":""}}}})");
+      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":""}],"outputs":[{"name":"out","card":"plan","port":""}]}})");
   fs::write_atomic(root / "externals/child/definitions/plan/_card.json",
                    R"({"type":"draft"})");
   Store store({root, ""});
@@ -407,14 +404,14 @@ TEST_F(OpaqueMetadata, NestedImplementationRebindsBoundaryEndsAtomically) {
   wiring.path = "externals/child/tsugumi.json";
   wiring.base_hash = store.current()->sources.at(wiring.path).hash;
   wiring.bytes =
-      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":{"in":{"card":"plan","port":"in"}},"outputs":{"out":{"card":"plan","port":"out"}}}})";
+      R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":"in"}],"outputs":[{"name":"out","card":"plan","port":"out"}]}})";
   const auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
   EXPECT_EQ(after->resolution->find({"outer", "plan"})->kind,
             CardType::Collect);
 }
 
-TEST_F(OpaqueMetadata, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
+TEST_F(DocumentStorage, NamedDraftEndIsRejectedAndIdentifiesTheWire) {
   fs::write_atomic(root / "definitions/plan/_card.json",
                    R"({"type":"draft"})");
   Store store({root, ""});

@@ -101,7 +101,7 @@ When a Merge produces a union, each distinct FlatBuffer type has one member. Its
   - the host, under Tsugumi's support folder;
   - the project: `templates/` in the project, versioned with it.
 - When names collide, both are listed, each labelled with its store. Neither shadows the other.
-- A template is a folder of Card definition folders. It may hold several Cards or a partial graph, plus an optional `layout.json` fragment. Card IDs are remapped when it is copied.
+- A template is a folder of Card definition folders. It may hold several Cards or a partial graph, plus an optional `layout.bin` fragment. Card IDs are remapped when it is copied.
 - Users can add templates from a folder, or import them from a public HTTPS Git repository with a ref and a subdirectory.
 - A "make template" skill may create templates at the project level.
 - The core manages the list: it stores, lists and copies templates, and imports them from Git.

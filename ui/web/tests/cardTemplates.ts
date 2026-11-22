@@ -9,8 +9,8 @@ const session = operationFixture(new ProjectSession('/templates', 'templates', '
   'templates/example/start/_card.json': '{"type":"trigger"}',
   'templates/example/plan/_card.json': '{"type":"draft"}',
   'templates/example/plan/notes.txt': 'a source file',
-  'templates/example/tsugumi.json': '{"canvas":{"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}}]}}',
-  'templates/example/layout.json': '{"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}}',
+  'templates/example/tsugumi.json': '{"canvas":{"cards":[],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}}]}}',
+  'templates/example/layout.bin': '{"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}}',
 })
 session.project = parse('{"canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')

@@ -182,7 +182,7 @@ struct ParamData: Hashable {
   var value: String
 }
 
-/// What the user and the Agent write about a Card (_meta.json), and the record
+/// What the user and the Agent write about a Card (_comments.json), and the record
 /// of who did what ("agent" or "user"; nil when not recorded).
 struct CardComment: Equatable, Identifiable {
   var id: String
@@ -202,7 +202,7 @@ struct CardComment: Equatable, Identifiable {
       guard let id = c["id"]?.string, let text = c["text"]?.string, !id.isEmpty else { return nil }
       let line = c["resolution"]?.string ?? ""
       return CardComment(id: id, text: text, resolved: c["resolved"]?.bool ?? false, finding: c["finding"]?.bool ?? false, resolution: line.isEmpty ? nil : line,
-                         author: c["author"]?.string, editedBy: c["editedBy"]?.string, stateBy: c["stateBy"]?.string,
+                         author: c["author"]?.string, editedBy: c["edited_by"]?.string, stateBy: c["state_by"]?.string,
                          cards: c["cards"]?.array?.compactMap(\.string) ?? [])
     }
   }
@@ -310,7 +310,7 @@ enum CardShape {
 /// land one grid apart on the two.
 func snapToGrid(_ v: CGFloat, _ grid: CGFloat) -> CGFloat { ((v / grid + 0.5).rounded(.down)) * grid }
 
-// Presentation from the document and layout.json: each UI computes the shape
+// Presentation from the document and the layout: each UI computes the shape
 // itself rather than asking hostd (port-grid-contract.json keeps them alike).
 /// Size, outline and port positions of a Card (world units, relative to its
 /// top-left corner). Shared by drawing, wires, the selection and hit-tests.
@@ -951,10 +951,7 @@ extension View {
 
 /// Writing a Draft on its Card: what is typed so far, where it goes, and how it ends.
 struct DraftEdit {
-  let name: Binding<String>
   let content: Binding<String>
-  /// Why the Card cannot take the name typed so far.
-  let nameProblem: String?
   /// Done, the focus having moved elsewhere (false) or by the keyboard (true).
   let onDone: (_ byKey: Bool) -> Void
 }
@@ -981,7 +978,7 @@ struct CardNodeView: View {
   /// The start Card's button: runs the workflow from it (nil: not offered).
   var onRun: (() -> Void)?
   var draftEdit: DraftEdit?
-  private enum DraftField { case name, content }
+  private enum DraftField { case content }
   @FocusState private var draftField: DraftField?
 
   private var edit: DraftEdit? { data.draftEditing ? draftEdit : nil }
@@ -1131,10 +1128,6 @@ struct CardNodeView: View {
     if let edit {
       // No box: the text stays where it is on the Card (the editor insets its text by 5).
       VStack(alignment: .leading, spacing: s(2)) {
-        if let problem = edit.nameProblem {
-          Text(problem).font(font(9.5)).foregroundStyle(.red).fixedSize(horizontal: false, vertical: true)
-            .padding(.horizontal, 5)
-        }
         ZStack(alignment: .topLeading) {
           if edit.content.wrappedValue.isEmpty {
             Text("何を受け取り、何を出し、どう処理するかを書きます").font(font(11)).foregroundStyle(.tertiary)
@@ -1178,17 +1171,8 @@ struct CardNodeView: View {
   private var header: some View {
     HStack(spacing: s(6)) {
       Image(systemName: data.symbol ?? data.kind.symbol).font(font(12)).foregroundStyle(.secondary).frame(width: s(15))
-      if let edit {
-        TextField("名前", text: edit.name)
-          .textFieldStyle(.plain).font(font(12, .semibold))
-          .focused($draftField, equals: .name)
-          .onSubmit { if edit.nameProblem == nil { draftField = .content } }
-          .onExitCommand { edit.onDone(true) }
-          .accessibilityLabel("Draft の名前")
-      } else {
-        Text(verbatim: data.untitled ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
-          .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
-      }
+      Text(verbatim: data.untitled && edit == nil ? data.summary?.split(separator: "\n").first.map(String.init) ?? data.title : data.title)
+        .font(font(12, .semibold)).lineLimit(1).truncationMode(.tail)
       if edit == nil { Spacer(minLength: s(2)) }
       ForEach(data.permissions, id: \.rawValue) { p in
         Image(systemName: p.symbol).font(font(10)).foregroundStyle(p == .sandboxOff ? .orange : .secondary).help(p.label)
@@ -1604,7 +1588,7 @@ private enum WireCost {
 }
 
 // Drawn routes are each UI's own work. hostd's route_wires is for Untangle,
-// which edits layout.json, not for drawing.
+// which edits the layout, not for drawing.
 /// Routes wires in world units around the Cards. A wire going along the flow
 /// whose curve touches no Card stays that curve. Any other wire takes the
 /// cheapest path on a grid of lines beside the Cards: by length, bends and

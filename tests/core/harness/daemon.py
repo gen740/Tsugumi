@@ -12,6 +12,7 @@ from pathlib import Path
 
 from tsugumi_client import Client
 
+from .control import read_ready, read_startup_error
 from .file_events import process_file
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -40,7 +41,6 @@ def write_project(root: Path) -> None:
         "name": "rpc-test", "pkgsPath": "tsugumi:default",
         "canvas": {"cards": [], "connections": []},
     }))
-    (root / "layout.json").write_text("{}")
 
 
 class StartupFailure(RuntimeError):
@@ -95,13 +95,13 @@ class Daemon:
             with self.log.open("ab") as log:
                 self.proc = subprocess.Popen(args, env=env, stdout=log, stderr=log)
             if process_file(self.proc, ready) is not None:
-                self.ready = json.loads(ready.read_text())
+                self.ready = read_ready(ready)
                 return self
             status = self.proc.wait()
             if expect_exit:
                 return self
-            record_path = self.control / "server.startup-error.json"
-            record = json.loads(record_path.read_text()) if record_path.exists() else {}
+            record_path = self.control / "server.startup-error"
+            record = read_startup_error(record_path) if record_path.exists() else {}
             raise StartupFailure(status, record, self.diagnostics())
         except BaseException:
             self.close()

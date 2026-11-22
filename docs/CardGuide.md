@@ -68,7 +68,7 @@ Write the output type in `_outputs.fbs`. The fields of `Outputs` are the output 
 `definitions/settings/_card.json`
 
 ```json
-{"type": "input", "params": [{"name": "value", "type": "uint64", "data": 21}]}
+{"type": "input", "params": [{"name": "value", "type": "uint64", "data": {"uint64": 21}}]}
 ```
 
 `definitions/settings/_outputs.fbs`
@@ -98,7 +98,7 @@ Write the names of the input ports in `inputs`. Input types are not written: the
 {
   "type": "code",
   "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": 2}]
+  "params": [{"name": "factor", "type": "uint64", "data": {"uint64": 2}}]
 }
 ```
 
@@ -111,14 +111,14 @@ table Outputs { result:Result (required); }
 root_type Outputs;
 ```
 
-A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card's settings, so write briefly what the Card does.
+A Card's summary goes in the one-line `description` front matter in `README.md`. It appears on the Canvas and in the Card's settings, so write briefly what the Card does.
 
-`definitions/multiply/_meta.json`
+`definitions/multiply/README.md`
 
-```json
-{
-  "description": "Multiply number by factor"
-}
+```markdown
+---
+description: Multiply number by factor
+---
 ```
 
 The SDK, the environment and the Card's views go in `default.nix`. `inputs.tsugumi` holds the SDKs from tsugumi-kit; `pythonSdk.pythonCard` builds the Card and `pythonSdk.views` are the views the Python SDK bundles. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`. Packages come from the project's pinned nixpkgs.
@@ -394,16 +394,22 @@ The worker sets the working directory, `HOME`, `TMPDIR` and the environment at l
 
 ### A Card's folder
 
-`definitions/<id>/` belongs to one Card. Its identifier is permanent; its editable human name is `_meta.json.name`, with the identifier shown when the name is omitted. Names may be shared by several Cards. New identifiers come from the core `card_id` RPC: the lowercase slug of the creation name, then `-2`, `-3`, and so on when that name is occupied, checked for uniqueness in the owning project (including reserved unsaved Cards and case variants). Pass `project_path` for a Card in Card, then save the definition and canvas using the returned identifier. The slug uses lowercase ASCII letters and digits separated by hyphens; a name without those characters uses `card`. Identifiers already present, including unsuffixed ones, stay as written.
+`definitions/<id>/` belongs to one Card. The permanent id is the Card's name and identifies it in canvas keys, connections, saved inputs, run records and evidence links. The core's `card_id` RPC reserves a lowercase slug from the supplied stem, adding `-2`, `-3` and so on as needed. Pass `project_path` to reserve an id inside a Card in Card.
 
-Renaming changes only `_meta.json.name`. Definition folders, canvas keys, connections, saved inputs, run records and evidence links retain their identifiers. The same rule holds inside a Card in Card.
+The core checks `tsugumi.json`, `_card.json` and `_comments.json` against the
+[project](../protocol/project_document.fbs), [Card](../protocol/card_document.fbs)
+and [review comment](../protocol/comments_document.fbs) schemas. Saves use a
+two-space indent and schema field order. The UI stores Card placement, flow,
+groups and note geometry in [`layout.bin`](../protocol/layout_document.fbs).
+Each note's text is Markdown in `notes/<id>.md`.
 
 Definition files:
 
 | File | What it is |
 | --- | --- |
 | `_card.json` | What the Card is (`type`, required) and all settings: `inputs`, `params`, run settings |
-| `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
+| `README.md` | Optional one-line `description: …` between `---` lines and a Markdown body. Keep the description and body when implementing a Draft. |
+| `_comments.json` | Review comments, keyed by stable comment ids across versions. |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
 | `default.nix` | Code Cards only: a function `{ pkgs, params, inputs, schemas }:` returning `run` (one implementation or an ordered list), and optionally `views` and `exports`. Nothing else is accepted |
 | `src/` | Code Cards only: the sources |
@@ -435,7 +441,7 @@ and an output message with a `value:bool` field. Wire that output to the
 Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 
 ```json
-{"type": "input", "params": [{"name": "seed", "type": "uint64", "data": 42}]}
+{"type": "input", "params": [{"name": "seed", "type": "uint64", "data": {"uint64": 42}}]}
 ```
 
 ### An input Card that passes on a project file or folder
@@ -447,7 +453,7 @@ worker stages a copy and the next Card receives its path.
 
 ```json
 {"type": "input",
- "params": [{"name": "value", "type": "string", "data": "data/events.fits"}]}
+ "params": [{"name": "value", "type": "string", "data": {"string": "data/events.fits"}}]}
 ```
 
 Use `project:definitions/shared/data/events.fits` for a saved source in another
@@ -468,7 +474,7 @@ The next Card reads the path directly, for example `Path(input.events)` in Pytho
 
 ### Code Card settings
 
-A Code Card has `"type": "code"`. Choose the SDK in the Card’s `default.nix`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they arrive in the Card's input as `params`. A parameter with `nix: true` is also a build-time value in `default.nix`, as `params.<name>`; changing it rebuilds the Card.
+A Code Card has `"type": "code"`. Choose the SDK in the Card’s `default.nix`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": {"double": 600}}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they arrive in the Card's input as `params`. A parameter with `nix: true` is also a build-time value in `default.nix`, as `params.<name>`; changing it rebuilds the Card.
 
 Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
@@ -494,7 +500,7 @@ What the Card does with the value is its author's responsibility: child processe
 ### Run lists and connected Nix exports
 
 Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
-sweeps its `value` parameter: `"sweep": [8, 12, 16]` in place of `"data"` hands
+sweeps its `value` parameter: `"sweep": [{"uint64": 8}, {"uint64": 12}, {"uint64": 16}]` in place of `"data"` hands
 on each signal in its own invocation, labeled `value=8` and so on.
 
 A Code Card compares implementations with a run list: `run` is a list of
@@ -530,9 +536,9 @@ in
 }
 ```
 
-A list-typed parameter (`"type": "uint64[]"`) with `data` is one ordinary
+A list-typed parameter (`"type": "uint64[]"`) with `"data": {"uint64s": [1, 2]}` is one ordinary
 vector value. Only `sweep` makes a batch, also for a single value
-(`"sweep": [5]` is ×1); each element of a list-typed sweep is one vector.
+(`"sweep": [{"uint64": 5}]` is ×1); each element of a list-typed sweep is one vector.
 Several swept parameters run their Cartesian product, the last one varying
 fastest. Code Cards use run lists instead of `sweep`.
 
@@ -602,7 +608,7 @@ Go, Rust, C#), read the generated union type and value fields; R, Julia and Ruby
 ### Templates
 
 A template is a folder of Card definition directories: one Card, several Cards, or part of a graph
-with its internal connections and an optional `layout.json` fragment. Choose **From Template…** in
+with its internal connections and an optional `layout.bin` fragment. Choose **From Template…** in
 **New Card** to copy one into the graph. The copy gets fresh Card IDs; connect its boundary ports to
 the rest of the project.
 
@@ -624,7 +630,7 @@ is described in the kit.
 ### Draft wire ends and implementation
 
 A Draft (`_card.json` with `"type": "draft"`) has no input or output ports,
-including when `_meta.json` contains port descriptions or `_outputs.fbs` exists.
+including when `_outputs.fbs` exists.
 A connection attaches directly to the Draft with `{"card":"plan","port":""}`.
 The `port` field is required; the empty string is reserved for Draft ends.
 Any number of wires can enter or leave a Draft, including wires between Drafts.

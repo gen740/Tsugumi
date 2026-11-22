@@ -7,13 +7,14 @@ import shutil
 
 from harness.fixtures import add_worker
 from harness.scenario import Gate, Project, run, wait_run
+from harness.document import set_param as set_typed_param
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
 
 
 def param(name, value):
-    return {"name": name, "type": "uint64", "data": value}
+    return {"name": name, "type": "uint64", "data": {"uint64": value}}
 
 
 def recorded_params(client, run_id, card):
@@ -25,7 +26,7 @@ def set_param(client, card, name, value):
     snapshot = client.call("ProjectInspectRequest")
     definition = next(d for d in snapshot.definitions if text(d.id) == card)
     body = json.loads(text(definition.cardJson))
-    next(p for p in body["params"] if p["name"] == name)["data"] = value
+    set_typed_param(body, name, value)
     client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
                 changes=[change("PutDefinition", id=card, cardJson=json.dumps(body))])
 

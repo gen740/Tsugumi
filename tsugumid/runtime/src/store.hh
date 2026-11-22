@@ -37,10 +37,13 @@ struct ChangeIn {
   };
   Kind kind;
   std::string id;    // definitions
-  std::string json;  // SetProject / SetLayout / card_json
-  std::optional<std::string> meta_json;
-  bool keep_meta =
-      false;  // PutDefinition without meta_json keeps the current _meta.json
+  std::string json;  // SetProject / card_json; SetLayout's layout.bin bytes
+  // PutDefinition: a README.md or _comments.json not given is removed, unless
+  // its keep flag keeps the current one.
+  std::optional<std::string> readme;
+  bool keep_readme = false;
+  std::optional<std::string> comments_json;
+  bool keep_comments = false;
   std::string path;   // sources
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;

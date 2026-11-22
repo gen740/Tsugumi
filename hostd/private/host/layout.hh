@@ -1,5 +1,5 @@
 // Arrange and Untangle Wires: the two operations that rewrite where a
-// project's Cards sit (layout.json) are worked out here, once, for every
+// project's Cards sit (layout.bin) are worked out here, once, for every
 // client (LayoutArrange / LayoutUntangle of protocol/host.fbs).
 //
 // Both are functions of a Scene, what a canvas draws in one scope: a Card's

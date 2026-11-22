@@ -1,5 +1,8 @@
 #include "service.hh"
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
+
 #include <flatbuffers/reflection.h>
 #include <unistd.h>
 
@@ -1229,7 +1232,7 @@ manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
   std::vector<flatbuffers::Offset<R::SourceInfo>> v;
   auto add = [&](const std::string& p, const SourceEntry& e) {
     v.push_back(wire::source_info(b, p, D::SourceKind::file, true, e.hash,
-                                  e.size, e.document_json.get()));
+                                  e.size, e.document.get()));
   };
   if (only) {
     for (const auto& p : *only) add(p, doc.sources.at(p));
@@ -1244,12 +1247,12 @@ manifest(FBB& b, const Document& doc, const std::vector<std::string>* only) {
 std::optional<Service::ViewRecord> Service::load_view(
     const std::string& view_id) {
   std::lock_guard<std::mutex> l(view_mu_);
-  auto text = fs::read_file(store_->state_dir() / "view.json");
-  if (!text) return std::nullopt;
-  schema::ViewFile file;
-  if (schema::decode(*text, file)) return std::nullopt;
-  for (const auto& [id, entry] : file.views->entries())
-    if (id == view_id) return ViewRecord{*entry.rev, *entry.view};
+  auto bytes = fs::read_file(store_->state_dir() / "view");
+  const auto file =
+      bytes ? flat::decode<Tsugumi::State::Views>(*bytes) : std::nullopt;
+  if (!file) return std::nullopt;
+  for (const auto& entry : file->views)
+    if (entry->id == view_id) return ViewRecord{entry->rev, std::string(entry->view.begin(), entry->view.end())};
   return std::nullopt;
 }
 
@@ -1285,7 +1288,8 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   auto run = wire::run_status(b, current_run_status());
   auto pid = b.CreateString(store_->project_id());
   auto pj = b.CreateString(doc.project_json);
-  auto lj = b.CreateString(doc.layout_json);
+  auto lj = b.CreateVector(reinterpret_cast<const uint8_t*>(doc.layout.data()),
+                           doc.layout.size());
   std::vector<flatbuffers::Offset<R::ExecutionService>> services;
   for (const auto& target : targets) {
     const bool remote = target.id != kLocalExecutionService;
@@ -1316,13 +1320,14 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
         target.grade, sandbox));
   }
   auto execution_services = b.CreateVector(services);
-  flatbuffers::Offset<flatbuffers::String> view;
+  flatbuffers::Offset<flatbuffers::Vector<uint8_t>> view;
   flatbuffers::Offset<flatbuffers::String> vid;
   std::optional<uint64_t> vrev;
   if (view_id) {
     vid = b.CreateString(*view_id);
     if (record) {
-      view = b.CreateString(record->view);
+      view = b.CreateVector(reinterpret_cast<const uint8_t*>(record->view.data()),
+                            record->view.size());
       vrev = record->rev;
     } else {
       vrev = 0;
@@ -1333,7 +1338,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   sb.add_rev(doc.rev);
   sb.add_execution_rev(doc.execution_rev);
   sb.add_project_json(pj);
-  sb.add_layout_json(lj);
+  sb.add_layout(lj);
   sb.add_definitions(defs_v);
   sb.add_sources(src);
   sb.add_resolution(res);
@@ -1341,7 +1346,7 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   sb.add_run(run);
   sb.add_execution_services(execution_services);
   if (view_id) {
-    if (!view.IsNull()) sb.add_view_json(view);
+    if (!view.IsNull()) sb.add_view(view);
     sb.add_view_id(vid);
     sb.add_view_rev(*vrev);
   }
@@ -1395,8 +1400,11 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   auto origin = b.CreateString(d.origin);
   auto pj = d.project_changed ? b.CreateString(doc.project_json)
                               : flatbuffers::Offset<flatbuffers::String>();
-  auto lj = d.layout_changed ? b.CreateString(doc.layout_json)
-                             : flatbuffers::Offset<flatbuffers::String>();
+  auto lj = d.layout_changed
+                ? b.CreateVector(
+                      reinterpret_cast<const uint8_t*>(doc.layout.data()),
+                      doc.layout.size())
+                : flatbuffers::Offset<flatbuffers::Vector<uint8_t>>();
   R::DocumentDeltaBuilder db(b);
   db.add_base_rev(d.base_rev);
   db.add_rev(d.rev);
@@ -1404,7 +1412,10 @@ flatbuffers::Offset<R::DocumentDelta> delta_offset(FBB& b, const Delta& d) {
   db.add_op_id(op);
   db.add_origin(origin);
   if (d.project_changed) db.add_project_json(pj);
-  if (d.layout_changed) db.add_layout_json(lj);
+  if (d.layout_changed) {
+    db.add_layout(lj);
+    db.add_layout_changed(true);
+  }
   db.add_definitions_upsert(ups_v);
   db.add_definitions_removed(rem_v);
   db.add_sources_upsert(src_v);
@@ -1537,7 +1548,9 @@ std::vector<ChangeIn> decode_changes(
         break;
       case R::DocumentChangeValue::SetLayout:
         ch.kind = ChangeIn::Kind::SetLayout;
-        ch.json = c->value_as_SetLayout()->json()->str();
+        if (const auto* bytes = c->value_as_SetLayout()->layout())
+          ch.json.assign(reinterpret_cast<const char*>(bytes->data()),
+                         bytes->size());
         break;
       case R::DocumentChangeValue::PutDefinition: {
         const auto* p = c->value_as_PutDefinition();
@@ -1545,12 +1558,17 @@ std::vector<ChangeIn> decode_changes(
         ch.id = p->id()->str();
         ch.json = p->card_json()->str();
         // An empty optional document is one not given (a model fills in every
-        // field). Neither file is ever empty. The _meta.json stays: it may hold
-        // the user's intent, and leaving a field blank must not remove that.
-        if (p->meta_json() && p->meta_json()->size() > 0)
-          ch.meta_json = p->meta_json()->str();
-        ch.keep_meta =
-            p->keep_meta() || (p->meta_json() && p->meta_json()->size() == 0);
+        // field). Neither file is ever empty. The README and comments stay:
+        // they may hold the user's intent, and leaving a field blank must not
+        // remove that.
+        if (p->readme() && p->readme()->size() > 0)
+          ch.readme = p->readme()->str();
+        ch.keep_readme =
+            p->keep_readme() || (p->readme() && p->readme()->size() == 0);
+        if (p->comments_json() && p->comments_json()->size() > 0)
+          ch.comments_json = p->comments_json()->str();
+        ch.keep_comments = p->keep_comments() ||
+                           (p->comments_json() && p->comments_json()->size() == 0);
         break;
       }
       case R::DocumentChangeValue::RemoveDefinition:
@@ -1788,7 +1806,7 @@ std::string version_receipt(const std::string& op_id, const std::string& commit,
 }  // namespace
 
 void Service::note_run_end(const RunStatusData& s,
-                           const std::string& record_json) {
+                           const std::string& facts) {
   if (!s.commit || !s.run_id || !s.terminal()) return;
   VersionRunNote n;
   n.run_id = *s.run_id;
@@ -1797,7 +1815,7 @@ void Service::note_run_end(const RunStatusData& s,
   int64_t start = s.started_at.value_or(s.accepted_at.value_or(end));
   n.ended = Versions::iso_utc(end);
   n.seconds = end > start ? static_cast<double>(end - start) / 1000.0 : 0;
-  n.record_json = record_json;
+  n.facts = facts;
   try {
     versions_->note_run(*s.commit, n);
   } catch (const std::exception& e) {
@@ -1914,7 +1932,7 @@ void Service::version_graph(RequestIn& req) {
   for (const auto& c : g.commits) {
     std::vector<flatbuffers::Offset<R::VersionRun>> runs;
     for (const auto& n : c.runs) {
-      const auto facts = version_facts::run(n.record_json);
+      const auto facts = version_facts::run(n.facts);
       runs.push_back(R::CreateVersionRun(
           b, b.CreateString(n.run_id), b.CreateString(n.state),
           b.CreateString(n.ended), n.seconds, 0,
@@ -1953,7 +1971,9 @@ void Service::version_canvas(RequestIn& req) {
                                                b.CreateString(to)));
   auto vc =
       R::CreateVersionCanvas(b, b.CreateVector(cards), b.CreateVector(wires),
-                             b.CreateString(canvas.layout_json));
+                             b.CreateVector(reinterpret_cast<const uint8_t*>(
+                                                canvas.layout.data()),
+                                            canvas.layout.size()));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionCanvas,
                          vc.Union()));
 }
@@ -1962,7 +1982,7 @@ void Service::version_note(RequestIn& req) {
   const auto* r = project_request(req)->value_as_VersionNoteRequest();
   auto note = versions_->note(r->commit()->str());
   FBB b;
-  auto facts = version_facts::changes(note.record_json);
+  auto facts = version_facts::changes(note.facts);
   auto n = R::CreateVersionNote(b, R::VersionChanges::Pack(b, &facts),
                                 b.CreateString(note.commit));
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionNote,
@@ -2430,10 +2450,11 @@ void Service::file_list(RequestIn& req) {
   std::set<std::string> files;
   for (const auto& [p, _] : doc->sources) files.insert(p);
   files.insert("tsugumi.json");
-  files.insert("layout.json");
+  if (!doc->layout.empty()) files.insert("layout.bin");
   for (const auto& [id, d] : doc->definitions) {
     files.insert("definitions/" + id + "/_card.json");
-    if (d.meta_json) files.insert("definitions/" + id + "/_meta.json");
+    if (d.readme) files.insert("definitions/" + id + "/README.md");
+    if (d.comments_json) files.insert("definitions/" + id + "/_comments.json");
   }
   std::string prefix = path == "." ? "" : path + "/";
   std::map<std::string, bool> entries;  // path -> is_directory
@@ -2480,14 +2501,15 @@ void Service::file_list(RequestIn& req) {
       } else if (p == "tsugumi.json") {
         hash = crypto::sha256_hex(doc->project_json);
         size = doc->project_json.size();
-      } else if (p == "layout.json") {
-        hash = crypto::sha256_hex(doc->layout_json);
-        size = doc->layout_json.size();
+      } else if (p == "layout.bin") {
+        hash = crypto::sha256_hex(doc->layout);
+        size = doc->layout.size();
       } else {
         auto id = p.substr(12, p.find('/', 12) - 12);
         const auto& d = doc->definitions.at(id);
-        const auto& text =
-            p.ends_with("_card.json") ? d.card_json : *d.meta_json;
+        const auto& text = p.ends_with("_card.json") ? d.card_json
+                           : p.ends_with("/README.md") ? *d.readme
+                                                       : *d.comments_json;
         hash = crypto::sha256_hex(text);
         size = text.size();
       }
@@ -2517,13 +2539,16 @@ std::optional<std::string> confirmed_bytes(const Document& doc,
                                            const Store& store,
                                            const std::string& p) {
   if (p == "tsugumi.json") return doc.project_json;
-  if (p == "layout.json") return doc.layout_json;
+  if (p == "layout.bin")
+    return doc.layout.empty() ? std::nullopt
+                              : std::optional<std::string>(doc.layout);
   if (Document::is_document_file(p)) {
     auto id = p.substr(12, p.find('/', 12) - 12);
     auto it = doc.definitions.find(id);
     if (it == doc.definitions.end()) return std::nullopt;
     if (p.ends_with("_card.json")) return it->second.card_json;
-    return it->second.meta_json;
+    if (p.ends_with("/README.md")) return it->second.readme;
+    return it->second.comments_json;
   }
   if (!doc.sources.count(p)) return std::nullopt;
   return store.read_source(doc, p);
@@ -2671,24 +2696,24 @@ void Service::view_save(RequestIn& req) {
     throw Failed(FailureKind::invalid_request, "view_id must be a UUID");
   if (!r->base_view_rev())
     throw Failed(FailureKind::invalid_request, "base_view_rev is required");
-  const auto view = r->view_json()->str();
+  const auto& view = *r->view();
   if (view.size() > kMaxViewBytes)
     throw Failed(FailureKind::resource_limit, "view exceeds 1 MiB");
-  // Validate JSON syntax only; scope, selection and camera belong to clients.
-  schema::Json opaque;
-  if (auto error = schema::decode(view, opaque))
-    throw Failed(FailureKind::invalid_request, error->message);
+  // The clients own scope, selection and camera semantics.
+  flatbuffers::Verifier verifier(view.data(), view.size());
+  if (!verifier.VerifyBuffer<R::ClientView>(nullptr))
+    throw Failed(FailureKind::invalid_request, "invalid client view FlatBuffer");
   std::lock_guard<std::mutex> l(view_mu_);
-  auto path = store_->state_dir() / "view.json";
-  schema::ViewFile file;
-  if (auto text = fs::read_file(path)) {
-    if (schema::decode(*text, file)) file = schema::ViewFile{};
-  }
+  auto path = store_->state_dir() / "view";
+  Tsugumi::State::ViewsT file;
+  if (auto bytes = fs::read_file(path))
+    if (auto decoded = flat::decode<Tsugumi::State::Views>(*bytes))
+      file = std::move(*decoded);
   uint64_t current = 0;
-  schema::ViewEntry* existing = nullptr;
-  for (auto& [id, entry] : file.views->entries())
-    if (id == view_id) existing = &entry;
-  if (existing) current = *existing->rev;
+  Tsugumi::State::ViewT* existing = nullptr;
+  for (auto& entry : file.views)
+    if (entry->id == view_id) existing = entry.get();
+  if (existing) current = existing->rev;
   if (*r->base_view_rev() != current) {
     FailureData f = FailureData::make(FailureKind::revision_conflict,
                                       "the view was saved by another window");
@@ -2696,15 +2721,16 @@ void Service::view_save(RequestIn& req) {
     throw Failed(f);
   }
   if (existing) {
-    *existing->rev = current + 1;
-    *existing->view = view;
+    existing->rev = current + 1;
+    existing->view.assign(view.begin(), view.end());
   } else {
-    schema::ViewEntry e;
-    *e.rev = current + 1;
-    *e.view = view;
-    file.views->emplace_back(view_id, std::move(e));
+    auto e = std::make_unique<Tsugumi::State::ViewT>();
+    e->id = view_id;
+    e->rev = current + 1;
+    e->view.assign(view.begin(), view.end());
+    file.views.push_back(std::move(e));
   }
-  fs::write_atomic(path, schema::encode(file), 0600);
+  fs::write_atomic(path, flat::encode<Tsugumi::State::Views>(file), 0600);
   FBB b;
   auto off = R::CreateViewSaveResult(b, b.CreateString(view_id), current + 1);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ViewSaveResult,

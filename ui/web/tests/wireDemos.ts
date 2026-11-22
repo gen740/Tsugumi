@@ -3,6 +3,9 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import { CardGeometry, CardNodeData, Pt, Rect, snapToGrid, union, WireRouter } from '../src/model/canvasKit'
+import { ByteBuffer } from 'flatbuffers'
+import { Layout as LayoutBuffer } from '../shared/gen/tsugumi/layout/layout'
+import { parseReadme } from '../src/model/documents'
 import type { FlowDirection } from '../src/model/prefs'
 
 const root = process.argv[2]
@@ -16,7 +19,8 @@ const read = (file: string) => (fs.existsSync(file) ? JSON.parse(fs.readFileSync
 function node(dir: string, id: string): CardNodeData {
   const base = path.join(dir, 'definitions', id)
   const def = read(path.join(base, '_card.json'))
-  const meta = read(path.join(base, '_meta.json'))
+  const readme = path.join(base, 'README.md')
+  const meta = parseReadme(fs.existsSync(readme) ? fs.readFileSync(readme, 'utf8') : '')
   const named = (list?: { name?: string }[]) => (list ?? []).flatMap((p) => (p.name ? [{ name: p.name }] : []))
   const fbs = path.join(base, '_outputs.fbs')
   const typed = fs.existsSync(fbs)
@@ -25,7 +29,7 @@ function node(dir: string, id: string): CardNodeData {
   const blank = { summary: def?.description || meta?.description || undefined, params: [], invocation: 0n, runContinues: false, errors: [], warnings: [], collapsed: false, title: id }
   if (def?.type === 'subgraph') {
     const b = read(path.join(dir, 'externals', def.external, 'tsugumi.json'))?.boundary ?? {}
-    return { ...blank, kind: 'subgraph', inputs: Object.keys(b.inputs ?? {}).map((name) => ({ name })), outputs: Object.keys(b.outputs ?? {}).map((name) => ({ name })) }
+    return { ...blank, kind: 'subgraph', inputs: named(b.inputs), outputs: named(b.outputs) }
   }
   const declared = named(def?.inputs)
   switch (def?.type) {
@@ -40,7 +44,7 @@ function node(dir: string, id: string): CardNodeData {
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }
     case 'draft': {
       const untitled = /^draft(-[0-9]+)?$/.test(id)
-      return { ...blank, kind: 'draft', summary: meta?.content || blank.summary, untitled, inputs: [], outputs: [] }
+      return { ...blank, kind: 'draft', summary: meta.body || blank.summary, untitled, inputs: [], outputs: [] }
     }
     default: throw new Error(`type ${def?.type}`)
   }
@@ -51,7 +55,18 @@ function node(dir: string, id: string): CardNodeData {
  *  nearest line and sized by it, frames where they were saved. */
 function scene(name: string, dir: string, flow: FlowDirection | undefined, moved: Record<string, Pt> = {}, grid?: number): { scene: Scene; flow: FlowDirection } {
   const project = read(path.join(dir, 'tsugumi.json'))
-  const layout: Layout = read(path.join(dir, 'layout.json')) ?? {}
+  const layoutFile = path.join(dir, 'layout.bin')
+  const savedLayout = fs.existsSync(layoutFile)
+    ? LayoutBuffer.getRootAsLayout(new ByteBuffer(fs.readFileSync(layoutFile))).unpack()
+    : undefined
+  const layout: Layout = {
+    flow: typeof savedLayout?.flow === 'string' ? savedLayout.flow : undefined,
+    cards: Object.fromEntries((savedLayout?.cards ?? []).map(c => [String(c.key), { x: c.x ?? 0, y: c.y ?? 0, collapsed: c.collapsed ?? false }])),
+    boundary: Object.fromEntries((['inputs', 'outputs'] as const).flatMap(side => {
+      const p = savedLayout?.boundary?.[side]
+      return p?.x != null && p.y != null ? [[side, { x: p.x, y: p.y }]] : []
+    })),
+  }
   const ids: string[] = project.canvas.cards.map((c: { id: string }) => c.id)
   const saved = (id: string): Pt => moved[id] ?? { x: layout.cards?.[id]?.x ?? 0, y: layout.cards?.[id]?.y ?? 0 }
   const place = (id: string): Pt => {
@@ -83,7 +98,9 @@ function scene(name: string, dir: string, flow: FlowDirection | undefined, moved
   }
   const obstacles = ids.map(cardRect)
   const wires: Wire[] = conns.map((c) => ({ a: port(c.from.card, c.from.port, true), b: port(c.to.card, c.to.port, false), name: `${c.from.card}.${c.from.port}>${c.to.card}.${c.to.port}` }))
-  const bi = Object.entries<{ card: string; port: string }>(project.boundary?.inputs ?? {}), bo = Object.entries<{ card: string; port: string }>(project.boundary?.outputs ?? {})
+  type End = { name: string; card: string; port: string }
+  const ends = (list: End[] = []) => list.map(end => [end.name, end] as const)
+  const bi = ends(project.boundary?.inputs), bo = ends(project.boundary?.outputs)
   if (bi.length || bo.length) {
     const box = ids.map(cardRect).reduce<Rect | null>((u, r) => (u ? union(u, r) : r), null) ?? { x: 0, y: 0, width: 240, height: 120 }
     const width = Math.max(box.width, Math.max(bi.length, bo.length) * 110 + 40)

@@ -27,10 +27,10 @@ the person's decision.
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
-  every Card states it) and settings (params with their values in "data", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
-  with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
-  permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
-  links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
+  every Card states it) and settings such as maxRuns, timeoutSeconds, recordIO, reuseWorker and system.
+  Param data and sweep entries carry one typed field (for example {"data": {"double": 2.5}}).
+  README.md holds the optional one-line description front matter and Markdown body, and _comments.json holds review
+  comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
   Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
 - Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
@@ -44,8 +44,8 @@ the person's decision.
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
-  tsugumi.json (boundary: outer ports to inner Card ports), layout.json and definitions, editable with project_edit on
-  the paths under externals/<name>/.
+  tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.
+  Use project_edit on its definition and project files under externals/<name>/.
 - Run the workflow from its trigger Card: run {"base_rev": ..., "card": {"segments": ["<trigger id>"]}}. Running one
   Card alone (propagate false) uses the inputs saved by an earlier whole run. run and tools family runs action status take wait_seconds
   (up to 300) and return when the run ends or when the time is up (still_running true). A run builds and runs every

@@ -1,5 +1,5 @@
 import { addCodeCard, cardIds } from './cardIds'
-// Comments on a Card: written, edited, resolved and removed in its _meta.json,
+// Comments on a Card: written, edited, resolved and removed in its _comments.json,
 // each saved at once, on any Card, its copy having comments of its own; who did
 // what is kept; the canvas shows how many are open and the Agent is asked about those only.
 import assert from 'node:assert/strict'
@@ -70,12 +70,12 @@ const session = () => {
 
   for (const c of s.comments(k)) { s.removeComment(k, c.id); await s.save() }
   assert.deepEqual(s.comments(k), [], 'no comments remain')
-  assert.equal(get(s.cardMeta(k), 'name'), 'card', 'the name stays after the last comment is removed')
+  assert.equal(s.displayName(k), k, 'the id is the Card name')
   assert.deepEqual(s.cardsWithOpenComments([]), [])
 }
 
 {
-  // What else the Card's _meta.json says is kept, and undo takes a comment back.
+  // What else the Card's _comments.json says is kept, and undo takes a comment back.
   const { s } = session()
   const k = await addCodeCard(s, { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
@@ -88,7 +88,7 @@ const session = () => {
 }
 
 {
-  // A Card in Card has a _meta.json too, though its settings are not edited here.
+  // A Card in Card has a _comments.json too, though its settings are not edited here.
   const { s } = session()
   const k = await addCodeCard(s, { x: 0, y: 0 })
   s.setCardDefinition(k, { card: parse('{"type":"subgraph","external":"inner"}') })

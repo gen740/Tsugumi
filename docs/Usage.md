@@ -45,7 +45,7 @@ Choose **Add Card → From Template…** on the Canvas or in the Card definition
 
 Use **Add Template…** to select a folder on the host, or **Import from Git…** to enter a public HTTPS Git repository, a branch, tag or commit, and a template subdirectory. Choose a name and a destination store. A Project template is versioned under the project's `templates/` directory. A Host template is kept under `templates/` in the Host support folder and is available across projects on that host. The Agent can list and copy stored templates. Its requests to add or import require your approval.
 
-A template folder contains one directory per Card, each with the original Card definition and sources. Put internal wiring in the optional `tsugumi.json` fragment using `canvas.connections`. Put positions in the optional `layout.json` fragment using `cards`, keyed by the original Card ID. [Example folders and import values](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
+A template folder contains one directory per Card, each with the original Card definition and sources. Put internal wiring in the optional `tsugumi.json` fragment using `canvas.connections`. Put positions in the optional `layout.bin` fragment using the `cards` entries defined in `protocol/layout_document.fbs`, keyed by the original Card ID. [Example folders and import values](https://github.com/gen740/tsugumi-kit/blob/main/docs/templates.md)
 
 ## Canvas tools
 

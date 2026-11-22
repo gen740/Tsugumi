@@ -1,5 +1,7 @@
 #include "host/templates.hh"
 
+#include "host/layout_file.hh"
+
 #include <unistd.h>
 
 #ifdef __APPLE__
@@ -151,8 +153,7 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
   if (!valid_id(id)) throw Failure("invalid_request", "Invalid Card id");
   switch (kind) {
     case H::BuiltinCard::Draft:
-      return {{"_card.json", R"({"type":"draft"})"},
-              {"_meta.json", R"({"description":"","content":""})"}};
+      return {{"_card.json", R"({"type":"draft"})"}};
     case H::BuiltinCard::Trigger:
       return {{"_card.json", R"({"type":"trigger"})"}};
     case H::BuiltinCard::Branch:
@@ -169,7 +170,7 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
     case H::BuiltinCard::BooleanInput: {
       const bool boolean = kind == H::BuiltinCard::BooleanInput;
       const std::string type = boolean ? "bool" : "double";
-      const std::string value = boolean ? "false" : "0";
+      const std::string value = boolean ? R"({"bool":false})" : R"({"double":0})";
       auto ns = id;
       std::ranges::replace(ns, '-', '_');
       std::ranges::replace(ns, '.', '_');
@@ -222,8 +223,14 @@ auto CheckTemplate(TemplateFiles files) -> DocumentTemplate {
       throw Failure("invalid_document",
                     "A template Card cannot reference an external project");
   }
-  if (files.contains("layout.json")) {
-    const auto layout = json::Object(files.at("layout.json"));
+  // A template's layout.bin is read as its JSON view.
+  if (files.contains("layout.bin")) {
+    try {
+      files["layout.bin"] = LayoutView(files.at("layout.bin"), {});
+    } catch (const std::exception&) {
+      throw Failure("invalid_document", "Template layout.bin is not a layout");
+    }
+    const auto layout = json::Object(files.at("layout.bin"));
     if (layout.contains("displays") || layout.contains("frames"))
       throw Failure("invalid_document", "Template layout must be frame-free");
     for (const auto& [id, raw] :

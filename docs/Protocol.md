@@ -454,7 +454,7 @@ No fields.
 | --- | --- | --- | --- |
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
-| `view_json` | `string` | yes |  |
+| `view` | `[ubyte]` | yes |  |
 
 ### CardViewRead
 
@@ -641,7 +641,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `HostRecentRememberRequest` | `path: string` (required) |
 | `HostRecentForgetRequest` | `paths: [string]` |
 | `LayoutValidateRequest` | `json: string` (required), `removed_cards: [string]` |
-| `VersionCanvasRequest` | `layout_json: string` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
+| `VersionCanvasRequest` | `layout: [ubyte]` (required), `cards: [VersionCanvasCard]`, `wires: [VersionCanvasWire]` |
 | `FileFormatRequest` | `path: string` (required), `text: string` (required) |
 | `HostVersionGraphRequest` | `project: string` (required), `language: string`, `limit: uint` |
 | `HostVersionDiffRequest` | `project: string` (required), `commit: string` (required), `from_commit: string` |
@@ -651,7 +651,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `DemoListRequest` | None |
 | `DemoReadRequest` | `path: string` (required) |
 | `VersionNoteRequest` | `project_id: string` (required), `commit: string` (required), `language: string` (required) |
-| `LayoutCompleteRequest` | `project_json: string` (required), `layout_json: string` (required), `definitions_json: string` (required) |
+| `LayoutCompleteRequest` | `project_json: string` (required), `layout: string` (required), `definitions_json: string` (required) |
 | `IdentifierReserveRequest` | `project_id: string` (required), `kind: string` (required), `scope: string`, `occupied: [string]` |
 | `InputTypesRequest` | `project: string` (required), `card: CardPath` (required), `output_port: string`, `at_rev: ulong` |
 | `HostActivityRequest` | None |

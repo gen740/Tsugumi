@@ -2,7 +2,7 @@
 
 #include <algorithm>
 
-#include "tsugumi/util/json_object.hh"
+#include "tsugumi/document/text.hh"
 
 namespace tsugumi::comments {
 
@@ -20,27 +20,31 @@ auto find(const std::vector<Comment>& list, const std::string& card,
 }
 
 std::vector<Comment> parse(const std::string& card,
-                           const std::string& meta_json) {
+                           const std::string& comments_json) {
   std::vector<Comment> out;
+  std::string buffer;
   try {
-    auto root = json::Object(meta_json);
-    for (const auto& raw : json::Array(json::Get(root, "comments", "[]"))) {
-      const auto c = json::Object(raw);
-      Comment o;
-      o.card = card;
-      o.id = json::Text(c, "id");
-      o.text = json::Text(c, "text");
-      o.resolved = json::Bool(json::Get(c, "resolved"));
-      o.resolution = json::Text(c, "resolution");
-      o.author = json::Text(c, "author");
-      o.edited_by = json::Text(c, "editedBy");
-      o.state_by = json::Text(c, "stateBy");
-      for (const auto& k : json::Array(json::Get(c, "cards", "[]")))
-        o.cards.push_back(json::String(k));
-      out.push_back(std::move(o));
-    }
+    buffer = document_text::parse(document_text::Schema::Comments,
+                                  "_comments.json", comments_json);
   } catch (const std::exception&) {
     return {};
+  }
+  using document_text::str;
+  const auto& root =
+      document_text::root<Tsugumi::Document::Comments>(buffer);
+  for (const auto* c : *root.comments()) {
+    Comment o;
+    o.card = card;
+    o.id = str(c->id());
+    o.text = c->text()->str();
+    o.resolved = c->resolved().value_or(false);
+    o.resolution = str(c->resolution());
+    o.author = str(c->author());
+    o.edited_by = str(c->edited_by());
+    o.state_by = str(c->state_by());
+    if (const auto* cards = c->cards())
+      for (const auto* k : *cards) o.cards.push_back(k->str());
+    out.push_back(std::move(o));
   }
   return out;
 }
@@ -48,7 +52,7 @@ std::vector<Comment> parse(const std::string& card,
 auto of(const Files& files) -> std::vector<Comment> {
   std::vector<Comment> out;
   for (const auto& [path, text] : files) {
-    if (!is_meta(path)) continue;
+    if (!is_comments(path)) continue;
     if (auto card = card_of(path, files)) {
       auto list = parse(*card, text);
       out.insert(out.end(), list.begin(), list.end());
@@ -92,7 +96,7 @@ std::vector<Change> changes(const std::vector<Comment>& before,
   return out;
 }
 
-auto is_meta(const std::string& path) -> bool {
+auto is_comments(const std::string& path) -> bool {
   auto rel = path;
   while (rel.starts_with("externals/")) {
     const auto slash = rel.find('/', 10);
@@ -101,7 +105,8 @@ auto is_meta(const std::string& path) -> bool {
   }
   if (!rel.starts_with("definitions/")) return false;
   const auto slash = rel.find('/', 12);
-  return slash != std::string::npos && rel.substr(slash + 1) == "_meta.json";
+  return slash != std::string::npos &&
+         rel.substr(slash + 1) == "_comments.json";
 }
 
 auto card_of(const std::string& path, const Files& files)
@@ -119,8 +124,11 @@ auto card_of(const std::string& path, const Files& files)
       auto local = link.substr(directory.size());
       if (local.find('/', 12) != local.size() - 11) continue;
       try {
-        if (::tsugumi::json::Text(::tsugumi::json::Object(text), "external") ==
-            external) {
+        const auto buffer = document_text::parse(document_text::Schema::Card,
+                                                 link, text);
+        if (document_text::str(
+                document_text::root<Tsugumi::Document::Card>(buffer)
+                    .external()) == external) {
           id = local.substr(12, local.size() - 23);
           break;
         }

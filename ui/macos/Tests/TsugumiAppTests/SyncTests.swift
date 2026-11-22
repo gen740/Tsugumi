@@ -1,5 +1,6 @@
 import Darwin
 import Foundation
+import FlatBuffers
 import Testing
 import TsugumiAgentClient
 import TsugumiTestSupport
@@ -41,7 +42,13 @@ import TsugumiTestSupport
         let file = dir.appendingPathComponent("control/server.ready")
         guard let value = try fixtureReadiness(file, pid: process.processIdentifier, read: {
           guard let data = try? Data(contentsOf: file) else { return nil as [String: Any]? }
-          return try JSONSerialization.jsonObject(with: data) as? [String: Any]
+          var buffer = ByteBuffer(bytes: Array(data))
+          let ready: Tsugumi_State_ServerReady = try getCheckedRoot(byteBuffer: &buffer)
+          return [
+            "endpoint": ready.endpoint ?? "",
+            "token": ready.token ?? "",
+            "project_id": ready.projectId ?? "",
+          ]
         }) else { throw CocoaError(.fileReadNoSuchFile) }
         ready = value
       } catch { stop(); throw error }
@@ -95,7 +102,6 @@ import TsugumiTestSupport
       let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
       try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
         .write(to: p.appendingPathComponent("tsugumi.json"))
-      try Data("{}".utf8).write(to: p.appendingPathComponent("layout.json"))
       return p
     } catch {
       try? FileManager.default.removeItem(at: p)
@@ -149,7 +155,6 @@ import TsugumiTestSupport
 
     await s.startDraftEdit(a)
     s.inlineDraft?.content = "first Draft"
-    s.inlineDraft?.name = "same name"
     // Return/Command-Return and focus loss can submit without awaiting each
     // other. Opening the next Draft must join them before replacing the fields.
     let done = Task { await s.finishDraftEdit() }
@@ -157,7 +162,7 @@ import TsugumiTestSupport
     await s.startDraftEdit(b)
     _ = await done.value
     _ = await blurred.value
-    #expect(s.nodeData(a).summary == "first Draft" && s.displayName(a) == "same name")
+    #expect(s.nodeData(a).summary == "first Draft" && s.displayName(a) == a)
     #expect(s.inlineDraft?.card == b)
     s.inlineDraft?.content = "before running"
     // Running the unconnected trigger has no worker work; the Draft must be
@@ -177,8 +182,8 @@ import TsugumiTestSupport
     }
     #expect(w.session == nil)
     #expect(s.inlineDraft == nil && s.cardMeta(b)?["content"]?.string == "before closing")
-    let saved = try JSONValue.parse(String(contentsOf: dir.appendingPathComponent("definitions/\(b)/_meta.json"), encoding: .utf8))
-    #expect(saved["content"]?.string == "before closing", "Closing waits for the transaction on disk")
+    let saved = try String(contentsOf: dir.appendingPathComponent("definitions/\(b)/README.md"), encoding: .utf8)
+    #expect(Documents.parseReadme(saved).body == "before closing", "Closing waits for the transaction on disk")
     try await checkUnreachableTsugumid(in: dir)
   }
 
@@ -226,7 +231,7 @@ import TsugumiTestSupport
       try #require(status?.runId == accepted.run.runId && status?.state == .succeeded)
     }
     _ = try await rpc.save(baseRev: opened.snapshot.rev ?? 0, opId: marker, origin: "ui",
-                            changes: [Change.setLayout("{\"cards\":{\"b\":{\"x\":1,\"y\":2}}}")])
+                            changes: [Change.setLayout(fixtureLayout(#"{"cards":{"b":{"x":1,"y":2}}}"#))])
     let (sequences, reachedMarker) = await received.value
     await rpc.close()
     #expect(reachedMarker, "The saved-change barrier must arrive after the run notifications")

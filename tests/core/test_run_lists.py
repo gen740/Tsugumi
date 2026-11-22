@@ -282,7 +282,7 @@ def test_implementation_limit_applies_before_running_batch(core_factory, project
     graph.save(client)
 
     if prepared:
-        cards = tmp_path / "cards.jsonl"
+        cards = tmp_path / "cards.bin"
         daemon.stop()
         daemon.args = ["--prepare-cards", str(cards)]
         daemon.start(expect_exit=True)

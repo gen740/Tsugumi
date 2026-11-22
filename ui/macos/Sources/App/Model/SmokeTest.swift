@@ -1,5 +1,6 @@
 import AppKit
 import Foundation
+import FlatBuffers
 import TsugumiRPC
 
 /// Headless end-to-end check of the app's own path (demo copy -> environment
@@ -108,9 +109,22 @@ enum SmokeTest {
           _ = try await other.connect(token: ep.token, expectedProjectId: nil, client: .macos)
           let snap = try await other.inspect()
           s.edit { $0.setPosition(dk, CGPoint(x: 333, y: 333)) }
-          var layout = try JSONValue.parse(snap.layoutJson)
-          layout["cards"]?["start"] = .object([("x", .real(77)), ("y", .real(77))])
-          _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other", changes: [Change.setLayout(layout.serialized())])
+          var layout = Tsugumi_Layout_LayoutT()
+          if !snap.layout.isEmpty {
+            var buffer = ByteBuffer(bytes: snap.layout)
+            let stored: Tsugumi_Layout_Layout = try getCheckedRoot(byteBuffer: &buffer)
+            layout = stored.unpack()
+          }
+          let start = layout.cards.compactMap { $0 }.first { $0.key == "start" }
+            ?? Tsugumi_Layout_CardPlaceT()
+          start.key = "start"; start.x = 77; start.y = 77
+          layout.cards.removeAll { $0?.key == start.key }
+          layout.cards.append(start)
+          var builder = FlatBufferBuilder(initialSize: 256)
+          let offset = Tsugumi_Layout_Layout.pack(&builder, obj: &layout)
+          Tsugumi_Layout_Layout.finish(&builder, end: offset)
+          _ = try? await other.save(baseRev: snap.rev ?? 0, opId: UUID(), origin: "smoke:other",
+                                    changes: [Change.setLayout(builder.sizedByteArray)])
           await other.close()
           await s.save()
           for _ in 0..<50 where s.confirmedLayout["cards"]?["start"]?["x"]?.double != 77 { try await Task.sleep(for: .milliseconds(100)) }

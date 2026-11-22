@@ -445,7 +445,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
         x = snapToGrid(x, prefs.gridSize)
         y = snapToGrid(y, prefs.gridSize)
       }
-      // Layout only (the external's layout.json).
+      // Layout only (the external's layout.bin).
       session.setBoundaryPosition(scope, input ? 'inputs' : 'outputs', { x: Math.round(x), y: Math.round(y) })
     })
   }
@@ -514,7 +514,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       }}
       onDrop={onDrop}>
       {session.inlineDraft && <div style={{ position: 'absolute', top: 12, left: 12, maxWidth: 520, zIndex: 20 }} onPointerDown={e => e.stopPropagation()}>
-        <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.name + '\n' + session.inlineDraft!.content}
+        <RevisionEditNotice edit={session.inlineDraft.revision} text={() => session.inlineDraft!.content}
           overwrite={() => void session.finishDraftEdit(true)} reload={() => void session.startDraftEdit(session.inlineDraft!.card, session.inlineDraft!.revision)} />
       </div>}
       <div className="cv-bg" style={gridStyle(cam, prefs.showGrid, prefs.gridSize)}
@@ -622,7 +622,6 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
             onPortDown={session.isEditable ? (port, output, e) => onPortDown(k, port, output, e) : undefined}
             draftEdit={session.inlineDraft?.card === k ? {
               draft: session.inlineDraft,
-              nameProblem: session.draftNameProblem(k, session.inlineDraft.name),
               onChange: (change) => { if (session.inlineDraft?.card === k) session.setDraftEdit(change) },
               onDone: (byKey) => {
                 if (session.inlineDraft?.card !== k) return
@@ -913,7 +912,7 @@ function GroupFrameView({ session, group, scope, zoom: z, ...ev }: { session: Pr
 
 export const noteFontSize = (n: J | undefined) => dbl(get(n, 'fontSize')) ?? 13
 
-/** Markdown sticky note; it does not take part in runs. Its text size is its own (`fontSize` in layout.json). */
+/** Markdown sticky note; it does not take part in runs. Its text size is its own (`fontSize` in layout.bin). */
 function StickyNoteView({ note, zoom: z, selected, onResize, ...ev }: { note: J; zoom: number; selected: boolean; onResize: (dx: number, dy: number) => void } & ItemEvents) {
   const color = noteColor(get(note, 'color'))
   return (
@@ -1090,12 +1089,12 @@ function NoteEditor({ session, noteId, onClose }: { session: ProjectSession; not
   const [height, setHeight] = useState(dbl(get(init, 'height')) ?? 120)
   const [fontSize, setFontSize] = useState(dbl(get(init, 'fontSize')) ?? 13)
   const value = () => JSON.stringify([text, color, width, height, fontSize])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], init); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.bin', ['notes', obj([['id', noteId]])], init); return e })
   const reload = () => {
     const n = session.note(noteId)
     const t = str(get(n, 'text')) ?? '', c = str(get(n, 'color')) ?? 'yellow', w = dbl(get(n, 'width')) ?? 240, h = dbl(get(n, 'height')) ?? 120, f = dbl(get(n, 'fontSize')) ?? 13
     setText(t); setColor(c); setWidth(w); setHeight(h); setFontSize(f)
-    edit.beginField(JSON.stringify([t, c, w, h, f]), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.json', ['notes', obj([['id', noteId]])], n)
+    edit.beginField(JSON.stringify([t, c, w, h, f]), session, (session.projectPrefix(session.scopeHolding('notes', noteId) ?? []) ?? '') + 'layout.bin', ['notes', obj([['id', noteId]])], n)
   }
   const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, n => {
     if (!(n instanceof JObj)) return n
@@ -1143,7 +1142,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
     return n
   }
   const value = () => JSON.stringify([name, color, [...members].sort(), [...outputs].sort()])
-  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], init); return e })
+  const [edit] = useState(() => { const e = new InlineParamEdit(); e.beginField(value(), session, (session.projectPrefix(scope) ?? '') + 'layout.bin', ['groups', obj([['id', groupId]])], init); return e })
   const reload = () => {
     const g = session.groups(scope).find(g => str(g.get('id')) === groupId)
     const n = str(g?.get('name')) ?? '', c = str(g?.get('color')) ?? 'blue'
@@ -1152,7 +1151,7 @@ function GroupEditor({ session, scope, groupId, onClose }: { session: ProjectSes
       const c = str(get(o, 'card')), p = str(get(o, 'port')); return c && p ? [`${c}\t${p}`] : []
     }))
     setName(n); setColor(c); setMembers(m); setOutputs(o)
-    edit.beginField(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session, (session.projectPrefix(scope) ?? '') + 'layout.json', ['groups', obj([['id', groupId]])], g)
+    edit.beginField(JSON.stringify([n, c, [...m].sort(), [...o].sort()]), session, (session.projectPrefix(scope) ?? '') + 'layout.bin', ['groups', obj([['id', groupId]])], g)
   }
   const apply = (overwrite = false) => edit.commitField(session, value(), overwrite, g => {
     if (!(g instanceof JObj)) return g

@@ -23,7 +23,7 @@ const session = () => {
   s.client = { setVisible: async (_sub: unknown, cards: string[][]) => { asked.push(cards.map((c) => c.join('/'))) } } as never
   const inner = s as unknown as { subscription: string; applyDelta(d: R.DocumentDeltaT): void; apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
   inner.subscription = 'sub'
-  inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}',
+  inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layout: [],
     definitions: [definition('a', '{"type":"draft"}')], resolution: [resolved('a')] }))
   return { s, asked, apply: (d: R.DocumentDeltaT) => inner.applyDelta(d) }
 }

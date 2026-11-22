@@ -24,6 +24,7 @@ from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
+from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from harness.file_events import process_file
 from harness.host import Host
 from harness.real_cards import log, python_run
@@ -110,14 +111,14 @@ def remote_daemon(tmp_path, request, remote_store_seed):
 
     def start():
         nonlocal process, port
-        ready = state / "worker.ready.json"
+        ready = state / "worker.ready"
         ready.unlink(missing_ok=True)
         with daemon_log.open("ab") as log:
             process = subprocess.Popen(command, env=env, stdout=log, stderr=log)
         published = process_file(process, ready)
         if published is None:
             raise RuntimeError(daemon_log.read_text())
-        port = json.loads(published.read_text())["port"]
+        port = WorkerReady.GetRootAs(published.read_bytes()).Port()
         command[command.index("--port") + 1] = str(port)
 
     def restart():
@@ -302,7 +303,7 @@ def run(input):
     copyfile(input.in_, output)
     return Output(doc=output)
 """
-    source = {"type": "input", "params": [{"name": "value", "type": "string", "data": "payload.txt"}],
+    source = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "payload.txt"}}],
               "_outputs": FILE_FBS}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
@@ -399,7 +400,7 @@ def run(input):
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     result = remote_results[text(active.executionJobId)]
-    assert set(result) == {"worker.fb", "logs.jsonl", "environment.json"}
+    assert set(result) == {"worker.fb", "logs", "environment"}
     assert all(payload not in contents for contents in result.values())
 
 

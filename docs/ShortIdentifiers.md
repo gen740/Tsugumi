@@ -171,8 +171,8 @@ adds scoped short-ID reservations. Home/project `agent.sqlite` adds durable
 conversation/scope call counters. Core local history changes from version 10 to
 **11**, portable `.tsugumi/runs.sqlite` from version 8 to **9**, adding the run
 high-water mark; stored run/artifact/environment identifiers and scratch paths
-also change. `.tsugumi/project-id` now contains six characters; `_meta.json`
-comment IDs and `layout.json` note/group IDs use the composed values above.
+also change. `.tsugumi/project-id` now contains six characters; `_comments.json`
+comment IDs and `layout.bin` note/group IDs use the composed values above.
 Agent scratch moves from hashed conversation/helper directory names to their
 actual short/composed IDs. The root workflow document and Card ABI do not gain
 an alias format. **Existing development projects and incompatible host state need

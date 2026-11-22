@@ -97,7 +97,8 @@ final class CardEditorModel {
       let boolean = value == DefinitionTemplate.booleanInput.rawValue
       let type = boolean ? "bool" : "double"
       definition = .object([("type", .string("input")), ("params", .array([
-        .object([("name", .string("value")), ("type", .string(type)), ("data", boolean ? .bool(false) : .number("0"))])
+        .object([("name", .string("value")), ("type", .string(type)),
+                 ("data", Documents.paramValue(type, boolean ? .bool(false) : .number("0")))])
       ]))])
       if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
         let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
@@ -115,7 +116,7 @@ final class CardEditorModel {
   /// Source files of the definition (documents excluded), with local changes.
   var files: [String] {
     guard !prefix.isEmpty else { return [] }
-    let docs: Set<String> = [prefix + "_card.json", prefix + "_meta.json"]
+    let docs: Set<String> = [prefix + "_card.json", prefix + "README.md", prefix + "_comments.json"]
     return Set(session.sourcePaths.filter { $0.hasPrefix(prefix) && !docs.contains($0) }).union(created).subtracting(removed).sorted()
   }
 
@@ -301,7 +302,7 @@ final class CardEditorModel {
   }
 
   var recoveryText: String {
-    "_card.json\n" + (definition?.serialized() ?? "") + "\n_meta.json\n" + (meta?.serialized() ?? "") +
+    "_card.json\n" + (definition?.serialized() ?? "") + "\nREADME.md\n" + (Documents.splitCardNotes(meta).readme ?? "") +
       texts.sorted(by: { $0.key < $1.key }).map { "\n\($0.key)\n\($0.value)" }.joined() +
       removed.sorted().map { "\n- \($0)" }.joined()
   }
@@ -329,7 +330,7 @@ final class CardEditorModel {
     let ok = await revisionEdit.apply(session) { s in
       var edits: [Tsugumi_Host_ProjectEditT] = []
       if let def { edits.append(s.jsonEdit(prefix + "_card.json", old: revisionEdit.jsonBase(prefix + "_card.json", initial: baseDefinition, overwrite: overwrite), new: def)) }
-      edits.append(s.jsonEdit(prefix + "_meta.json", old: revisionEdit.jsonBase(prefix + "_meta.json", initial: baseMeta, overwrite: overwrite), new: m))
+      edits.append(contentsOf: s.notesEdits(prefix, old: revisionEdit.jsonBase(prefix + "#notes", initial: baseMeta, overwrite: overwrite), new: m))
       for (to, from) in moves.sorted(by: { $0.key < $1.key }) {
         let move = Tsugumi_Host_ProjectFileMoveT()
         move.filePath = from; move.to = to
@@ -368,7 +369,11 @@ final class CardEditorModel {
       if ends.contains(where: { $0.boundary != nil }), let prefix = s.projectPrefix(scope) {
         s.updateExternal(prefix) { ext in
           for e in ends {
-            if let name = e.boundary { ext.project["boundary"]?[e.side]?[name]?["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines)) }
+            if let name = e.boundary, var ports = ext.project["boundary"]?[e.side]?.array,
+               let i = ports.firstIndex(where: { $0["name"]?.string == name }) {
+              ports[i]["port"] = .string(bindings[e.id]!.trimmingCharacters(in: .whitespacesAndNewlines))
+              ext.project["boundary"]?[e.side] = .array(ports)
+            }
           }
         }
       }
@@ -592,14 +597,10 @@ struct CardPreview: View {
 
 // MARK: - Categories
 
-/// Name (the Card's id and folder), description, params, when it runs, and
-/// the worker's permissions.
+/// Id (the Card's only name and its folder), description, params, when it
+/// runs, and the worker's permissions.
 private struct GeneralCategory: View {
   @Bindable var model: CardEditorModel
-  @State private var name = ""
-  @State private var nameEdit = InlineParamEdit()
-  @State private var renaming = false
-  @State private var renameError: String?
 
   private var remote: Bool {
     { let id = model.definition?["executionService"]?.string ?? "auto"; return id != "local" && id != "auto" }()
@@ -608,20 +609,7 @@ private struct GeneralCategory: View {
   var body: some View {
     Form {
       Section {
-        HStack {
-          TextField("名前", text: $name)
-            .onSubmit { rename() }
-          if name != model.session.displayName(model.cardKey) {
-            Button("名前を変更") { rename() }.disabled(renaming || !model.session.isEditable)
-          }
-          if renaming { ProgressView().controlSize(.small) }
-        }
-        .help("表示する名前です。同じ名前を複数の Card に使えます。変えても ID・接続・実行履歴は変わりません（すぐに保存します）。")
-        RevisionEditNotice(edit: nameEdit.revision, text: { name }, overwrite: { rename(overwrite: true) }, reload: {
-          name = model.session.displayName(model.cardKey)
-          beginNameEdit(name)
-        })
-        if let renameError { Text(renameError).font(.caption).foregroundStyle(.red) }
+        LabeledContent("ID", value: model.session.displayName(model.cardKey))
         LabeledContent("種類", value: model.kind.label)
         LabeledContent("アイコン") {
           SymbolPicker(symbol: Binding(get: { model.definition?["symbol"]?.string.flatMap { $0.isEmpty ? nil : $0 } },
@@ -702,11 +690,6 @@ private struct GeneralCategory: View {
       }
     }
     .formStyle(.grouped)
-    .onAppear { name = model.session.displayName(model.cardKey); beginNameEdit(name) }
-    .onChange(of: model.cardKey) { name = model.session.displayName(model.cardKey); beginNameEdit(name) }
-    .onChange(of: model.session.displayName(model.cardKey)) { before, current in
-      if name == before { name = current; beginNameEdit(name) }
-    }
   }
 
   @ViewBuilder private var executionSettings: some View {
@@ -814,33 +797,12 @@ private struct GeneralCategory: View {
       }), prompt: Text(example))
   }
 
-  private func beginNameEdit(_ name: String) {
-    nameEdit.beginField(name, session: model.session, file: (model.session.definitionDir(model.cardKey) ?? "") + "_meta.json",
-                        selector: [.string("name")], value: model.session.cardMeta(model.cardKey)?["name"])
-  }
-
-  private func rename(overwrite: Bool = false) {
-    let new = name.trimmingCharacters(in: .whitespaces)
-    guard new != model.session.displayName(model.cardKey) else { return }
-    renaming = true
-    renameError = nil
-    Task {
-      do {
-        if let problem = model.session.cardNameProblem(model.cardKey, new) { throw RPCFailure(kind: .invalidRequest, diagnostic: problem) }
-        _ = await nameEdit.commitField(model.session, text: new, overwrite: overwrite) { $0 = .string(new) }
-      } catch {
-        renameError = "\(error)"
-      }
-      renaming = false
-    }
-  }
-
   private func string(_ name: String, fallback: String? = nil) -> Binding<String> {
     Binding(get: { model.definition?[name]?.string ?? fallback ?? "" },
             set: { v in model.definition?[name] = v.isEmpty || v == fallback ? nil : .string(v) })
   }
 
-  /// A Card's intent is in _meta.json.
+  /// A Card's intent is in its README.md.
   private func metaString(_ name: String) -> Binding<String> {
     Binding(get: { model.meta?[name]?.string ?? "" },
             set: { v in
@@ -955,10 +917,10 @@ private struct ParamRow: View {
     let param = model.definition?["params"]?.array?[index] ?? .object([])
     let name = param["name"]?.string ?? "?"
     let type = param["type"]?.string ?? "string"
-    let value = param["data"]
+    let value = Documents.paramData(param["data"], type: type)
     // An Input Card can hand on several values, one invocation each (an
     // execution list). A list-typed value without it stays one vector.
-    let sweep = param["sweep"]?.array
+    let sweep = param["sweep"]?.array?.compactMap { Documents.paramData($0, type: type) }
     let sweepText = draft ?? JSONValue.array(sweep ?? []).serialized(pretty: false)
     let parsed = (try? JSONValue.parse(sweepText))?.array
     let pathInput = model.kind == .input && name == "value" && type == "string" &&
@@ -968,7 +930,9 @@ private struct ParamRow: View {
         if sweep != nil {
           TextField(name, text: Binding(get: { sweepText }, set: { text in
             draft = text
-            if let values = (try? JSONValue.parse(text))?.array { update { $0["sweep"] = .array(values) } }
+            if let values = (try? JSONValue.parse(text))?.array {
+              update { $0["sweep"] = .array(values.map { Documents.paramValue(type, $0) }) }
+            }
           }))
         } else if type == "bool" {
           Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
@@ -1029,7 +993,9 @@ private struct ParamRow: View {
     model.definition?["params"] = .array(params)
   }
 
-  private func set(_ v: JSONValue?) { update { $0["data"] = v } }
+  private func set(_ v: JSONValue?) {
+    update { param in param["data"] = v.map { Documents.paramValue(param["type"]?.string, $0) } }
+  }
 
   private func setSweeping(_ on: Bool) {
     draft = nil
@@ -1074,9 +1040,6 @@ private struct PortsCategory: View {
                 .textFieldStyle(.roundedBorder).labelsHidden()
                 .frame(maxWidth: 140)
                 .help("入力ポートの名前")
-              TextField("用途", text: note("inputs", name), prompt: Text("用途（何を受け取るか）"))
-                .textFieldStyle(.roundedBorder).labelsHidden()
-                .help("このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。")
               Text(r?.inputs.first { $0.name == name }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
@@ -1119,11 +1082,6 @@ private struct PortsCategory: View {
     .formStyle(.grouped)
   }
 
-  /// Descriptions of an implemented Card's ports, kept in _meta.json.
-  private func note(_ list: String, _ name: String) -> Binding<String> {
-    portNote(model, list, name)
-  }
-
   private func editInputs(_ fn: (inout [JSONValue]) -> Void) {
     var inputs = model.definition?["inputs"]?.array ?? []
     fn(&inputs)
@@ -1141,24 +1099,6 @@ private struct PortsCategory: View {
   }
 }
 
-/// A port's purpose in _meta.json.
-@MainActor
-func portNote(_ model: CardEditorModel, _ list: String, _ name: String) -> Binding<String> {
-  Binding(get: {
-    model.meta?[list]?.array?.first { $0["name"]?.string == name }?["description"]?.string ?? ""
-  }, set: { v in
-    var m = model.meta ?? .object([])
-    var items = m[list]?.array ?? []
-    if let i = items.firstIndex(where: { $0["name"]?.string == name }) {
-      items[i]["description"] = v.isEmpty ? nil : .string(v)
-    } else if !v.isEmpty {
-      items.append(.object([("name", .string(name)), ("description", .string(v))]))
-    }
-    m[list] = items.isEmpty ? nil : .array(items)
-    model.meta = (m.object?.isEmpty ?? true) ? nil : m
-  })
-}
-
 /// A Fork's outputs, declared in _card.json (a and b until they are). Each one
 /// receives the value, with its type.
 private struct ForkOutputsSection: View {
@@ -1174,8 +1114,6 @@ private struct ForkOutputsSection: View {
             .textFieldStyle(.roundedBorder).labelsHidden()
             .frame(maxWidth: 140)
             .help("出力ポートの名前")
-          TextField("用途", text: portNote(model, "outputs", names[i]), prompt: Text("用途（何を出すか）"))
-            .textFieldStyle(.roundedBorder).labelsHidden()
           Text(r?.outputs.first { $0.name == names[i] }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             .disabled(names.count <= 1)
@@ -1216,8 +1154,6 @@ private struct OutputPortsSection: View {
       ForEach(ports(r), id: \.name) { p in
         HStack {
           Text(p.name).font(.body.monospaced()).frame(maxWidth: 120, alignment: .leading)
-          TextField("用途", text: portNote(model, "outputs", p.name), prompt: Text("用途（何を出すか）"))
-            .textFieldStyle(.roundedBorder).labelsHidden()
           let selection = p.kind == .path ? "string" : p.rootType ?? ""
           if model.outputsPath == nil {
             Text(p.typeName ?? String(localized: "未解決"))
@@ -1317,7 +1253,7 @@ private struct BoundaryCategory: View {
   }
 }
 
-/// Free text describing intent and notes, kept in `_meta.json` (`context`).
+/// Free text describing intent and notes in README.md.
 /// What the user and the Agent write about this Card. Saved at once, not with Apply
 /// (during a run, when the run ends, as other edits): it says nothing about how it runs.
 private struct CommentsCategory: View {
@@ -1333,7 +1269,7 @@ private struct CommentsCategory: View {
     let resolved = comments.filter(\.resolved)
     ScrollView {
       VStack(alignment: .leading, spacing: 8) {
-        Text("この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_meta.json に保存され、版の履歴に残ります）。")
+        Text("この Card をどう変えたいかを書きます。Canvas の「コメントから生成」で Agent が従います（_comments.json に保存され、版の履歴に残ります）。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         TextField("例: y 軸を対数にしてください", text: $text, axis: .vertical)
           .lineLimit(3...8).textFieldStyle(.roundedBorder)
@@ -1364,7 +1300,7 @@ private struct CommentsCategory: View {
 
   private func beginCommentEdit(_ id: String, _ text: String) {
     let value = session.cardMeta(card)?["comments"]?.array?.first { $0["id"]?.string == id }
-    revisionEdit.beginField(text, session: session, file: (session.definitionDir(card) ?? "") + "_meta.json",
+    revisionEdit.beginField(text, session: session, file: (session.definitionDir(card) ?? "") + "_comments.json",
                            selector: [.string("comments"), .object([("id", .string(id))])], value: value)
   }
 
@@ -1374,7 +1310,7 @@ private struct CommentsCategory: View {
       let text = copy.text.trimmingCharacters(in: .whitespacesAndNewlines)
       guard !text.isEmpty else { return }
       value?["text"] = .string(text)
-      value?["editedBy"] = .string("user")
+      value?["edited_by"] = .string("user")
     }) {
       editing = nil
     }
@@ -1477,7 +1413,7 @@ private struct ContextCategory: View {
 
   var body: some View {
     VStack(alignment: .leading, spacing: 8) {
-      Text("処理の意図や補足を文章で残します（_meta.json）。チャットで Card を参照したときにも使われます。")
+      Text("処理の意図や補足を文章で残します（README.md）。チャットで Card を参照したときにも使われます。")
         .font(.callout).foregroundStyle(.secondary)
       if model.definitionId == nil {
         Text("定義を持たない Card には追加コンテキストを置けません。").foregroundStyle(.secondary)

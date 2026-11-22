@@ -15,7 +15,6 @@ TEST(GraphDefinition, CodeCardSelectsItsImplementationInNix) {
   ts::fs::write_atomic(
       root / "tsugumi.json",
       R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"card"}],"connections":[]}})");
-  ts::fs::write_atomic(root / "layout.json", "{}");
   ts::fs::write_atomic(root / "definitions/card/default.nix",
                        "{pkgs,inputs,params}:{run=pkgs.emptyDirectory;}");
   ts::fs::write_atomic(root / "definitions/card/_outputs.fbs",

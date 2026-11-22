@@ -76,7 +76,7 @@ def test_backpressure_stall_ends_the_run(env):
         "seed": python_card(ONE_MAIN),
         "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": python_card(ONE_MAIN, inputs=["x"], maxRuns=1000, reuseWorker=True),
-        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
         "branch": {"type": "branch"},
     }
     c = load(env, defs,
@@ -318,7 +318,7 @@ def test_unselected_branch_is_not_evaluated(env):
 { run = builtins.throw "must never be evaluated"; }
 '''}
     defs = {"trigger": {"type": "trigger"},
-            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
             "branch": {"type": "branch"}, "broken": broken}
     c = load(env, defs,
              [card("start", "trigger"),

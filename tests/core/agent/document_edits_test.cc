@@ -81,7 +81,7 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
   using Kind = Tsugumi::Host::BuiltinCard;
   const auto draft = BuiltinCard(Kind::Draft, "new-card");
   EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
-  EXPECT_EQ(json::Text(json::Object(draft.at("_meta.json")), "content"), "");
+  EXPECT_FALSE(draft.contains("README.md"));
   for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
                                   {Kind::Branch, "branch"},
                                   {Kind::Fork, "fork"},
@@ -106,12 +106,12 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","data":9007199254740993}],"sandbox":{"filesystem":false},"grants":{"network":true}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","type":"uint64","data":{"uint64":9007199254740993}}],"sandbox":{"filesystem":false},"grants":{"network":true}},"readme":"Plots","comments":{"comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/_card.json",
-                     "definitions/a/_meta.json", "definitions/ab/no"},
-                    "definitions/a/", "definitions/copy/", "new name");
+                     "definitions/a/README.md", "definitions/ab/no"},
+                    "definitions/a/", "definitions/copy/");
   const auto defs =
       json::Object(json::Object(edit.edits_json).at("definitions"));
   const auto draft = json::Object(defs.at("definitions/copy/"));
@@ -120,9 +120,8 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
                 json::Object(
                     json::Object(json::Object(state).at("definitions")).at("a"))
                     .at("card")));
-  const auto meta = json::Object(draft.at("meta"));
-  EXPECT_EQ(json::Text(meta, "name"), "new name");
-  EXPECT_EQ(json::Text(meta, "description"), "Plots");
+  const auto meta = json::Object(draft.at("comments"));
+  EXPECT_EQ(json::Text(draft, "readme"), "Plots");
   const auto comment = json::Object(json::Array(meta.at("comments"))[0]);
   EXPECT_NE(json::Text(comment, "id"), "old");
   EXPECT_EQ(json::Text(comment, "text"), "one");
@@ -135,16 +134,16 @@ TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
 
 TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"meta":{"content":"unsaved"}}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
+      R"({"definitions":{"a":{"card":{"type":"subgraph","external":"inner"}}},"externals":{"externals/inner/":{"project":{"name":"inner","pkgsPath":"pinned"},"layout":{"cards":{"x":{"x":2}}},"definitions":{"x":{"card":{"type":"draft"},"readme":"unsaved"}}},"externals/inner/externals/grand/":{"project":{"name":"grand"},"layout":{},"definitions":{}}}})";
   const std::vector<std::string> paths = {
       "externals/inner/tsugumi.json",
-      "externals/inner/definitions/x/_meta.json",
+      "externals/inner/definitions/x/README.md",
       "externals/inner/definitions/removed/_card.json",
       "externals/inner/asset.bin",
       "externals/inner/externals/grand/data.bin",
       "externals/other/no"};
   const auto edit = CopyDocuments(state, paths, "definitions/a/",
-                                  "externals/target/definitions/copy/", "");
+                                  "externals/target/definitions/copy/");
   const auto patch = json::Object(edit.edits_json);
   const auto defs = json::Object(patch.at("definitions"));
   EXPECT_EQ(
@@ -167,7 +166,7 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
                 "externals/target/externals/copy/asset.bin",
                 "externals/target/externals/copy/externals/grand/data.bin"}));
   const auto external =
-      CopyDocuments(state, paths, "externals/inner/", "externals/another/", "");
+      CopyDocuments(state, paths, "externals/inner/", "externals/another/");
   EXPECT_EQ(external.files.size(), 2);
   EXPECT_EQ(
       json::Object(json::Object(external.edits_json).at("externals")).size(),
@@ -177,16 +176,16 @@ TEST(DocumentCopy, LinkedDefinitionCopiesNestedDocumentsAndAllOtherBytes) {
 TEST(DocumentCopy, MissingLinkedProjectCannotProduceAPartialCopy) {
   EXPECT_THROW(
       CopyDocuments(R"({"definitions":{"a":{"card":{"type":"subgraph","external":"missing"}}}})",
-                    {}, "definitions/a/", "definitions/b/", ""),
+                    {}, "definitions/a/", "definitions/b/"),
       std::runtime_error);
   EXPECT_THROW(
-      CopyDocuments("{}", {}, "externals/missing/", "externals/copy/", ""),
+      CopyDocuments("{}", {}, "externals/missing/", "externals/copy/"),
       std::runtime_error);
 }
 
 TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   const std::string root =
-      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":{"input":{"card":"a","port":"in"}},"outputs":{"result":{"card":"b","port":"out"}}}})";
+      R"({"name":"parent","pkgsPath":"pinned","nixSources":[{"name":"science","type":"flake","ref":"locked","overrides":{"p":{"override":{"flag":true}}}}],"settings":{"future":42},"canvas":{"cards":[{"id":"a","sandbox":{"filesystem":false},"grants":{"network":true},"params":[{"name":"value","data":7}]},{"id":"b"},{"id":"c"}],"connections":[{"from":{"card":"a","port":"x"},"to":{"card":"b","port":"in"}},{"from":{"card":"c","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"a","port":"x"},"to":{"card":"c","port":"in"}}]},"boundary":{"inputs":[{"name":"input","card":"a","port":"in"}],"outputs":[{"name":"result","card":"b","port":"out"}]}})";
   const auto edit = MakeSubgraph(root, {"a", "b"}, "sub");
   const auto before = json::Object(root),
              outer = json::Object(edit.project_json),
@@ -217,15 +216,17 @@ TEST(DocumentSubgraph, PreservesRunConditionsAndBothSidesOfBoundary) {
   EXPECT_FALSE(selected.contains("c"));
   EXPECT_EQ(json::Array(graph.at("connections")).size(), 1);
   const auto boundary = json::Object(inner.at("boundary"));
-  EXPECT_EQ(json::Object(boundary.at("inputs")).size(), 1);
-  EXPECT_EQ(json::Object(boundary.at("outputs")).size(), 2);
+  EXPECT_EQ(json::Array(boundary.at("inputs")).size(), 1);
+  EXPECT_EQ(json::Array(boundary.at("outputs")).size(), 2);
   const auto outer_boundary = json::Object(outer.at("boundary"));
   for (const auto* side : {"inputs", "outputs"})
-    for (const auto& [name, endpoint] : json::Object(outer_boundary.at(side))) {
-      (void)name;
+    for (const auto& endpoint : json::Array(outer_boundary.at(side))) {
       EXPECT_EQ(json::Text(json::Object(endpoint), "card"), "sub");
       const auto port = json::Text(json::Object(endpoint), "port");
-      EXPECT_TRUE(json::Object(boundary.at(side)).contains(port));
+      const auto ends = json::Array(boundary.at(side));
+      EXPECT_TRUE(std::any_of(ends.begin(), ends.end(), [&](const auto& end) {
+        return json::Text(json::Object(end), "name") == port;
+      }));
     }
   EXPECT_EQ(
       json::Array(json::Object(outer.at("canvas")).at("connections")).size(),
@@ -238,10 +239,10 @@ TEST(DocumentSubgraph, ReusesEndpointsAndDisambiguatesPortNames) {
       {"a_b", "a"}, "sub");
   const auto boundary =
       json::Object(json::Object(edit.external_json).at("boundary"));
-  const auto ports = json::Object(boundary.at("outputs"));
-  EXPECT_EQ(ports.size(), 2);
-  EXPECT_TRUE(ports.contains("a_b_c"));
-  EXPECT_TRUE(ports.contains("a_b_c2"));
+  std::set<std::string> ports;
+  for (const auto& output : json::Array(boundary.at("outputs")))
+    ports.insert(json::Text(json::Object(output), "name"));
+  EXPECT_EQ(ports, (std::set<std::string>{"a_b_c", "a_b_c2"}));
   const auto wires =
       json::Array(json::Object(json::Object(edit.project_json).at("canvas"))
                       .at("connections"));

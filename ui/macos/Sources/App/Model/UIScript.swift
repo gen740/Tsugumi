@@ -174,7 +174,7 @@ final class UIScript {
         if let s = session, let rpc = s.rpc, var card = s.confirmedDefinitions[w[1]] {
           card[w[2]] = .string(w.dropFirst(3).joined(separator: " "))
           _ = try? await rpc.save(baseRev: s.rev, opId: UUID(), origin: "script:other",
-                                  changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), metaJSON: s.confirmedDefinitionMeta[w[1]]?.serialized())])
+                                  changes: [Change.putDefinition(id: w[1], cardJSON: card.serialized(), keepNotes: true)])
         }
       case "marquee":
         // The items a Shift + drag over these world coordinates selects (the script cannot hold Shift).

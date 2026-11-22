@@ -1,0 +1,129 @@
+// definitions/<id>/_card.json: one Card's kind and execution settings.
+//
+// Saved as FlatBuffers JSON text and read with the FlatBuffers parser (see
+// project_document.fbs). Keys keep the document's camelCase spelling.
+
+namespace Tsugumi.Document;
+
+/// What the Card is.
+enum CardType:ubyte {
+  code,
+  draft,
+  trigger,
+  input,
+  branch,
+  fork,
+  merge,
+  collect,
+  subgraph,
+}
+
+/// One param value, in the field named after the param's declared type
+/// (`bool`, `int64`, `uint64`, `double`, `string`; `bools`, `int64s`,
+/// `uint64s`, `doubles`, `strings` for the list types). The core checks that
+/// exactly that field is set.
+table ParamValue {
+  bool:bool = null;
+  int64:long = null;
+  uint64:ulong = null;
+  double:double = null;
+  string:string;
+  bools:[bool];
+  int64s:[long];
+  uint64s:[ulong];
+  doubles:[double];
+  strings:[string];
+}
+
+table Param {
+  name:string (required);
+  /// bool, int64, uint64, double, string, or one of those followed by [].
+  type:string (required);
+  data:ParamValue;
+  /// An Input Card's direct value sweep: one invocation per value, instead
+  /// of data. A list-typed param sweeps lists.
+  sweep:[ParamValue];
+  nix:bool = null;
+}
+
+table Input {
+  name:string (required);
+}
+
+/// A Fork's output port; other Cards' outputs come from their schema.
+table Output {
+  name:string (required);
+}
+
+/// A folder the worker may read (Experimental): a folder of the Mac, seen in
+/// the worker as /host/<name>.
+table HostFolder {
+  /// Absolute path on the Mac.
+  path:string (required);
+  /// Folder name under /host (an id).
+  name:string (required);
+  /// Default false: read-only.
+  write:bool = null;
+}
+
+table SandboxLimits {
+  /// CPUs, in (0, 256].
+  cpu:double = null;
+  memoryMiB:ulong = null;
+}
+
+table Sandbox {
+  filesystem:bool = null;
+  pid:bool = null;
+  ipc:bool = null;
+  identity:bool = null;
+  limits:SandboxLimits;
+}
+
+table Grants {
+  network:bool = null;
+  gui:bool = null;
+  hostPaths:[HostFolder];
+}
+
+table WorkerCondition {
+  language:string (required);
+  expression:string (required);
+}
+
+table Card {
+  /// Required.
+  type:CardType = null;
+  /// externals/<external>/ for a subgraph (Card in Card).
+  external:string;
+  symbol:string;
+  params:[Param];
+  inputs:[Input];
+  /// A Fork's.
+  outputs:[Output];
+  maxRuns:ulong = null;
+  /// Positive; absent means no deadline.
+  timeoutSeconds:ulong = null;
+  buildTimeoutSeconds:ulong = null;
+  recordLogs:bool = null;
+  recordIO:bool = null;
+  retainArtifact:bool = null;
+  artifactOutput:string;
+  sandbox:Sandbox;
+  grants:Grants;
+  /// Keep worker state across invocations and runs. Default false.
+  reuseWorker:bool = null;
+  executionService:string;
+  workerCondition:WorkerCondition;
+  /// The Nix system the Card is built for and runs as: "x86_64-linux" or
+  /// "aarch64-linux". Default: this machine's. Another one runs emulated.
+  system:string;
+  /// How a figure on the canvas follows the Card's results: "update" (the
+  /// default) or "live". Carried opaquely; only clients interpret it.
+  displayMode:string;
+  /// Names of the Card secrets the Card's process receives as environment
+  /// variables of the same name. Values live only in hostd's secret store.
+  secrets:[string];
+}
+
+root_type Card;

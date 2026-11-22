@@ -16,8 +16,8 @@ namespace {
 using host::Failure;
 namespace H = Tsugumi::Host;
 const std::set<std::string> kProtected{
-    "tsugumi.json", "layout.json",  "_card.json", "_meta.json",
-    "_inputs.fbs",  "_outputs.fbs", "_params.fbs"};
+    "tsugumi.json", "layout.bin",   "_card.json",  "README.md",
+    "_comments.json", "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
 auto CardRoot(const std::string& path) -> std::string {
   if (!fs::valid_relative_path(path)) return {};
   auto rest = path;
@@ -39,7 +39,8 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
   for (const auto& part : std::filesystem::path(path))
     if (part == ".tsugumi" || part == ".git") return false;
   const auto file = path.substr(root.size() + 1);
-  if (file.empty() || file == "_card.json" || file == "_meta.json")
+  if (file.empty() || file == "_card.json" || file == "README.md" ||
+      file == "_comments.json")
     return false;
   return !shell || !kProtected.contains(file);
 }
@@ -207,7 +208,6 @@ auto Tools::FileOperation(const std::string& conversation,
         item->demo = json::Text(args, "demo");
       item->from = json::Text(args, "card");
       item->id = json::Text(args, "id");
-      item->name = json::Text(args, "name");
       item->x = std::stod(json::Get(args, "x", "0"));
       item->y = std::stod(json::Get(args, "y", "0"));
       if (attached_card ? item->folder.empty() : item->demo.empty())
@@ -273,7 +273,9 @@ auto Tools::FileOperation(const std::string& conversation,
     const auto definition = json::Object(raw);
     const auto dir = "definitions/" + json::Text(definition, "id") + '/';
     for (const auto& [field, file] :
-         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}}) {
+         {std::pair{"card_json", "_card.json"},
+          {"readme", "README.md"},
+          {"comments_json", "_comments.json"}}) {
       const auto bytes = json::Text(definition, field);
       if (!bytes.empty()) hashes[dir + file] = crypto::sha256_hex(bytes);
     }
@@ -378,8 +380,6 @@ auto Tools::FileOperation(const std::string& conversation,
     if (!boundary || !boundary->scoped()) {
       fs::write_atomic(work / "tsugumi.json",
                        json::Text(snapshot, "project_json"));
-      fs::write_atomic(work / "layout.json",
-                       json::Text(snapshot, "layout_json", "{}"));
     }
     std::set<std::string> writable, protected_paths;
     std::map<std::string, std::string> initial;

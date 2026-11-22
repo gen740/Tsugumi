@@ -313,7 +313,11 @@ auto Projects::Apply(const A::Request& request) -> std::string {
       case A::RequestPayload::HostProjectDefaultsRequest: {
         const auto document = parse_project_json(initial_project_json(""));
         return json::Encode(json::Members{
-            {"nixpkgsPin", json::Quote(document.pkgs_path->value())}});
+            {"nixpkgsPin",
+             json::Quote(document_text::root<Tsugumi::Document::Project>(
+                             document.buffer)
+                             .pkgsPath()
+                             ->str())}});
       }
       case A::RequestPayload::HostProjectInfoRequest:
         return Info(
@@ -330,9 +334,10 @@ auto Projects::Apply(const A::Request& request) -> std::string {
         const auto destination = Path(p->parent()->str()) / name;
         return Populate(destination, [&] {
           fs::write_atomic(destination / "tsugumi.json", document);
-          fs::write_atomic(
-              destination / "layout.json",
-              json::Encode(json::Members{{"flow", json::Quote(flow)}}) + '\n');
+          Tsugumi::Layout::LayoutT layout;
+          layout.flow = flow;
+          fs::write_atomic(destination / "layout.bin",
+                           document_text::pack<Tsugumi::Layout::Layout>(layout));
         });
       }
       case A::RequestPayload::HostProjectDuplicateRequest: {

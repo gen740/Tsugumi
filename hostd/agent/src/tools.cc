@@ -1,5 +1,7 @@
 #include "agent/tools.hh"
 
+#include "host/layout_file.hh"
+
 #include <algorithm>
 #include <condition_variable>
 #include <future>
@@ -434,9 +436,10 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
   const bool project_document =
       file_path == "tsugumi.json" ||
       host::IsExternalDocument(file_path, "tsugumi.json");
+  // layout.bin is read as its JSON view (the notes' text is in notes/).
   const bool layout_document =
-      file_path == "layout.json" ||
-      host::IsExternalDocument(file_path, "layout.json");
+      file_path == "layout.bin" ||
+      host::IsExternalDocument(file_path, "layout.bin");
   if (name == "project_file_read" && (project_document || layout_document)) {
     // A projected document is a complete page. Guards retain the original hash.
     auto envelope = json::Object(result);
@@ -448,7 +451,9 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
       if (!json::Bool(json::Get(value, "eof")))
         throw Failure("invalid_request",
                       "Read the project document in one page");
-      const auto text = policy.FileText(file_path, json::Text(value, "bytes"));
+      const auto bytes = host::DecodeSourceBytes(json::Get(value, "bytes", "\"\""));
+      const auto text = policy.FileText(
+          file_path, layout_document ? host::LayoutView(bytes, {}) : bytes);
       value["bytes"] = json::Quote(text);
       value["size_bytes"] = value["next_offset"] =
           json::Quote(std::to_string(text.size()));

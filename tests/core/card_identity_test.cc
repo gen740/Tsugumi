@@ -20,11 +20,11 @@ TEST(InitialDocument, LoadsAnEmptyProjectAndEscapesItsName) {
   } cleanup{root};
   const std::string name = "New \"project\"\n日本語";
   const auto text = initial_project_json(name);
-  const auto project = parse_project_json(text);
-  EXPECT_EQ(schema::text(project.name->value()),
-            schema::text(schema::string_value(name)));
-  EXPECT_TRUE(project.canvas->value().cards->value().empty());
-  EXPECT_TRUE(project.canvas->value().connections->value().empty());
+  const auto parsed = parse_project_json(text);
+  const auto& project = document_text::root<Tsugumi::Document::Project>(parsed.buffer);
+  EXPECT_EQ(project.name()->str(), name);
+  EXPECT_EQ(project.canvas()->cards()->size(), 0);
+  EXPECT_EQ(project.canvas()->connections()->size(), 0);
   fs::write_atomic(root / "tsugumi.json", text);
   const auto loaded = load_from_disk(root);
   EXPECT_EQ(loaded->project_json, text);
@@ -33,12 +33,12 @@ TEST(InitialDocument, LoadsAnEmptyProjectAndEscapesItsName) {
 }
 
 TEST(CardIdentity, MetadataIsNonComputationalOnlyAtDefinitionPaths) {
-  EXPECT_TRUE(Document::is_card_meta_file("definitions/card/_meta.json"));
-  EXPECT_TRUE(Document::is_card_meta_file(
-      "externals/outer/externals/inner/definitions/card/_meta.json"));
-  EXPECT_FALSE(Document::is_card_meta_file(
-      "definitions/card/src/definitions/data/_meta.json"));
-  EXPECT_FALSE(Document::is_card_meta_file(
+  EXPECT_TRUE(Document::is_card_note_file("definitions/card/README.md"));
+  EXPECT_TRUE(Document::is_card_note_file(
+      "externals/outer/externals/inner/definitions/card/README.md"));
+  EXPECT_FALSE(Document::is_card_note_file(
+      "definitions/card/src/definitions/data/README.md"));
+  EXPECT_FALSE(Document::is_card_note_file(
       "externals/outer/definitions/card/_card.json"));
 }
 
@@ -78,7 +78,6 @@ TEST(CardIdentity,
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
   fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
-  fs::write_atomic(root / "layout.json", "{}");
   fs::write_atomic(root / "externals/child/tsugumi.json",
                    R"({"canvas":{"cards":[],"connections":[]}})");
   fs::write_atomic(root / ".tsugumi/card-ids", "CASE\n");

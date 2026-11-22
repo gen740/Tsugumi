@@ -72,8 +72,8 @@ TEST_F(AgentProjectFixture,
   const auto root = directory.path / "project";
   Write(root / "definitions/start/_card.json", R"({"type":"trigger"})");
   Write(root / "definitions/plan/_card.json", R"({"type":"draft"})");
-  Write(root / "definitions/plan/_meta.json",
-        R"({"description":"Make a greeting","content":"Return hello."})");
+  const std::string readme = "---\ndescription: Make a greeting\n---\n\nReturn hello.";
+  Write(root / "definitions/plan/README.md", readme);
   Write(root / "definitions/next/_card.json", R"({"type":"draft"})");
   StartProject(
       false,
@@ -89,23 +89,6 @@ TEST_F(AgentProjectFixture,
   const auto end = reference.find("\n```", begin);
   ASSERT_NE(end, std::string::npos);
   const auto args = reference.substr(begin, end - begin);
-  auto edits = json::Array(json::Get(json::Object(args), "edits"));
-  std::erase_if(edits, [](const auto& raw) {
-    return json::Text(json::Object(raw), "file_path") ==
-           "definitions/plan/_meta.json";
-  });
-  const auto before = Read(root / "tsugumi.json");
-  const auto refused =
-      Tool(conversation, "project_edit",
-           json::Encode(json::Members{{"edits", json::Encode(edits)}}),
-           "missing-context");
-  ASSERT_TRUE(refused.Code().empty()) << refused.View();
-  EXPECT_TRUE(JsonBool(refused.View(), "/isError"));
-  EXPECT_EQ(Read(root / "tsugumi.json"), before);
-  EXPECT_EQ(Read(root / "definitions/plan/_card.json"),
-            R"({"type":"draft"})");
-  EXPECT_FALSE(std::filesystem::exists(root / "definitions/plan/src/main.py"));
-
   const auto reply = Tool(conversation, "project_edit", args, "implement");
   ASSERT_TRUE(reply.Code().empty()) << reply.View();
   ASSERT_FALSE(JsonBool(reply.View(), "/isError")) << reply.View();
@@ -114,10 +97,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
-  const auto meta = Read(root / "definitions/plan/_meta.json");
-  EXPECT_EQ(JsonString(meta, "/description"), "Make a greeting");
-  EXPECT_EQ(JsonString(meta, "/content"), "Return hello.");
-  EXPECT_FALSE(JsonString(meta, "/context").empty());
+  EXPECT_EQ(Read(root / "definitions/plan/README.md"), readme);
   const auto definition = Read(root / "definitions/plan/_card.json");
   EXPECT_EQ(JsonString(definition, "/type"), "code");
   EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/default.nix"));
@@ -256,10 +236,8 @@ TEST_F(AgentProjectFixture,
         R"({"type":"draft"})");
   Write(directory.path / "project/definitions/b/_card.json",
         R"({"type":"draft"})");
-  const std::string meta =
-      "{\n  \"description\": \"Keep my words\", \"comments\": "
-      "[{\"id\":\"c1\",\"text\":\"Question\",\"author\":\"user\"}]\n}\n";
-  Write(directory.path / "project/definitions/a/_meta.json", meta);
+  const std::string readme = "---\ndescription: Keep my words\n---\n";
+  Write(directory.path / "project/definitions/a/README.md", readme);
   Write(directory.path / "project/definitions/a/data.bin",
         std::string("\0\xff", 2));
   StartProject(
@@ -280,7 +258,7 @@ TEST_F(AgentProjectFixture,
       Tool(conversation, "project_layout", R"({"action":"arrange"})", "layout");
   ASSERT_TRUE(laid_out.Code().empty()) << laid_out.View();
   ASSERT_FALSE(JsonBool(laid_out.View(), "/isError")) << laid_out.View();
-  EXPECT_NE(Read(directory.path / "project/layout.json").find("\"a\""),
+  EXPECT_NE(FixtureLayoutText(Read(directory.path / "project/layout.bin")).find("\"a\""),
             std::string::npos);
   const auto untangled = Tool(conversation, "project_layout",
                               R"({"action":"untangle"})", "untangle");
@@ -293,13 +271,13 @@ TEST_F(AgentProjectFixture,
       Read(directory.path / "project/externals/group/definitions/a/data.bin"),
       std::string("\0\xff", 2));
   EXPECT_EQ(
-      Read(directory.path / "project/externals/group/definitions/a/_meta.json"),
-      meta);
+      Read(directory.path / "project/externals/group/definitions/a/README.md"),
+      readme);
   EXPECT_FALSE(
       std::filesystem::exists(directory.path / "project/definitions/a"));
-  EXPECT_NE(Read(directory.path / "project/layout.json").find("\"group\""),
+  EXPECT_NE(FixtureLayoutText(Read(directory.path / "project/layout.bin")).find("\"group\""),
             std::string::npos);
-  EXPECT_NE(Read(directory.path / "project/externals/group/layout.json")
+  EXPECT_NE(FixtureLayoutText(Read(directory.path / "project/externals/group/layout.bin"))
                 .find("\"a\""),
             std::string::npos);
 }

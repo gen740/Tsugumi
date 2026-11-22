@@ -23,6 +23,7 @@ import {
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
+import { cardNotes, layoutView, noteId, paramData, paramValue, parseReadme, printReadme, splitCardNotes } from './documents'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
@@ -83,7 +84,7 @@ export const stageRecords = (list: R.StageTimeT[]): StageRecord[] =>
     return st === undefined ? [] : [{ stage: st, outcome: t.outcome, start: t.start !== null ? Number(t.start) : undefined, end: t.end !== null ? Number(t.end) : undefined }]
   })
 
-/** What the user and the Agent write about a Card (_meta.json), and the record
+/** What the user and the Agent write about a Card (_comments.json), and the record
  *  of who did what ("agent" or "user"; absent when not recorded). */
 export interface CardComment {
   id: string
@@ -104,7 +105,7 @@ export function cardComments(meta: J | undefined): CardComment[] {
     const id = str(get(c, 'id')), text = str(get(c, 'text'))
     return id && text !== undefined ? [{
       id, text, resolved: bool(get(c, 'resolved')) ?? false, finding: bool(get(c, 'finding')) ?? false, resolution: str(get(c, 'resolution')) || undefined,
-      author: str(get(c, 'author')), editedBy: str(get(c, 'editedBy')), stateBy: str(get(c, 'stateBy')),
+      author: str(get(c, 'author')), editedBy: str(get(c, 'edited_by')), stateBy: str(get(c, 'state_by')),
       cards: (arr(get(c, 'cards')) ?? []).map((x) => str(x)).filter((x): x is string => !!x),
     }] : []
   })
@@ -170,18 +171,18 @@ export interface TimelineEntry {
   stages: StageRecord[]
 }
 
-/** A Draft being written on its Card: its name and content as typed so far. */
+/** A Draft being written on its Card: its content as typed so far. */
 export interface InlineDraft {
   card: CardKey
-  name: string
   content: string
-  initialName: string
   initialContent: string
-  initialMeta?: J
+  initialReadme?: string
   revision: RevisionEdit
 }
 
-/** Draft of one Card's definition (`_card.json` and optional `_meta.json`). */
+/** Draft of one Card's definition: `_card.json`, and its notes (README.md's
+ *  description and body and _comments.json, as {description, content,
+ *  comments}; see documents.ts). */
 export interface DefinitionDraft {
   card: J
   meta?: J
@@ -193,7 +194,7 @@ export interface DefinitionDraft {
 export interface ExternalProject {
   project: J
   layout: J
-  /** Card id -> its definition files (_card.json and optional _meta.json). */
+  /** Card id -> its definition files (_card.json, README.md, _comments.json). */
   definitions: Map<string, DefinitionDraft>
   /** Removed (the folder goes with it). */
 }
@@ -283,7 +284,11 @@ export class ProjectSession extends Observable {
   confirmedDefinitionMeta = new Map<string, J>()
   /** Externals by folder ("externals/<name>/", nested "…/externals/<name>/"). */
   externals = new Map<string, ExternalProject>()
-  private externalDocuments = new Map<string, J>()
+  /** Bytes of the files the core carries: nested projects' documents and the
+   *  canvas notes (notes/<id>.md). */
+  private sourceDocuments = new Map<string, Uint8Array>()
+  /** The confirmed layout.bin; confirmedLayout is its view with the notes. */
+  private confirmedLayoutBytes: Uint8Array = new Uint8Array()
   sources = new Map<string, { hash: string; size: bigint }>()
   resolution = new Map<CardKey, ResolvedCard>()
   diagnostics: Diagnostic[] = []
@@ -297,7 +302,7 @@ export class ProjectSession extends Observable {
   private draftFinishTask?: Promise<CardKey | undefined>
   get hasUnsavedEdits() {
     const e = this.inlineDraft
-    return this.dirty || !!this.draftFinishTask || !!e && (e.name !== e.initialName || e.content !== e.initialContent)
+    return this.dirty || !!this.draftFinishTask || !!e && e.content !== e.initialContent
   }
   /** Edited externals (by folder), written back as their files. */
   /** Base hashes chosen by an editor that read the file before this draft started. */
@@ -765,7 +770,7 @@ export class ProjectSession extends Observable {
       const id = s(d.id)
       const c = tryParse(s(d.cardJson))
       if (c !== undefined) this.confirmedDefinitions.set(id, c)
-      const m = d.metaJson !== null ? tryParse(s(d.metaJson)) : undefined
+      const m = cardNotes(sOpt(d.readme), sOpt(d.commentsJson))
       if (m !== undefined) this.confirmedDefinitionMeta.set(id, m)
       else this.confirmedDefinitionMeta.delete(id)
     }
@@ -777,22 +782,23 @@ export class ProjectSession extends Observable {
     this.documentRevisions.reset(this.rev)
     this.executionRev = snap.executionRev ?? 0n
     this.confirmedProject = tryParse(s(snap.projectJson)) ?? obj()
-    this.confirmedLayout = tryParse(s(snap.layoutJson)) ?? obj()
+    this.confirmedLayoutBytes = Uint8Array.from(snap.layout)
     this.confirmedDefinitions = new Map()
     this.confirmedDefinitionMeta = new Map()
     this.readDefinitions(snap.definitions)
     this.sources = new Map()
-    this.externalDocuments.clear()
+    this.sourceDocuments.clear()
     this.externals.clear()
     this.derivedLayouts.clear()
     this.layoutTasks.clear()
     this.applySources(snap.sources, [])
+    this.confirmedLayout = this.layoutAt('')
     this.refreshDerivedLayout()
     this.applyResolution(snap.resolution, snap.diagnostics)
     if (this.currentRunId !== sOpt(snap.run?.runId)) this.runBatches = new Map()
     this.runStatus = snap.run ?? undefined
     this.viewRev = snap.viewRev ?? 0n
-    const view = readViewState(s(snap.viewJson))
+    const view = readViewState(snap.view)
     if (view) {
       this.initialScope = view.scope
       for (const cam of view.cameras) this.cameras.set(key(cam.scope), { x: cam.x, y: cam.y, zoom: cam.zoom })
@@ -842,16 +848,14 @@ export class ProjectSession extends Observable {
       const v = tryParse(s(d.projectJson))
       if (v !== undefined) this.confirmedProject = v
     }
-    if (d.layoutJson !== null) {
-      const v = tryParse(s(d.layoutJson))
-      if (v !== undefined) this.confirmedLayout = v
-    }
+    if (d.layoutChanged) this.confirmedLayoutBytes = Uint8Array.from(d.layout)
     for (const id of d.definitionsRemoved) {
       this.confirmedDefinitions.delete(s(id))
       this.confirmedDefinitionMeta.delete(s(id))
     }
     this.readDefinitions(d.definitionsUpsert)
     this.applySources(d.sourcesUpsert, d.sourcesRemoved.map(s))
+    this.confirmedLayout = this.layoutAt('')
     if (d.origin === 'agent') {
       const cards = [...d.definitionsUpsert.map(x => s(x.id)), ...d.sourcesUpsert.flatMap(x => {
         const parts = s(x.path).split('/')
@@ -953,11 +957,11 @@ export class ProjectSession extends Observable {
     if (!prefix || !before) return
     const after = cloneExternal(before); fn(after)
     this.editJSON(prefix + 'tsugumi.json', before.project, after.project)
-    this.editJSON(prefix + 'layout.json', before.layout, after.layout)
+    this.editJSON(prefix + 'layout.bin', before.layout, after.layout)
     for (const [id, d] of after.definitions) {
       const old = before.definitions.get(id), dir = prefix + 'definitions/' + id + '/'
       this.editJSON(dir + '_card.json', old?.card, d.card)
-      this.editJSON(dir + '_meta.json', old?.meta, d.meta)
+      this.editNotes(dir, old?.meta, d.meta)
     }
   }
 
@@ -973,6 +977,22 @@ export class ProjectSession extends Observable {
     return new H.ProjectEditT(H.ProjectEditValue.ProjectJSONEdit, new H.ProjectJSONEditT(file,
       new H.ProjectValueT(before !== undefined, before === undefined ? null : serialize(before)),
       new H.ProjectValueT(after !== undefined, after === undefined ? null : serialize(after))))
+  }
+
+  /** Edits of a Card's notes: its README.md (as a JSON string) and _comments.json. */
+  notesEdits(dir: string, before: J | undefined, after: J | undefined): H.ProjectEditT[] {
+    const was = splitCardNotes(before), now = splitCardNotes(after)
+    const edits: H.ProjectEditT[] = []
+    if (was.readme !== now.readme) edits.push(this.jsonEdit(dir + 'README.md', was.readme, now.readme))
+    if (!jeq(was.comments, now.comments)) edits.push(this.jsonEdit(dir + '_comments.json', was.comments, now.comments))
+    return edits
+  }
+
+  private editNotes(dir: string, before: J | undefined, after: J | undefined) {
+    const edits = this.notesEdits(dir, before, after)
+    if (!edits.length) return
+    if (this.commandEdits) this.commandEdits.push(...edits)
+    else void this.operateFields(edits).catch(e => this.cardEditFailed(e))
   }
 
   private editJSON(file: string, before: J | undefined, after: J | undefined) {
@@ -1248,7 +1268,7 @@ export class ProjectSession extends Observable {
     if (prefix === undefined) return
     const before = this.layoutOf(scope), after = clone(before)
     if (!isObj(after)) return
-    fn(after); this.editJSON(prefix + 'layout.json', before, after)
+    fn(after); this.editJSON(prefix + 'layout.bin', before, after)
   }
 
   /** A Card's key in the layout of its scope (inside a Card in Card: its id). */
@@ -1285,7 +1305,7 @@ export class ProjectSession extends Observable {
     return d && definitionKind(d.card) !== 'subgraph' ? d.card : undefined
   }
 
-  /** The Card's _meta.json. */
+  /** The Card's notes: {description, content, comments}. */
   cardMeta(k: CardKey): J | undefined {
     return this.cardDefinitionDraft(k)?.meta
   }
@@ -1295,7 +1315,7 @@ export class ProjectSession extends Observable {
     const dir = this.definitionDir(k), before = this.cardDefinitionDraft(k)
     if (!dir || !d) return
     this.editJSON(dir + '_card.json', before?.card, d.card)
-    this.editJSON(dir + '_meta.json', before?.meta, d.meta)
+    this.editNotes(dir, before?.meta, d.meta)
   }
 
   /** The external project of a Card in Card ("externals/<name>/…"), if it is one. */
@@ -1315,7 +1335,12 @@ export class ProjectSession extends Observable {
   /** A Card in Card's ports: its external's boundary. */
   boundary(k: CardKey): J | undefined {
     const ext = this.cardExternal(k)
-    return ext ? get(this.external(ext)?.project, 'boundary') : undefined
+    const boundary = ext ? get(this.external(ext)?.project, 'boundary') : undefined
+    if (!boundary) return undefined
+    return obj(['inputs', 'outputs'].map(side => [side, obj((arr(get(boundary, side)) ?? []).flatMap(port => {
+      const name = str(get(port, 'name'))
+      return name ? [[name, port]] : []
+    }))]))
   }
 
   /** Changes a Card's _card.json in the draft. */
@@ -1328,7 +1353,7 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
-  /** Changes a Card's _meta.json in the draft. */
+  /** Changes a Card's notes in the draft. */
   updateMeta(k: CardKey, fn: (m: JObj) => void) {
     const d = this.cardDefinitionDraft(k)
     if (!d) return
@@ -1338,7 +1363,7 @@ export class ProjectSession extends Observable {
     this.setCardDefinition(k, n)
   }
 
-  // ---- Comments on a Card (its _meta.json) ---------------------------------------------
+  // ---- Comments on a Card (its _comments.json) ------------------------------------------
 
   /** What the user asks of this Card, in the order written. */
   comments(k: CardKey): CardComment[] {
@@ -1389,7 +1414,7 @@ export class ProjectSession extends Observable {
       return list.map((c) => {
         if (str(get(c, 'id')) === id && isObj(c)) {
           c.set('text', t)
-          c.set('editedBy', 'user')
+          c.set('edited_by', 'user')
         }
         return c
       })
@@ -1401,7 +1426,7 @@ export class ProjectSession extends Observable {
     this.editComments(k, (list) => list.map((c) => {
       if (str(get(c, 'id')) === id && isObj(c)) {
         c.set('resolved', resolved ? true : undefined)
-        c.set('stateBy', 'user')
+        c.set('state_by', 'user')
         if (!resolved) {
           c.set('resolution', undefined)
           c.set('cards', undefined)
@@ -1472,42 +1497,69 @@ export class ProjectSession extends Observable {
     return { x: dbl(get(derived, 'x')) ?? 0, y: dbl(get(derived, 'y')) ?? 0 }
   }
 
+  /** The text of a carried file. */
+  private carriedText(path: string): string | undefined {
+    const bytes = this.sourceDocuments.get(path)
+    return bytes ? new TextDecoder().decode(bytes) : undefined
+  }
+
+  /** The layout view of a project ("" or "externals/<p>/…"): its layout.bin
+   *  and the text of its notes. */
+  private layoutAt(prefix: string): JObj {
+    const notes = new Map<string, string>()
+    for (const path of this.sourceDocuments.keys()) {
+      const id = noteId(prefix, path)
+      if (id !== undefined && path.slice(prefix.length).split('/').length === 2) notes.set(id, this.carriedText(path) ?? '')
+    }
+    try {
+      return layoutView(prefix ? this.sourceDocuments.get(prefix + 'layout.bin') : this.confirmedLayoutBytes, notes)
+    } catch (error) {
+      this.notice = `${prefix}layout.bin: ${errorText(error)}`
+      return obj()
+    }
+  }
+
   private applySources(upserts: R.SourceInfoT[], removed: string[]) {
     let changed = false
     for (const path of removed) {
       this.sources.delete(path)
-      changed = this.externalDocuments.delete(path) || changed
+      changed = this.sourceDocuments.delete(path) || changed
     }
     for (const src of upserts) {
       const path = s(src.path)
       this.sources.set(path, { hash: s(src.hash), size: src.sizeBytes ?? 0n })
-      if (src.documentJson === null) continue
+      // A carried file: a nested project's documents or a note (which may be empty).
+      if (!src.document.length && noteId(path.slice(0, path.lastIndexOf('notes/')), path) === undefined) continue
       changed = true
-      try {
-        this.externalDocuments.set(path, parse(s(src.documentJson)))
-      } catch (error) {
-        this.externalDocuments.delete(path)
-        this.notice = `${path}: ${errorText(error)}`
-      }
+      this.sourceDocuments.set(path, Uint8Array.from(src.document))
     }
     if (!changed) return
+    const json = (path: string): J | undefined => {
+      const text = this.carriedText(path)
+      if (text === undefined) return undefined
+      try { return parse(text) } catch (error) {
+        this.notice = `${path}: ${errorText(error)}`
+        return undefined
+      }
+    }
     const found = new Map<string, ExternalProject>()
-    for (const [path, project] of this.externalDocuments) {
+    for (const path of this.sourceDocuments.keys()) {
       if (!path.endsWith('/tsugumi.json')) continue
       const prefix = path.slice(0, -'tsugumi.json'.length)
-      found.set(prefix, {
-        project, layout: this.externalDocuments.get(prefix + 'layout.json') ?? obj(),
-        definitions: new Map(),
-      })
+      const project = json(path)
+      if (project === undefined) continue
+      found.set(prefix, { project, layout: this.layoutAt(prefix), definitions: new Map() })
     }
-    for (const [path, card] of this.externalDocuments) {
+    for (const path of this.sourceDocuments.keys()) {
       if (!path.endsWith('/_card.json')) continue
+      const card = json(path)
+      if (card === undefined) continue
       const dir = path.slice(0, -'_card.json'.length)
       const split = dir.lastIndexOf('/', dir.length - 2) + 1
       const id = dir.slice(split, -1)
       const prefix = dir.slice(0, split - 'definitions/'.length)
       found.get(prefix)?.definitions.set(id, {
-        card, meta: this.externalDocuments.get(dir + '_meta.json'),
+        card, meta: cardNotes(this.carriedText(dir + 'README.md'), this.carriedText(dir + '_comments.json')),
       })
     }
     const previous = this.externals
@@ -1529,9 +1581,9 @@ export class ProjectSession extends Observable {
     return definitionKind(this.cardDefinitionDraft(k)?.card)
   }
 
-  /** The editable human name; the identifier remains the exact address. */
+  /** A Card's name: its id, the only name it has. */
   displayName(k: CardKey): string {
-    return str(get(this.cardMeta(k), 'name')) || path(k).pop() || k
+    return path(k).pop() || k
   }
 
   /** A human-readable path. Pass the original segments to tools and links. */
@@ -1613,7 +1665,7 @@ export class ProjectSession extends Observable {
   async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, automaticPlacement = false): Promise<CardKey> {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
     await this.operate(H.ProjectOperationBody.ProjectCreateCard, new H.ProjectCreateCardT(
-      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, BUILTIN_CARDS[t], name ?? templateBaseName(t), at.x, at.y, automaticPlacement))
+      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, BUILTIN_CARDS[t], at.x, at.y, automaticPlacement))
     this.forgetResult(key([...scope, id]))
     return key([...scope, id])
   }
@@ -1644,7 +1696,7 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(base, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
-        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(from, id, base, at.x, at.y)]))
+        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(from, id, at.x, at.y)]))
       this.forgetResult(key([...scope, id]))
       return key([...scope, id])
     } catch (e) { this.cardEditFailed(e); return undefined }
@@ -1654,7 +1706,7 @@ export class ProjectSession extends Observable {
     const newId = await this.newCardId(id, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectCopy, new H.ProjectCopyT(
-        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, newId, null, at.x, at.y)]))
+        (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), [new H.ProjectCopyItemT(`${prefix}definitions/${id}/`, newId, at.x, at.y)]))
       this.forgetResult(key([...scope, newId]))
       return key([...scope, newId])
     } catch (e) { this.cardEditFailed(e); return undefined }
@@ -1692,12 +1744,6 @@ export class ProjectSession extends Observable {
     this.changed()
   }
 
-  /** Names are independent of identifiers and may be shared by several Cards. */
-  cardNameProblem(_k: CardKey, raw: string): string | undefined {
-    if (!raw.trim() || new TextEncoder().encode(raw.trim()).length > 4096) return L('名前を入力してください（4096 バイトまで）。')
-    return undefined
-  }
-
   // ---- A Draft written on the canvas -------------------------------------------------
 
   /** Whether a Draft has no name of its own: its id is one made for it. */
@@ -1705,7 +1751,7 @@ export class ProjectSession extends Observable {
     return this.kind(k) === 'draft' && this.displayName(k) === 'draft'
   }
 
-  /** Starts writing a Draft's name and content on its Card. */
+  /** Starts writing a Draft's content on its Card. */
   async startDraftEdit(k: CardKey, revision?: RevisionEdit) {
     if (!revision && this.inlineDraft) {
       if (this.inlineDraft.card === k) return
@@ -1713,18 +1759,13 @@ export class ProjectSession extends Observable {
       if (this.inlineDraft) return
     }
     revision ??= new RevisionEdit()
-    const name = this.draftUntitled(k) ? '' : this.displayName(k), content = str(get(this.cardMeta(k), 'content')) ?? ''
+    const content = str(get(this.cardMeta(k), 'content')) ?? ''
     revision.reload(this.rev)
-    this.inlineDraft = { card: k, name, content, initialName: name, initialContent: content, initialMeta: clone(this.cardMeta(k)), revision }
+    this.inlineDraft = { card: k, content, initialContent: content, initialReadme: splitCardNotes(this.cardMeta(k)).readme, revision }
     this.changed()
   }
 
-  /** Why the name typed on a Draft's Card cannot be taken (no name is fine). */
-  draftNameProblem(k: CardKey, name: string): string | undefined {
-    return name.trim() ? this.cardNameProblem(k, name) : undefined
-  }
-
-  setDraftEdit(change: Partial<Pick<InlineDraft, 'name' | 'content'>>) {
+  setDraftEdit(change: Partial<Pick<InlineDraft, 'content'>>) {
     if (!this.inlineDraft) return
     this.inlineDraft = { ...this.inlineDraft, ...change }
     this.changed()
@@ -1751,28 +1792,23 @@ export class ProjectSession extends Observable {
   private async finishDraftEditOnce(overwrite: boolean): Promise<CardKey | undefined> {
     const e = this.inlineDraft
     if (!e) return undefined
-    const contentChanged = e.content !== e.initialContent
-    const nameChanged = e.name !== e.initialName
-    if (!this.instance(e.card) || (!contentChanged && !nameChanged)) {
+    if (!this.instance(e.card) || e.content === e.initialContent) {
       this.inlineDraft = undefined; this.changed(); return undefined
     }
-    const name = e.name.trim() || 'draft'
-    const problem = nameChanged ? this.cardNameProblem(e.card, name) : undefined
-    if (problem) { this.notice = problem; e.revision.error = problem; e.revision.changed(); this.changed(); return undefined }
     const dir = this.definitionDir(e.card)
     if (!dir) return undefined
-    const before = e.revision.jsonBase(dir + '_meta.json', e.initialMeta, overwrite)
-    const after = clone(before) ?? obj()
-    if (!isObj(after)) return undefined
-    if (contentChanged) after.set('content', e.content || undefined)
-    if (nameChanged) after.set('name', name)
-    const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + '_meta.json', before, after)]))
+    // The README.md as it was when writing began (or as the conflict found it).
+    const base = e.revision.jsonBase(dir + 'README.md', e.initialReadme, overwrite)
+    const before = typeof base === 'string' ? base : undefined
+    const readme = parseReadme(before ?? '')
+    const after = printReadme({ ...readme, body: e.content })
+    const ok = await e.revision.apply(this, x => x.appendEdits([x.jsonEdit(dir + 'README.md', before, after)]))
     if (ok && this.inlineDraft?.revision === e.revision) {
-      if (this.inlineDraft.name === e.name && this.inlineDraft.content === e.content) this.inlineDraft = undefined
-      else this.inlineDraft = { ...this.inlineDraft, initialName: e.name, initialContent: e.content, initialMeta: clone(after) }
+      if (this.inlineDraft.content === e.content) this.inlineDraft = undefined
+      else this.inlineDraft = { ...this.inlineDraft, initialContent: e.content, initialReadme: after }
     }
     this.changed()
-    return ok && nameChanged ? e.card : undefined
+    return undefined
   }
 
   deleteCards(keys: Set<CardKey>, scope: string[]) {
@@ -1808,9 +1844,9 @@ export class ProjectSession extends Observable {
       if (entry === undefined) {
         const at = this.position(k), placed = obj([['x', real(at.x)], ['y', real(at.y)]])
         if (value) placed.set('collapsed', true)
-        return [this.fieldEdit(prefix + 'layout.json', ['cards', this.layoutKey(k)], undefined, placed)]
+        return [this.fieldEdit(prefix + 'layout.bin', ['cards', this.layoutKey(k)], undefined, placed)]
       }
-      return [this.fieldEdit(prefix + 'layout.json', ['cards', this.layoutKey(k), 'collapsed'], get(entry, 'collapsed'), value ? true : undefined)]
+      return [this.fieldEdit(prefix + 'layout.bin', ['cards', this.layoutKey(k), 'collapsed'], get(entry, 'collapsed'), value ? true : undefined)]
     })).catch(e => this.cardEditFailed(e))
   }
 
@@ -1820,14 +1856,16 @@ export class ProjectSession extends Observable {
       const dir = this.definitionDir(k)
       if (dir) {
         const selector = ['params', obj([['name', name]])]
-        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'), value)])
+        const type = str(get(initial.parameter, 'type'))
+        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'),
+          value === undefined ? undefined : paramValue(type, value))])
       }
       return
     }
     this.updateCard(k, (c) => {
       const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
       const p = params.find((p) => str(get(p, 'name')) === name)
-      if (isObj(p)) p.set('data', value)
+      if (isObj(p)) p.set('data', value === undefined ? undefined : paramValue(str(p.get('type')), value))
       c.set('params', params)
     })
   }
@@ -1839,7 +1877,7 @@ export class ProjectSession extends Observable {
     const id = await this.newCardId(name, scope)
     try {
       await this.operate(H.ProjectOperationBody.ProjectMakeSubgraph, new H.ProjectMakeSubgraphT(
-        prefix.replace(/\/$/, ''), [...keys].map(k => path(k).pop()!).sort(), id, name))
+        prefix.replace(/\/$/, ''), [...keys].map(k => path(k).pop()!).sort(), id))
       return key([...scope, id])
     } catch (e) { this.cardEditFailed(e); return undefined }
   }
@@ -1906,7 +1944,7 @@ export class ProjectSession extends Observable {
   private async operateLayoutEntity(scope: string[], field: string, id: string, oldValue: J | undefined, newValue: J | undefined) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
-    await this.operateFields([this.fieldEdit(prefix + 'layout.json', [field, obj([['id', id]])], oldValue, newValue)])
+    await this.operateFields([this.fieldEdit(prefix + 'layout.bin', [field, obj([['id', id]])], oldValue, newValue)])
   }
 
   updateNote(id: string, fn: (n: JObj) => void) {
@@ -1914,7 +1952,7 @@ export class ProjectSession extends Observable {
       const scope = this.scopeHolding('notes', id), before = this.note(id)
       if (!scope || !before) throw new Error('Unknown note: ' + id)
       const prefix = this.projectPrefix(scope), after = clone(before) as JObj; fn(after)
-      return [this.fieldEdit(prefix + 'layout.json', ['notes', obj([['id', id]])], before, after)]
+      return [this.fieldEdit(prefix + 'layout.bin', ['notes', obj([['id', id]])], before, after)]
     }).catch(e => this.cardEditFailed(e))
   }
 
@@ -1953,13 +1991,13 @@ export class ProjectSession extends Observable {
   setBoundaryPosition(scope: string[], side: string, p: { x: number; y: number }) {
     const prefix = this.projectPrefix(scope)
     if (prefix === undefined) return
-    void this.operateFields(() => [this.fieldEdit(prefix + 'layout.json', ['boundary', side], get(this.layoutOf(scope), 'boundary', side),
+    void this.operateFields(() => [this.fieldEdit(prefix + 'layout.bin', ['boundary', side], get(this.layoutOf(scope), 'boundary', side),
       obj([['x', real(Math.round(p.x * 10) / 10)], ['y', real(Math.round(p.y * 10) / 10)]]))]).catch(e => this.cardEditFailed(e))
   }
 
-  // Inferring a missing flow from Card places is presentation of layout.json:
+  // Inferring a missing flow from Card places is presentation of the layout:
   // each UI does it itself rather than asking hostd.
-  /** The direction this project's Cards are laid out in (layout.json "flow");
+  /** The direction this project's Cards are laid out in (the layout's "flow");
    *  without one, read from where the wired Cards sit, else the app's default. */
   get flow(): FlowDirection {
     const f = str(get(this.layout, 'flow'))
@@ -1977,7 +2015,7 @@ export class ProjectSession extends Observable {
   }
 
   setFlow(f: FlowDirection) {
-    void this.operateFields(() => [this.fieldEdit('layout.json', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
+    void this.operateFields(() => [this.fieldEdit('layout.bin', ['flow'], get(this.layout, 'flow'), f)]).catch(e => this.cardEditFailed(e))
   }
 
   layoutHost = layoutHost
@@ -2185,7 +2223,8 @@ export class ProjectSession extends Observable {
   portData(k: CardKey, definition?: J, meta?: J): { inputs: PortData[]; outputs: PortData[] } {
     const def = definition ?? this.cardDefinition(k)
     const m = meta ?? this.cardMeta(k)
-    const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
+    // Ports have no notes of their own: a Card's README.md describes them.
+    const note = (_list: string, _name: string): string | undefined => (void m, undefined)
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
       inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')), note: note('inputs', 'in') }],
@@ -2218,7 +2257,7 @@ export class ProjectSession extends Observable {
       if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
       // Swept values are edited in the Card's settings, where the list is visible.
       if (get(p, 'sweep') !== undefined) return []
-      return [{ name, type, value: paramText(get(p, 'data')) }]
+      return [{ name, type, value: paramText(paramData(get(p, 'data'), type)) }]
     })
   }
 
@@ -2346,7 +2385,7 @@ export class ProjectSession extends Observable {
     const pending = state?.executionState === D.RemoteExecutionState.queued || state?.executionState === D.RemoteExecutionState.disconnected ||
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
-      title: str(get(m, 'name')) || path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
+      title: path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
       inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
@@ -2367,7 +2406,7 @@ export class ProjectSession extends Observable {
     return prefs.showGrid ? { x: snapToGrid(p.x, prefs.gridSize), y: snapToGrid(p.y, prefs.gridSize) } : p
   }
 
-  // Shown ports and their order (layout.json inputOrder / outputOrder) are
+  // Shown ports and their order (the layout's inputOrder / outputOrder) are
   // presentation: each UI works them out itself rather than asking hostd.
   private visualPorts(k: CardKey, ports: PortData[], output: boolean): PortData[] {
     if (!['code', 'draft', 'input', 'subgraph'].includes(this.kind(k))) return ports
@@ -2409,7 +2448,7 @@ export class ProjectSession extends Observable {
       const entry = get(this.layoutOf(scope), 'cards', this.layoutKey(k))
       for (const field of ['inputOrder', 'outputOrder']) {
         const value = get(entry, field)
-        if (value !== undefined) edits.push(this.fieldEdit(`${prefix}layout.json`, ['cards', this.layoutKey(k), field], value, undefined))
+        if (value !== undefined) edits.push(this.fieldEdit(`${prefix}layout.bin`, ['cards', this.layoutKey(k), field], value, undefined))
       }
     }
     try { await this.operateFields(edits) } catch (error) { this.cardEditFailed(error) }

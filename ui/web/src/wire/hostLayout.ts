@@ -9,6 +9,6 @@ export const layoutHost = {
     s((await hostCall<H.LayoutValidatedT>(H.RequestPayload.LayoutCompleteRequest,
       new H.LayoutCompleteRequestT(project, layout, JSON.stringify(definitions)), H.ReplyPayload.LayoutValidated)).json),
   versionCanvas: (data: VersionCanvasT) => hostCall<H.VersionCanvasT>(H.RequestPayload.VersionCanvasRequest,
-    new H.VersionCanvasRequestT(data.layoutJson, data.cards.map(c => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
+    new H.VersionCanvasRequestT(data.layout, data.cards.map(c => new H.VersionCanvasCardT(c.id, 0, 0, c.kind, c.fan)),
       data.wires.map(w => new H.VersionCanvasWireT(w.from, w.to))), H.ReplyPayload.VersionCanvas),
 }

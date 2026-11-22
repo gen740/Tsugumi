@@ -8,6 +8,8 @@
 #include <fstream>
 #include <thread>
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
 #include "server.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -107,19 +109,17 @@ auto main(int argc, char** argv) -> int {
   tsugumi::Server server(options, &daemon);
   daemon.server = &server;
   server.start();
-  fs::write_atomic(
-      control / "server.ready",
-      json::Encode(json::Members{
-          {"protocol", "1"},
-          {"pid", std::to_string(getpid())},
-          {"endpoint",
-           json::Quote("ws://127.0.0.1:" +
-                       std::to_string(server.bound_tcp_port()) + "/rpc")},
-          {"token", json::Quote(daemon.token)},
-          {"project_id", json::Quote(daemon.project)},
-          {"server_instance_id", json::Quote(daemon.instance)},
-          {"unix_socket", json::Quote(unix_socket)}}),
-      0600);
+  Tsugumi::State::ServerReadyT ready;
+  ready.protocol = 1;
+  ready.pid = getpid();
+  ready.endpoint = "ws://127.0.0.1:" +
+                   std::to_string(server.bound_tcp_port()) + "/rpc";
+  ready.token = daemon.token;
+  ready.project_id = daemon.project;
+  ready.unix_socket = unix_socket;
+  fs::write_atomic(control / "server.ready",
+                   tsugumi::flat::encode<Tsugumi::State::ServerReady>(ready),
+                   0600);
   int caught = 0;
   sigwait(&signals, &caught);
   std::filesystem::remove(control / "server.ready");

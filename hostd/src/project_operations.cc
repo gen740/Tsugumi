@@ -1,5 +1,7 @@
 #include "host/project_operations.hh"
 
+#include "host/layout_file.hh"
+
 #include <algorithm>
 #include <cmath>
 #include <limits>
@@ -84,7 +86,11 @@ auto Prepare(
         put.file_path = document->path;
         put.expect_missing = !old;
         if (old) put.expected_hash = crypto::sha256_hex(*old);
-        put.bytes.assign(document->json.begin(), document->json.end());
+        // A README.md is Markdown, given as a JSON string.
+        const auto bytes = document->path.ends_with("/README.md")
+                               ? json::String(document->json)
+                               : document->json;
+        put.bytes.assign(bytes.begin(), bytes.end());
         entry->value.Set(std::move(put));
       } else if (old) {
         H::ProjectFileRemoveT remove;
@@ -163,7 +169,7 @@ auto Prepare(
   } else
     throw Failure("invalid_request", "missing operation body");
   const auto project = required(prefix + "tsugumi.json");
-  const auto layout_path = prefix + "layout.json";
+  const auto layout_path = prefix + "layout.bin";
   auto read_layout = [&] { return get(layout_path).value_or("{}"); };
   auto read_geometry =
       [&](const std::string& relative) -> std::optional<LayoutFile> {
@@ -223,48 +229,49 @@ auto Prepare(
     graph["cards"] = json::Encode(cards);
     root["canvas"] = json::Encode(graph);
     put(prefix + "tsugumi.json", json::Encode(root));
-    auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                               prefix + "layout.json");
+    auto layout = json::Object(get(prefix + "layout.bin").value_or("{}"),
+                               prefix + "layout.bin");
     if (layout.contains("boundaries")) {
       auto entries = json::Object(layout.at("boundaries"),
-                                  prefix + "layout.json.boundaries");
+                                  prefix + "layout.bin.boundaries");
       std::erase_if(entries, [&](const auto& entry) {
         return entry.first == id || entry.first.starts_with(id + '/');
       });
       layout["boundaries"] = json::Encode(entries);
-      put(prefix + "layout.json", json::Encode(layout));
+      put(prefix + "layout.bin", json::Encode(layout));
     }
     if (!automatic) write_position(id, std::to_string(x), std::to_string(y));
   };
+  // A definition in a document state: {"card": _card.json, "readme":
+  // README.md text, "comments": _comments.json}.
   auto definition = [&](const std::string& dir, const std::string& raw) {
     const auto parts = json::Object(raw);
-    for (const auto& [key, name] :
-         {std::pair{"card", "_card.json"}, {"meta", "_meta.json"}})
-      if (parts.contains(key)) put(dir + name, parts.at(key));
+    if (parts.contains("card")) put(dir + "_card.json", parts.at("card"));
+    if (parts.contains("readme"))
+      put(dir + "README.md", json::String(parts.at("readme")));
+    if (parts.contains("comments"))
+      put(dir + "_comments.json", parts.at("comments"));
   };
   auto external = [&](const std::string& to, const std::string& raw) {
     const auto state = json::Object(raw);
     put(to + "tsugumi.json", json::Get(state, "project", "{}"));
-    put(to + "layout.json", json::Get(state, "layout", "{}"));
+    put(to + "layout.bin", json::Get(state, "layout", "{}"));
     for (const auto& [id, d] :
          json::Object(json::Get(state, "definitions", "{}")))
       definition(to + "definitions/" + id + '/', d);
   };
-  auto link = [&](const std::string& id, const std::string& name) {
+  auto link = [&](const std::string& id) {
     definition(prefix + "definitions/" + id + '/',
                json::Encode(json::Members{
-                   {"card",
-                    json::Encode(json::Members{
-                        {"type", json::Quote("subgraph")},
-                        {"external", json::Quote(id)}})},
-                   {"meta", json::Encode(
-                                json::Members{{"name", json::Quote(name)}})}}));
+                   {"card", json::Encode(json::Members{
+                                {"type", json::Quote("subgraph")},
+                                {"external", json::Quote(id)}})}}));
   };
   auto document_state = [&](const auto& files) {
     auto scope = [&](const std::string& at) {
       json::Members state{{"project", files.at(at + "tsugumi.json")},
-                          {"layout", files.contains(at + "layout.json")
-                                         ? files.at(at + "layout.json")
+                          {"layout", files.contains(at + "layout.bin")
+                                         ? files.at(at + "layout.bin")
                                          : "{}"}};
       json::Members definitions;
       for (const auto& [path, bytes] : files) {
@@ -275,12 +282,13 @@ auto Prepare(
             rest.find('/', slash + 1) != std::string::npos)
           continue;
         const auto file = rest.substr(slash + 1), id = rest.substr(0, slash);
-        std::string key = file == "_card.json"   ? "card"
-                          : file == "_meta.json" ? "meta"
-                                                 : "";
+        std::string key = file == "_card.json"       ? "card"
+                          : file == "README.md"      ? "readme"
+                          : file == "_comments.json" ? "comments"
+                                                     : "";
         if (key.empty()) continue;
         auto d = json::Object(json::Get(definitions, id, "{}"));
-        d[key] = bytes;
+        d[key] = key == "readme" ? json::Quote(bytes) : bytes;
         definitions[id] = json::Encode(d);
       }
       state["definitions"] = json::Encode(definitions);
@@ -401,22 +409,22 @@ auto Prepare(
                                        prefix + "tsugumi.json.boundary");
           for (const auto& side : {"inputs", "outputs"}) {
             if (!boundary.contains(side)) continue;
-            auto ends = json::Object(boundary.at(side),
+            auto ends = json::Array(boundary.at(side),
                                      prefix + "tsugumi.json.boundary." + side);
             std::erase_if(ends, [&](const auto& item) {
               return ids.contains(
-                  json::Text(json::Object(item.second), "card"));
+                  json::Text(json::Object(item), "card"));
             });
             boundary[side] = json::Encode(ends);
           }
           if (root.contains("boundary"))
             root["boundary"] = json::Encode(boundary);
-          auto layout = json::Object(get(prefix + "layout.json").value_or("{}"),
-                                     prefix + "layout.json");
+          auto layout = json::Object(get(prefix + "layout.bin").value_or("{}"),
+                                     prefix + "layout.bin");
           for (const auto& field : {"cards", "boundaries"}) {
             if (!layout.contains(field)) continue;
             auto values =
-                json::Object(layout.at(field), prefix + "layout.json." + field);
+                json::Object(layout.at(field), prefix + "layout.bin." + field);
             std::erase_if(values, [&](const auto& item) {
               return std::any_of(ids.begin(), ids.end(), [&](const auto& id) {
                 return item.first == id || item.first.starts_with(id + '/');
@@ -426,11 +434,11 @@ auto Prepare(
           }
           if (layout.contains("notes")) {
             auto notes =
-                json::Array(layout.at("notes"), prefix + "layout.json.notes");
+                json::Array(layout.at("notes"), prefix + "layout.bin.notes");
             size_t note_index = 0;
             std::erase_if(notes, [&](const auto& raw) {
               const auto id = json::Text(
-                  json::Object(raw, prefix + "layout.json.notes[" +
+                  json::Object(raw, prefix + "layout.bin.notes[" +
                                         std::to_string(note_index++) + "]"),
                   "id");
               return std::find(selection->notes.begin(), selection->notes.end(),
@@ -440,10 +448,10 @@ auto Prepare(
           }
           if (layout.contains("groups")) {
             auto groups =
-                json::Array(layout.at("groups"), prefix + "layout.json.groups");
+                json::Array(layout.at("groups"), prefix + "layout.bin.groups");
             size_t group_index = 0;
             for (auto& raw : groups) {
-              const auto at = prefix + "layout.json.groups[" +
+              const auto at = prefix + "layout.bin.groups[" +
                               std::to_string(group_index++) + "]";
               auto group = json::Object(raw, at);
               for (const auto& field : {"cards", "outputs"}) {
@@ -467,7 +475,7 @@ auto Prepare(
             }
             layout["groups"] = json::Encode(groups);
           }
-          put(prefix + "layout.json", json::Encode(layout));
+          put(prefix + "layout.bin", json::Encode(layout));
         }
         put(prefix + "tsugumi.json", json::Encode(root));
       }
@@ -489,9 +497,6 @@ auto Prepare(
   } else if (const auto* create = body.AsProjectCreateCard()) {
     empty(prefix + "definitions/" + create->id + '/');
     auto files = BuiltinCard(create->kind, create->id);
-    auto meta = json::Object(json::Get(files, "_meta.json", "{}"));
-    if (!create->name.empty()) meta["name"] = json::Quote(create->name);
-    files["_meta.json"] = json::Encode(meta);
     const auto dir = prefix + "definitions/" + create->id + '/';
     for (const auto& [path, bytes] : files) put(dir + path, bytes);
     place(create->id, create->x, create->y, create->automatic_placement);
@@ -543,7 +548,7 @@ auto Prepare(
     }
     const auto state = document_state(source_files);
     const auto layout =
-        json::Object(json::Get(contents.files, "layout.json", "{}"));
+        json::Object(json::Get(contents.files, "layout.bin", "{}"));
     const auto positions = json::Object(json::Get(layout, "cards", "{}"));
     auto offset_x = std::numeric_limits<double>::infinity();
     auto offset_y = std::numeric_limits<double>::infinity();
@@ -577,7 +582,7 @@ auto Prepare(
       empty(to);
       empty(prefix + "externals/" + id + '/');
       const auto patch = CopyDocuments(state, source_paths,
-                                       "definitions/" + old + '/', to, {});
+                                       "definitions/" + old + '/', to);
       for (const auto& [dir, raw] :
            json::Object(json::Object(patch.edits_json).at("definitions")))
         definition(dir, raw);
@@ -606,11 +611,26 @@ auto Prepare(
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';
     empty(destination);
+    // Its layout.bin and notes are one layout view, like every project's.
+    std::map<std::string, LayoutFiles> layouts;
     for (const auto& [path, bytes] :
-         ReadProjectFiles(imported->path, authorize))
-      put(destination + path, bytes);
-    link(imported->id,
-         std::filesystem::path(imported->path).filename().string());
+         ReadProjectFiles(imported->path, authorize)) {
+      if (path == "layout.bin" || IsExternalDocument(path, "layout.bin")) {
+        layouts[path.substr(0, path.size() - 10)].layout = bytes;
+      } else if (Document::is_note_file(path)) {
+        const auto at = path.substr(0, path.rfind("notes/"));
+        if (const auto note = NoteId(at, path)) layouts[at].notes[*note] = bytes;
+      } else {
+        put(destination + path, bytes);
+      }
+    }
+    try {
+      for (const auto& [at, files] : layouts)
+        put(destination + at + "layout.bin", LayoutView(files.layout, files.notes));
+    } catch (const std::exception&) {
+      throw Failure("invalid_document", "The project's layout.bin is invalid");
+    }
+    link(imported->id);
     place(imported->id, imported->x, imported->y);
   } else if (const auto* copy = body.AsProjectCopy()) {
     if (copy->items.empty())
@@ -671,7 +691,7 @@ auto Prepare(
           if (path.starts_with(dir) && authorize)
             authorize(imported ? (source_root / path).string() : path);
       const auto patch = CopyDocuments(source_state, source_paths, from,
-                                       destination, item->name);
+                                       destination);
       const auto values = json::Object(patch.edits_json);
       for (const auto& [dir, raw] :
            json::Object(json::Get(values, "definitions", "{}")))
@@ -685,7 +705,7 @@ auto Prepare(
         put(file.to,
             imported ? imported_files.at(file.from) : required(file.from));
       if (is_external)
-        link(item->id, item->name.empty() ? item->id : item->name);
+        link(item->id);
       double x = item->x, y = item->y;
       if (copy->copy_connections) {
         if (!item->from.starts_with(prefix + "definitions/"))
@@ -752,12 +772,12 @@ auto Prepare(
     cx /= subgraph->cards.size();
     cy /= subgraph->cards.size();
     for (auto& [id, raw] : inner_positions) {
-      auto pos = json::Object(raw, prefix + "layout.json.cards." + id);
+      auto pos = json::Object(raw, prefix + "layout.bin.cards." + id);
       pos["x"] = std::to_string(std::stod(pos.at("x")) - cx);
       pos["y"] = std::to_string(std::stod(pos.at("y")) - cy);
       raw = json::Encode(pos);
     }
-    put(destination + "layout.json",
+    put(destination + "layout.bin",
         json::Encode(json::Members{{"cards", json::Encode(inner_positions)}}));
     auto selected = [&](const std::string& id) {
       return std::find(subgraph->cards.begin(), subgraph->cards.end(), id) !=
@@ -765,7 +785,7 @@ auto Prepare(
     };
     for (const auto& field : {"cards", "boundaries"}) {
       auto entries = json::Object(json::Get(outer_layout, field, "{}"),
-                                  prefix + "layout.json." + field);
+                                  prefix + "layout.bin." + field);
       std::erase_if(entries, [&](const auto& entry) {
         const auto slash = entry.first.find('/');
         return selected(entry.first.substr(0, slash));
@@ -777,11 +797,11 @@ auto Prepare(
         outer_layout[field] = json::Encode(entries);
     }
     auto groups = json::Array(json::Get(outer_layout, "groups", "[]"),
-                              prefix + "layout.json.groups");
+                              prefix + "layout.bin.groups");
     size_t group_index = 0;
     for (auto& raw : groups) {
       const auto at =
-          prefix + "layout.json.groups[" + std::to_string(group_index++) + "]";
+          prefix + "layout.bin.groups[" + std::to_string(group_index++) + "]";
       auto group = json::Object(raw, at);
       auto members =
           json::Array(json::Get(group, "cards", "[]"), at + ".cards");
@@ -803,10 +823,7 @@ auto Prepare(
     }
     if (outer_layout.contains("groups"))
       outer_layout["groups"] = json::Encode(groups);
-    put(prefix + "layout.json", json::Encode(outer_layout));
-    if (!subgraph->name.empty())
-      put(prefix + "definitions/" + subgraph->id + "/_meta.json",
-          json::Encode(json::Members{{"name", json::Quote(subgraph->name)}}));
+    put(prefix + "layout.bin", json::Encode(outer_layout));
   } else if (const auto* move = body.AsProjectMove()) {
     put(layout_path,
         MoveProjectLayout(project, read_layout(), read_geometry, *move));
@@ -848,13 +865,13 @@ auto Authored(const json::Members& plan, SaveBase base) -> SaveBase {
     const auto change = json::Object(raw);
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
-    if (type == "SetProject" || type == "SetLayout")
-      base.files[type == "SetProject" ? "tsugumi.json" : "layout.json"] =
-          json::Text(value, "json");
+    if (type == "SetProject")
+      base.files["tsugumi.json"] = json::Text(value, "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, file] :
-           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
+      for (const auto& [key, file] : {std::pair{"card_json", "_card.json"},
+                                      {"readme", "README.md"},
+                                      {"comments_json", "_comments.json"}})
         if (value.contains(key)) {
           const auto text = json::Text(value, key);
           if (text.empty())
@@ -884,15 +901,14 @@ auto Preserve(json::Members plan, const SaveBase& base) -> json::Members {
     };
     if (type == "SetProject")
       preserve("tsugumi.json", "json");
-    else if (type == "SetLayout")
-      preserve("layout.json", "json");
     else if (type == "PutDefinition") {
       const auto dir = "definitions/" + json::Text(value, "id") + '/';
-      for (const auto& [key, name] :
-           {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}})
+      for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
+                                      {"comments_json", "_comments.json"}})
         preserve(dir + name, key);
     } else if (type == "PutSource" &&
-               base.files.contains(json::Text(value, "path"))) {
+               base.files.contains(json::Text(value, "path")) &&
+               !IsExternalDocument(json::Text(value, "path"), "layout.bin")) {
       const auto path = json::Text(value, "path");
       value["bytes"] = json::Quote(PreserveProjectBytes(
           base.files.at(path), Bytes(json::Get(value, "bytes"))));
@@ -924,7 +940,13 @@ auto SubmitProjectSave(json::Members plan, const SaveBase& base,
       [&](const std::string& path) -> std::optional<LayoutFile> {
         const auto file = base.files.find(path);
         if (file == base.files.end()) return std::nullopt;
-        return LayoutFile{file->second, crypto::sha256_hex(file->second)};
+        for (const auto& raw :
+             json::Array(json::Get(base.snapshot, "sources", "[]"))) {
+          const auto source = json::Object(raw);
+          if (json::Text(source, "path") == path)
+            return LayoutFile{file->second, json::Text(source, "hash")};
+        }
+        return LayoutFile{file->second, std::nullopt};
       },
       patches));
   preparation.finish(plan);

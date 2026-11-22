@@ -1,4 +1,5 @@
 // The Card database and the project's settings panes.
+import { splitCardNotes } from '../model/documents'
 import { useEffect, useState } from 'react'
 import { app } from '../model/app'
 import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
@@ -40,7 +41,7 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
     const c = session.definitions.get(id)
     const mt = session.definitionMeta.get(id)
     const ct = c !== undefined ? serialize(c) : '{}'
-    const mtt = mt !== undefined ? serialize(mt) : ''
+    const mtt = splitCardNotes(mt).readme ?? ''
     setCardText(ct)
     setMetaText(mtt)
     setBase({ card: ct, meta: mtt })
@@ -61,17 +62,17 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
   const unplaced = new Set(session.unplacedDefinitions)
 
   const apply = async (id: string, overwrite = false) => {
-    let card: J, meta: J | undefined
+    let card: J
+    const readme: J | undefined = metaText.trim() ? metaText : undefined
     try {
       card = parse(cardText)
-      meta = metaText.trim() ? parse(metaText) : undefined
     } catch (e) {
       setParseError(L('JSON として読めません: {0}', errorText(e)))
       return
     }
     setParseError(undefined)
     if (!await revisionEdit.replaceDocuments(session, [
-      [`definitions/${id}/_card.json`, card], [`definitions/${id}/_meta.json`, meta],
+      [`definitions/${id}/_card.json`, card], [`definitions/${id}/README.md`, readme],
     ], overwrite)) return
     setBase({ card: cardText, meta: metaText })
     setMessage(L('適用しました（revision {0}）。', session.rev))
@@ -92,9 +93,9 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         <div className="callout secondary">{L('Card「{0}」の定義（definitions/{0}/）です。', id)}</div>
         <div className="headline">{L('_card.json（設定・params・入力）')}</div>
         <CodeEditor text={cardText} onChange={setCardText} language="json" documentId={`db:${id}/_card.json`} style={{ flex: 2, minHeight: 180 }} />
-        <div className="headline">{L('_meta.json（説明・計画・追加コンテキスト、任意）')}</div>
-        <CodeEditor text={metaText} onChange={setMetaText} language="json" documentId={`db:${id}/_meta.json`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
-        <RevisionEditNotice edit={revisionEdit} text={() => `_card.json\n${cardText}\n_meta.json\n${metaText}`}
+        <div className="headline">{L('README.md（説明と内容、任意）')}</div>
+        <CodeEditor text={metaText} onChange={setMetaText} language="md" documentId={`db:${id}/README.md`} style={{ flex: 1, minHeight: 80, maxHeight: 140 }} />
+        <RevisionEditNotice edit={revisionEdit} text={() => `_card.json\n${cardText}\nREADME.md\n${metaText}`}
           overwrite={() => void apply(id, true)} reload={() => load(id)} />
         {parseError && <span className="label selectable" style={{ color: 'var(--red)' }}><Icon name="xmark.octagon" />{parseError}</span>}
         {message && <div className="callout secondary selectable">{message}</div>}
@@ -400,13 +401,13 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
   )
 }
 
-/** How the project's Cards are laid out (layout.json, applied at once). */
+/** How the project's Cards are laid out (layout.bin, applied at once). */
 function CanvasProjectSettings({ session }: { session: ProjectSession }) {
   return (
     <div className="scroll fill">
       <Form>
         <Section footer={<span className="label" style={{ color: 'var(--orange)' }}><Icon name="exclamationmark.triangle" />{L('変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。')}</span>}>
-          <Row label={L('流れの向き')} help={L('このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。')}>
+          <Row label={L('流れの向き')} help={L('このプロジェクトの Card を並べた向きです（layout.bin に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。')}>
             <Select<FlowDirection> value={session.flow} onChange={(f) => session.setFlow(f)}
               options={(Object.keys(FLOW_LABELS) as FlowDirection[]).map((f) => ({ value: f, label: FLOW_LABELS[f] }))} />
           </Row>

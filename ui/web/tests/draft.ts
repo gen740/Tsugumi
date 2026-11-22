@@ -13,7 +13,7 @@ page.window = globalThis
 page.matchMedia = () => ({ matches: false, addEventListener() {} })
 page.EventSource = class { addEventListener() {} close() {} }
 const { CardGeometry, NEW_PORT } = await import('../src/model/canvasKit')
-const { key, ProjectSession } = await import('../src/model/session')
+const { ProjectSession } = await import('../src/model/session')
 
 const session = () => {
   const s = cardIds(new ProjectSession('/p', 'k', 'p'))
@@ -92,20 +92,10 @@ const ports = (s: Session, k: string) => {
   assert.equal(plain.headerRow, CardGeometry.untitledTop)
   await s.save()
   await s.startDraftEdit(a)
-  assert.equal(s.inlineDraft?.name, '', 'the name field is empty, not the made-up id')
-  assert.equal(s.draftNameProblem(a, ''), undefined)
   assert.equal(await s.finishDraftEdit(), undefined)
   assert.ok(s.instance(a))
+  assert.equal(s.displayName(a), a)
 
-  // A name the Card cannot take is reported and not kept.
-  assert.match(s.cardNameProblem(a, ' ') ?? '', /名前/)
-  assert.equal(s.cardNameProblem(a, 'draft'), undefined)
-  await s.save()
-  await s.startDraftEdit(a)
-  s.setDraftEdit({ name: 'a'.repeat(4097) })
-  assert.equal(await s.finishDraftEdit(), undefined)
-  assert.match(s.notice ?? '', /名前/)
-  assert.ok(s.instance(key(['draft'])))
 }
 
 {

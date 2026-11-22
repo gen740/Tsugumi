@@ -64,6 +64,6 @@ Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/
 
 ### Compatibility
 
-- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.json` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
+- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.bin` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
 - Do not add code that reads old formats, migrations or deprecated aliases. When something changes, delete the old one.
 - The version number is in `VERSION`. This policy holds for the versions before v1.0.0 (0.x).

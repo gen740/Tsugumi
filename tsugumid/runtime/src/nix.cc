@@ -11,7 +11,9 @@
 #include "runtime_schema.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
@@ -105,23 +107,16 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
   eval_dir_ = stdfs::canonical(eval_dir_);
   nix_dir_ = stdfs::canonical(svc_.options().nix_dir, ec);
   if (const auto& file = svc_.options().prepared_cards; !file.empty()) {
-    auto text = fs::read_file(file);
-    if (!text)
+    auto bytes = fs::read_file(file);
+    if (!bytes)
       throw std::runtime_error("cannot read prepared builds " + file.string());
+    auto manifest = flat::decode<Tsugumi::State::PreparedCards>(*bytes);
+    if (!manifest)
+      throw std::runtime_error("invalid prepared builds " + file.string());
     prepared_.emplace();
-    std::istringstream lines(*text);
-    for (std::string line; std::getline(lines, line);) {
-      if (line.empty()) continue;
-      schema::PreparedCard card;
-      if (auto error = schema::decode(line, card))
-        throw std::runtime_error("prepared builds " + file.string() + ": " +
-                                 error->message);
-      const auto* name = schema::get(card.card);
-      if (!name)
-        throw std::runtime_error("prepared builds " + file.string() +
-                                 ": a line names no card");
-      const auto key = *name;
-      prepared_->emplace(key, std::move(card));
+    for (auto& card : manifest->cards) {
+      auto key = card->card;
+      prepared_->emplace(std::move(key), std::move(*card));
     }
   }
   if (ec) nix_dir_ = svc_.options().nix_dir;
@@ -134,28 +129,26 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
     throw Failed(FailureKind::unsupported,
                  "Card " + card + " has no prepared build", {{"card", card}});
   const auto& p = found->second;
-  if (const auto* error = schema::get(p.error))
+  if (!p.error.empty())
     throw Failed(FailureKind::nix_failed,
-                 "Card " + card + " did not build ahead: " + *error,
+                 "Card " + card + " did not build ahead: " + p.error,
                  {{"card", card}});
-  const auto* prepared_key = schema::get(p.key);
-  if (!prepared_key || *prepared_key != key)
+  if (p.key != key)
     throw Failed(FailureKind::validation_failed,
                  "Card " + card +
                      " changed since its build was prepared: its definition, "
                      "contract, Nix parameters or upstream exports differ",
                  {{"card", card}});
-  const auto* count = schema::get(p.implementations);
-  const auto implementations = count ? *count : 0;
+  const auto implementations = p.implementations;
   try {
     enforce_implementation_limit(implementations, max_implementations);
   } catch (const NixImplementationLimit& e) {
     throw Failed(FailureKind::execution_limit, e.what(), {{"card", card}});
   }
   NixResult res;
-  res.derivation.path = *schema::get(p.derivation);
-  res.derivation.output = *schema::get(p.plan);
-  res.derivation.system = *schema::get(p.system);
+  res.derivation.path = p.derivation;
+  res.derivation.output = p.plan;
+  res.derivation.system = p.system;
   auto plan_json = fs::read_file(res.derivation.output);
   if (!plan_json)
     throw Failed(FailureKind::nix_failed,
@@ -163,12 +156,10 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
                      " is missing: " + res.derivation.output,
                  {{"card", card}});
   res.plan_json = std::move(*plan_json);
-  if (const auto* closure = schema::get(p.closure)) res.closure = *closure;
-  if (const auto* list = schema::get(p.execution_list))
-    res.execution_list = *list;
+  res.closure = p.closure;
+  res.execution_list = p.execution_list;
   res.implementation_count = static_cast<uint32_t>(implementations);
-  if (const auto* labels = schema::get(p.implementation_labels))
-    res.implementation_labels = *labels;
+  res.implementation_labels = p.implementation_labels;
   try {
     check_implementation_labels(res.implementation_labels, implementations);
   } catch (const std::exception& e) {
@@ -270,12 +261,14 @@ std::string NixRunner::params_json(const Node& node, bool nix_only) {
 
 std::string NixRunner::params_json(const std::vector<ParamDef>& params,
                                    bool nix_only) {
-  std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>> members;
+  // The params, in their declared order, as the JSON default.nix reads.
+  std::string out = "{";
   for (const auto& p : params) {
-    if (nix_only && !p.nix) continue;
-    if (p.data) members.emplace_back(p.name, &*p.data);
+    if ((nix_only && !p.nix) || !p.data) continue;
+    if (out.size() > 1) out += ',';
+    out += json::Quote(p.name) + ':' + param_value_json(p.type, *p.data);
   }
-  return schema::object_text(members);
+  return out + '}';
 }
 
 std::string NixRunner::params_buffer(const Node& node) {
@@ -364,16 +357,18 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   if (req.target.system.empty())
     throw Failed(FailureKind::unsupported,
                  "execution target system is unknown");
-  // Definition sources from the confirmed snapshot. _card.json and
-  // _meta.json are not part of it: Nix gets what it needs from them through
-  // the generated files, and settings or descriptions never re-evaluate.
+  // Definition sources from the confirmed snapshot. _card.json, README.md and
+  // _comments.json are not part of it: Nix gets what it needs from them
+  // through the generated files, and settings or descriptions never
+  // re-evaluate.
   auto definition_dir = [&](const std::string& prefix) {
     crypto::Sha256 h;
     std::vector<std::string> paths;
     for (const auto& [path, entry] : req.doc->sources) {
       if (!path.starts_with(prefix)) continue;
       auto rel = path.substr(prefix.size());
-      if (rel == "_card.json" || rel == "_meta.json") continue;
+      if (rel == "_card.json" || rel == "README.md" || rel == "_comments.json")
+        continue;
       paths.push_back(path);
       h.update(rel);
       h.update(entry.hash);

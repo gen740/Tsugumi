@@ -32,7 +32,7 @@ come later.
    list shape. A Card that does not build fails the export and is named.
 3. **Write the payload.** The Cards' runtime closures, minus what the app's
    runner image already holds, go into `payload.erofs` with those records
-   (`cards.jsonl`) and the staged Project. No nixpkgs sources, derivations
+   (`cards.bin`) and the staged Project. No nixpkgs sources, derivations
    or Nix database: nothing in the app evaluates.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,

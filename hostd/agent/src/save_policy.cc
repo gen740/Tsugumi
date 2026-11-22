@@ -3,6 +3,7 @@
 #include <set>
 
 #include "host/failure.hh"
+#include "tsugumi/document/readme.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::agent {
@@ -16,6 +17,12 @@ auto Object(const std::string& text) -> json::Members {
   } catch (const std::exception&) {
     return {};
   }
+}
+// A README's description and body; empty when it cannot be read.
+auto Readme(const std::map<std::string, std::string>& files,
+            const std::string& path) -> readme::Readme {
+  if (!files.contains(path)) return {};
+  return readme::parse(files.at(path)).value_or(readme::Readme{});
 }
 auto Bytes(const std::string& raw) -> std::string {
   if (raw.starts_with('"')) return json::String(raw);
@@ -62,25 +69,27 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
     if (kind == "PutDefinition") {
       const auto dir = "definitions/" + id + "/";
       after[dir + "_card.json"] = json::Text(c, "card_json");
-      if (const auto meta = json::Text(c, "meta_json"); !meta.empty())
-        after[dir + "_meta.json"] = meta;
-      else if (!(json::Bool(json::Get(c, "keep_meta")) ||
-                 json::Get(c, "meta_json") == "\"\"" ||
-                 c.contains("fill_description") || c.contains("fill_context")))
-        after.erase(dir + "_meta.json");
-      auto meta = Object(after.contains(dir + "_meta.json")
-                             ? after.at(dir + "_meta.json")
-                             : "{}");
-      bool filled = false;
-      for (const auto& field : {"description", "context"}) {
-        const auto fill = json::Text(c, "fill_" + std::string(field));
-        if (!fill.empty() && Blank(json::Text(meta, field))) {
-          meta[field] = json::Quote(fill);
-          filled = true;
+      if (const auto text = json::Text(c, "readme"); !text.empty())
+        after[dir + "README.md"] = text;
+      else if (!(json::Bool(json::Get(c, "keep_readme")) ||
+                 json::Get(c, "readme") == "\"\"" ||
+                 c.contains("fill_description")))
+        after.erase(dir + "README.md");
+      if (const auto text = json::Text(c, "comments_json"); !text.empty())
+        after[dir + "_comments.json"] = text;
+      else if (!(json::Bool(json::Get(c, "keep_comments")) ||
+                 json::Get(c, "comments_json") == "\"\""))
+        after.erase(dir + "_comments.json");
+      if (const auto fill = json::Text(c, "fill_description"); !fill.empty()) {
+        auto text = Readme(after, dir + "README.md");
+        if (Blank(text.fields["description"])) {
+          text.fields["description"] = fill;
+          after[dir + "README.md"] = readme::print(text);
+          c["readme"] = json::Quote(after.at(dir + "README.md"));
+          c.erase("keep_readme");
         }
-        c.erase("fill_" + std::string(field));
       }
-      if (filled) after[dir + "_meta.json"] = json::Encode(meta);
+      c.erase("fill_description");
     } else if (kind == "RemoveDefinition") {
       const auto dir = "definitions/" + id + "/";
       std::erase_if(
@@ -108,7 +117,7 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
         }
         after[path] = value;
       }
-      if (!comments::is_meta(path))
+      if (!comments::is_comments(path))
         if (auto card = comments::card_of(path, after);
             card && (kind == "RemoveSource" || !hashes.contains(path) ||
                      hashes.at(path) != crypto::sha256_hex(after.at(path))))
@@ -125,53 +134,50 @@ auto PrepareAgentSave(json::Members args, const host::SaveBase& base,
         after.contains(path) &&
         json::Text(Object(after.at(path)), "type") != "draft";
     if (!implemented) continue;
-    auto meta_path = path.substr(0, path.size() - 10) + "_meta.json";
-    auto old_meta =
-        Object(before.contains(meta_path) ? before.at(meta_path) : "{}");
-    auto new_meta =
-        Object(after.contains(meta_path) ? after.at(meta_path) : "{}");
+    const auto readme_path = path.substr(0, path.size() - 10) + "README.md";
+    auto old_readme = Readme(before, readme_path);
+    auto new_readme = Readme(after, readme_path);
     auto fail = [&](const std::string& why) {
       throw host::Failure(
           "validation_failed",
           comments::card_of(path, after).value_or(path) + ": " + why);
     };
-    for (const auto* field : {"description", "content", "context"})
-      if (!Blank(json::Text(old_meta, field)) &&
-          json::Text(old_meta, field) != json::Text(new_meta, field))
-        fail(std::string(field) +
-             " changed; send what the Draft had, word for word");
-    if (Blank(json::Text(new_meta, "description")))
+    if (!Blank(old_readme.fields["description"]) &&
+        old_readme.fields["description"] != new_readme.fields["description"])
       fail(
-          "description is empty; write a one-line summary of what the Card "
-          "does");
-    if (Blank(json::Text(new_meta, "context")) &&
-        !(Blank(json::Text(old_meta, "description")) &&
-          Blank(json::Text(old_meta, "content"))))
+          "README.md description changed; send what the Draft had, word for "
+          "word");
+    if (!Blank(old_readme.body) && old_readme.body != new_readme.body)
+      fail("README.md body changed; send what the Draft had, word for word");
+    if (Blank(new_readme.fields["description"]))
       fail(
-          "_meta.json context is empty; write context as what the user asked "
-          "of this Card, preserving its existing description and content");
+          "README.md description is empty; write a one-line summary of what "
+          "the Card does");
   }
   for (const auto& [path, text] : after)
-    if (!comments::is_meta(path) &&
+    if (!comments::is_comments(path) &&
         (!before.contains(path) || before.at(path) != text))
       if (auto card = comments::card_of(path, after)) changed.insert(*card);
   const auto was = comments::of(before);
   const std::vector<std::string> cards(changed.begin(), changed.end());
   // Stamp only metadata written by this save. A keep-only save preserves it.
   for (auto& [wrapper, c, kind] : changes) {
-    const auto path = kind == "PutDefinition"
-                          ? "definitions/" + json::Text(c, "id") + "/_meta.json"
-                          : json::Text(c, "path");
+    const auto path =
+        kind == "PutDefinition"
+            ? "definitions/" + json::Text(c, "id") + "/_comments.json"
+            : json::Text(c, "path");
     if ((kind == "PutDefinition" || kind == "PutSource" ||
          kind == "PatchSource") &&
-        comments::is_meta(path) && after.contains(path)) {
+        comments::is_comments(path) && after.contains(path)) {
       const auto original = after.at(path);
       after[path] = comments::stamped(
           original, comments::card_of(path, after).value_or(path), was, cards,
           reserve);
       if (kind == "PutDefinition") {
-        c["meta_json"] = json::Quote(after.at(path));
-        c.erase("keep_meta");
+        if (after.at(path) != original || c.contains("comments_json")) {
+          c["comments_json"] = json::Quote(after.at(path));
+          c.erase("keep_comments");
+        }
       } else if (after.at(path) != original) {
         wrapper["value_type"] = json::Quote("PutSource");
         c.erase("patches");
