@@ -183,7 +183,7 @@ def print_table(results):
 
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("scenario", choices=["collatz", "builtin-chain", "large-values"])
+    parser.add_argument("scenario", choices=["collatz", "builtin-chain"])
     parser.add_argument("--project", type=Path, help="Probe this current-format project instead of generating a fixture")
     parser.add_argument("--start", default="start")
     parser.add_argument("--out", type=Path, default=Path("stages.json"))
