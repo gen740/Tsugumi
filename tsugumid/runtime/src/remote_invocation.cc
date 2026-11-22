@@ -409,7 +409,7 @@ auto import_remote_result(
         value.path = input->path;
         continue;
       }
-      if (*rel.begin() != "out" || rel == "out")
+      if (*rel.begin() != "out")
         throw invalid("remote output is outside its output folder");
       returned_paths.push_back(rel);
       value.path = (directory / rel).string();
@@ -419,7 +419,9 @@ auto import_remote_result(
       const auto rel = remote::relative_path(dir);
       if (*rel.begin() != "out" || !directories.insert(rel).second)
         throw std::runtime_error("invalid remote result directory");
-      if (rel != "out") count_entry();
+      if (rel != "out" ||
+          std::ranges::find(returned_paths, rel) != returned_paths.end())
+        count_entry();
       stdfs::create_directories(temp / "files" / rel);
     }
     for (const auto& rel : returned_paths) {

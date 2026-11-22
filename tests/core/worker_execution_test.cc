@@ -81,6 +81,15 @@ TEST_P(WorkerDelivery, RelativePathIsUnderTheWorkingDirectory) {
   EXPECT_EQ(fs::read_file(root_ / "result/files/out/relative"), "relative");
 }
 
+TEST_P(WorkerDelivery, CopiesTheWorkingDirectoryWhenReturned) {
+  fs::write_atomic(root_ / "worker/work/result.txt", "directory");
+  const auto result = stage(produced("."));
+  EXPECT_EQ(fs::read_file(root_ / "result/files/out/result.txt"), "directory");
+  EXPECT_EQ(result, GetParam() == OutputDelivery::local_paths
+                        ? (root_ / "result/files/out").string()
+                        : "out");
+}
+
 TEST_P(WorkerDelivery, CopiesOnlyRegularDirectoryContents) {
   fs::write_atomic(root_ / "worker/work/tree/nested/file", "directory");
   stdfs::create_directories(root_ / "worker/work/tree/empty");
@@ -172,6 +181,18 @@ TEST(WorkerOutputs, FlatBufferBytesAreAcceptedUnopened) {
                      ports);
   ASSERT_EQ(outputs.size(), 1u);
   EXPECT_EQ(outputs[0].bytes, std::string("not a FlatBuffer\0", 17));
+}
+
+TEST(WorkerOutputs, PathAndFlatBufferUseSeparateFields) {
+  const std::vector<types::PortType> path{
+      {"value", PortKind::Path, false, nullptr}};
+  const std::vector<types::PortType> blob{
+      {"value", PortKind::FlatBuffer, false, nullptr}};
+  EXPECT_THROW(accept_outputs({{"value", "bytes", "path", {}}}, path),
+               Failed);
+  EXPECT_THROW(accept_outputs({{"value", {}, "path", {}}}, blob), Failed);
+  EXPECT_THROW(accept_outputs({{"value", "bytes", {}, "input"}}, blob),
+               Failed);
 }
 
 TEST(WorkerOutputs, MissingRequiredOutputIsRejected) {

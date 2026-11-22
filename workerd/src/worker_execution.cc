@@ -136,10 +136,18 @@ auto accept_outputs(std::vector<RawOutput> raw,
       throw Failed(FailureKind::output_invalid,
                    "output " + name + " produced twice", {{"port", name}});
     Value value{name, port->kind, port->type, {}, {}};
-    if (port->kind == PortKind::Path)
+    if (port->kind == PortKind::Path) {
+      if (!output.bytes.empty() || output.path.empty())
+        throw Failed(FailureKind::output_invalid,
+                     "Path output must carry only a path", {{"port", name}});
       value.path = std::move(output.path);
-    else
+    } else {
+      if (!output.path.empty() || !output.forwarded_from.empty())
+        throw Failed(FailureKind::output_invalid,
+                     "FlatBuffer output cannot carry or forward a path",
+                     {{"port", name}});
       value.bytes = std::move(output.bytes);
+    }
     outputs.push_back(std::move(value));
   }
   for (const auto& port : ports)

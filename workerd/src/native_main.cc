@@ -255,11 +255,21 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
   for (const auto* input : *call.inputs()) {
     flatbuffers::Offset<Payload> bytes;
     flatbuffers::Offset<flatbuffers::String> path;
-    if (const auto* value = input->path()) {
-      input_paths.emplace(value->string_view(), input->name()->string_view());
-      path = b.CreateString(value->string_view());
+    const auto* location = input->path();
+    const auto* payload = input->bytes();
+    if (input->kind() == D::PortKind::Path && location &&
+        location->string_view().starts_with("/") &&
+        location->string_view().find('\0') == std::string_view::npos &&
+        (!payload || payload->size() == 0)) {
+      input_paths.emplace(location->string_view(), input->name()->string_view());
+      path = b.CreateString(location->string_view());
+    } else if (input->kind() == D::PortKind::FlatBuffer && !location) {
+      if (payload) bytes = aligned_payload(b, *payload);
+    } else {
+      return Failure{D::FailureKind::input_missing,
+                     "invalid Card input envelope",
+                     {{"port", input->name()->str()}}};
     }
-    if (const auto* value = input->bytes()) bytes = aligned_payload(b, *value);
     inputs.push_back(C::CreateCardPort(
         b, b.CreateString(input->name()->string_view()), input->kind(), bytes,
         path));
