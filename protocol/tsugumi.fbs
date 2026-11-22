@@ -1313,9 +1313,12 @@ table RunEvent {
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
 /// The full list of views for a Card, available independently of a run.
+/// When evaluating the declarations failed, failure says why and views is
+/// empty; an absent failure with an empty list means the Card declares none.
 table CardViewsUpdated {
   card:Tsugumi.Data.CardPath (id: 0, required);
   views:[Tsugumi.Data.CardView] (id: 1, required);
+  failure:Tsugumi.Data.Failure (id: 2);
 }
 
 table DisplayRunStateChanged {

@@ -2730,7 +2730,8 @@ void Service::view_save(RequestIn& req) {
 
 namespace {
 
-auto card_views_note(CardPath card, std::vector<schema::CardView> views)
+auto card_views_note(CardPath card, std::vector<schema::CardView> views,
+                     std::optional<FailureData> failure = std::nullopt)
     -> Note {
   Note note;
   note.kind = Note::Kind::CardViews;
@@ -2738,16 +2739,21 @@ auto card_views_note(CardPath card, std::vector<schema::CardView> views)
   for (const auto& view : views)
     note.approx_bytes +=
         view.name->size() + view.type->size() + view.blob->size() + 64;
+  if (failure)
+    note.approx_bytes += failure->diagnostic.value_or("").size() + 64;
   note.build = std::make_shared<const Note::Build>(
-      [card = std::move(card), views = std::move(views)](FBB& b) {
+      [card = std::move(card), views = std::move(views),
+       failure = std::move(failure)](FBB& b) {
         std::vector<flatbuffers::Offset<D::CardView>> declarations;
         declarations.reserve(views.size());
         for (const auto& view : views)
           declarations.push_back(D::CreateCardView(
               b, b.CreateString(*view.name), b.CreateString(*view.type),
               b.CreateString(*view.blob)));
+        const auto reason = failure ? wire::failure(b, *failure)
+                                    : flatbuffers::Offset<D::Failure>{};
         const auto value = R::CreateCardViewsUpdated(
-            b, wire::path(b, card), b.CreateVector(declarations));
+            b, wire::path(b, card), b.CreateVector(declarations), reason);
         return std::make_pair(R::NotificationPayload::CardViewsUpdated,
                               value.Union());
       });
@@ -2790,6 +2796,7 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
       const auto stop = cancel.get_token();
       if (stop.stop_requested()) return;
       std::vector<schema::CardView> views;
+      std::optional<FailureData> failure;
       try {
         std::lock_guard lock(card_views_build_mu_);
         if (stop.stop_requested()) return;
@@ -2799,14 +2806,18 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
         request.cancel = stop;
         request.timeout_seconds = node->settings.build_timeout_seconds;
         views = nix_->declared_views(request);
-      } catch (const std::exception&) {
-        // A definition without realized views clears the previous list.
+      } catch (const Failed& e) {
+        failure = e.failure;
+      } catch (const std::exception& e) {
+        failure = FailureData::make(FailureKind::nix_failed, e.what());
       }
       if (stop.stop_requested()) return;
+      // A failed evaluation clears the previous list and says why, so the
+      // UI can tell it from a Card that declares no views.
       std::vector<DeclaredView> files;
       files.reserve(views.size());
       for (const auto& view : views) files.push_back({*view.name, *view.blob});
-      auto note = card_views_note(card, std::move(views));
+      auto note = card_views_note(card, std::move(views), std::move(failure));
       mutation_lane_->submit([this, key, stop, card = std::move(card),
                               files = std::move(files),
                               note = std::move(note)]() mutable {

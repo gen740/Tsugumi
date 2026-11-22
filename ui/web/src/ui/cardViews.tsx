@@ -21,6 +21,10 @@ export function CardViewsWindow({ session, cardKey }: { session: ProjectSession;
 }
 
 export function CardViewsPanel({ card, read }: { card?: CardLiveViews; read: ReadHtmlView }) {
+  if (card?.failure !== undefined)
+    return <div className="card-views">
+      <p className="caption" role="alert">{L('ビューの宣言を評価できませんでした: {0}', card.failure)}</p>
+    </div>
   if (!card || (!card.views.length && !card.unknown.size))
     return <Empty title={L('表示するビューがありません')} icon="chart.xyaxis.line" />
   return <div className="card-views">

@@ -26,7 +26,11 @@ struct CardViewsPanel: View {
         Label(String(localized: "ビュー名「\(name)」が重複しているため、この名前に送られたデータはどのビューにも届きません"), systemImage: "exclamationmark.triangle")
           .font(.caption).foregroundStyle(.red).textSelection(.enabled)
       }
-      if let views = relay.declarations[cardKey] {
+      if let failure = relay.failures[cardKey] {
+        Label(String(localized: "ビューの宣言を評価できませんでした: \(failure)"), systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      } else if let views = relay.declarations[cardKey] {
         if views.isEmpty {
           ContentUnavailableView("この Card は表示を宣言していません", systemImage: "rectangle.dashed")
         } else {

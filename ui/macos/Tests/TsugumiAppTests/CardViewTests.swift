@@ -23,9 +23,15 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   Tsugumi_RPC_NotificationPayloadUnion(value, type: type)
 }
 
-@MainActor private func declared(_ card: CardKey, _ views: [CardViewDeclaration]) -> Tsugumi_RPC_NotificationPayloadUnion {
+@MainActor private func declared(_ card: CardKey, _ views: [CardViewDeclaration], failure: String? = nil) -> Tsugumi_RPC_NotificationPayloadUnion {
   let u = Tsugumi_RPC_CardViewsUpdatedT()
   u.card = cardPath(card)
+  if let failure {
+    let f = Tsugumi_Data_FailureT()
+    f.kind = .nixFailed
+    f.diagnostic = failure
+    u.failure = f
+  }
   u.views = views.map { v in
     let w = Tsugumi_Data_CardViewT()
     w.name = v.name; w.type = v.type; w.blob = v.blob
@@ -109,7 +115,11 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   s.applyViewNotification(sent("plot", "chart", [4]))
   #expect(chart.last == .data(Data([9])))
   #expect(s.cardViews.undeclared("plot").isEmpty)
+  s.applyViewNotification(declared("plot", [], failure: "views are broken"))
+  #expect(s.cardViews.failures["plot"] == "views are broken")
+  #expect(s.cardViews.undeclared("plot").isEmpty, "a failed evaluation is shown instead of undeclared names")
   s.applyViewNotification(declared("plot", []))
+  #expect(s.cardViews.failures["plot"] == nil, "an evaluated empty list has no failure")
   #expect(s.cardViews.declarations["plot"] == [])
 
   for id in [a, b, c] { s.cardViews.detach(id) }

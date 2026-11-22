@@ -36,10 +36,13 @@ export class CardLiveViews {
   readonly unknown = new Set<string>()
   /** Names more than one declaration has: data sent to them reaches no view. */
   ambiguous = new Set<string>()
+  /** Why evaluating the declarations failed; unset when they were evaluated, even to an empty list. */
+  failure?: string
   activeRun?: string
   viewers = 0
 
-  declare(declarations: ViewDeclaration[]) {
+  declare(declarations: ViewDeclaration[], failure?: string) {
+    this.failure = failure
     const prior = this.views
     this.views = declarations.map((declaration, index) => {
       const { name, type, blob } = declaration
@@ -71,6 +74,7 @@ export class CardLiveViews {
     this.views = []
     this.unknown.clear()
     this.ambiguous = new Set()
+    this.failure = undefined
     this.activeRun = undefined
   }
 }

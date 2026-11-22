@@ -245,6 +245,30 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
     assert Path(text(update.views[-1].blob)).read_text() == "<p>Available before a run</p>"
 
 
+def test_a_failed_view_evaluation_is_relayed_apart_from_an_empty_list(core_factory, project):
+    """A broken declaration says why; a Card that declares nothing sends no failure."""
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": '{ pkgs, inputs, params }: { run = []; views = throw "views are broken"; }',
+    }).save(client)
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
+    failed = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and note.value.failure
+    ).value
+    assert not failed.views
+    assert failed.failure.kind != FailureKind.unspecified
+    assert "views are broken" in text(failed.failure.diagnostic)
+
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": "{ pkgs, inputs, params }: { run = []; views = [ ]; }",
+    }).save(client)
+    empty = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and not note.value.failure
+    ).value
+    assert not empty.views
+
+
 @pytest.mark.parametrize("body, message", [
     ('run = "echo legacy";', "must be a derivation"),
     ('run = "legacy"; preRun = "true";', "unknown Card attributes: preRun"),

@@ -59,6 +59,8 @@ struct CardViewOutbox {
 
   /// The declarations of each Card, absent until the core has sent them.
   private(set) var declarations: [CardKey: [CardViewDeclaration]] = [:]
+  /// Why evaluating a Card's declarations failed. Absent when they were evaluated, even to an empty list.
+  private(set) var failures: [CardKey: String] = [:]
   /// The view names data arrived for, per Card.
   private(set) var received: [CardKey: Set<String>] = [:]
   private(set) var runs: [CardKey: RunMark] = [:]
@@ -67,7 +69,7 @@ struct CardViewOutbox {
 
   /// Names the Card sent data to without declaring them. Empty until the declarations are known.
   func undeclared(_ card: CardKey) -> [String] {
-    guard let declared = declarations[card] else { return [] }
+    guard failures[card] == nil, let declared = declarations[card] else { return [] }
     return received[card, default: []].subtracting(declared.map(\.name)).sorted()
   }
 
@@ -78,8 +80,10 @@ struct CardViewOutbox {
   }
 
   /// The full list for a Card; an empty list clears what it declared before.
-  func declare(_ card: CardKey, _ views: [CardViewDeclaration]) {
+  /// A failure says the declarations could not be evaluated.
+  func declare(_ card: CardKey, _ views: [CardViewDeclaration], failure: String? = nil) {
     if declarations[card] != views { declarations[card] = views }
+    if failures[card] != failure { failures[card] = failure }
   }
 
   func receive(_ card: CardKey, view: String, bytes: Data) {
@@ -113,6 +117,7 @@ struct CardViewOutbox {
   /// Drops everything about a Card whose windows all closed or that left the document.
   func forget(_ card: CardKey) {
     declarations[card] = nil
+    failures[card] = nil
     received[card] = nil
     runs[card] = nil
     latest[card] = nil

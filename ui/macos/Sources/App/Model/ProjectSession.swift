@@ -658,7 +658,8 @@ final class ProjectSession {
     switch payload.type {
     case .cardviewsupdated:
       if let u = payload.value as? Tsugumi_RPC_CardViewsUpdatedT, viewing(key(u.card.path)) {
-        cardViews.declare(key(u.card.path), u.views.compactMap { $0 }.map(CardViewDeclaration.init))
+        cardViews.declare(key(u.card.path), u.views.compactMap { $0 }.map(CardViewDeclaration.init),
+                          failure: u.failure.map { $0.diagnostic ?? "\($0.kind)" })
       }
     case .displayupdated:
       if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display, viewing(key(d.card.path)) {

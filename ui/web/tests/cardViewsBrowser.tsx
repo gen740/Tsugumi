@@ -118,6 +118,10 @@ async function test() {
   render()
   await until(() => loadingSignal !== undefined)
   assert(!first.isConnected, 'Declaration changes detach the old frame')
+  card.declare([], 'views are broken')
+  render()
+  assert([...document.querySelectorAll('[role=alert]')].some(e => e.textContent?.includes('views are broken')),
+    'A failed declaration evaluation is shown')
   flushSync(() => root.unmount())
   assert(!document.querySelector('iframe'), 'Closing the panel removes every frame')
   assert(loadingSignal?.aborted, 'A pending blob read is cancelled on disposal')
