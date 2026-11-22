@@ -400,6 +400,59 @@ Listing list_beneath(const stdfs::path& root, const stdfs::path& rel,
   return out;
 }
 
+std::string sha256_tree(const stdfs::path& p) {
+  const auto listing = list_beneath(p, "");
+  crypto::Sha256 hash;
+  const auto entry = [&](std::string_view kind, const std::string& name,
+                         std::string_view digest = {}) {
+    hash.update(kind);
+    hash.update(std::string_view(name.c_str(), name.size() + 1));
+    hash.update(digest);
+    hash.update(std::string_view("\n", 1));
+  };
+  for (const auto& name : listing.directories) entry("d", name);
+  for (const auto& name : listing.files)
+    entry("f", name, sha256_file(p / name));
+  for (const auto& name : listing.links) entry("l", name);
+  for (const auto& name : listing.special) entry("s", name);
+  return hash.finish_hex();
+}
+
+bool directory_beneath(const stdfs::path& root, const stdfs::path& rel) {
+  const int fd = open_beneath(root, rel, O_RDONLY | O_NONBLOCK);
+  struct stat st{};
+  const int status = ::fstat(fd, &st);
+  ::close(fd);
+  if (status != 0 || !(S_ISDIR(st.st_mode) || S_ISREG(st.st_mode)))
+    throw Error((root / rel).string() +
+                " is neither a regular file nor a directory");
+  return S_ISDIR(st.st_mode);
+}
+
+bool copy_path_beneath(
+    const stdfs::path& root, const stdfs::path& rel,
+    const stdfs::path& destination,
+    const std::function<void(const stdfs::path&, const stdfs::path&)>&
+        copy_file) {
+  if (!directory_beneath(root, rel)) {
+    copy_file(rel, destination);
+    return false;
+  }
+  const auto listing = list_beneath(root, rel);
+  if (!listing.links.empty())
+    throw Error((root / rel).string() + " contains the link " +
+                listing.links.front());
+  if (!listing.special.empty())
+    throw Error((root / rel).string() + " contains the special file " +
+                listing.special.front());
+  stdfs::create_directories(destination);
+  for (const auto& child : listing.directories)
+    stdfs::create_directories(destination / child);
+  for (const auto& child : listing.files)
+    copy_file(rel / child, destination / child);
+  return true;
+}
+
 FileLock::~FileLock() {
   if (fd_ >= 0) ::close(fd_);
 }
