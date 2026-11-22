@@ -62,7 +62,7 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return "(inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
+    return "(inputs.tsugumi.pythonSdk.pythonCard { contract = schemas; src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
 
 
 def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: str = "", extra: str = "") -> str:
