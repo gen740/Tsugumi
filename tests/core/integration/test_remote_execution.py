@@ -259,11 +259,13 @@ def remote_gates(tmp_path, remote_daemon):
         # channel for releasing a staged Card inside its sandbox.
         return None
 
-    def release(invocation):
+    def release(invocation, *, before_release=None):
         job = text(invocation.executionJobId)
         directory, = (tmp_path / "daemon-state/projects").glob(f"*/jobs/{job}")
         fifo = directory / "work/scratch/work/test-release"
-        deadline = time.monotonic() + 30
+        # The remote job reaches Running before its private store finishes
+        # building the Card. Wait for the Card to actually open the gate.
+        deadline = time.monotonic() + 180
         while True:
             try:
                 fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
@@ -275,6 +277,8 @@ def remote_gates(tmp_path, remote_daemon):
                     pytest.fail(f"remote job {job} did not open its release gate: {fifo}")
                 time.sleep(0.05)
         with os.fdopen(fd, "w") as gate:
+            if before_release is not None:
+                before_release()
             gate.write("release\n")
 
     return release
@@ -348,9 +352,9 @@ def test_remote_card_roundtrip_and_reconnect(project, core_factory, remote_broke
 
     run_id = start_run(client, "source")
     started = wait_invocation(client, run_id, "slow", lambda row: row.executionState == RemoteExecutionState.running)
-    # The listener restarts while its journal and detached supervisor survive.
-    remote_daemon[2]()
-    remote_gates(started)
+    # Once the Card is waiting, restart the listener and release the same
+    # invocation. The journal and detached supervisor survive the restart.
+    remote_gates(started, before_release=remote_daemon[2])
     run = wait_run(client, run_id)
     assert run.state == RunState.succeeded, run.failure and text(run.failure.diagnostic)
     resumed = check_success(client, run_id, "slow", system)
