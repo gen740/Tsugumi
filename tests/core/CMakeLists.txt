@@ -20,6 +20,13 @@ endif()
 add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough
   -Wmissing-designated-field-initializers)
 
+function(tsugumi_use_nix_double target)
+  set_property(TARGET ${target} PROPERTY TSUGUMI_MOCK_NIX ON)
+  target_sources(${target} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/doubles/nix_eval.cc")
+  target_include_directories(${target} PRIVATE
+    "$<TARGET_PROPERTY:tsugumi_nix_store,INTERFACE_INCLUDE_DIRECTORIES>")
+endfunction()
+
 if(TSUGUMI_INSTALLED_CORE)
   # These fixtures have consumers outside the native RPC suites.
   if(TSUGUMI_TEST_TARGET STREQUAL "tsugumid-mock")

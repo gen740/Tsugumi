@@ -26,7 +26,7 @@ import pytest
 from harness import remote_worker as R
 from harness.file_events import process_file
 from harness.host import Host
-from harness.real_cards import log, nix_string
+from harness.real_cards import log, python_run
 from harness.values import collected_items
 from projects import (
     FILE_FBS,
@@ -248,10 +248,6 @@ def wait_for_release():
 """
 
 
-def python_program(source):
-    return 'inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir "main.py" ' + nix_string(source) + '; }'
-
-
 def entry(run, extra=""):
     return "{ pkgs, params, inputs, schemas }: { run = " + run + "; " + extra + " }"
 
@@ -311,7 +307,7 @@ def run(input):
     }
     definitions = {
         "input": source,
-        "slow": {**settings, "_nix": entry(python_program(body))},
+        "slow": {**settings, "_nix": entry(python_run(body))},
     }
     write(project, definitions, [card("source", "input"), card("slow", "slow")],
           [conn("source", "doc", "slow", "in")],
@@ -378,7 +374,7 @@ def run(input):
     definition = {"type": "code", "executionService": "remote-test",
                   "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
-                  "_nix": entry(python_program(source), views)}
+                  "_nix": entry(python_run(source), views)}
     write(project, {"work": definition}, [card("work", "work")], [],
           {"definitions/work/notes.html": "<!doctype html><p>Empty view</p>"})
     client = core_factory().connect()
@@ -418,7 +414,7 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
 
 def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
     def numbers(values, value=""):
-        programs = [python_program(f"""
+        programs = [python_run(f"""
 from card import Output
 from outputs.out.Number import NumberT
 
@@ -451,7 +447,7 @@ def run(input):
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
     if remote_gates is None:
         pytest.skip("requires a disposable worker to synchronize both jobs")
-    programs = [python_program(GATE_HELPER + f"""
+    programs = [python_run(GATE_HELPER + f"""
 import sys
 
 def run(input):
@@ -490,7 +486,7 @@ def run(input):
 
 @pytest.mark.parametrize("link", [False, True])
 def test_remote_snapshots_only_declared_regular_outputs(project, core_factory, remote_broker, tmp_path, link):
-    body = f"""
+    body = rf"""
 import os
 from pathlib import Path
 from card import Output
@@ -508,7 +504,7 @@ def run(input):
     schema = FILE_FBS
     definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,
                   "recordIO": True, "timeoutSeconds": 600, "_outputs": schema,
-                  "_nix": entry(python_program(body))}
+                  "_nix": entry(python_run(body))}
     write(project, {"copy": definition}, [card("copy", "copy")], [])
     scratch = tmp_path / "scratch"
     c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
@@ -527,7 +523,7 @@ def run(input):
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):
     definition = {"type": "code", "executionService": "remote-test", "timeoutSeconds": 1,
                   "buildTimeoutSeconds": 600, "_outputs": "table Outputs {} root_type Outputs;",
-                  "_nix": entry(python_program(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
+                  "_nix": entry(python_run(GATE_HELPER + "\ndef run(input): wait_for_release()\n"))}
     write(project, {"deadline": definition}, [card("deadline", "deadline")], [])
     client = core_factory().connect()
     run_id, status = run_and_wait(client, "deadline")
@@ -563,7 +559,7 @@ def secret_project(project):
 
 def uses_secret():
     return {**RUN_LIST_REMOTE, "secrets": ["database_password"],
-            "_nix": entry(python_program(USES_SECRET))}
+            "_nix": entry(python_run(USES_SECRET))}
 
 
 def files_containing(root, needle, skip=lambda path: False):

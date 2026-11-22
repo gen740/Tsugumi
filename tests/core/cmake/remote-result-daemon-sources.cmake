@@ -1,6 +1,5 @@
 set(_tsugumi_remote_result_daemon_sources
   shell_test.cc
-  doubles/nix_eval.cc
 )
 if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
   list(APPEND _tsugumi_remote_result_daemon_sources
