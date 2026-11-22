@@ -41,6 +41,7 @@ struct Server::State : RequestSink {
     pending.coalesce_key = note.coalesce_key;
     pending.group = sub->id;
     pending.approx_bytes = note.approx_bytes;
+    pending.trace = note.kind != Note::Kind::Display;
     pending.build = [sub, build = std::move(note.build)] {
       flatbuffers::FlatBufferBuilder b;
       auto [type, value] = (*build)(b);

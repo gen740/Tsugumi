@@ -26,7 +26,6 @@ class NativeContract : public testing::Test {
   flatbuffers::FlatBufferBuilder message;
   flatbuffers::Parser schema;
   Call call{};
-  tsugumi_call abi{};
   std::string directory;
 
   void SetUp() override {
@@ -39,13 +38,7 @@ class NativeContract : public testing::Test {
                      "(required); } root_type Output;"));
     schema.Serialize();
     W::WorkerCallT request;
-    request.run_id = "run";
-    request.card = std::make_unique<D::CardPathT>();
-    request.card->segments = {"card"};
-    request.invocation = 1;
     request.params = std::make_unique<D::FlatBufferDataT>();
-    request.working_directory = directory;
-    request.temporary_directory = directory;
     for (const auto* name : {"first", "second"}) {
       auto port = std::make_unique<D::PortT>();
       port->name = name;
@@ -58,12 +51,9 @@ class NativeContract : public testing::Test {
     }
     message.Finish(W::WorkerCall::Pack(message, &request));
     call.msg = flatbuffers::GetRoot<W::WorkerCall>(message.GetBufferPointer());
-    call.card = "card";
-    call.run_id = "run";
     call.call_id = 1;
     call.phase = TSUGUMI_RUN;
     g_call = &call;
-    abi.effects = &kEffects;
   }
   void TearDown() override {
     g_call = nullptr;
@@ -156,18 +146,10 @@ TEST_F(NativeContract, SourceFailureSurvivesCompletionAndTheFailureReply) {
   for (const auto* entry : *failure->args())
     args.emplace(entry->key()->str(), entry->value()->str());
   const std::map<std::string, std::string> expected = {
-      {"card", "card"},
       {"source", "src/notebook.py"},
       {"line", "8"},
       {"cell", "calculation"}};
   EXPECT_EQ(args, expected);
-}
-TEST_F(NativeContract, ReportRejectionCanBeHandledByTheCard) {
-  ASSERT_NE(tsugumi_display_scalar(&abi, NAN, "value"), 0);
-  ASSERT_FALSE(call.failure);
-  receive_json("first", R"({"value":"ok"})");
-  validate_required_outputs(call);
-  EXPECT_FALSE(call.failure);
 }
 TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   const std::string base = directory + "/contract";
@@ -177,6 +159,8 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
              "printf '%s' \"$TSUGUMI_FAILED\" > " + base + "/failed\n");
   Options options;
   options.bash = host_bash();
+  options.work = directory;
+  options.tmp = directory;
   options.run = base + "/body";
   options.post = base + "/post";
   flatbuffers::FlatBufferBuilder result;
@@ -187,21 +171,6 @@ TEST_F(NativeContract, RequiredOutputFailurePrecedesPostRun) {
   ::unlink((base + "/post").c_str());
   ::unlink((base + "/failed").c_str());
   ::rmdir(base.c_str());
-}
-TEST_F(NativeContract, MalformedDisplaysAreRejectedSynchronously) {
-  EXPECT_NE(tsugumi_display_scalar(&abi, INFINITY, "value"), 0);
-  EXPECT_NE(tsugumi_display_text(&abi, "\xff", 0), 0);
-  EXPECT_NE(
-      tsugumi_display_image(&abi, "image/png",
-                            reinterpret_cast<const uint8_t*>("invalid"), 7, ""),
-      0);
-  EXPECT_NE(tsugumi_display_table(&abi, nullptr, 0, nullptr, 0), 0);
-  const std::vector<uint8_t> oversized((8u << 20) + 1);
-  const tsugumi_blob blob{"points", oversized.data(), oversized.size()};
-  EXPECT_NE(tsugumi_display_module(
-                &abi, "/nix/store/00000000000000000000000000000000-view", "{}",
-                &blob, 1),
-            0);
 }
 }  // namespace
 

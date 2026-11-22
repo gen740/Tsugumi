@@ -18,7 +18,6 @@ table JobSpec {
   cpu_millis:ulong; memory_bytes:ulong; build_timeout_ms:ulong;
   filesystem:bool = true; pid:bool = true; ipc:bool = true; identity:bool = true;
   network:bool;
-  r_params_environment:bool;
   // Core recording policy for captured stdout and stderr bytes. Zero keeps
   // live transport available and disables persisted stdout/stderr.
   log_limit_bytes:ulong;

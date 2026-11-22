@@ -2,10 +2,10 @@
 // Frames: 4 byte little-endian length + FlatBuffer (max 16 MiB).
 //
 // One call at a time per worker. call_id >= 1 and never reused by a worker.
-// A call ends with exactly one WorkerResult or WorkerFailure; WorkerDisplay may
-// be sent any number of times before that.
+// A call ends with exactly one WorkerResult or WorkerFailure. WorkerDisplay
+// uses call_id 0 and is independent of calls.
 
-include "data.fbs";
+include "worker_types.fbs";
 
 namespace Tsugumi.Worker;
 attribute "trace_secret";
@@ -22,24 +22,17 @@ table WorkerInput {
 }
 
 table WorkerCall {
-  run_id:string (id: 0, required);
-  card:Tsugumi.Data.CardPath (id: 1, required);
-  invocation:uint64 = null (id: 2);
-  inputs:[WorkerInput] (id: 3, required);
-  params:Tsugumi.Data.FlatBufferData (id: 4, required);
-  outputs:[Tsugumi.Data.Port] (id: 5, required);
-  working_directory:string (id: 6, required);
-  temporary_directory:string (id: 7, required);
-  // Only for Cards with File / Directory outputs.
-  output_directory:string (id: 8);
-  environment:[EnvVar] (id: 9, required);
+  inputs:[WorkerInput] (id: 0, required);
+  params:Tsugumi.Data.FlatBufferData (id: 1, required);
+  outputs:[Tsugumi.Data.Port] (id: 2, required);
   // Remaining time in milliseconds. Omitted means no deadline.
-  deadline_ms:uint64 = null (id: 10);
+  deadline_ms:uint64 = null (id: 3);
 }
 
 table WorkerOutput {
   name:string (id: 0, required);
   bytes:[ubyte] (id: 1, required);
+  forwarded_from:string (id: 2);
 }
 
 table WorkerResult { outputs:[WorkerOutput] (id: 0, required); }
@@ -51,7 +44,10 @@ table WorkerCancel {}
 // A private launch frame sent before the first call when the Card uses secrets.
 table WorkerStart { environment:[EnvVar] (required); }
 
-table WorkerDisplay { display:Tsugumi.Data.Display (id: 0, required); }
+table WorkerDisplay {
+  view:string (id: 0, required);
+  bytes:[ubyte] (id: 1, required);
+}
 
 union WorkerPayload {
   WorkerCall = 1,

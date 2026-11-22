@@ -67,15 +67,9 @@ struct Value {
 auto with_path(const Value& value, const std::string& path) -> Value;
 auto path_value(const Value& value) -> std::optional<std::string>;
 
-// The core owns only the address and revision. Presentation remains an opaque
-// verified FlatBuffer, including any shared tables and strings inside it.
-struct DisplayData {
-  CardPath card;
-  std::string run_id;
-  uint64_t invocation = 0;
-  uint64_t revision = 0;
+struct WorkerDisplayData {
+  std::string view;
   std::string bytes;
-  size_t root_offset = 0;
 };
 
 }  // namespace tsugumi

@@ -21,9 +21,6 @@ import threading
 
 import flatbuffers
 
-from Tsugumi.Data.Display import DisplayT
-from Tsugumi.Data.DisplayText import DisplayTextT
-from Tsugumi.Data.DisplayValue import DisplayValue
 from Tsugumi.Data.Failure import FailureT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
@@ -167,12 +164,13 @@ class Worker:
         self.data.send(self.call_id, WorkerPayload.WorkerFailure, WorkerFailureT(failure=failure))
 
     def output_path(self, relative):
-        if self.call is None or not self.call.outputDirectory:
+        output_directory = os.environ.get("TSUGUMI_OUTPUT_DIR")
+        if self.call is None or not output_directory:
             raise ValueError("file actions require a File or Directory output")
         relative = Path(relative)
         if relative.is_absolute() or ".." in relative.parts:
             raise ValueError("output action path must stay inside the output directory")
-        return Path(text(self.call.outputDirectory)) / relative
+        return Path(output_directory) / relative
 
     def actions(self, actions, outputs):
         for action in actions:
@@ -204,7 +202,7 @@ class Worker:
                 self.failure(action.get("kind", "worker_failed"), action.get("message", "scripted worker failure"))
                 return False
             elif operation == "output":
-                sources = {"calls": self.calls, "invocation": self.call.invocation, "pid": os.getpid()}
+                sources = {"calls": self.calls, "pid": os.getpid()}
                 value = sources[action["source"]] if "source" in action else action["value"]
                 outputs[action["port"]] = scalar(action["type"], value)
             elif operation == "echo":
@@ -227,12 +225,8 @@ class Worker:
                 destination.parent.mkdir(parents=True, exist_ok=True)
                 destination.symlink_to(action["target"])
             elif operation == "display_text":
-                display = DisplayT(
-                    card=self.call.card, runId=self.call.runId, invocation=self.call.invocation,
-                    revision=1, valueType=DisplayValue.DisplayText,
-                    value=DisplayTextT(text=action["text"]),
-                )
-                self.data.send(self.call_id, WorkerPayload.WorkerDisplay, WorkerDisplayT(display=display))
+                display = WorkerDisplayT(view="test", bytes=action["text"].encode())
+                self.data.send(0, WorkerPayload.WorkerDisplay, display)
             else:
                 raise ValueError(f"unknown worker action: {operation}")
         return True

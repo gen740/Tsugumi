@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 53 requests.
+There are 52 requests.
 
 ## Connection
 
@@ -447,7 +447,6 @@ No fields.
 | --- | --- | --- |
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
-| [`ModuleRead`](#moduleread) | FileContent | Read immutable display-module source in pages. |
 
 ### ViewSetVisible
 
@@ -464,14 +463,6 @@ No fields.
 | `view_id` | `string` | yes |  |
 | `base_view_rev` | `uint64` |  |  |
 | `view_json` | `string` | yes |  |
-
-### ModuleRead
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `module` | `string` | yes |  |
-| `offset` | `uint64` |  |  |
-| `limit_bytes` | `uint32` |  |  |
 
 ## Versions
 
@@ -553,6 +544,8 @@ Sent from `tsugumid` to connected clients.
 - `LogAvailable`
 - `TraceChanged`
 - `RunCategoryDeleteResult`
+- `CardViewsUpdated`
+- `DisplayRunStateChanged`
 
 ### Run events
 

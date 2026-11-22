@@ -83,7 +83,6 @@ struct EvidenceView: View {
   @State private var bodyText = String(localized: "読み込み中…")
   @State private var rows: [Tsugumi_RPC_InvocationSummaryT] = []
   @State private var record: Tsugumi_RPC_RecordResultT?
-  @State private var displays = RecordedDisplays()
   @State private var selected: EvidenceTarget?
   @State private var artifact: Tsugumi_RPC_ArtifactInfoT?
   @State private var artifactMember: String?
@@ -108,10 +107,6 @@ struct EvidenceView: View {
             }.buttonStyle(.link).disabled((row.invocation ?? 0) == 0)
           }
           if let r = record?.record {
-            DisplayRecordPicker(history: displays)
-            if let display = displays.display {
-              DisplayView(display: display).frame(height: 360)
-            }
             Text("入力").font(.headline)
             ForEach(Array(r.inputs.compactMap { $0 }.enumerated()), id: \.offset) { _, value in Text(describeValue(value)).monospaced().textSelection(.enabled) }
             Text("出力").font(.headline)
@@ -121,12 +116,7 @@ struct EvidenceView: View {
       }
     }.padding(20).frame(minWidth: 650, minHeight: 450)
       .task(id: "\(target.href)|\(session.recordingRevision)") { await load() }
-      .task(id: displays.selection) {
-        if let run = target.run, let card = target.card {
-          await displays.show(rpc: session.rpc, run: run, card: card)
-        }
-      }
-      .sheet(item: $selected) { EvidenceView(session: session, target: $0) }
+
   }
   private func load() async {
     artifact = nil
@@ -171,7 +161,6 @@ struct EvidenceView: View {
         let state = summary?.state ?? r.status.state
         let diagnostic = summary.map { $0.failure?.diagnostic ?? "" } ?? (r.status.failure?.diagnostic ?? "")
         bodyText = (runMark(r.run.status).map { $0 + "\n" } ?? "") + "\(session.displayPath(card)) · #\(summary?.invocation ?? 0)\n\(state.label)\n\(diagnostic)"
-        await displays.load(rpc: rpc, run: run, card: card, known: r, exact: target.invocation != nil)
       } else {
         let status = try await rpc.runStatus(runId: run)
         bodyText = status.state.label

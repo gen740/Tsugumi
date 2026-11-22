@@ -292,8 +292,8 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
         auto result = import_remote_result(
             client_, target_, instance_, s.execution_job_id,
             reply->result_sha256, job.spec, request.directory,
-            service_.store().state_dir() / "modules", node.outputs, request.inputs,
-            request.display, live_log.recorded(), request.log, request.stop,
+            node.outputs, request.inputs, live_log.recorded(), request.log,
+            request.stop,
             [&](std::string_view name, uint64_t done, uint64_t total) {
               if (request.transfer)
                 request.transfer("download", name, done, total);

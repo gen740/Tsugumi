@@ -7,7 +7,6 @@
 #include <set>
 #include <sstream>
 
-#include "module_source.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
@@ -222,15 +221,8 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                  "run cancelled before external submission");
   const auto ptype = NixRunner::params_type(request.node);
   const auto params = NixRunner::params_buffer(request.node);
-  // The remote adapter chooses which realized implementations need this
-  // ABI 8 parameter encoding when it sees the manifest.
-  const std::vector<std::pair<std::string, std::string>> env{
-      {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
-  };
   auto call = worker_call_frame(
-      1, request.summary.run_id, request.node.path, request.summary.invocation,
-      inputs, ptype->bfbs, ptype->root_type, params, request.node.outputs, "",
-      "", "", env,
+      1, inputs, ptype->bfbs, ptype->root_type, params, request.node.outputs,
       request.node.settings.timeout_seconds
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)
@@ -268,7 +260,6 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   job.ipc = settings.sandbox.ipc;
   job.identity = settings.sandbox.identity;
   job.network = settings.grants.network;
-  job.r_params_environment = settings.language == "r";
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &job));
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
@@ -278,10 +269,10 @@ auto import_remote_result(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,
     const std::string& result_digest, const std::string& spec,
-    const stdfs::path& directory, const stdfs::path& module_cache,
+    const stdfs::path& directory,
     const std::vector<types::PortType>& outputs,
     const std::vector<Value>& inputs,
-    const WorkerProc::DisplaySink& display, const RemoteLogPrefix& recorded,
+    const RemoteLogPrefix& recorded,
     const WorkerProc::LogSink& log,
     std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
@@ -323,7 +314,6 @@ auto import_remote_result(
   } remove{temp};
   std::set<stdfs::path> written;
   uint64_t total = 0;
-  std::vector<std::pair<ModuleIdentity, const R::ResultFile*>> module_files;
   for (const auto* file : *files) {
     const auto name_value = file->path()->str();
     const auto digest_value = file->sha256()->str();
@@ -333,8 +323,8 @@ auto import_remote_result(
     const auto* size = &size_value;
     const auto rel = remote::relative_path(*name);
     const auto base = *rel.begin();
-    if (base != "files" && base != "modules" && rel != "environment.json" &&
-        rel != "logs.jsonl" && rel != "display.fb")
+    if (base != "files" && rel != "environment.json" &&
+        rel != "logs.jsonl")
       throw std::runtime_error("unexpected remote result member");
     if (base == "files") {
       auto part = std::next(rel.begin());
@@ -346,20 +336,12 @@ auto import_remote_result(
     if (!crypto::is_sha256_hex(*digest) || *size > kMaxBlobBytes - total ||
         !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = base == "modules"     ? kModuleSourceLimit
-                          : base == "files"     ? kMaxBlobBytes
+    const auto max_size = base == "files"       ? kMaxBlobBytes
                           : rel == "logs.jsonl" ? kRemoteLogTransportBytes
                                                 : kMaxWorkerBytes;
     if (*size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
     total += *size;
-    if (base == "modules") {
-      const auto name = rel.parent_path().filename().string();
-      if (rel == stdfs::path("modules") / name / "index.js")
-        if (auto identity = ModuleIdentity::parse("/nix/store/" + name))
-          module_files.emplace_back(std::move(*identity), file);
-      continue;  // Built definition resources are independent of display data.
-    }
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
@@ -377,31 +359,6 @@ auto import_remote_result(
     throw std::runtime_error("invalid remote build environment");
   result.built = *environment.built;
   result.environment.paths = *environment.paths;
-  std::optional<DisplayData> decoded_display;
-  if (auto blob = fs::read_file(temp / "display.fb"))
-    decoded_display = wire::standalone_display(*blob);
-  for (const auto& [identity, file] : module_files) {
-    if (std::ranges::find(result.environment.paths, identity.path().string()) ==
-        result.environment.paths.end())
-      continue;
-    try {
-      const auto& root = identity.path();
-      if (stdfs::is_symlink(root)) continue;
-      if (!stdfs::is_directory(root) &&
-          !cached_module_source(module_cache, identity)) {
-        const auto source =
-            download(client, service, instance, job_id, file->sha256()->str(),
-                     kModuleSourceLimit, stop, file->size());
-        // The pinned builder supplies built resources, restricted to its
-        // closure. A Nix store path is an identity, not the content hash of
-        // this source.
-        save_module_source(module_cache, identity, source);
-      }
-    } catch (const std::exception&) {
-      if (stop.stop_requested()) throw;
-      // The clients show unavailable presentation; computation still completes.
-    }
-  }
   if (const auto* failure = message->value_as_WorkerFailure()) {
     result.failure = wire::failure(failure->failure());
   } else if (const auto* worker = message->value_as_WorkerResult()) {
@@ -469,7 +426,6 @@ auto import_remote_result(
     throw std::runtime_error("remote worker did not send a result or failure");
   }
   import_logs(temp / "logs.jsonl", recorded, log, result);
-  if (display && decoded_display) display(*decoded_display);
   return result;
 }
 

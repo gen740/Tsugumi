@@ -45,37 +45,6 @@ struct ResolvedCard {
   var nixReferences: [CardNixReference] = []
 }
 
-/// Decode the ABI 8 wire values used by both live and retained displays.
-func recordedDisplay(_ d: Tsugumi_Data_DisplayT) -> DisplaySnapshot? {
-  let value: DisplayValue
-  switch d.value?.type {
-  case .displaytext:
-    let t = d.value?.value as? Tsugumi_Data_DisplayTextT
-    value = t?.markdown == true ? .markdown(t?.text ?? "") : .text(t?.text ?? "")
-  case .displayscalar:
-    let s = d.value?.value as? Tsugumi_Data_DisplayScalarT
-    value = .scalar(s?.value ?? .nan, s?.label ?? "")
-  case .displaytable:
-    let t = d.value?.value as? Tsugumi_Data_DisplayTableT
-    value = .table(columns: (t?.columns ?? []).compactMap { $0 }, rows: (t?.rows ?? []).compactMap { $0?.cells.compactMap { $0 } })
-  case .displayimage:
-    let im = d.value?.value as? Tsugumi_Data_DisplayImageT
-    value = .image(mediaType: im?.mediaType ?? "", data: Data(im?.data ?? []), alt: im?.alt ?? "")
-  case .displaypointcloud:
-    let p = d.value?.value as? Tsugumi_Data_DisplayPointCloudT
-    value = .points(x: p?.x ?? [], y: p?.y ?? [], z: p?.z ?? [], colors: p?.colors ?? [])
-  case .displaymodule:
-    let m = d.value?.value as? Tsugumi_Data_DisplayModuleT
-    let names = (m?.blobs ?? []).compactMap { $0?.name }
-    guard Set(names).count == names.count else {
-      return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: .unavailable)
-    }
-    value = .module(name: m?.module ?? "", json: m?.configJson ?? "", blobs: Dictionary(uniqueKeysWithValues: (m?.blobs ?? []).compactMap { $0 }.map { ($0.name, Data($0.data)) }))
-  default: value = .unavailable
-  }
-  return DisplaySnapshot(runId: d.runId, invocation: d.invocation ?? 0, revision: d.revision ?? 0, value: value)
-}
-
 /// One stage of an invocation as the core recorded it (core clock, ms).
 struct StageRecord: Equatable, Hashable {
   var stage: Stage
@@ -566,7 +535,6 @@ final class ProjectSession {
       let opened = try await c.open(viewId: viewId)
       if Task.isCancelled || closed { await c.close(); return }
       client = c
-      ModuleSources.register(c)
       receiveProjectSnapshot(opened.snapshot, projectId: ep.projectId)
       subscription = opened.subscriptionId
       lastSeq = opened.seq ?? 1
@@ -760,8 +728,6 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .displayupdated:
-      if let d = (e.payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display { applyDisplay(d) }
     case .runcategorydeleteresult:
       recordingRevision += 1
     case .logavailable:
@@ -988,16 +954,6 @@ final class ProjectSession {
       lastFinished = Date()
     default:
       break
-    }
-  }
-
-  func applyDisplay(_ d: Tsugumi_Data_DisplayT) {
-    let k = key(d.card.path)
-    guard displayViewers.values.contains(k) else { return }
-    let rev = d.revision ?? 0
-    if let old = displays[k], old.runId == d.runId, old.revision >= rev { return }  // stale frame
-    if let display = recordedDisplay(d) {
-      displays[k] = display
     }
   }
 

@@ -69,22 +69,6 @@ import Testing
     #expect(RunComparison.sameDisplay(image, sameImage))
   }
 
-  @Test func recordedDisplayDoesNotNeedALiveSession() {
-    let value = Tsugumi_Data_DisplayTableT()
-    value.columns = ["Band", "Photons"]
-    let row = Tsugumi_Data_TableRowT()
-    row.cells = ["red", "101187"]
-    value.rows = [row]
-    let display = Tsugumi_Data_DisplayT()
-    display.runId = "old-run"
-    display.invocation = 7
-    display.value = Tsugumi_Data_DisplayValueUnion(value, type: .displaytable)
-    let decoded = recordedDisplay(display)
-    #expect(decoded?.runId == "old-run" && decoded?.invocation == 7)
-    guard case .table(let columns, let rows) = decoded?.value else { Issue.record("expected a retained table"); return }
-    #expect(columns == ["Band", "Photons"] && rows == [["red", "101187"]])
-  }
-
   @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
     func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
       let value = Tsugumi_Data_NamedValueT()

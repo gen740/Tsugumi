@@ -344,8 +344,7 @@ Catalog::Catalog() {
             "Reserve a permanent Card id from name; returns id. project_path "
             "selects an external project; omitted means root.";
       if (tool.spec.name == "run_value_read" ||
-          tool.spec.name == "artifact_read" || tool.spec.name == "log_range" ||
-          tool.spec.name == "module_read")
+          tool.spec.name == "artifact_read" || tool.spec.name == "log_range")
         tool.spec.description +=
             " Agent pages default to 2048 bytes; continue with next_offset.";
       if (tool.spec.name == "run_history" ||

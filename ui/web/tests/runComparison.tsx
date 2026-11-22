@@ -1,14 +1,11 @@
 import assert from 'node:assert/strict'
 import { setImmediate } from 'node:timers/promises'
 import { L } from '../src/i18n'
-import fs from 'node:fs'
-import path from 'node:path'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { act, create } from 'react-test-renderer'
 import { D, R, cardPath } from '../src/wire/rpc'
 import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
-import { displayModule, ProjectSession, recordedDisplay } from '../src/model/session'
-import { loadDisplayIndex } from '../src/ui/recordedDisplays'
+import { ProjectSession } from '../src/model/session'
 import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
 
 const summary = (runId: string, card: string, state = D.CardState.succeeded) => Object.assign(new R.InvocationSummaryT(), {
@@ -182,20 +179,6 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.ok(html.includes('#3') && html.includes('#1'), 'the two sides identify the compared invocations')
 }
 
-// Use the retained table and images from the Cas A recording.
-const playerData = path.join(process.env.TSUGUMI_SITE_PLAYER_DIR!, 'player-data')
-const { outputs } = JSON.parse(fs.readFileSync(path.join(playerData, 'assets/casa.run.json'), 'utf8'))
-const table = outputs.bands
-const display = (runId: string, valueType: D.DisplayValue, value: D.DisplayTableT | D.DisplayImageT) => Object.assign(new D.DisplayT(), { runId, invocation: 1n, revision: 1n, card: cardPath(['bands']), valueType, value })
-const tableValue = (rows: string[][]) => Object.assign(new D.DisplayTableT(), { columns: table.columns, rows: rows.map(cells => Object.assign(new D.TableRowT(), { cells })) })
-a.record!.display = display('left', D.DisplayValue.DisplayTable, tableValue(table.rows))
-const changedRows = structuredClone(table.rows)
-changedRows[0][2] = String(Number(changedRows[0][2]) + 1)
-b.record!.display = display('right', D.DisplayValue.DisplayTable, tableValue(changedRows))
-const shown = (d?: D.DisplayT | null) => d ? recordedDisplay(d) : undefined
-assert.equal(sameDisplay(shown(a.record!.display), shown(b.record!.display)), false)
-assert.equal(sameDisplay(shown(a.record!.display), undefined), false)
-assert.equal(sameDisplay(undefined, undefined), true)
 {
   // The same rule as the Mac app: compare what is shown, kind by kind; module equality includes binary data.
   const chart = (y: number[]) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'module' as const, name: 'line-chart', json: '{}', blobs: { y: new Uint8Array(new Float64Array(y).buffer) } } })
@@ -206,52 +189,11 @@ assert.equal(sameDisplay(undefined, undefined), true)
   const scalar = (value: number, label: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'scalar' as const, value, label } })
   assert.ok(sameDisplay(scalar(1, 'n'), scalar(1, 'n')) && !sameDisplay(scalar(1, 'n'), scalar(1, 'm')))
 }
-assert.equal(recordedDisplay(a.record!.display)?.value.kind, 'table')
-const markup = renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />)
-for (const text of ['bands', '1650', '1800', '/modules/viewer.html']) assert.ok(markup.includes(text), text)
-assert.equal(JSON.parse(displayModule(shown(a.record!.display)!.value)!.config).rows[0][2], table.rows[0][2])
-assert.equal(JSON.parse(displayModule(shown(b.record!.display)!.value)!.config).rows[0][2], changedRows[0][2])
-for (const name of ['rgb', 'spectrum']) {
-  const image = outputs[name]
-  const bytes = [...fs.readFileSync(path.join(playerData, image.src))]
-  const value = Object.assign(new D.DisplayImageT(), { data: bytes, mediaType: name === 'rgb' ? 'image/jpeg' : 'image/png', alt: name })
-  const retained = display('left', D.DisplayValue.DisplayImage, value)
-  const other = display('right', D.DisplayValue.DisplayImage, value)
-  other.revision = 99n
-  assert.ok(sameDisplay(shown(retained), shown(other)), 'identity and frame revision do not change image equality')
-  assert.equal(recordedDisplay(retained)?.value.kind, 'image')
-  a.record!.display = retained; b.record!.display = other
-  assert.equal(displayModule(shown(retained)!.value)?.name, 'tsugumi:image')
-  assert.equal((renderToStaticMarkup(<ComparedCardView row={compared.get('bands')!} />).match(/<iframe/g) ?? []).length, 2)
-}
-// The ABI 8 adapter orders retained displays by arrival across invocation pages.
-{
-  const results = [1n, 2n, 3n].map((invocation, i) => {
-    const r = record('history', 'bands', '{}')
-    r.record!.summary!.invocation = invocation
-    if (i < 2) r.record!.display = Object.assign(display('history', D.DisplayValue.DisplayTable, tableValue(table.rows)), {
-      invocation, revision: i === 0 ? 7n : 4n,
-    })
-    return r
-  })
-  const index = await loadDisplayIndex({
-    async invocations(_run, _card, cursor) {
-      return Object.assign(new R.InvocationPageT(), {
-        records: (cursor ? results.slice(2) : results.slice(0, 2)).map(r => r.record!.summary!),
-        nextCursor: cursor ? null : 'next',
-      })
-    },
-    async record(_run, _card, invocation) { return results[Number(invocation) - 1] },
-  }, 'history', ['bands'], results[2], new AbortController().signal)
-  assert.deepEqual(index.entries.map(entry => entry.invocation), [2n, 1n])
-  assert.equal(index.latest?.invocation, 1n)
-}
-
 // Opening a comparison leaves the live viewer alone: the displays the session holds are
 // the same objects afterwards, and the only requests are reads of the two selected runs.
 {
   const session = new ProjectSession('/p', 'k', 'p')
-  const live = recordedDisplay(display('current', D.DisplayValue.DisplayTable, tableValue(table.rows)))!
+  const live = { runId: 'current', invocation: 1n, revision: 1n, value: { kind: 'text' as const, text: 'live' } }
   session.displays.set('bands', live)
   const requests: string[] = []
   const unavailable = 'fixture history error'

@@ -497,7 +497,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
   duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
-  input_sources TEXT, display BLOB, build_cached INTEGER, detail TEXT,
+  input_sources TEXT, build_cached INTEGER, detail TEXT,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p +
@@ -541,17 +541,13 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   members TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
-CREATE TABLE IF NOT EXISTS )SQL" +
-         p + R"SQL(displays(
-  run_id TEXT NOT NULL, card TEXT NOT NULL, revision INTEGER NOT NULL, data BLOB NOT NULL,
-  PRIMARY KEY(run_id, card));
 )SQL";
 }
 
 // Version of the local history's tables (PRAGMA user_version).
 // Includes the definition paths recorded when a run is accepted and the
 // log line index.
-constexpr int kHistoryVersion = 16;
+constexpr int kHistoryVersion = 17;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -933,8 +929,8 @@ void History::complete_invocation(sql::Db& db,
       "INSERT OR REPLACE INTO invocations(run_id, card, "
       "invocation, state, phase, started_at, ended_at, "
       "duration_ms, failure, waiting, record_io, "
-      "input_sources, display, build_cached, detail) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      "input_sources, build_cached, detail) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   st.bind(1, s.run_id)
       .bind(2, key(s.card))
       .bind(3, s.invocation)
@@ -948,15 +944,11 @@ void History::complete_invocation(sql::Db& db,
   st.bind(10, waiting_json(s.waiting))
       .bind(11, r.record_io)
       .bind(12, sources_json(r.input_sources));
-  if (r.display)
-    st.bind_blob(13, wire::standalone_display(*r.display));
+  if (s.build_cached)
+    st.bind(13, *s.build_cached);
   else
     st.bind_null(13);
-  if (s.build_cached)
-    st.bind(14, *s.build_cached);
-  else
-    st.bind_null(14);
-  st.bind(15, detail_json(s));
+  st.bind(14, detail_json(s));
   st.run();
   // The completion removes exactly this invocation's progress status, never a
   // newer one.
@@ -1087,17 +1079,6 @@ void History::put_artifact(sql::Db& db, const ArtifactData& a) {
       .run();
   db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
       .bind(1, a.run_id)
-      .run();
-}
-
-void History::put_display(sql::Db& db, const DisplayData& d) {
-  db.prepare(
-        "INSERT OR REPLACE INTO displays(run_id, card, revision, data) "
-        "VALUES(?,?,?,?)")
-      .bind(1, d.run_id)
-      .bind(2, key(d.card))
-      .bind(3, d.revision)
-      .bind_blob(4, wire::standalone_display(d))
       .run();
 }
 
@@ -1331,15 +1312,14 @@ std::optional<InvocationRecordData> History::invocation(
   auto st = db.prepare(
       "SELECT card, invocation, state, phase, started_at, ended_at, "
       "duration_ms, failure, waiting, "
-      "record_io, input_sources, display, build_cached, detail FROM "
+      "record_io, input_sources, build_cached, detail FROM "
       "invocations WHERE run_id=? AND card=? AND invocation=?");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n);
   if (!st.step()) return std::nullopt;
   InvocationRecordData r;
-  r.summary = inv_row(db, st, run_id, 12, 13);
+  r.summary = inv_row(db, st, run_id, 11, 12);
   r.record_io = st.i64(9) != 0;
   r.input_sources = sources_from(st.text(10));
-  if (!st.is_null(11)) r.display = wire::standalone_display(st.blob(11));
   return r;
 }
 
@@ -1652,15 +1632,6 @@ std::vector<ArtifactData> History::artifacts(
   return out;
 }
 
-std::optional<DisplayData> History::display(sql::Db& db,
-                                            const std::string& run_id,
-                                            const CardPath& card) {
-  auto st = db.prepare("SELECT data FROM displays WHERE run_id=? AND card=?");
-  st.bind(1, run_id).bind(2, key(card));
-  if (!st.step()) return std::nullopt;
-  return wire::standalone_display(st.blob(0));
-}
-
 std::vector<RunSummaryData> History::runs_page(sql::Db& db,
                                                std::optional<CardPath> card,
                                                bool artifacts_only,
@@ -1937,7 +1908,7 @@ std::vector<std::string> History::delete_runs(
          {"runs", "run_cards", "run_batches", "build_environments",
           "environment_paths", "run_substituters", "run_commits", "invocations",
           "ivalues", "logs", "log_terminal_ends", "log_terminal_tiles",
-          "log_truncations", "artifacts", "displays", "statuses",
+          "log_truncations", "artifacts", "statuses",
           "active_environments", "run_definition_paths"}) {
       auto remove =
           db.prepare(std::string("DELETE FROM ") + table + " WHERE run_id=?");

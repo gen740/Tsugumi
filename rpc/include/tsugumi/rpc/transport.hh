@@ -33,6 +33,7 @@ struct PendingMessage {
   std::string group;
   std::function<std::string()> build;
   size_t approx_bytes = 256;
+  bool trace = true;
 };
 struct FrameInfo {
   uint64_t request_id;

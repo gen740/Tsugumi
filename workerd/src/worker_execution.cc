@@ -277,20 +277,15 @@ auto run_invocation(const ReleaseWorker& release_worker,
         invocation.stage_inputs ? staged : invocation.inputs;
     const auto params = invocation.prepare_params ? invocation.prepare_params()
                                                   : invocation.params;
-    std::vector<std::pair<std::string, std::string>> environment;
-    if (params.json)
-      environment.emplace_back("TSUGUMI_PARAMS_JSON", *params.json);
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (invocation.timeout_ms)
       deadline = std::chrono::steady_clock::now() +
                  std::chrono::milliseconds(*invocation.timeout_ms +
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
-    auto frame = worker_call_frame(
-        id, invocation.run_id, invocation.card, invocation.number, inputs,
-        params.bfbs, params.root, params.bytes, invocation.outputs,
-        worker.work_dir(), worker.tmp_dir(), needs_out ? worker.out_dir() : "",
-        environment, invocation.timeout_ms);
+    auto frame = worker_call_frame(id, inputs, params.bfbs, params.root,
+                                   params.bytes, invocation.outputs,
+                                   invocation.timeout_ms);
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");

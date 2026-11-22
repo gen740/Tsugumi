@@ -20,7 +20,6 @@
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
-#include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/value_wire.hh"
@@ -168,7 +167,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const stdfs::path& input, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
-                const WorkerProc::DisplaySink& display,
                 const fs::TransferProgress& progress, Secrets secrets)
     -> workerd::InvocationResult {
   schema::CardManifest manifest;
@@ -204,7 +202,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                  "remote Card manifest must contain one package or Bash body");
   spawn.program.pre_run = manifest.pre_run->value_or("");
   spawn.program.post_run = manifest.post_run->value_or("");
-  spawn.program.views = manifest.views->value_or("");
   spawn.sandbox = {job.filesystem,
                    job.pid,
                    job.ipc,
@@ -213,9 +210,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   spawn.network = job.network;
   if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
   spawn.ro_paths = {input.string()};
-  CardPath card;
-  for (const auto* name : *call.card()->segments()) card.push_back(name->str());
-  spawn.card = path_key(card);
+  spawn.card = "remote";
 
   std::vector<Value> values;
   for (const auto* port : *call.inputs()) {
@@ -244,18 +239,11 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   auto lease = pool.acquire(spawn.card, "", spawn, false);
   spawn.secrets.reset();
   workerd::Invocation request;
-  request.run_id = call.run_id()->str();
-  request.card = card;
-  request.number = call.invocation().value_or(0);
   request.inputs = values;
   request.outputs = std::move(outputs);
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  if (spawn.program.bash || job.r_params_environment)
-    for (const auto* v : *call.environment())
-      if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-        request.params.json = v->value()->str();
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
@@ -264,7 +252,6 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
   request.transfer = progress;
-  request.display = display;
   return workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
         pool.release(spawn.card, lease.generation, std::move(worker), keep,
@@ -356,7 +343,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       if (fd >= 0) ::close(fd);
     }
   };
-  std::string display;
   WorkerStoreResult environment;
   InvocationResult outcome;
   // Only definition data enter this persistent private Nix store. Invocation
@@ -371,37 +357,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(
         *call, *job, invocation, input, directory, store, group, environment,
-        log,
-        [&](const DisplayData& data) {
-          display = wire::standalone_display(data);
-        },
-        progress, std::move(secrets));
-    if (!display.empty()) {
-      const auto* module =
-          flatbuffers::GetRoot<Tsugumi::Data::Display>(display.data())
-              ->value_as_DisplayModule();
-      if (module && module->module_()) {
-        try {
-          const auto identity = module->module_()->str();
-          if (!valid_module_identity(identity) ||
-              std::ranges::find(environment.closure, identity) ==
-                  environment.closure.end())
-            throw std::runtime_error(
-                "display module is outside the built closure");
-          // Transport a built definition resource under its immutable identity.
-          // The core imports it without interpreting the display's run data.
-          const auto store_directory = store / "nix/store";
-          const auto basename = stdfs::path(identity).filename();
-          const auto root = store_directory / basename;
-          if (stdfs::is_symlink(root) || !stdfs::is_directory(root))
-            throw std::runtime_error("invalid display module output");
-          fs::write_atomic(result_dir / "modules" / basename / "index.js",
-                           module_source(root, store_directory), 0600);
-        } catch (const std::exception&) {
-          // A view failure must not replace the Card result.
-        }
-      }
-    }
+        log, progress, std::move(secrets));
   } catch (const Failed& error) {
     outcome.failure = error.failure;
   } catch (const std::exception& error) {
@@ -423,8 +379,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         info.directories->push_back(
             entry.path().lexically_relative(files).generic_string());
   }
-  if (!display.empty())
-    fs::write_atomic(result_dir / "display.fb", display, 0600);
   fs::write_atomic(result_dir / "environment.json", schema::encode(info), 0600);
   fs::write_atomic(result_dir / "worker.fb", make_result(outcome), 0600);
 }

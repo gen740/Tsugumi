@@ -998,7 +998,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
   }
   // Model-facing defaults belong to the host. UI/core paging is unchanged.
   if (call.name == "run_value_read" || call.name == "artifact_read" ||
-      call.name == "log_range" || call.name == "module_read") {
+      call.name == "log_range") {
     if (!args.contains("limit_bytes"))
       args["limit_bytes"] = std::to_string(kResultPageBytes);
   }

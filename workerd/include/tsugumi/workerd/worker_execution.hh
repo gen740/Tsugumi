@@ -33,13 +33,9 @@ struct InvocationParameters {
   std::string bfbs;
   std::string root;
   std::string bytes;
-  std::optional<std::string> json;
 };
 
 struct Invocation {
-  std::string run_id;
-  CardPath card;
-  uint64_t number = 0;
   // Borrowed for this synchronous invocation; never retained by the pool.
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;

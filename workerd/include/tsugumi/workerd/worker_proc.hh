@@ -97,7 +97,7 @@ class WorkerProc {
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;
-  using DisplaySink = std::function<void(const DisplayData&)>;
+  using DisplaySink = std::function<void(const WorkerDisplayData&)>;
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
   explicit WorkerProc(const WorkerSpawn& spawn);
@@ -179,12 +179,9 @@ class WorkerProc {
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
 std::string worker_call_frame(
-    uint64_t call_id, const std::string& run_id, const CardPath& card,
-    uint64_t invocation, std::span<const Value> inputs,
+    uint64_t call_id, std::span<const Value> inputs,
     const std::string& params_bfbs, const std::string& params_root,
     const std::string& params, const std::vector<types::PortType>& outputs,
-    const std::string& work, const std::string& tmp, const std::string& out,
-    const std::vector<std::pair<std::string, std::string>>& env,
     std::optional<uint64_t> deadline_ms);
 
 }  // namespace tsugumi

@@ -35,7 +35,6 @@ enum Shared {
     "RunEnvironmentsRequest",
     "RunEnvironmentPathsRequest",
     "ProjectShellRequest",
-    "ModuleReadRequest",
     "ProjectCacheUsageRequest"
   ],
   "hostTools": [
@@ -966,8 +965,7 @@ enum Shared {
       },
       "artifacts": {
         "list": "artifact_list",
-        "read": "artifact_read",
-        "module": "module_read"
+        "read": "artifact_read"
       },
       "versions": {
         "graph": "version_graph",

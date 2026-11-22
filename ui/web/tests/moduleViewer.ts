@@ -2,7 +2,6 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import path from 'node:path'
 import vm from 'node:vm'
-import { moduleSource, registerModuleClient } from '../src/model/moduleSources'
 
 const shared = path.join(process.argv[2], 'ui/shared/modules')
 const script = fs.readFileSync(path.join(shared, 'viewer.js'), 'utf8')
@@ -42,14 +41,4 @@ for (let i = 0; i < 10 && calls.length < 3; i++) await new Promise(resolve => se
 assert.deepEqual(calls, [['mount', ' { "count":2 } ', 255], ['update', '{"count":3}', 254], ['update', '{"count":4}', 253]])
 assert.equal(messages.at(-1).state, 'ok')
 
-// ModuleRead sends self-contained source in pages and coalesces consumers.
-let reads = 0
-const client = { async call(_: unknown, request: { offset: bigint }) {
-  ++reads
-  const first = request.offset === 0n
-  return { bytes: first ? [65, 0] : [66], offset: request.offset, nextOffset: first ? 2n : 3n, eof: !first }
-} }
-registerModuleClient(client as never)
-const [a, b] = await Promise.all([moduleSource('test-identity'), moduleSource('test-identity')])
-assert.equal(a, 'A\0B'); assert.equal(a, b); assert.equal(reads, 2)
-console.log('module views: default mount, opaque config, binary updates, and RPC paging passed')
+console.log('module viewer isolation and lifecycle passed')

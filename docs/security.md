@@ -116,9 +116,7 @@ The worker builds the process environment at launch. It uses the Card's manifest
 
 ### Showing Card views (line charts, Plotly, Vega-Lite and Card-owned modules)
 
-Card views run in the shared isolated host (`ui/shared/modules`). Built-in views, including the WebGPU line chart and the SDK-pinned Plotly/Vega libraries, are fetched from the core through RPC just like Card-owned modules. Run data are supplied separately as configuration and binary blobs.
-
-The core accepts only Nix store module identities. A shared entry must resolve to a canonical store `index.js`, and the Card's Wasm must remain inside its own output directory (`tsugumid/runtime/src/module_source.cc`).
+The ABI 9 protocol carries each Card’s declared view file path and sends opaque live bytes separately. The project core relays this data without loading view files. The UI hosts are being cut over to isolated HTML frames.
 
 - Web UI: `/modules/viewer.html` is put in an iframe. Its response's CSP is `sandbox allow-scripts` (without `allow-same-origin`), so the component runs in an opaque origin and can use neither cookies nor `/api/`. With `default-src 'none'` and `connect-src 'none'` it loads nothing and connects nowhere. With `frame-src 'none'` the Card's inner frame (a `srcdoc` document) cannot navigate itself to any URL either. Its script is embedded in the page, and the library code is handed over by the parent page with postMessage. This is the only route that may be embedded (`frame-ancestors 'self'`); every other response forbids embedding.
 - macOS app: the trusted host is loaded as HTML in a nonpersistent WKWebView without a file read grant. Card code runs in its opaque inner frame. Content rules block network/file resources, a navigation delegate denies external navigation, and native message handlers reject messages from subframes.

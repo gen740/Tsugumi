@@ -690,7 +690,11 @@ def test_run_logs_and_display(project, tmp_path, core_factory):
                               n.value.valueType == RunEventValue.RunFinished)
     assert fin.value.value.summary.status.state == RunState.succeeded
     disp = c.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated)
-    assert "日本語のログ" in text(disp.value.display.value.text)
+    display = disp.value.display
+    assert text(display.runId) == run_id
+    assert display.card.segments == [b"work"]
+    assert text(display.view) == "test"
+    assert bytes(display.bytes) == message.encode()
     rec = c.call("RunRecordRequest", runId=run_id, card=shown)
     assert rec.exists and rec.recordingDisabled is True
     # Read the stdout log in small chunks; never split a character.

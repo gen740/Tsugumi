@@ -200,20 +200,31 @@ void stage_close(InvocationSummaryData& s, StageOutcome o) {
 
 }  // namespace
 
-Note display_note(const DisplayData& d) {
-  auto shared = std::make_shared<DisplayData>(d);
+namespace {
+
+auto display_note(const CardPath& card, const std::string& run,
+                  const WorkerDisplayData& display) -> Note {
+  auto payload = std::make_shared<const WorkerDisplayData>(display);
   Note n;
   n.kind = Note::Kind::Display;
-  n.card_key = path_key(d.card);
-  n.coalesce_key = "display|" + n.card_key;
-  n.approx_bytes = d.bytes.size() + 1024;
-  n.build = std::make_shared<const Note::Build>([shared](FBB& b) {
-    auto dv = wire::display(b, *shared);
+  n.card_key = path_key(card);
+  n.coalesce_key = "display|" + n.card_key + "|" + display.view;
+  n.approx_bytes = display.bytes.size() + display.view.size() + 1024;
+  n.build = std::make_shared<const Note::Build>([card, run, payload](FBB& b) {
+    const auto path = wire::path(b, card);
+    const auto run_id = b.CreateString(run);
+    const auto view = b.CreateString(payload->view);
+    const auto bytes = b.CreateVector(
+        reinterpret_cast<const uint8_t*>(payload->bytes.data()),
+        payload->bytes.size());
+    const auto update = D::CreateDisplay(b, path, run_id, view, bytes);
     return std::make_pair(R::NotificationPayload::DisplayUpdated,
-                          R::CreateDisplayUpdated(b, dv).Union());
+                          R::CreateDisplayUpdated(b, update).Union());
   });
   return n;
 }
+
+}  // namespace
 
 // ---------------------------------------------------------------------------
 
@@ -319,8 +330,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::optional<FailureData> last_failure;
     std::optional<CardBuildPlan> build;
     std::optional<ExecutionTarget> build_target;
-    uint64_t display_rev = 0;
-    std::optional<DisplayData> display;
     // Groups of the latest activation, saved at the end of the run.
     std::optional<std::pair<uint64_t, std::vector<SavedInputGroup>>>
         last_inputs;
@@ -343,7 +352,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     PreparedExecution* execution = nullptr;
     std::optional<uint32_t> batch_index, batch_size;
     bool execution_list = false;
-    std::optional<DisplayData> display;
     std::optional<FailureData> preparation_failure;
   };
   // ---- persistence helpers -------------------------------------------------
@@ -1427,7 +1435,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     rec.summary = s;
     rec.record_io = node.settings.record_io;
     rec.input_sources = sources;
-    rec.display = w.display;
     if (s.state == CardState::succeeded) {
       // Records, artifacts and saved values are written in the save stage.
       stage_begin(s, Phase::save);
@@ -1972,19 +1979,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     return p;
   }
 
-  auto on_display(NodeRt& rt, Work& w, DisplayData d) -> void {
-    if (d.card != rt.node->path || d.run_id != run_id_ ||
-        d.invocation != w.invocation || d.bytes.size() > (16u << 20))
-      return;
-    {
-      std::lock_guard<std::mutex> l(mu_);
-      d.revision = ++rt.display_rev;
-      rt.display = d;
-      w.display = d;
-    }
-    sched_.publish_display(d);
-  }
-
   // ---- code Cards
   // -------------------------------------------------------------
 
@@ -2010,7 +2004,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
          [&](LogStream stream, const std::string& text) {
            card_log(node.path, inv, stream, text);
          },
-         [&](const DisplayData& display) { on_display(rt, w, display); },
+         [&](const WorkerDisplayData& display) {
+           svc_.server()->broadcast(display_note(rt.node->path, run_id_, display));
+         },
          [&](int64_t begin, int64_t end) {
            svc_.server()->broadcast(timeline_note(
                run_id_, node.path, inv, Phase::execute, lane, begin, end));
@@ -2226,12 +2222,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
             std::nullopt, std::nullopt,
             sum.status.failure ? sum.status.failure->diagnostic.value_or("")
                                : "run finished");
-    // Final displays are persisted and queued before Finished.
-    std::vector<DisplayData> displays;
-    for (auto& n : nodes_)
-      if (n.display) displays.push_back(*n.display);
-    for (const auto& d : displays) svc_.server()->broadcast(display_note(d));
-    sched_.finished(std::move(sum), displays, record(final));
+    sched_.finished(std::move(sum), record(final));
   }
 
   Service& svc_;
@@ -2645,17 +2636,6 @@ RunStatusData Scheduler::cancel(const std::string& run_id) {
   return r->status;
 }
 
-void Scheduler::publish_display(const DisplayData& d) {
-  {
-    std::lock_guard<std::mutex> l(mu_);
-    auto k = path_key(d.card);
-    displays_[k] = d;
-    gone_.erase(k);
-    no_display_.erase(k);
-  }
-  svc_.server()->broadcast(display_note(d));
-}
-
 namespace {
 
 // What a Card is made of: its settings (whatever the spacing of their JSON, a
@@ -2699,64 +2679,15 @@ void Scheduler::document_changed(const Document& before,
     if (!next || card_content(before, n) != card_content(after, *next))
       svc_.invalidate_resident(path_key(n.path));
   }
-  std::lock_guard<std::mutex> l(mu_);
-  for (const auto& n : before.resolution->nodes) {
-    if (after.resolution->find(n.path)) continue;
-    auto k = path_key(n.path);
-    // The first Card that left: an undo goes back through the ones that
-    // followed it.
-    gone_.try_emplace(k, card_content(before, n));
-  }
 }
 
-std::optional<Note> Scheduler::latest_display_note(
-    const std::string& card_key) {
-  std::lock_guard<std::mutex> l(mu_);
-  if (auto g = gone_.find(card_key); g != gone_.end()) {
-    auto doc = svc_.store().current();
-    const Node* n = doc->resolution
-                        ? doc->resolution->find(path_from_key(card_key))
-                        : nullptr;
-    if (!n) return std::nullopt;
-    if (card_content(*doc, *n) != g->second) {
-      displays_.erase(card_key);
-      no_display_.insert(card_key);
-    }
-    gone_.erase(g);
-  }
-  if (no_display_.count(card_key)) return std::nullopt;
-  auto it = displays_.find(card_key);
-  if (it != displays_.end()) return display_note(it->second);
-  // After a restart the latest display comes from the last run's history.
-  auto last =
-      svc_.history().read([](sql::Db& db) { return History::latest_run(db); });
-  if (!last) return std::nullopt;
-  CardPath p;
-  size_t s = 0;
-  while (true) {
-    size_t e = card_key.find('/', s);
-    p.push_back(
-        card_key.substr(s, e == std::string::npos ? std::string::npos : e - s));
-    if (e == std::string::npos) break;
-    s = e + 1;
-  }
-  auto d = svc_.history().read([&](sql::Db& db) {
-    return History::display(db, *last->status.run_id, p);
-  });
-  if (!d) return std::nullopt;
-  return display_note(*d);
-}
-
-auto Scheduler::finished(RunSummaryData sum,
-                         const std::vector<DisplayData>& displays,
-                         std::string record) -> void {
+auto Scheduler::finished(RunSummaryData sum, std::string record) -> void {
   std::lock_guard lock(mu_);
   // Release the slot before the terminal status can appear in history. Keep
   // admission locked until the result commits and both events are queued.
   auto done = std::move(active_);
   try {
     svc_.history().write_sync([&](sql::Db& db) {
-      for (const auto& d : displays) History::put_display(db, d);
       History::update_run(db, sum.status);
       History::interrupt_batches(db, *sum.status.run_id);
       // Detached external invocations are still pending after the local

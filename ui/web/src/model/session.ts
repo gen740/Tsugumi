@@ -5,7 +5,7 @@ import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
 import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
-import { registerModuleClient, ModuleBlobs } from './moduleSources'
+import { ModuleBlobs } from './moduleSources'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -220,57 +220,12 @@ export interface DisplaySnapshot {
   value: DisplayValue
 }
 
-/** Decode a retained display without changing the live canvas. */
-export function recordedDisplay(d: D.DisplayT): DisplaySnapshot | undefined {
-  let value: DisplayValue
-  try {
-  switch (d.valueType) {
-    case D.DisplayValue.DisplayText: {
-      const t = d.value as D.DisplayTextT
-      value = t.markdown ? { kind: 'markdown', text: s(t.text) } : { kind: 'text', text: s(t.text) }
-      break
-    }
-    case D.DisplayValue.DisplayScalar: {
-      const v = d.value as D.DisplayScalarT
-      value = { kind: 'scalar', value: v.value ?? NaN, label: s(v.label) }
-      break
-    }
-    case D.DisplayValue.DisplayTable: {
-      const t = d.value as D.DisplayTableT
-      value = { kind: 'table', columns: t.columns.map((c) => s(c)), rows: t.rows.map((r) => r.cells.map((c) => s(c))) }
-      break
-    }
-    case D.DisplayValue.DisplayImage: {
-      const im = d.value as D.DisplayImageT
-      value = { kind: 'image', mediaType: s(im.mediaType), data: Uint8Array.from(im.data), alt: s(im.alt) }
-      break
-    }
-    case D.DisplayValue.DisplayPointCloud: {
-      const p = d.value as D.DisplayPointCloudT
-      value = { kind: 'points', x: p.x, y: p.y, z: p.z, colors: p.colors }
-      break
-    }
-    case D.DisplayValue.DisplayModule: {
-      const m = d.value as D.DisplayModuleT
-      if (new Set(m.blobs.map(b => s(b.name))).size !== m.blobs.length) throw new Error('duplicate blobs')
-      value = { kind: 'module', name: s(m.module), json: s(m.configJson), blobs: Object.fromEntries(m.blobs.map(b => [s(b.name), Uint8Array.from(b.data)])) }
-      break
-    }
-    default:
-      value = { kind: 'unavailable' }
-  }
-  if (!displayable(value)) value = { kind: 'unavailable' }
-  } catch { value = { kind: 'unavailable' } }
-  return { runId: s(d.runId), invocation: d.invocation ?? 0n, revision: d.revision ?? 0n, value }
-}
-
 export interface DisplayModule {
   name: string
   config: string
   blobs: ModuleBlobs
 }
 
-/** ABI 8 still carries typed Display values and store paths for SDK defaults. */
 export function displayModule(value: DisplayValue): DisplayModule | undefined {
   const builtin = (name: string, config: object, blobs: ModuleBlobs = {}): DisplayModule =>
     ({ name: `tsugumi:${name}`, config: JSON.stringify(config), blobs })
@@ -293,30 +248,6 @@ export function displayModule(value: DisplayValue): DisplayModule | undefined {
   }
 }
 
-/** A malformed presentation stays attached to its run, with an explicit state. */
-function displayable(v: DisplayValue): boolean {
-  const bytes = (s: string) => new TextEncoder().encode(s).length
-  const id = (s: string) => s !== '.' && s !== '..' && /^[a-zA-Z0-9_.-]{1,128}$/.test(s)
-  switch (v.kind) {
-    case 'unavailable': return false
-    case 'text': case 'markdown': return bytes(v.text) <= 1 << 20
-    case 'scalar': return Number.isFinite(v.value)
-    case 'table': return v.columns.length > 0 && v.columns.length <= 64 && v.rows.length <= 10000 &&
-      v.columns.every(c => bytes(c) <= 4096) && v.rows.every(r => r.length === v.columns.length && r.every(c => bytes(c) <= 4096))
-    case 'image': return v.data.length <= 8 << 20 && (v.mediaType === 'image/png'
-      ? v.data.length > 8 && [137,80,78,71,13,10,26,10].every((b,i) => v.data[i] === b)
-      : v.mediaType === 'image/jpeg' && v.data.length > 3 && v.data[0] === 255 && v.data[1] === 216)
-    case 'points': return v.x.length <= 1000000 && v.x.length === v.y.length && v.x.length === v.z.length &&
-      (!v.colors.length || v.colors.length === v.x.length) && [v.x,v.y,v.z].every(a => a.every(Number.isFinite))
-    case 'module':
-      if (!/^\/nix\/store\/[0123456789abcdfghijklmnpqrsvwxyz]{32}-[a-zA-Z0-9+._?=-]+$/.test(v.name) || bytes(v.json) > 1 << 20 ||
-          Object.keys(v.blobs).length > 64 || !Object.keys(v.blobs).every(id) || Object.values(v.blobs).reduce((n,b) => n+b.length,0) > 8 << 20) return false
-      return true
-  }
-}
-
-/** A built-in view's title or line-series summary (as an image shows its alt
- *  text), or what it is when it has none. */
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
 /** Undo consists solely of the host's guarded inverse edits. */
@@ -663,7 +594,6 @@ export class ProjectSession extends Observable {
       signal.addEventListener('abort', cancel, { once: true })
       try { await client.connect(token) }
       finally { signal.removeEventListener('abort', cancel) }
-      registerModuleClient(client)
       return client
     } catch (e) {
       client?.close()
@@ -834,11 +764,6 @@ export class ProjectSession extends Observable {
       case R.NotificationPayload.RunEvent:
         this.applyRunEvent(e.value as R.RunEventT)
         break
-      case R.NotificationPayload.DisplayUpdated: {
-        const d = (e.value as R.DisplayUpdatedT).display
-        if (d) this.applyDisplay(d)
-        break
-      }
       case R.NotificationPayload.RunCategoryDeleteResult:
         this.recordingRevision++
         this.changed()
@@ -1006,18 +931,6 @@ export class ProjectSession extends Observable {
         this.lastFinished = Date.now()
         break
       }
-    }
-  }
-
-  private applyDisplay(d: D.DisplayT) {
-    const k = key(segs(d.card))
-    if (!this.displayViewers.has(k)) return
-    const rev = d.revision ?? 0n
-    const old = this.displays.get(k)
-    if (old && old.runId === s(d.runId) && old.revision >= rev) return // stale frame
-    const display = recordedDisplay(d)
-    if (display) {
-      this.displays.set(k, display)
     }
   }
 

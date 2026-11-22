@@ -85,7 +85,6 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     add_worker(graph, "sink", tmp_path / "sink", [
         gate.action(),
         {"op": "echo", "input": "in", "port": "out"},
-        {"op": "display_text", "text": "received input"},
     ], inputs=[{"name": "in"}], executionService="local")
     graph.connect("source", "out", "sink", "in").save(client)
 
@@ -102,7 +101,6 @@ def test_gate_controls_a_downstream_worker_without_mocking_the_scheduler(core_fa
     assert read_output(client, run_id, card="sink") == read_output(client, run_id, card="source")
     record = client.call("RunRecordRequest", runId=run_id, card=path("sink"), invocation=1).record
     assert [text(segment) for segment in record.inputSources[0].card.segments] == ["source"]
-    assert text(record.display.value.text) == "received input"
 
 
 def test_timeout_ends_a_worker_that_ignores_cancellation(core_factory, project, tmp_path):

@@ -13,12 +13,11 @@
 // covers all steps, and cancel/deadline are checked before each step starts.
 //
 // The process environment and cwd are configured at launch. ABI 8 preRun
-// overrides and the Bash/R parameter JSON apply only to the current call.
+// overrides apply only to the current call.
 // A bash body gets, per input port P:
 //   JSON_P          path of a JSON file with the message (any size)
 //   FILE_P / DIR_P  the path carried by File / Directory messages
-// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT and what it
-// shows as JSON to $TSUGUMI_REPORT (read when it ends; see BashDisplay).
+// and writes its outputs as {"port": {...}} JSON to $TSUGUMI_OUTPUT.
 // postRun gets TSUGUMI_FAILED (0/1) and TSUGUMI_OUTPUTS (the ports sent).
 
 #include <dlfcn.h>
@@ -55,7 +54,6 @@
 #include "tsugumi/sdk/abi.h"
 #include "tsugumi/util/flatbuffer_schema.hh"
 #include "tsugumi/util/json.hh"
-#include "tsugumi/workerd/display.hh"
 #include "tsugumi/workerd/frame.hh"
 
 extern char** environ;
@@ -141,6 +139,9 @@ struct Options {
   std::string pre;      // a file with bash text
   std::string run;      // a file with bash text (a bash body)
   std::string post;     // a file with bash text
+  std::string work = ".";
+  std::string tmp = ".";
+  std::string out;
 };
 
 struct Call {
@@ -150,13 +151,10 @@ struct Call {
   bool has_deadline = false;
   std::vector<std::pair<std::string, std::string>> outputs;
   std::optional<Failure> failure;
-  std::string card;
-  std::string run_id;
   size_t output_bytes = 0;
   uint32_t phase = TSUGUMI_PREPARE;
   std::optional<std::string> inputs_json;
   std::optional<std::string> params_json;
-  std::string display_error;
 };
 
 Call* g_call = nullptr;
@@ -222,249 +220,6 @@ void validate_required_outputs(Call& call) {
   }
 }
 
-auto invalid_display(const std::string& message) -> int {
-  if (g_call) g_call->display_error = message;
-  return 1;
-}
-
-int send_display(
-    const std::function<std::pair<D::DisplayValue, flatbuffers::Offset<void>>(
-        flatbuffers::FlatBufferBuilder&)>& f) {
-  if (!g_call) return 1;
-  flatbuffers::FlatBufferBuilder b;
-  auto [type, value] = f(b);
-  std::vector<flatbuffers::Offset<flatbuffers::String>> segs;
-  std::string card = g_call->card;
-  size_t s = 0;
-  while (true) {
-    size_t e = card.find('/', s);
-    segs.push_back(b.CreateString(
-        card.substr(s, e == std::string::npos ? std::string::npos : e - s)));
-    if (e == std::string::npos) break;
-    s = e + 1;
-  }
-  auto path = D::CreateCardPath(b, b.CreateVector(segs));
-  auto run = b.CreateString(g_call->run_id);
-  D::DisplayBuilder db(b);
-  db.add_card(path);
-  db.add_run_id(run);
-  db.add_invocation(g_call->msg->invocation().value_or(0));
-  db.add_revision(0);
-  db.add_value_type(type);
-  db.add_value(value);
-  auto d = db.Finish();
-  const auto* display = flatbuffers::GetTemporaryPointer(b, d);
-  if (auto error = tsugumi::workerd::validate_display(*display)) {
-    g_call->display_error = *error;
-    return 1;
-  }
-  auto wd = W::CreateWorkerDisplay(b, d);
-  W::WorkerMessageBuilder mb(b);
-  mb.add_call_id(g_call->call_id);
-  mb.add_value_type(W::WorkerPayload::WorkerDisplay);
-  mb.add_value(wd.Union());
-  W::FinishWorkerMessageBuffer(b, mb.Finish());
-  if (b.GetSize() > kMaxFrame) {
-    g_call->display_error = "display frame exceeds 16 MiB";
-    return 1;
-  }
-  send_frame(b);
-  return 0;
-}
-
-auto display_text_impl(const char* text, bool markdown) -> int {
-  if (!text || std::strlen(text) > (1u << 20))
-    return invalid_display("display text exceeds 1 MiB or is missing");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    return std::make_pair(
-        D::DisplayValue::DisplayText,
-        D::CreateDisplayText(b, b.CreateString(text), markdown).Union());
-  });
-}
-
-int display_scalar_impl(double value, const char* label) {
-  if (!label) return invalid_display("display scalar needs a label");
-  std::string l = label;
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto ls = b.CreateString(l);
-    D::DisplayScalarBuilder sb(b);
-    sb.add_value(value);
-    sb.add_label(ls);
-    return std::make_pair(D::DisplayValue::DisplayScalar, sb.Finish().Union());
-  });
-}
-
-struct ChartSeriesConfig {
-  tsugumi::schema::t::String<"id"> id;
-  tsugumi::schema::t::String<"label"> label;
-  tsugumi::schema::t::Uint64<"offset"> offset;
-  tsugumi::schema::t::Uint64<"count"> count;
-};
-struct ChartConfig {
-  tsugumi::schema::t::Array<"series", tsugumi::schema::Obj<ChartSeriesConfig>>
-      series;
-};
-
-// The view module mapping of the Card (--views), set once when the worker
-// starts.
-std::string g_views;
-
-auto display_module_impl(const char*, const char*, const tsugumi_blob*, size_t)
-    -> int;
-
-// All language SDKs keep their line-chart API. Only the common worker encodes
-// its immutable view identity and run data; coordinates never pass through
-// JSON.
-auto display_line_chart_impl(const tsugumi_series* series, size_t count)
-    -> int {
-  const auto invalid = [](const char* message) {
-    if (g_call) g_call->display_error = message;
-    return -1;
-  };
-  if (count && !series) return invalid("missing line series");
-  ChartConfig config;
-  std::string x, y;
-  size_t points = 0, bytes = 0;
-  for (size_t i = 0; i < count; ++i) {
-    const auto& row = series[i];
-    if (!row.id || !row.label || (row.count && (!row.x || !row.y)) ||
-        row.count > 10000 - points)
-      return invalid("invalid line series or more than 10,000 points");
-    bytes += row.count * 16 + std::strlen(row.id) + std::strlen(row.label);
-    if (bytes > (1u << 20)) return invalid("line chart exceeds 1 MiB");
-    ChartSeriesConfig meta;
-    *meta.id = row.id;
-    *meta.label = row.label;
-    *meta.offset = points;
-    *meta.count = row.count;
-    config.series->push_back(std::move(meta));
-    for (size_t j = 0; j < row.count; ++j) {
-      if (!std::isfinite(row.x[j]) || !std::isfinite(row.y[j]))
-        return invalid("line coordinates must be finite");
-      const double xv = flatbuffers::EndianScalar(row.x[j]);
-      const double yv = flatbuffers::EndianScalar(row.y[j]);
-      x.append(reinterpret_cast<const char*>(&xv), sizeof xv);
-      y.append(reinterpret_cast<const char*>(&yv), sizeof yv);
-    }
-    points += row.count;
-  }
-  const auto json = tsugumi::schema::encode(config);
-  const tsugumi_blob blobs[] = {
-      {"x", reinterpret_cast<const uint8_t*>(x.data()), x.size()},
-      {"y", reinterpret_cast<const uint8_t*>(y.data()), y.size()}};
-  const auto status = display_module_impl("line-chart", json.c_str(), blobs, 2);
-  return status == 0 ? 0
-                     : invalid("the built-in line-chart module is unavailable");
-}
-
-int display_table_impl(const char* const* columns, size_t column_count,
-                       const char* const* cells, size_t row_count) {
-  if (column_count == 0 || column_count > 64 || row_count > 10000 || !columns ||
-      (row_count && !cells))
-    return invalid_display(
-        "a table needs 1 to 64 columns and at most 10,000 rows");
-  size_t bytes = 0;
-  const auto fits = [&](const char* text) {
-    if (!text) return false;
-    const auto size = ::strnlen(text, 4097);
-    bytes +=
-        size + 16;  // Include per-string metadata before allocating copies.
-    return size <= 4096 && bytes <= kMaxFrame;
-  };
-  for (size_t i = 0; i < column_count; ++i)
-    if (!fits(columns[i]))
-      return invalid_display(
-          "table strings exceed 4 KiB or the display frame exceeds 16 MiB");
-  for (size_t i = 0; i < column_count * row_count; ++i)
-    if (!fits(cells[i]))
-      return invalid_display(
-          "table strings exceed 4 KiB or the display frame exceeds 16 MiB");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    std::vector<std::string> cols(columns, columns + column_count);
-    std::vector<flatbuffers::Offset<D::TableRow>> rows;
-    for (size_t r = 0; r < row_count; ++r) {
-      std::vector<std::string> row(cells + r * column_count,
-                                   cells + (r + 1) * column_count);
-      rows.push_back(D::CreateTableRow(b, b.CreateVectorOfStrings(row)));
-    }
-    auto c = b.CreateVectorOfStrings(cols);
-    return std::make_pair(
-        D::DisplayValue::DisplayTable,
-        D::CreateDisplayTable(b, c, b.CreateVector(rows)).Union());
-  });
-}
-
-int display_image_impl(const char* media_type, const uint8_t* data, size_t size,
-                       const char* alt) {
-  if (!media_type || !data || size > (8u << 20))
-    return invalid_display("an image exceeds 8 MiB or is missing");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto mt = b.CreateString(media_type);
-    auto d = b.CreateVector(data, size);
-    auto a = b.CreateString(alt ? alt : "");
-    return std::make_pair(D::DisplayValue::DisplayImage,
-                          D::CreateDisplayImage(b, mt, d, a).Union());
-  });
-}
-
-int display_points_impl(const float* x, const float* y, const float* z,
-                        const uint32_t* colors, size_t count) {
-  if (count > 1000000 || (count && (!x || !y || !z)))
-    return invalid_display(
-        "a point cloud needs x, y and z, up to 1,000,000 points");
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto xv = b.CreateVector(x, count);
-    auto yv = b.CreateVector(y, count);
-    auto zv = b.CreateVector(z, count);
-    auto cv = b.CreateVector(colors, colors ? count : 0);
-    return std::make_pair(
-        D::DisplayValue::DisplayPointCloud,
-        D::CreateDisplayPointCloud(b, xv, yv, zv, cv).Union());
-  });
-}
-
-auto display_module_impl(const char* name, const char* config_json,
-                         const tsugumi_blob* blobs, size_t count) -> int {
-  if (!name || !config_json || std::strlen(config_json) > (1u << 20) ||
-      count > 64 || (count && !blobs))
-    return -1;
-  size_t bytes = 0;
-  for (size_t i = 0; i < count; ++i) {
-    if (!blobs[i].name || std::strlen(blobs[i].name) > 128 ||
-        (!blobs[i].data && blobs[i].size) || blobs[i].size > (8u << 20) - bytes)
-      return -1;
-    bytes += blobs[i].size;
-  }
-  std::string identity = name;
-  if (!identity.starts_with("/nix/store/")) {
-    if (g_views.empty()) return -1;
-    tsugumi::schema::v::Mapping<tsugumi::schema::v::String,
-                                tsugumi::schema::v::String>
-        views;
-    if (tsugumi::schema::decode(g_views, views)) return -1;
-    bool found = false;
-    for (const auto& [key, value] : views.value())
-      if (key == identity) {
-        identity = value;
-        found = true;
-        break;
-      }
-    if (!found) return -1;
-  }
-  return send_display([&](flatbuffers::FlatBufferBuilder& b) {
-    auto n = b.CreateString(identity);
-    auto d = b.CreateString(config_json);
-    std::vector<flatbuffers::Offset<D::DisplayBlob>> values;
-    for (size_t i = 0; i < count; ++i)
-      values.push_back(
-          D::CreateDisplayBlob(b, b.CreateString(blobs[i].name),
-                               b.CreateVector(blobs[i].data, blobs[i].size)));
-    return std::make_pair(
-        D::DisplayValue::DisplayModule,
-        D::CreateDisplayModule(b, n, d, b.CreateVector(values)).Union());
-  });
-}
-
 void log_impl(void*, const char* message) {
   std::fprintf(stderr, "%s\n", message);
   std::fflush(stderr);
@@ -478,8 +233,7 @@ auto fail_at_impl(void*, const char* kind, const char* message,
   record_failure(kind_from_name(kind).value_or(D::FailureKind::worker_failed),
                  message ? message : "");
   if (source && *source && line > 0) {
-    g_call->failure->args = {{"card", g_call->card},
-                             {"source", source},
+    g_call->failure->args = {{"source", source},
                              {"line", std::to_string(line)}};
     if (cell && *cell) g_call->failure->args.emplace_back("cell", cell);
   }
@@ -752,14 +506,12 @@ auto output_json_impl(void*, const char* name, const char* json) -> int {
   return output_json(name, json);
 }
 
-auto display_impl(void*, uint32_t kind, const void* payload) -> int;
 
 // Package libraries and language state are initialized during the first call.
 void* g_lib = nullptr;
 tsugumi_main_fn g_main = nullptr;
 bool g_card_loaded = false;
 std::string g_load_error;
-std::string g_last_run;
 auto process_env() -> std::vector<std::string> {
   std::vector<std::string> out;
   for (char** e = environ; *e; ++e) out.emplace_back(*e);
@@ -853,7 +605,8 @@ void open_package(const std::string& lib) {
 }
 
 constexpr tsugumi_host kEffects{
-    .display = display_impl,
+    // The old effect has no ABI 9 payload. It is disabled during the cutover.
+    .display = [](void*, uint32_t, const void*) { return 0; },
     .log = log_impl,
     .cancelled = cancelled_impl,
     .remaining_ms = remaining_ms_impl,
@@ -874,9 +627,9 @@ auto make_call(const Call& call, const std::string& work,
   return {
       .abi_version = TSUGUMI_ABI_VERSION,
       .phase = TSUGUMI_PREPARE,
-      .run_id = call.run_id.c_str(),
-      .card = call.card.c_str(),
-      .invocation = m->invocation().value_or(0),
+      .run_id = "",
+      .card = "",
+      .invocation = 0,
       .params = m->params()->bytes()->data(),
       .params_size = m->params()->bytes()->size(),
       .working_directory = work.c_str(),
@@ -951,160 +704,6 @@ void bash_outputs(const std::string& out_json) {
     if (output_json(name, sc::text(value))) return;
 }
 
-// A display object from bash or an in-memory language adapter. A relative image
-// path is resolved against the working directory.
-struct BashDisplayTable {
-  tsugumi::schema::Opt<"columns",
-                       tsugumi::schema::v::Array<tsugumi::schema::v::String>>
-      columns;
-  tsugumi::schema::Opt<
-      "rows", tsugumi::schema::v::Array<
-                  tsugumi::schema::v::Array<tsugumi::schema::v::String>>>
-      rows;
-};
-struct BashDisplayImage {
-  tsugumi::schema::Opt<"path", tsugumi::schema::v::String> path;
-  tsugumi::schema::Opt<"alt", tsugumi::schema::v::String> alt;
-};
-struct BashDisplayModule {
-  tsugumi::schema::Opt<"module", tsugumi::schema::v::String> module;
-  tsugumi::schema::Opt<"config", tsugumi::schema::Json> config;
-  tsugumi::schema::Opt<"blobs",
-                       tsugumi::schema::v::Mapping<tsugumi::schema::v::String,
-                                                   tsugumi::schema::v::String>>
-      blobs;
-};
-struct BashDisplay {
-  tsugumi::schema::Opt<"text", tsugumi::schema::v::String> text;
-  tsugumi::schema::Opt<"markdown", tsugumi::schema::v::String> markdown;
-  tsugumi::schema::Opt<"table", tsugumi::schema::Obj<BashDisplayTable>> table;
-  tsugumi::schema::Opt<"image", tsugumi::schema::Obj<BashDisplayImage>> image;
-  tsugumi::schema::Opt<"module", tsugumi::schema::Obj<BashDisplayModule>>
-      module;
-};
-
-auto json_display(const std::string& json, const std::string& cwd) -> int {
-  namespace sc = tsugumi::schema;
-  auto invalid = [](const std::string& why) {
-    if (g_call) g_call->display_error = why;
-    return 1;
-  };
-  BashDisplay d;
-  if (auto err = sc::decode(json, d)) return invalid(err->message);
-  if (const auto* t = sc::get(d.text)) {
-    return display_text_impl(t->c_str(), false);
-  } else if (const auto* m = sc::get(d.markdown)) {
-    return display_text_impl(m->c_str(), true);
-  } else if (const auto* table = sc::get(d.table)) {
-    const auto* columns = sc::get(table->columns);
-    if (!columns) return invalid("a table needs columns");
-    std::vector<const char*> names, cells;
-    for (const auto& c : *columns) names.push_back(c.c_str());
-    size_t row_count = 0;
-    if (const auto* rows = sc::get(table->rows))
-      for (const auto& row : *rows) {
-        if (row.size() != names.size())
-          return invalid("a table row has " + std::to_string(row.size()) +
-                         " cells, not " + std::to_string(names.size()));
-        for (const auto& c : row) cells.push_back(c.c_str());
-        ++row_count;
-      }
-    return display_table_impl(names.data(), names.size(), cells.data(),
-                              row_count);
-  } else if (const auto* image = sc::get(d.image)) {
-    const auto* file = sc::get(image->path);
-    if (!file) return invalid("an image needs a path");
-    std::string full = file->starts_with("/") ? *file : cwd + "/" + *file;
-    if (::access(full.c_str(), R_OK) != 0)
-      return invalid("cannot read the image " + *file);
-    std::string bytes = read_text(full);
-    const char* media = bytes.starts_with("\x89PNG")    ? "image/png"
-                        : bytes.starts_with("\xFF\xD8") ? "image/jpeg"
-                                                        : nullptr;
-    if (!media) return invalid(*file + " is neither PNG nor JPEG");
-    const auto* alt = sc::get(image->alt);
-    return display_image_impl(media,
-                              reinterpret_cast<const uint8_t*>(bytes.data()),
-                              bytes.size(), alt ? alt->c_str() : "");
-  } else if (const auto* module = sc::get(d.module)) {
-    const auto* name = sc::get(module->module);
-    const auto* data = sc::get(module->config);
-    if (!name || !data) return invalid("a module needs module and config");
-    std::vector<std::pair<std::string, std::string>> owned;
-    if (const auto* blobs = sc::get(module->blobs))
-      for (const auto& [key, file] : *blobs) {
-        const auto full = file.starts_with("/") ? file : cwd + "/" + file;
-        if (::access(full.c_str(), R_OK) != 0)
-          return invalid("cannot read blob " + file);
-        owned.emplace_back(key, read_text(full));
-      }
-    std::vector<tsugumi_blob> blobs;
-    for (const auto& [key, bytes] : owned)
-      blobs.push_back({key.c_str(),
-                       reinterpret_cast<const uint8_t*>(bytes.data()),
-                       bytes.size()});
-    if (display_module_impl(name->c_str(), sc::text(*data).c_str(),
-                            blobs.data(), blobs.size()))
-      return invalid("unknown view module; declare it in views");
-  } else {
-    return invalid("name one of text, markdown, table, image or module");
-  }
-  return 0;
-}
-
-auto bash_display(const std::string& path, const std::string& cwd) -> void {
-  if (::access(path.c_str(), R_OK) == 0 && json_display(read_text(path), cwd))
-    record_failure(D::FailureKind::output_invalid,
-                   "$TSUGUMI_REPORT: " + g_call->display_error);
-}
-
-auto display_impl(void*, uint32_t kind, const void* payload) -> int {
-  if (!payload) return invalid_display("display payload is missing");
-  switch (kind) {
-    case TSUGUMI_DISPLAY_TEXT:
-    case TSUGUMI_DISPLAY_MARKDOWN:
-      return display_text_impl(static_cast<const char*>(payload),
-                               kind == TSUGUMI_DISPLAY_MARKDOWN);
-    case TSUGUMI_DISPLAY_SCALAR: {
-      const auto& data = *static_cast<const tsugumi_scalar*>(payload);
-      return display_scalar_impl(data.value, data.label);
-    }
-    case TSUGUMI_DISPLAY_LINE_CHART: {
-      const auto& data = *static_cast<const tsugumi_chart*>(payload);
-      return display_line_chart_impl(data.series, data.count);
-    }
-    case TSUGUMI_DISPLAY_TABLE: {
-      const auto& data = *static_cast<const tsugumi_table*>(payload);
-      return display_table_impl(data.columns, data.column_count, data.cells,
-                                data.row_count);
-    }
-    case TSUGUMI_DISPLAY_IMAGE: {
-      const auto& data = *static_cast<const tsugumi_image*>(payload);
-      return display_image_impl(data.media_type, data.data, data.size,
-                                data.alt);
-    }
-    case TSUGUMI_DISPLAY_POINTS: {
-      const auto& data = *static_cast<const tsugumi_points*>(payload);
-      return display_points_impl(data.x, data.y, data.z, data.colors,
-                                 data.count);
-    }
-    case TSUGUMI_DISPLAY_MODULE: {
-      const auto& data = *static_cast<const tsugumi_module*>(payload);
-      return display_module_impl(data.name, data.config_json, data.blobs,
-                                 data.count);
-    }
-    case TSUGUMI_DISPLAY_JSON: {
-      char* cwd = ::getcwd(nullptr, 0);
-      const int status =
-          json_display(static_cast<const char*>(payload), cwd ? cwd : ".");
-      std::free(cwd);
-      return status;
-    }
-    default:
-      return invalid_display("unknown display kind");
-  }
-}
-
 auto finish_outputs(Call& call) -> flatbuffers::FlatBufferBuilder {
   if (call.failure) return flatbuffers::FlatBufferBuilder();
   auto result = result_frame(call);
@@ -1137,14 +736,14 @@ void execute(const Options& opt, Call& call,
         "input " + input->name()->str() + " does not match its type");
     return;
   }
-  std::string work = m->working_directory()->str();
-  std::string tmp = m->temporary_directory()->str();
-  std::string out_dir =
-      m->output_directory() ? m->output_directory()->str() : "";
-  StepEnvironment parameters;
-  for (const auto* e : *m->environment())
-    if (e->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      parameters.set("TSUGUMI_PARAMS_JSON", e->value()->str());
+  const auto& work = opt.work;
+  const auto& tmp = opt.tmp;
+  const bool has_file_outputs = std::ranges::any_of(
+      *m->outputs(), [](const auto* port) {
+        return port->kind() == D::PortKind::File ||
+               port->kind() == D::PortKind::Directory;
+      });
+  const std::string out_dir = has_file_outputs ? opt.out : "";
   std::vector<std::string> env;
   if (!opt.pre.empty() || !opt.run.empty() || !opt.post.empty())
     env = process_env();
@@ -1236,10 +835,6 @@ void execute(const Options& opt, Call& call,
       pre_overrides.reapply();
       if (!g_load_error.empty())
         record_failure(D::FailureKind::worker_failed, g_load_error);
-      if (!call.failure && may_start("run-start hook") &&
-          call.run_id != g_last_run)
-        invoke(c, TSUGUMI_RUN_START, "onRunStart");
-      g_last_run = call.run_id;
       if (!call.failure && may_start("main")) {
         invoke(c, TSUGUMI_RUN, "main.so");
         std::fflush(stdout);
@@ -1254,15 +849,11 @@ void execute(const Options& opt, Call& call,
     std::string out_json = tmp + "/output.json";
     ::unlink(out_json.c_str());
     set_env(run_env, "TSUGUMI_OUTPUT", out_json);
-    std::string display_json = tmp + "/display.json";
-    ::unlink(display_json.c_str());
-    set_env(run_env, "TSUGUMI_REPORT", display_json);
     if (!call.failure) {
       int st = run_shell(opt.bash, {opt.run}, run_env, cwd, call, &timed_out);
       if (!(WIFEXITED(st) && WEXITSTATUS(st) == 0)) {
         step_failed("run", st);
       } else {
-        bash_display(display_json, cwd);
         if (!call.failure) bash_outputs(out_json);
       }
     }
@@ -1358,6 +949,10 @@ int main(int argc, char** argv) {
     return 0;
   }
   Options opt;
+  if (const auto* path = ::getenv("TSUGUMI_WORK_DIR")) opt.work = path;
+  opt.tmp = opt.work;
+  if (const auto* path = ::getenv("TMPDIR")) opt.tmp = path;
+  if (const auto* path = ::getenv("TSUGUMI_OUTPUT_DIR")) opt.out = path;
   if (!::getenv("TSUGUMI_WORKER")) ::setenv("TSUGUMI_WORKER", argv[0], 1);
   for (int i = 1; i + 1 < argc; i += 2) {
     std::string k = argv[i];
@@ -1371,8 +966,6 @@ int main(int argc, char** argv) {
       opt.run = argv[i + 1];
     else if (k == "--post")
       opt.post = argv[i + 1];
-    else if (k == "--views")
-      g_views = argv[i + 1];
   }
   // Standby starts only the worker executable. No package-controlled code,
   // including constructors or an alleged SDK adapter, runs before a call.
@@ -1404,9 +997,6 @@ int main(int argc, char** argv) {
     call.msg = wc;
     call.call_id = *m->call_id();
     last_call = call.call_id;
-    call.run_id = wc->run_id()->str();
-    for (const auto* s : *wc->card()->segments())
-      call.card += (call.card.empty() ? "" : "/") + s->str();
     if (wc->deadline_ms()) {
       call.has_deadline = true;
       call.deadline = std::chrono::steady_clock::now() +

@@ -743,7 +743,6 @@ std::vector<std::string> Service::capabilities() {
                                    "RunValueRead",
                                    "ArtifactList",
                                    "ArtifactRead",
-                                   "ModuleRead",
                                    "LogRange",
                                    "ViewSetVisible",
                                    "ViewSave",
@@ -756,10 +755,6 @@ std::vector<std::string> Service::capabilities() {
                                    "VersionNote",
                                    "VersionDiff",
                                    "VersionComments"};
-  // Every Display kind of the protocol.
-  for (auto v : D::EnumValuesDisplayValue())
-    if (v != D::DisplayValue::NONE)
-      caps.push_back(std::string("display:") + D::EnumNameDisplayValue(v));
   return caps;
 }
 
@@ -1014,8 +1009,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::run_value_read);
     case P::ArtifactListRequest:
       return on_lane(r, std::move(req), &Service::artifact_list);
-    case P::ModuleReadRequest:
-      return on_lane(r, std::move(req), &Service::module_read);
     case P::ArtifactReadRequest:
       return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest:
@@ -2732,13 +2725,8 @@ void Service::view_set_visible(RequestIn& req) {
   auto ack = R::CreateAck(b);
   std::string ack_bytes =
       wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union());
-  std::vector<Note> initial;
-  if (enabled)
-    for (const auto& key : cards)
-      if (auto n = scheduler_->latest_display_note(key))
-        initial.push_back(std::move(*n));
   server_->set_visible(req.conn, r->subscription_id()->str(), std::move(cards),
-                       enabled, std::move(ack_bytes), std::move(initial));
+                       enabled, std::move(ack_bytes), {});
 }
 
 }  // namespace tsugumi

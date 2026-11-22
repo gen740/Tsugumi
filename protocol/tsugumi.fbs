@@ -790,13 +790,6 @@ table ViewSaveRequest {
   view_json:string (id: 2, required);
 }
 
-/// -> FileContent. Read immutable display-module source in pages.
-table ModuleReadRequest {
-  module:string (id: 0, required);
-  offset:uint64 = null (id: 1);
-  limit_bytes:uint32 = null (id: 2);
-}
-
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
 /// all connections. Does not stop work or restrict connections.
 table ProjectActivityRequest {}
@@ -841,7 +834,6 @@ union RequestPayload {
   RunEnvironmentsRequest = 42,
   RunEnvironmentPathsRequest = 43,
   ProjectShellRequest = 44,
-  ModuleReadRequest = 45,
   ProjectCacheUsageRequest = 48,
   RunScratchDeleteRequest = 49,
   CardIdRequest = 50,
@@ -1143,10 +1135,9 @@ table InvocationRecord {
   inputs:[Tsugumi.Data.NamedValue] (id: 1, required);
   outputs:[Tsugumi.Data.NamedValue] (id: 2, required);
   input_sources:[InputSource] (id: 3, required);
-  display:Tsugumi.Data.Display (id: 4);
-  record_io:bool = null (id: 5);
+  record_io:bool = null (id: 4);
   /// Parameters captured from the run's immutable document; absent if unavailable.
-  params_json:string (id: 6);
+  params_json:string (id: 5);
 }
 
 table HistoryState {
@@ -1305,6 +1296,18 @@ table RunEvent {
 
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
+/// The full list of views for a Card, available independently of a run.
+table CardViewsUpdated {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  views:[Tsugumi.Data.CardView] (id: 1, required);
+}
+
+table DisplayRunStateChanged {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  run_id:string (id: 1, required);
+  state:Tsugumi.Data.DisplayRunState (id: 2);
+}
+
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
 table LogAvailable {
@@ -1323,6 +1326,8 @@ union NotificationPayload {
   LogAvailable = 4,
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
   RunCategoryDeleteResult = 6,
+  CardViewsUpdated = 7,
+  DisplayRunStateChanged = 8,
 }
 
 // ---- Frame -------------------------------------------------------------------

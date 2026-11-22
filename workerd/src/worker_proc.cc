@@ -342,8 +342,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   script("--pre", sp.program.pre_run, "pre.sh");
   if (sp.program.bash) script("--run", *sp.program.bash, "run.sh");
   script("--post", sp.program.post_run, "post.sh");
-  if (!sp.program.views.empty())
-    args.insert(args.end(), {"--views", sp.program.views});
   if (sp.program.package) {
     args.push_back("--package");
     args.push_back(*sp.program.package);
@@ -923,27 +921,22 @@ WorkerOutcome WorkerProc::call(
                               "worker sent a buffer that does not verify");
         return outcome;
       }
+      const auto* m = W::GetWorkerMessage(msg.data());
+      if (const auto* update = m->value_as_WorkerDisplay()) {
+        if (display && m->call_id() == 0) {
+          try {
+            display({update->view()->str(),
+                     std::string(update->bytes()->begin(), update->bytes()->end())});
+          } catch (const Failed&) {
+            // Presentation sinks cannot fail the invocation.
+          }
+        }
+        continue;
+      }
       trace::Observe(trace_link_, "Card worker", "project core", false, msg,
                      &trace::kFlatBufferCodec);
-      const auto* m = W::GetWorkerMessage(msg.data());
-      if (!m->call_id() || *m->call_id() != call_id) {
-        terminate();
-        outcome.failure = FailureData::make(
-            FailureKind::worker_failed, "worker answered an unknown call_id");
-        return outcome;
-      }
+      if (m->call_id() != call_id) continue;
       switch (m->value_type()) {
-        case W::WorkerPayload::WorkerDisplay:
-          if (display) {
-            auto presentation =
-                wire::display(m->value_as_WorkerDisplay()->display(), msg);
-            try {
-              display(presentation);
-            } catch (const Failed&) {
-              // Presentation sinks cannot fail the invocation.
-            }
-          }
-          break;
         case W::WorkerPayload::WorkerResult: {
           for (const auto* o : *m->value_as_WorkerResult()->outputs())
             outcome.outputs.emplace_back(
@@ -998,12 +991,9 @@ WorkerOutcome WorkerProc::call(
 }
 
 std::string worker_call_frame(
-    uint64_t call_id, const std::string& run_id, const CardPath& card,
-    uint64_t invocation, std::span<const Value> inputs,
+    uint64_t call_id, std::span<const Value> inputs,
     const std::string& params_bfbs, const std::string& params_root,
     const std::string& params, const std::vector<types::PortType>& outputs,
-    const std::string& work, const std::string& tmp, const std::string& out,
-    const std::vector<std::pair<std::string, std::string>>& env,
     std::optional<uint64_t> deadline_ms) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   auto bytes = [&](const std::string& s) {
@@ -1030,27 +1020,10 @@ std::string worker_call_frame(
   std::vector<flatbuffers::Offset<D::Port>> outs;
   for (const auto& p : outputs) outs.push_back(wire::port(b, p));
   auto outsv = b.CreateVector(outs);
-  std::vector<flatbuffers::Offset<W::EnvVar>> ev;
-  for (const auto& [k, v] : env)
-    ev.push_back(W::CreateEnvVar(b, b.CreateString(k), b.CreateString(v)));
-  auto evv = b.CreateVector(ev);
-  auto run = b.CreateString(run_id);
-  auto cp = wire::path(b, card);
-  auto w = b.CreateString(work);
-  auto t = b.CreateString(tmp);
-  flatbuffers::Offset<flatbuffers::String> o;
-  if (!out.empty()) o = b.CreateString(out);
   W::WorkerCallBuilder cb(b);
-  cb.add_run_id(run);
-  cb.add_card(cp);
-  cb.add_invocation(invocation);
   cb.add_inputs(insv);
   cb.add_params(pdata);
   cb.add_outputs(outsv);
-  cb.add_working_directory(w);
-  cb.add_temporary_directory(t);
-  if (!out.empty()) cb.add_output_directory(o);
-  cb.add_environment(evv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();
   W::WorkerMessageBuilder mb(b);

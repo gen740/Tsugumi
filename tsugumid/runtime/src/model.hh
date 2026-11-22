@@ -11,7 +11,6 @@
 #include "tsugumi/document/document.hh"
 #include "tsugumi/document/types.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
-#include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/values.hh"
 
 namespace tsugumi {

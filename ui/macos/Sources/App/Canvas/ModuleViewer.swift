@@ -3,18 +3,8 @@ import SwiftUI
 import WebKit
 import TsugumiRPC
 
-/// Immutable module source shared by live displays, comparisons and evidence.
 @MainActor enum ModuleSources {
-  private final class Connection {
-    weak var client: RPCClient?
-    init(_ client: RPCClient) { self.client = client }
-  }
-  private static var connections: [Connection] = []
   private static var cache: [String: Task<String, Error>] = [:]
-  static func register(_ client: RPCClient) {
-    connections.removeAll { $0.client == nil }
-    connections.append(Connection(client))
-  }
   static func source(_ identity: String) async throws -> String {
     if identity.hasPrefix("tsugumi:") {
       let name = String(identity.dropFirst("tsugumi:".count))
@@ -27,32 +17,7 @@ import TsugumiRPC
       do { return try await task.value } catch { cache[identity] = nil; throw error }
     }
 
-    if let task = cache[identity] { return try await task.value }
-    let task = Task { @MainActor () throws -> String in
-      var last: Error = NSError(domain: "Module", code: 1)
-      for connection in connections.reversed() {
-        guard let client = connection.client else { continue }
-        do {
-          var data = Data(), offset: UInt64 = 0
-          while true {
-            let request = Tsugumi_RPC_ModuleReadRequestT()
-            request.module = identity; request.offset = offset; request.limitBytes = 1 << 20
-            let page: Tsugumi_RPC_FileContentT = try await client.call(.modulereadrequest, request)
-            guard page.offset == offset, data.count + page.bytes.count <= 32 << 20 else { throw last }
-            data.append(contentsOf: page.bytes)
-            if page.eof == true { break }
-            guard let next = page.nextOffset, next > offset else { throw last }
-            offset = next
-          }
-          guard let code = String(data: data, encoding: .utf8) else { throw last }
-          return code
-        } catch { last = error }
-      }
-      throw last
-    }
-    if cache.count >= 8, let first = cache.keys.first { cache[first] = nil }
-    cache[identity] = task
-    do { return try await task.value } catch { cache[identity] = nil; throw error }
+    throw CocoaError(.fileNoSuchFile)
   }
 }
 

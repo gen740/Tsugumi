@@ -19,29 +19,6 @@ export { D, R, RequestPayload }
 export const s = (v: string | Uint8Array | null | undefined): string => (typeof v === 'string' ? v : v ? new TextDecoder().decode(v) : '')
 export const sOpt = (v: string | Uint8Array | null | undefined): string | undefined => (v === null || v === undefined ? undefined : s(v))
 
-/** Preserve invalid display text as an unavailable display, before lossy decoding. */
-export function unpackDisplay(wire: D.Display): D.DisplayT {
-  return wire.unpack()
-}
-
-function unpackRecordResult(wire: R.RecordResult): R.RecordResultT {
-  const value = Object.assign(new R.RecordResultT(), {
-    selectedInvocation: wire.selectedInvocation(), run: wire.run()?.unpack() ?? null,
-    status: wire.status()?.unpack() ?? null, aggregate: wire.aggregate()?.unpack() ?? null,
-    exists: wire.exists(), recordingDisabled: wire.recordingDisabled(), truncated: wire.truncated(), orphaned: wire.orphaned(),
-  })
-  const record = wire.record()
-  if (record) value.record = Object.assign(new R.InvocationRecordT(), {
-    summary: record.summary()?.unpack() ?? null,
-    inputs: Array.from({ length: record.inputsLength() }, (_, i) => record.inputs(i)!.unpack()),
-    outputs: Array.from({ length: record.outputsLength() }, (_, i) => record.outputs(i)!.unpack()),
-    inputSources: Array.from({ length: record.inputSourcesLength() }, (_, i) => record.inputSources(i)!.unpack()),
-    display: record.display() ? unpackDisplay(record.display()!) : null,
-    recordIo: record.recordIo(), paramsJson: record.paramsJson(),
-  })
-  return value
-}
-
 /** A structured failure returned by tsugumid (never matched by its text). */
 export class RPCFailure extends Error {
   readonly kind: D.FailureKind
@@ -139,10 +116,7 @@ export class RPCClient {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
       const raw = message.payload(new R.Notification()) as R.Notification
-      const note = raw.valueType() === R.NotificationPayload.DisplayUpdated
-        ? Object.assign(new R.NotificationT(), { subscriptionId: raw.subscriptionId(), seq: raw.seq(), valueType: raw.valueType(),
-          value: new R.DisplayUpdatedT(unpackDisplay((raw.value(new R.DisplayUpdated()) as R.DisplayUpdated).display()!)) })
-        : raw.unpack()
+      const note = raw.unpack()
       this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
     } catch (error) {
       this.transport.close()
@@ -157,8 +131,6 @@ export class RPCClient {
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
     const type = wire.valueType()
-    if (type === R.ReplyPayload.RecordResult)
-      return new ReplyT(type, unpackRecordResult(wire.value(new R.RecordResult()) as R.RecordResult))
     if (type === R.ReplyPayload.LogSlice) {
       const slice = wire.value(new R.LogSlice()) as R.LogSlice
       return new ReplyT(type, new R.LogSliceT(

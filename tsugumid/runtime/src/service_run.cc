@@ -5,7 +5,6 @@
 #include <algorithm>
 #include <set>
 
-#include "module_source.hh"
 #include "nix.hh"
 #include "scheduler.hh"
 #include "service.hh"
@@ -798,9 +797,6 @@ void Service::run_record(RequestIn& req) {
             b, b.CreateString(s.port), wire::path(b, s.card), s.invocation));
     auto srcv = b.CreateVector(srcs);
     auto sum = wire::invocation(b, summary);
-    flatbuffers::Offset<D::Display> disp;
-    if (o.record && o.record->display)
-      disp = wire::display(b, *o.record->display);
     auto params = summary.params_json.empty()
                       ? flatbuffers::Offset<flatbuffers::String>()
                       : b.CreateString(summary.params_json);
@@ -809,7 +805,6 @@ void Service::run_record(RequestIn& req) {
     rb.add_inputs(ins);
     rb.add_outputs(outs);
     rb.add_input_sources(srcv);
-    if (!disp.IsNull()) rb.add_display(disp);
     rb.add_record_io(o.record ? o.record->record_io : false);
     if (!params.IsNull()) rb.add_params_json(params);
     rec = rb.Finish();
@@ -926,34 +921,6 @@ void Service::artifact_list(RequestIn& req) {
   auto off = pb.Finish();
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::ArtifactPage,
                          off.Union()));
-}
-
-auto Service::module_read(RequestIn& req) -> void {
-  const auto* r = project_request(req)->value_as_ModuleReadRequest();
-  const auto identity = ModuleIdentity::parse(r->module_()->string_view());
-  if (!identity || stdfs::is_symlink(identity->path()))
-    throw Failed(FailureKind::invalid_path, "invalid module identity");
-  std::string source;
-  try {
-    if (stdfs::is_directory(identity->path()))
-      source = module_source(identity->path());
-    else if (auto cached = cached_module_source(store_->state_dir() / "modules",
-                                                *identity))
-      source = std::move(*cached);
-    else
-      throw std::runtime_error("module source is unavailable");
-  } catch (const std::exception& e) {
-    throw Failed(FailureKind::output_invalid, e.what());
-  }
-  const auto size = source.size();
-  const auto offset = r->offset().value_or(0);
-  if (offset > size)
-    throw Failed(FailureKind::invalid_request,
-                 "module offset exceeds source size");
-  const auto bytes =
-      std::string_view(source).substr(offset, content_limit(r->limit_bytes()));
-  reply(req, wire::file_page(req.request_id, "index.js", bytes, offset, size,
-                             crypto::sha256_hex(source)));
 }
 
 void Service::artifact_read(RequestIn& req) {

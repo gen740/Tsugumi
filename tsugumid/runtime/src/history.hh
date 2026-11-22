@@ -38,7 +38,6 @@ struct InvocationRecordData {
   std::vector<Value> inputs;   // only when record_io
   std::vector<Value> outputs;  // only when record_io
   std::vector<InputSourceData> input_sources;
-  std::optional<DisplayData> display;
   bool record_io = false;
 };
 
@@ -125,7 +124,6 @@ class History {
                              const std::vector<SavedInputGroup>& groups)
       -> void;
   static void put_artifact(sql::Db& db, const ArtifactData& a);
-  static void put_display(sql::Db& db, const DisplayData& d);
   static void put_receipt(sql::Db& db, const std::string& op_id,
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);
@@ -230,9 +228,6 @@ class History {
       sql::Db& db, const std::string& run_id,
       const std::optional<CardPath>& card, std::optional<uint64_t> invocation,
       const std::string& after, uint64_t limit);
-  static std::optional<DisplayData> display(sql::Db& db,
-                                            const std::string& run_id,
-                                            const CardPath& card);
   static std::vector<RunSummaryData> runs_page(sql::Db& db,
                                                std::optional<CardPath> card,
                                                bool artifacts_only,

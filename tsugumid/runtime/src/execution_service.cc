@@ -246,18 +246,12 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         "Resident worker state started fresh: " + lease.replaced + ".\n");
 
   workerd::Invocation invocation;
-  invocation.run_id = s.run_id;
-  invocation.card = node.path;
-  invocation.number = s.invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
   invocation.prepare_params = [&] {
     const auto ptype = NixRunner::params_type(node);
     return workerd::InvocationParameters{
-        ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node),
-        build.bash || node.settings.language == "r"
-            ? std::optional(NixRunner::params_json(node, false))
-            : std::nullopt};
+        ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node)};
   };
   invocation.output_directory = request.directory / "out";
   if (uid && ::geteuid() == 0 && worker_uid_on_host())

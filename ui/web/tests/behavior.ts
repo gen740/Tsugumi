@@ -93,7 +93,6 @@ await import("./runScratch")
 await import('./cardIdentity')
 await import('./agentAppearance')
 
-await import("./invalidDisplays")
 
 
 
