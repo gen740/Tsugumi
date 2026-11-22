@@ -50,7 +50,7 @@ Each **Before P1** note records the behavior at `24fc2d2c`, the revision the con
 
 Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote workers), `/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care there. On native macOS only `TMPDIR` is guaranteed.
 
-File and Directory outputs are created under the working directory ([Card ABI 9](CardABI.md#file-and-directory-outputs)).
+New Path outputs are created under the working directory. A Card can also return a staged input path unchanged. [Card ABI 9](CardABI.md#path-ports)
 
 **Before P1 (`24fc2d2c`).**
 
@@ -58,15 +58,15 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 - The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 - bubblewrap mounts an in-memory tmpfs at `/tmp`, separate from `TMPDIR` (`workerd/src/worker_proc.cc`).
 
-## File and Directory inputs
+## Path inputs
 
 **Decided.**
 
-- The input value holds an absolute path.
+- A Path input holds an absolute path in the ABI envelope. The worker stages a regular file or a whole directory tree according to what exists at run time.
   - With the `filesystem` option on, the Card's view of the input is read-only.
   - With `filesystem` off, the input is a copy (below), so the Card can write to that copy. Only the stored original is protected.
 - "Valid for that invocation" is the lifetime of the path. File descriptors that the Card keeps open are not revoked.
-- Inputs are hardlinked; a Directory is hardlinked file by file.
+- When hardlinking is possible, the worker links regular files individually, including each file in a directory tree.
 - Inputs are copied instead of hardlinked:
   - across filesystems;
   - whenever read-only cannot be enforced. A hardlink shares the inode of the stored run data, so without read-only enforcement the Card could change those data;

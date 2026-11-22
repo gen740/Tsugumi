@@ -48,7 +48,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 - Highlighting by file extension is UI presentation.
 - hostd formats JSON and Nix, chosen by file extension. Formatting Card source is the Agent's job, or the Card's `default.nix` can expose a formatter.
-- `InputTypes` returns the resolved FlatBuffers schema of connected ports. [Host presentation services](HostPresentation.md)
+- `InputTypes` describes connected ports. A FlatBuffer port has a resolved schema. A Path port carries a file or directory and is declared as `string (tsugumi: "path")` in the port catalog. [Host presentation services](HostPresentation.md)
 - The guide is ordinary documentation of the language SDK, in tsugumi-kit.
 - The generated entry (for example `card.hh`) is the description of the types.
 
