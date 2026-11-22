@@ -93,7 +93,7 @@ open -g dist/Tsugumi.app
 
 ### Each stage in detail
 
-Enter the development shell and build the core (tsugumid) and the SDK:
+Enter the development shell and build the core (tsugumid, the worker and hostd). The language SDKs are not built here: they come from the pinned [tsugumi-kit](https://github.com/gen740/tsugumi-kit) when a Card is built.
 
 ```bash
 nix develop

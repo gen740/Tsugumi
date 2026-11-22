@@ -15,20 +15,20 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 - **Try one change.** Run the Workflow once, change a Card parameter, then choose **Run from Here Downstream**. Use **Run Only This Card (Last Inputs)** to try the step by itself with inputs saved from a previous run. [Run from a Card](Usage.md#run-from-a-card)
 - **See what happened.** Use the bottom timeline or open **Card settings → Run History**. Pick an invocation and open **Ports**, **Log**, **Packages** or **Info** to see its inputs and outputs, its logs, and the stage at which it failed or stopped. [Inspect an invocation](RunHistory.md#inspect-an-invocation)
-- **Compare results and check the code that produced them.** Select two runs in **Compare Runs** to compare their recorded parameters, values and displays. Inspect the code and settings diff before choosing whether to revisit a saved version. [Compare two runs](RunHistory.md#compare-two-runs) · [Version history](Versions.md#the-version-tree)
+- **Compare results and check the code that produced them.** Select two runs in **Compare Runs** to compare their recorded parameters and values. Inspect the code and settings diff before choosing whether to revisit a saved version. [Compare two runs](RunHistory.md#compare-two-runs) · [Version history](Versions.md#the-version-tree)
 - **Go back to an earlier version.** Open **Version History**, pick a version in the tree and choose **Start from This Version**. [The version tree](Versions.md#the-version-tree)
 - **Check what an invocation ran with.** Open **Packages** in its run record and search the recorded runtime store paths. Open an evidence link from the Agent's chat to inspect a cited run, log or artifact. [Runtime packages](RunHistory.md#find-the-runtime-packages) · [Evidence links](RunHistory.md#follow-evidence-from-chat)
 
 ### Display results and keep files
 
-- **Plot data with editable code.** Open the Visualization demo or write a Code Card with Matplotlib, Plotly or Altair. For example, plot a numeric column as a histogram and inspect the actual bins kept with the figure. [Visualisation templates](Visualization.md)
-- **Watch a running figure or show a value.** Right-click the Card in the Live Stream demo and choose **Open Display** to follow incoming revisions. Use a Bash Card to log a typed input and show it as text or an explicitly selected Markdown string, as the `result` Card of the marimo demo does. [Live displays](Usage.md#live-displays) · [Bash displays](CardGuide.md#bash)
+- **Plot data with editable code.** Write a Code Card with Matplotlib or Plotly, show the figure live in one of the Card's views and save it as a File or Directory output. For example, plot a numeric column as a histogram and keep the actual bins with the figure. [Visualisation](Visualization.md) · [Views](CardGuide.md#views)
+- **Watch a running Card.** Right-click a Code Card and choose **Open Display** to see the views it declares and follow what it sends while it works. Views are live: what a Card sends is not recorded, so a result to check later goes to an output or an artifact. [Live displays](Usage.md#live-displays) · [Views](CardGuide.md#views)
 - **Run a notebook or render a report.** Add a marimo notebook to run committed cells once and return typed results. Use an R Markdown or Quarto Card to render a parameterised HTML report from an upstream value. [marimo notebooks](Marimo.md) · [R Markdown and Quarto](Reports.md)
 - **Keep a result for later.** In **Ports**, keep a File or Directory output as an artifact. Open its saved files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
 
 ### Write Cards and pin environments
 
-- Choose a Code Card’s SDK in `default.nix`. Start with a Draft or choose **From Template…** to copy saved Cards. The Card guide has the same typed input/output example in all nine languages. [First Card](CardGuide.md) · [Ruby](CardGuide.md#the-same-card-in-ruby) · [Go](CardGuide.md#go-cards) · [Rust](CardGuide.md#rust-cards) · [C#](CSharp.md)
+- Choose a Code Card’s language SDK in `default.nix`. The default SDKs for C++, Python, Go, Rust, C#, Julia, R and Ruby come from [tsugumi-kit](https://github.com/gen740/tsugumi-kit). Start with a Draft or choose **From Template…** to copy saved Cards. [First Card](CardGuide.md) · [Other languages](CardGuide.md#writing-the-same-card-in-another-language) · [Templates](CardGuide.md#templates)
 - **Pin dependencies and control state.** Use **Project settings → Name and Environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](CardGuide.md) · [Worker state](CardGuide.md#worker-state)
 - **Keep a monitoring worker resident.** Workers retained with `reuseWorker` have no count, idle-time or memory eviction limit. They stay until the environment stops or the Card's definition or execution conditions change; a failed, cancelled or timed-out call discards its worker, and a dead worker is replaced. Each invocation records reuse, and its log identifies replacement of resident state. Fresh workers prepared for speed keep their separate limits. [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
@@ -72,7 +72,7 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 
 | Kind | Role |
 | --- | --- |
-| Code Card (`code`) | Defines its environment in `default.nix` and runs C++, Python, Bash, R, Julia, Ruby, Go, Rust or C# code |
+| Code Card (`code`) | Builds its processing in `default.nix` with a language SDK into `lib/main.so` (C++, Python, Go, Rust, C#, Julia, R, Ruby or an SDK of your own) |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
 | branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (declared inputs to `out`, a union named by input port with root `tsugumi.merge.Merged`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
@@ -87,7 +87,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 - An output port can carry several wires. Each connected input receives the same emitted value. A Fork does the same as a named step on the Canvas, with one output per destination.
 - An output port's type is declared in a FlatBuffers schema (`_outputs.fbs`), and the type of each downstream input port is derived automatically from upstream. Structural compatibility is checked when wiring, and a merge builds a union type automatically.
-- Values flow between Cards as FlatBuffers bytes. Automated tests check that 64-bit integers, enums, structs, unions and File / Directory pass between C++ / Python / bash (and R and Julia through an in-memory JSON adapter) without loss.
+- Values flow between Cards as FlatBuffers bytes. Every Card receives and returns them through the fixed [Card ABI](CardABI.md); how a language SDK maps them to its own values is that SDK's business.
 
 ### Execution semantics (scheduler)
 
@@ -102,7 +102,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows a value sweep of three inputs, two named implementations and one collected result.
 
-- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ "echo first" "echo second" ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
+- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ (sdk.pythonCard { src = ./first; }) (sdk.pythonCard { src = ./second; }) ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
 - An Input Card supplies a batch directly: a parameter written as `"sweep": [8, 12, 16]` instead of `"data"` hands on each value in its own invocation. Several swept parameters give their Cartesian product, with the last one varying fastest; an arriving `start` batch is the outer axis. Each member is labeled with its values, such as `value=8`. A parameter of a list type (`uint64[]`) with `data` stays one ordinary FlatBuffers vector; with `sweep`, each element of the sweep is one vector. `sweep: [x]` is still a one-member batch (×1), and `sweep: []` sends an empty batch (×0).
 - History rows and the batch list show each member's label. Comparing two runs, a Card that ran an execution list compares one member at a time, chosen by name: members pair by label, or by implementation number when unlabeled, and a name repeated once per arriving input pairs by its occurrence. A member present in one run only is said so.
 - Results follow the order of the input port names, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
@@ -117,11 +117,11 @@ The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) 
 ```nix
 { pkgs, inputs, params }:
 let
-  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+  sdk = inputs.tsugumi.cppSdk;
 in
 {
-  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
-  preRun = "mkdir -p scratch";
+  run = sdk.cppCard { src = ./src; };
+  views = sdk.views;
 }
 ```
 
@@ -166,7 +166,7 @@ Use [Build Cache settings](Usage.md#manage-build-and-scratch-space) to inspect a
 
 ## 4. Card SDK and workers
 
-Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGuide.md), [worker state rules](CardGuide.md#worker-state) or [C# guide](CSharp.md). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation). The decided, not yet implemented contract between the core and a language SDK is [Card ABI 9](CardABI.md).
+Start with [Your first Card](CardGuide.md), then use the [worker state rules](CardGuide.md#worker-state) and each language SDK's guide in [tsugumi-kit](https://github.com/gen740/tsugumi-kit). Inspect execution stages in [Run History](RunHistory.md#inspect-an-invocation). The contract between the core and a language SDK is [Card ABI 9](CardABI.md).
 
 ### Execution service
 
@@ -178,7 +178,7 @@ Start with [Your first Card](CardGuide.md), then use the [SDK reference](CardGui
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
-- The kernel runs Bash Cards' programs under the emulator. Package Cards load a native `main.so` or an explicitly named SDK runtime artifact, so their build also makes a worker for the selected system (`worker` of the Nix SDK) from the Card's own nixpkgs, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time, and reused from the store after that by every such Card, whichever emulator built it.
+- Every Code Card is a `lib/main.so` loaded by a worker, so the Card's build plan also holds a worker for the selected system, built by the core from the Card's own nixpkgs, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time, and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
 ### Card secrets
@@ -189,7 +189,7 @@ A Card declares the names of the credentials it needs (`"secrets": ["database_pa
 
 - By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).
 - In **Card settings → General**, the Card can grant access to the network, a supported GUI, or named host paths. Host path grants are read-only by default and appear in the Card environment as `TSUGUMI_GRANT_<NAME>`.
-- "Restrict file access" (`sandbox`, on by default) is in the same tab. An Agent's save that turns it off, allows the network, adds a host folder or changes the execution service waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
+- The sandbox options (`sandbox.filesystem`, `sandbox.pid`, `sandbox.ipc` and `sandbox.identity`, each on by default) are in the same tab. An Agent's save that turns it off, allows the network, adds a host folder or changes the execution service waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
 
 ## 5. Documents and saving
 
@@ -201,7 +201,7 @@ A Card declares the names of the credentials it needs (`"secrets": ["database_pa
 
 ## 7. Visualisation
 
-Use the [visualisation templates](Visualization.md), [marimo notebooks](Marimo.md) or [R reports](Reports.md). Authors of custom views use [Card-owned web views](CardGuide.md#card-owned-web-views); open [live displays](Usage.md#live-displays) from the Card menu.
+A Card declares its views in `default.nix` and sends to them while it works; open them as [live displays](Usage.md#live-displays) from the Card menu. The language SDKs bundle views for text, Markdown, tables, images, line charts and points, and Python adds Plotly. A Card can also declare its own HTML view. Nothing a Card sends to a view is recorded. [Views](CardGuide.md#views) · [Visualisation](Visualization.md) · [marimo notebooks](Marimo.md) · [R reports](Reports.md)
 
 ## 8. UI (the workbench)
 
@@ -233,7 +233,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | --- | --- | --- |
 | Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`) for the explicit `requests` allow list in `hostd/agent/Shared/agent.json` | [Tools and the RPC](#tools-and-the-rpc), `hostd/agent/src/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation and the summaries of the thinking of the bird on the Canvas use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `hostd/agent/Shared/agent.json` |
-| Judging from the figures a run makes (multimodal) | `run_record` passes the images a Card displayed (charts, RGB images and so on) to the model as images. The same in the app, the Web UI and the Claude Code plugin | `hostd/agent/src/tool_images.cc`, `cli/src/mcp.cc`, `tests/core/agent/project_rpc_test.cc` |
+| Judging from the figures a run makes (multimodal) | PNG and JPEG bytes in a tool's result, such as an image read from a kept artifact, reach the model as images. Views are live and not recorded, so a figure the model should read is saved as a file output or an artifact. The same in the app, the Web UI and the Claude Code plugin | `hostd/agent/src/tool_images.cc`, `cli/src/mcp.cc` |
 | Implementing independent Drafts at the same time (subagents) | `delegate` starts tasks with depth/count capabilities and exact Card sets, and returns their reports and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`hostd/agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `hostd/agent/src/provider.cc` |
@@ -301,7 +301,7 @@ The host-side `tsugumi-hostd` discovers Skills, parses their metadata and report
 
 The host-side `tsugumi-hostd` embeds and interprets `hostd/agent/Shared/guide-script{,.en}.json`. `GuideGetRequest` reads a session in Japanese or English; `GuideAdvanceRequest` reports an interest, a message or choice, a demo opening, a run observation, or a completed client action. The reply contains the step, text, choices, semantic actions, highlight and panel request. Scripted guidance works without a model connection.
 
-Scripted tours and the model-backed `$demo` tour give short guidance: run, open the result's location, optionally change a parameter, Apply and rerun. The person reads and judges the results. Tours do not require checklists or confirmations of saving and running, and do not infer output values or changes from a successful run. In a script, `finished` names the step after success; other terminal states lead to the tour's `failed` step with logs and a retry button. Only steps with `finished` react to run endings. A result step also offers a run with unchanged settings to explore reproducibility. Detailed interpretation in model-backed chat is an optional response to a question, grounded in actual run records and displays.
+Scripted tours and the model-backed `$demo` tour give short guidance: run, open the result's location, optionally change a parameter, Apply and rerun. The person reads and judges the results. Tours do not require checklists or confirmations of saving and running, and do not infer output values or changes from a successful run. In a script, `finished` names the step after success; other terminal states lead to the tour's `failed` step with logs and a retry button. Only steps with `finished` react to run endings. A result step also offers a run with unchanged settings to explore reproducibility. Detailed interpretation in model-backed chat is an optional response to a question, grounded in actual run records and saved artifacts.
 
 Progress belongs to the host (`desktop`), shared by the app's windows and every Web page. The core persists the first-start answer, demo-offer answer and tour; the live step and run observations last for the service lifetime. A resumed tour uses that live step, or the script's start step after a service restart. Stale choices and repeated or superseded run observations do not advance the guide twice.
 

@@ -53,7 +53,7 @@ You open the code or the result of a Card you are curious about, change a condit
 - **Pinned down to the environment, so it can be checked again.** Each Card's dependencies are pinned with Nix, and every run is recorded against a git version.
 - **Computation runs isolated.** In a VM of its own on a Mac, under bubblewrap on Linux. Cards have no outside network by default, and a save in which the Agent widens a Card's permissions does not go through without the user's approval. What is sent to the model is [stated](docs/security.md#what-is-sent-to-the-model). Opening a project is a decision to trust its contents; Tsugumi takes responsibility for what happens inside that ([what it guarantees](docs/security.md#what-tsugumi-takes-on)).
 - **A finished Workflow needs no LLM.** The generated code stays as ordinary files that a person can read and fix at any time.
-- **Each Claude feature for what it is good at.** Tool use to implement Cards, subagents to implement independent Drafts at the same time, a Skill for the demo guide, multimodal input for the figures a run makes, and MCP (the Claude Code plugin) for agents outside. Small models write the guide and the summaries ([the list](docs/features.md#choosing-claudes-features-by-purpose)).
+- **Each Claude feature for what it is good at.** Tool use to implement Cards, subagents to implement independent Drafts at the same time, a Skill for the demo guide, multimodal input for the figures a run keeps as files, and MCP (the Claude Code plugin) for agents outside. Small models write the guide and the summaries ([the list](docs/features.md#choosing-claudes-features-by-purpose)).
 
 ## Are you using AI in your research as much as you could?
 
@@ -110,7 +110,7 @@ Yet today we write long instructions, read long reports, and check again whether
 Tsugumi is a **macOS app for assembling computation and data processing as a graph of Cards (a Workflow)**.
 
 1. **Draw.** Place Drafts, which have only a name and a description, and wire them up to design the whole flow.
-2. **Implement.** Leave a Draft to the Agent, or write C++ / Python / bash / R / Julia yourself. The generated code stays in the project as ordinary files that you can reread and edit at any time.
+2. **Implement.** Leave a Draft to the Agent, or write it yourself with a language SDK: C++, Python, Go, Rust, C#, Julia, R, Ruby or one of your own. The generated code stays in the project as ordinary files that you can reread and edit at any time.
 3. **Check.** Run the graph in environments pinned with Nix, and look at each Card's progress, outputs and logs. When you fix a step in the middle, run again from there at once, with the saved inputs.
 
 ## Splitting the processing finely, without making trial and error heavy
@@ -129,17 +129,17 @@ Switch to the deep observation ObsID 114 (50 ks, about 15 million photons in the
 ### Seeing the whole flow
 
 In the screen at the top of this page, a sticky note states the aim of the analysis, and below it runs the flow `load` → `bands` → `rgb` / `spectrum`.
-When it runs, each Card shows its progress, and the table of photon counts per band, the RGB image and the spectrum appear right on the Canvas.
+When it runs, each Card shows its progress on the Canvas, and the table of photon counts per band, the RGB image and the spectrum appear in the Cards' views as they are made.
 The spectrum shows that the green band (1.65–2.25 keV) contains exactly the Si line, while S, Ar, Ca and Fe fall in blue. What the colours of the image mean can be checked on the same screen.
 From the chat on the right you can ask the Agent to implement or change things.
 
 ### Reading the code and trying other conditions
 
 Open a Card's settings to see its source code, its input and output ports, and the definition of its environment (`default.nix`).
-`spectrum` draws with Matplotlib and publishes the figure through `report.figure()`.
+`spectrum` draws with Matplotlib and sends the figure to its view.
 Rewrite the band edges or the bin width of the spectrum and rerun only that Card with the saved inputs, and checking continues from the very place you were curious about.
 
-<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="Opening the settings of the spectrum Card and following its matplotlib source down to report.figure()" width="100%"></a>
+<a href="https://gen740.github.io/Tsugumi/#demo-casa"><img src="docs/assets/casa-source.svg" alt="Opening the settings of the spectrum Card and following its matplotlib source down to where it shows the figure" width="100%"></a>
 
 ### Looking back at what actually ran
 

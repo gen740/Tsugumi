@@ -96,3 +96,5 @@ A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a 
 ## Demo histories
 
 A demo folder's `.tsugumi-history.json` becomes commits, branches, tags and notes when a copy becomes a repository (the file itself goes away). The Cas A demo carries the process of trying bands, grids and stretches: failed branches, branches not adopted, the adopted version `rgb-v1`, the version that added the spectrum on top of it, and the version that pinned CIAO.
+
+A demo history is the record of what ran. Its earlier versions keep the Card sources of the time they were made, written for the Card ABI of that time, so they show how the analysis went but may not build with the current SDKs. The demo's current definitions are the runnable ones.

@@ -1,5 +1,7 @@
 """Runs demos for real with a host tsugumid and keeps what the demo player shows:
-when each Card ran (the order of the replay) and each Card's last display.
+when each Card ran (the order of the replay) and the artifacts the run kept.
+What a Card sends to its views is live and not recorded, so a recording holds
+no display; a figure for the page is an artifact or an authored asset.
 
 Nothing here is written by hand: every value comes from RunInvocationsRequest
 and RunRecordRequest of the run named in the file's `run` note.
@@ -9,13 +11,12 @@ and RunRecordRequest of the run named in the file's `run` note.
   TSUGUMI_PY_BINDINGS=<dir>      (default: <build dir>/generated/python)
   --no-sandbox                   run the Cards without Seatbelt, as tests/python does on a host
   --ports                        also write assets/ports.json: the core's resolved ports of every project
-Writes docs/site/player-data/assets/<demo>.run.json and its images next to it.
+Writes docs/site/player-data/assets/<demo>.run.json.
 `card-guide` is the project of docs/CardGuide.md instead of a folder in demos/.
 """
 
 from __future__ import annotations
 
-import base64
 import json
 import os
 import platform
@@ -25,8 +26,6 @@ import subprocess
 import sys
 import tempfile
 import time
-import uuid
-from array import array
 from datetime import date
 from pathlib import Path
 
@@ -49,11 +48,6 @@ STATE = {v: k for k, v in vars(CardState).items() if not k.startswith("_")}
 PHASE = {v: k for k, v in vars(Phase).items() if not k.startswith("_")}
 OUTCOME = {v: k for k, v in vars(StageOutcome).items() if not k.startswith("_")}
 RUN = {v: k for k, v in vars(RunState).items() if not k.startswith("_")}
-MAX_IMAGE = 640      # pixels on the long side
-MAX_PNG = 220_000    # bytes of a PNG before it becomes a JPEG
-MAX_TEXT = 4000      # characters of a text display
-MAX_ROWS = 24        # rows of a table
-MAX_POINTS = 400     # points of a series
 
 
 def guide_files() -> dict[str, str]:
@@ -79,7 +73,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
             if card.get("type") == "code":
-                card["sandbox"] = {"filesystem": False}
+                card["sandbox"] = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
                 f.write_text(json.dumps(card))
     return dst
 
@@ -99,115 +93,6 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
     return out
 
 
-def resized(data: bytes, media: str, dest: Path) -> str:
-    """Writes the image at a size for the page with sips (macOS); its file name."""
-    suffix = ".jpg" if "jpeg" in media else ".png"
-    dest = dest.with_name(f"{dest.name}{suffix}")
-    dest.write_bytes(data)
-    subprocess.run(["sips", "-Z", str(MAX_IMAGE), str(dest)], check=True, capture_output=True)
-    if suffix == ".png" and dest.stat().st_size > MAX_PNG:  # a photograph-like image: JPEG keeps it small
-        jpeg = dest.with_suffix(".jpg")
-        subprocess.run(["sips", "-s", "format", "jpeg", "-s", "formatOptions", "62", str(dest), "--out", str(jpeg)], check=True, capture_output=True)
-        dest.unlink()
-        return jpeg.name
-    return dest.name
-
-
-def plain(values) -> list:
-    """A Plotly array: a list, or numpy's {"dtype", "bdata"} from fig.to_json()."""
-    if isinstance(values, dict) and "bdata" in values:
-        kinds = {"f8": "d", "f4": "f", "i4": "i", "i2": "h", "i1": "b", "u4": "I", "u2": "H", "u1": "B"}
-        return array(kinds[values["dtype"]], base64.b64decode(values["bdata"])).tolist()
-    return list(values)
-
-
-def thin(values, most: int) -> list[float]:
-    values = plain(values)
-    if len(values) <= most:
-        return [round(float(v), 4) for v in values]
-    step = (len(values) - 1) / (most - 1)
-    return [round(float(values[round(i * step)]), 4) for i in range(most)]
-
-
-def vega_image(spec: dict, dest: Path) -> str:
-    """Writes the figure as an image, drawn by Vega (PNG: the Mac's thumbnails read images with ImageIO, which has no SVG); its file name."""
-    drawn = subprocess.run(["node", str(Path(__file__).with_name("vega-svg.mjs"))], input=json.dumps(spec),
-                           check=True, stdout=subprocess.PIPE, text=True)
-    with tempfile.TemporaryDirectory(prefix="tsg-harvest-") as tmp:
-        svg, png = Path(tmp) / "figure.svg", Path(tmp) / "figure.png"
-        svg.write_text(drawn.stdout)
-        subprocess.run(["sips", "-s", "format", "png", str(svg), "--out", str(png)], check=True, capture_output=True)
-        return resized(png.read_bytes(), "image/png", dest)
-
-
-def module_value(name: str, data: dict, dest: Path) -> dict:
-    """What can be drawn without the plot libraries: the figure's own points."""
-    series = []
-    if name == "plotly":
-        for t in data.get("data", []):
-            if "x" in t and "y" in t:
-                series.append({"label": t.get("name") or "", "x": thin(t["x"], MAX_POINTS), "y": thin(t["y"], MAX_POINTS),
-                               "points": "markers" in str(t.get("mode", ""))})
-        layout = data.get("layout", {})
-        title = (layout.get("title") or {}).get("text", "")
-        axis = lambda a: ((layout.get(a) or {}).get("title") or {}).get("text", "")  # noqa: E731
-        return {"type": "plot", "library": "Plotly", "title": title, "xLabel": axis("xaxis"), "yLabel": axis("yaxis"), "series": series}
-    if name == "vega-lite":
-        rows: list[dict] = []
-        if isinstance(data.get("datasets"), dict):
-            for v in data["datasets"].values():
-                rows += v
-        rows += (data.get("data") or {}).get("values", []) if isinstance(data.get("data"), dict) else []
-        if isinstance(data.get("layer"), list):
-            for layer in data["layer"]:
-                rows += ((layer.get("data") or {}).get("values", [])) if isinstance(layer.get("data"), dict) else []
-        enc = data.get("encoding") or (data.get("layer") or [{}])[0].get("encoding", {})
-        xf = (enc.get("x") or {}).get("field")
-        yf = (enc.get("y") or {}).get("field")
-        cf = (enc.get("color") or {}).get("field")
-        groups: dict[str, list[dict]] = {}
-        for r in rows:
-            groups.setdefault(str(r.get(cf, "")) if cf else "", []).append(r)
-        for label, items in groups.items():
-            # layers can hold rows of other columns (a band's low and high, say)
-            items = [r for r in items if xf in r and yf in r] if xf and yf else []
-            if items:
-                series.append({"label": label, "x": thin([r[xf] for r in items], MAX_POINTS), "y": thin([r[yf] for r in items], MAX_POINTS), "points": False})
-        title = data.get("title", "")
-        if isinstance(title, dict):
-            title = title.get("text", "")
-        if not series:  # panels with their own axes (concat, facet): the picture, not one set of points
-            return {"type": "image", "src": f"assets/{vega_image(data, dest)}", "alt": title}
-        return {"type": "plot", "library": "Altair", "title": title, "xLabel": xf or "", "yLabel": yf or "", "series": series}
-    return {"type": "module", "name": name}
-
-
-def display_value(d, dest: Path) -> dict | None:
-    v = d.value
-    t = d.valueType
-    if t == 1:
-        s = text(v.text)
-        return {"type": "text", "text": s[:MAX_TEXT], "markdown": bool(v.markdown), **({"cut": len(s)} if len(s) > MAX_TEXT else {})}
-    if t == 2:
-        return {"type": "scalar", "value": v.value, "label": text(v.label)}
-    if t == 4:
-        rows = [[text(c) for c in r.cells] for r in v.rows]
-        return {"type": "table", "columns": [text(c) for c in v.columns], "rows": rows[:MAX_ROWS], "totalRows": len(rows)}
-    if t == 5:
-        name = resized(bytes(v.data), text(v.mediaType), dest)
-        return {"type": "image", "src": f"assets/{name}", "alt": text(v.alt) if v.alt else ""}
-    if t == 6:
-        return {"type": "points", "count": len(v.x)}
-    if t == 7:
-        if text(v.module).endswith("-tsugumi-view-line-chart"):
-            from tsugumi_client import line_chart_series
-            return {"type": "plot", "library": "line", "title": "", "xLabel": "", "yLabel": "",
-                    "series": [{"label": s.label, "x": thin(s.x, MAX_POINTS), "y": thin(s.y, MAX_POINTS), "points": False}
-                               for s in line_chart_series(v)]}
-        return module_value("plotly" if text(v.module).endswith("-tsugumi-view-plotly") else "vega-lite" if text(v.module).endswith("-tsugumi-view-vega-lite") else text(v.module), json.loads(text(v.configJson)), dest)
-    return None
-
-
 def invocations(c, run_id: str, card: list[str]) -> list:
     out, cursor = [], None
     while True:
@@ -219,7 +104,7 @@ def invocations(c, run_id: str, card: list[str]) -> list:
             return out
 
 
-def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) -> dict:
+def harvest(demo: str, tmp: Path, sandbox: bool, timeout: float) -> dict:
     root = project_copy(demo, tmp, sandbox)
     graph_id = subprocess.check_output(
         ["node", str(Path(__file__).with_name("build.mjs")), "--graph-id", str(root)], text=True,
@@ -235,10 +120,8 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
             state = RUN.get(status.state, str(status.state))
             failure = text(status.failure.diagnostic) if status.failure else None
             raise RuntimeError(f"run {run_id} {state}: {failure}")
-        recording_id = uuid.uuid4().hex
         cards = {}
         t0 = None
-        outputs = {}
         artifacts = []
         for card in card_paths(root):
             k = "/".join(card)
@@ -254,11 +137,6 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
                 if r.startedAt:
                     t0 = r.startedAt if t0 is None else min(t0, r.startedAt)
             cards[k] = recs
-            rec = c.call("RunRecordRequest", runId=run_id, card=path(*card)).record
-            if len(card) == 1 and rec and rec.display and rec.display.value is not None:
-                value = display_value(rec.display, staging / f"{demo}-{recording_id}-{k}")
-                if value:
-                    outputs[k] = value
         timeline = {}
         for k, recs in cards.items():
             first, last = recs[0], recs[-1]
@@ -279,9 +157,9 @@ def harvest(demo: str, tmp: Path, staging: Path, sandbox: bool, timeout: float) 
             "run": {
                 "id": run_id, "state": "succeeded", "date": date.today().isoformat(), "wallSeconds": round(time.time() - began, 1),
                 "host": f"{platform.system()} {platform.machine()}, tsugumid on the host",
-                "sandbox": "Seatbelt" if sandbox else "off", "commit": subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip(),
+                "sandbox": "Seatbelt" if sandbox else "sandbox options off", "commit": subprocess.check_output(["git", "rev-parse", "--short", "HEAD"], cwd=ROOT, text=True).strip(),
             },
-            "timeline": timeline, "outputs": outputs, "artifacts": artifacts,
+            "timeline": timeline, "outputs": {}, "artifacts": artifacts,
         }
     finally:
         daemon.cleanup()
@@ -322,21 +200,16 @@ def main() -> int:
         ):
             try:
                 staging = Path(staging_dir)
-                result = harvest(demo, Path(tmp), staging, sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
+                result = harvest(demo, Path(tmp), sandbox, float(os.environ.get("HARVEST_TIMEOUT", "600")))
                 record = staging / f"{demo}.run.json"
                 record.write_text(json.dumps(result, ensure_ascii=False, separators=(",", ":")))
-                # Keep the old recording readable until every image for the new one is published.
-                for output in result["outputs"].values():
-                    if output["type"] == "image":
-                        name = Path(output["src"]).name
-                        (staging / name).rename(OUT / name)
                 record.replace(OUT / record.name)
             except Exception as e:  # one demo failing does not stop the others
                 print(f"{demo}: FAILED {type(e).__name__}: {e}", flush=True)
                 code = 1
                 continue
         print(f"{demo}: succeeded in {result['run']['wallSeconds']} s, "
-              f"{len(result['timeline'])} Cards, displays: {sorted(result['outputs'])}", flush=True)
+              f"{len(result['timeline'])} Cards, {len(result['artifacts'])} artifacts", flush=True)
     return code
 
 
