@@ -11,9 +11,9 @@
 #include <thread>
 
 #include "agent_tools.hh"
-#include "tsugumi/cli/launch.hh"
+#include "launch.hh"
 #include "mcp_instructions.hh"
-#include "tsugumi/cli/rpc.hh"
+#include "rpc.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::cli {

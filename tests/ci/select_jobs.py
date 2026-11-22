@@ -18,8 +18,7 @@ SYSTEMS = {
     "aarch64-darwin": "macos-26",
 }
 NATIVE_TESTS = {"agent-rpc", "rpc"}
-# linux-ui: the GTK desktop UI's package and its headless check against hostd.
-CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "sdk", "swift", "vm", "linux-ui"}
+CORE = NATIVE_TESTS | {"host", "remote-execution", "adapters", "sdk", "swift", "vm"}
 GUEST = {"vm", "pack-guest"}
 WEB = {"docs", "web-typecheck", "web-contracts", "adapters"}
 ALL = CORE | GUEST | WEB | {"prompt"}
@@ -97,8 +96,6 @@ def consumers(path):
         return {"pack-guest"}
     if path.startswith(("ui/macos/", "vm/macos/", "client/swift/", "cli/vmctl/")):
         return {"swift"}
-    if path.startswith("ui/linux/"):
-        return {"linux-ui"}
     if path.startswith(("ui/web/tests/", "ui/web/scripts/test.mjs")):
         return {"web-contracts"}
     if path == "ui/web/scripts/check-boundaries.mjs":
@@ -132,12 +129,11 @@ def consumers(path):
     if path.startswith("hostd/"):
         # Host RPC is consumed by native clients, the broker and the Web edit
         # driver. Guest entry points and the Card SDK run through tsugumid.
-        return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "swift", "web-contracts", "linux-ui"}
+        return {"agent-rpc", "rpc", "host", "remote-execution", "adapters", "swift", "web-contracts"}
     if path.startswith(("tsugumid/", "workerd/")):
         return CORE | GUEST
     if path.startswith("cli/"):
-        # cli/ also holds the hostd launch the Linux UI shares.
-        return {"adapters", "swift", "linux-ui"}
+        return {"adapters", "swift"}
     if path.startswith("plugins/") or path in ADAPTER_TESTS:
         return {"adapters"}
     if path == "tests/python/test_host_projects_rpc.py":
@@ -171,8 +167,7 @@ def select(paths=None):
         # Linux's host integrations take several minutes. Keep them and their
         # Web consumers parallel to the cold C++ test build and RPC suites.
         "x86_64-linux": {"native-checks": NATIVE_TESTS, "host-and-web": host_checks,
-                         "sdk": {"sdk"}, "remote-execution": {"remote-execution"},
-                         "linux-ui": {"linux-ui"}},
+                         "sdk": {"sdk"}, "remote-execution": {"remote-execution"}},
         "aarch64-darwin": {"native-checks": NATIVE_TESTS | {"host"}, "swift": {"swift"}},
     }.items():
         selected = set().union(*(jobs for path, jobs in changes if system in systems_for(path)))
