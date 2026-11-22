@@ -131,7 +131,9 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
           close(open("stopped", O_WRONLY | O_CREAT, 0600));
           // Observe the second call without draining it so the sender blocks.
           struct pollfd worker_data = {3, POLLIN, 0};
-          if (poll(&worker_data, 1, -1) != 1 || !(worker_data.revents & POLLIN))
+          char byte;
+          if (poll(&worker_data, 1, -1) != 1 ||
+              recv(3, &byte, sizeof(byte), MSG_PEEK) != 1)
             _exit(3);
           close(open("sending", O_WRONLY | O_CREAT, 0600));
           _exit(0);
@@ -139,7 +141,8 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         std::ofstream("marker") << "test";
         out.file("marker");
         printf("%s/stop\n", std::getenv("HOME"));
-    ''', inputs=["data"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
+    ''', declarations="#include <sys/socket.h>", inputs=["data"],
+        outputs=FILE_FBS, reuseWorker=True, recordIO=True)
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
     payload = {"type": "input", "params": [{"name": "value", "type": "string", "data": "x" * (4 << 20)}],
@@ -157,6 +160,8 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         pass
     wait_for_file(gate.with_name("stopped"))
     second = start_run(c, "source")
+    # The first invocation's child can only see this marker after it has
+    # observed the next call on the same resident's socket.
     wait_for_file(gate.with_name("sending"))
     if stop != "shutdown":
         if stop == "cancel":
@@ -165,7 +170,11 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         assert state == (RunState.cancelled if stop == "cancel" else RunState.failed)
         inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
         assert inv.workerReused
-        assert inv.state == (CardState.cancelled if stop == "cancel" else CardState.failed)
+        expected = CardState.cancelled if stop == "cancel" else CardState.failed
+        assert inv.state == expected, (
+            inv.state, vars(inv.failure) if inv.failure else None,
+            log(c, second, "resident", 2)
+        )
         assert inv.failure.kind == (FailureKind.cancelled if stop == "cancel" else FailureKind.timeout)
     daemon.proc.send_signal(signal.SIGTERM)
     assert daemon.proc.wait() == 0

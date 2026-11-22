@@ -700,10 +700,14 @@ bool WorkerProc::alive() const {
            !(state.revents & (POLLHUP | POLLERR | POLLNVAL));
   }
   if (!alive_ || pid_ <= 0) return false;
+  // Darwin can return CLD_STOPPED from this waitid query despite WEXITED.
+  // A stopped resident still owns its connection and can be cancelled.
   siginfo_t si{};
   if (::waitid(P_PID, static_cast<id_t>(pid_), &si,
                WEXITED | WNOHANG | WNOWAIT) == 0 &&
-      si.si_pid == pid_)
+      si.si_pid == pid_ &&
+      (si.si_code == CLD_EXITED || si.si_code == CLD_KILLED ||
+       si.si_code == CLD_DUMPED))
     return false;
   return true;
 }
