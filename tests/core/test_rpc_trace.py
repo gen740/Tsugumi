@@ -8,12 +8,15 @@ from contextlib import closing, contextmanager
 
 import pytest
 from harness.daemon import DAEMON, NIX, WORKER
+from harness.fixtures import mock_plan
 from harness.host import Host, HostConnection, HostFailure
-from tsugumi_client import Client, RpcFailure
+from harness.scenario import Project
+from tsugumi_client import Client, RpcFailure, make, path, text
 from Tsugumi.Host.EnvironmentAction import EnvironmentAction
 from Tsugumi.Host.EnvironmentPhase import EnvironmentPhase
 from Tsugumi.Host.EventPayload import EventPayload
 from Tsugumi.Host.Setting import SettingT
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.Trace.CoreTraceRequest import CoreTraceRequestT
 from Tsugumi.Trace.Direction import Direction
 from Tsugumi.Trace.Mode import Mode
@@ -97,6 +100,50 @@ def test_trace_traffic_including_failures_is_excluded(debug_core, tmp_path):
         assert {(e.direction, e.messageType) for e in core_entries} == {
             (Direction.Request, b"ProjectActivityRequest"), (Direction.Reply, b"ProjectActivity"),
         }
+
+
+def test_view_visibility_and_view_reads_stay_out_of_both_traces(project, core_factory, tmp_path):
+    """Like live display traffic, the requests that open and read a view and
+    their replies are recorded neither as metadata nor as captured content."""
+    marker = b"tsugumi-view-marker-7f3a"
+    blob = tmp_path / "store" / "page.html"
+    blob.parent.mkdir()
+    blob.write_bytes(b"<p>" + marker + b"</p>")
+    package = tmp_path / "package"
+    package.mkdir()
+    core = core_factory(mocked_builds=True, env={"TSUGUMI_RPC_TRACE": "1",
+                                                  "TSUGUMI_MOCK_STORE": str(blob.parent)})
+    project_id = core.ready["project_id"]
+    with closing(Host(tmp_path / "host", rpc_trace=True)) as host, core.connect() as client:
+        host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{core.unix}")
+        assert host.call("HostTraceRequest", mode=Mode.Capture).snapshot.mode == Mode.Capture
+        Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
+                              plan=mock_plan([str(package)], views=[
+                                  {"blob": str(blob), "name": "page", "type": "html"}])).save(client)
+        opened = client.open()
+        hidden = []
+
+        def call(name, **fields):
+            rid = client.send(name, make(name, **fields))
+            hidden.append(rid)
+            return client.wait_reply(rid)
+
+        call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
+        client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
+                                 and n.value.views, timeout=20)
+        assert marker in bytes(call("CardViewReadRequest", card=path("work"), name="page", index=0).bytes)
+        with pytest.raises(RpcFailure):
+            call("CardViewReadRequest", card=path("work"), name="missing", index=0)
+        # A later request is captured, so the recorder was on throughout.
+        client.call("ProjectActivityRequest")
+
+        entries = host.call("HostTraceRequest", source=project_id).snapshot.entries
+        assert any(e.messageType == b"ProjectActivityRequest" and e.contentJson for e in entries)
+        assert not [e.messageType for e in entries if e.requestId in hidden]
+        assert not {e.messageType for e in entries} & {
+            b"ViewSetVisibleRequest", b"CardViewReadRequest", b"FileContent", b"CardViewsUpdated"}
+        captured = "".join("".join(e.contentJson.decode().split()) for e in entries if e.contentJson)
+        assert marker.decode() not in captured and ",".join(map(str, marker)) not in captured
 
 
 def test_host_refuses_trace_without_debug_launch(tmp_path):

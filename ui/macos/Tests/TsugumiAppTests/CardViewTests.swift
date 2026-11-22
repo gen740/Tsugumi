@@ -23,9 +23,15 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   Tsugumi_RPC_NotificationPayloadUnion(value, type: type)
 }
 
-@MainActor private func declared(_ card: CardKey, _ views: [CardViewDeclaration]) -> Tsugumi_RPC_NotificationPayloadUnion {
+@MainActor private func declared(_ card: CardKey, _ views: [CardViewDeclaration], failure: String? = nil) -> Tsugumi_RPC_NotificationPayloadUnion {
   let u = Tsugumi_RPC_CardViewsUpdatedT()
   u.card = cardPath(card)
+  if let failure {
+    let f = Tsugumi_Data_FailureT()
+    f.kind = .nixFailed
+    f.diagnostic = failure
+    u.failure = f
+  }
   u.views = views.map { v in
     let w = Tsugumi_Data_CardViewT()
     w.name = v.name; w.type = v.type; w.blob = v.blob
@@ -101,7 +107,19 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   // Declaring the name later clears the error; an empty list clears the declarations.
   s.applyViewNotification(declared("plot", [html("chart"), html("missing")]))
   #expect(s.cardViews.undeclared("plot").isEmpty)
+  #expect(s.cardViews.ambiguous("plot").isEmpty)
+
+  // A name two declarations share is reported, and data sent to it reaches neither.
+  s.applyViewNotification(declared("plot", [html("chart"), html("chart")]))
+  #expect(s.cardViews.ambiguous("plot") == ["chart"])
+  s.applyViewNotification(sent("plot", "chart", [4]))
+  #expect(chart.last == .data(Data([9])))
+  #expect(s.cardViews.undeclared("plot").isEmpty)
+  s.applyViewNotification(declared("plot", [], failure: "views are broken"))
+  #expect(s.cardViews.failures["plot"] == "views are broken")
+  #expect(s.cardViews.undeclared("plot").isEmpty, "a failed evaluation is shown instead of undeclared names")
   s.applyViewNotification(declared("plot", []))
+  #expect(s.cardViews.failures["plot"] == nil, "an evaluated empty list has no failure")
   #expect(s.cardViews.declarations["plot"] == [])
 
   for id in [a, b, c] { s.cardViews.detach(id) }
@@ -112,19 +130,19 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
 
 @MainActor @Test func viewFilesAreReadPageByPageWithinTheLimit() async throws {
   var asked: [UInt64] = []
-  let files = CardViewFiles { card, name, offset in
-    #expect(card == ["plot"] && name == "chart")
+  let files = CardViewFiles { card, index, name, offset in
+    #expect(card == ["plot"] && index == 1 && name == "chart")
     asked.append(offset)
     return offset == 0 ? CardViewFilePage(bytes: Data("<p>".utf8), eof: false, nextOffset: 3)
       : CardViewFilePage(bytes: Data("x</p>".utf8), eof: true, nextOffset: nil)
   }
-  #expect(try await files.read(card: ["plot"], name: "chart") == Data("<p>x</p>".utf8))
+  #expect(try await files.read(card: ["plot"], index: 1, name: "chart") == Data("<p>x</p>".utf8))
   #expect(asked == [0, 3])
-  let stuck = CardViewFiles { _, _, _ in CardViewFilePage(bytes: Data(), eof: false, nextOffset: 0) }
-  await #expect(throws: CardViewFileError.self) { try await stuck.read(card: [], name: "a") }
-  let huge = CardViewFiles { _, _, _ in CardViewFilePage(bytes: Data(count: CardViewFiles.limit + 1), eof: true, nextOffset: nil) }
-  await #expect(throws: CardViewFileError.self) { try await huge.read(card: [], name: "a") }
-  await #expect(throws: CardViewFileError.self) { try await CardViewFiles.unavailable.read(card: [], name: "a") }
+  let stuck = CardViewFiles { _, _, _, _ in CardViewFilePage(bytes: Data(), eof: false, nextOffset: 0) }
+  await #expect(throws: CardViewFileError.self) { try await stuck.read(card: [], index: 0, name: "a") }
+  let huge = CardViewFiles { _, _, _, _ in CardViewFilePage(bytes: Data(count: CardViewFiles.limit + 1), eof: true, nextOffset: nil) }
+  await #expect(throws: CardViewFileError.self) { try await huge.read(card: [], index: 0, name: "a") }
+  await #expect(throws: CardViewFileError.self) { try await CardViewFiles.unavailable.read(card: [], index: 0, name: "a") }
 }
 
 /// Watches the view's own document from an isolated world, so the test sees

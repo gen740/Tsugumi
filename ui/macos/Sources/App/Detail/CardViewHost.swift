@@ -22,7 +22,15 @@ struct CardViewsPanel: View {
         Label(String(localized: "宣言されていない表示「\(name)」にデータが届きました"), systemImage: "exclamationmark.triangle")
           .font(.caption).foregroundStyle(.red).textSelection(.enabled)
       }
-      if let views = relay.declarations[cardKey] {
+      ForEach(relay.ambiguous(cardKey), id: \.self) { name in
+        Label(String(localized: "ビュー名「\(name)」が重複しているため、この名前に送られたデータはどのビューにも届きません"), systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+      }
+      if let failure = relay.failures[cardKey] {
+        Label(String(localized: "ビューの宣言を評価できませんでした: \(failure)"), systemImage: "exclamationmark.triangle")
+          .font(.caption).foregroundStyle(.red).textSelection(.enabled)
+          .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+      } else if let views = relay.declarations[cardKey] {
         if views.isEmpty {
           ContentUnavailableView("この Card は表示を宣言していません", systemImage: "rectangle.dashed")
         } else {
@@ -37,7 +45,7 @@ struct CardViewsPanel: View {
           // Every declared view stays mounted, so a hidden one keeps receiving its data.
           ZStack {
             ForEach(slots) { slot in
-              CardViewHost(session: session, cardKey: cardKey, view: slot.view)
+              CardViewHost(session: session, cardKey: cardKey, index: slot.index, view: slot.view)
                 .opacity(slot.id == shown ? 1 : 0)
                 .allowsHitTesting(slot.id == shown)
                 .accessibilityHidden(slot.id != shown)
@@ -55,12 +63,14 @@ struct CardViewsPanel: View {
 struct CardViewHost: View {
   let session: ProjectSession
   let cardKey: CardKey
+  /// The declaration's place in the views list, which selects its file.
+  let index: Int
   let view: CardViewDeclaration
 
   var body: some View {
     switch view.type {
     case "html":
-      HTMLCardView(session: session, cardKey: cardKey, view: view)
+      HTMLCardView(session: session, cardKey: cardKey, index: index, view: view)
     case "dawn":
       ContentUnavailableView("Dawn の表示はまだ使えません", systemImage: "cube.transparent",
                              description: Text(verbatim: view.name))
@@ -73,8 +83,14 @@ struct CardViewHost: View {
 
 /// Loads the declared HTML file and keeps the host attached to the relay while it is shown.
 private struct HTMLCardView: View {
+  private struct Selection: Hashable {
+    let index: Int
+    let view: CardViewDeclaration
+  }
+
   let session: ProjectSession
   let cardKey: CardKey
+  let index: Int
   let view: CardViewDeclaration
   @State private var host: HTMLViewHost?
   @State private var error: String?
@@ -90,7 +106,7 @@ private struct HTMLCardView: View {
         Text(message).font(.caption).foregroundStyle(.red).textSelection(.enabled)
       }
     }
-    .task(id: view) { await show() }
+    .task(id: Selection(index: index, view: view)) { await show() }
   }
 
   private func show() async {
@@ -99,7 +115,7 @@ private struct HTMLCardView: View {
     error = nil
     var attachment: UUID?
     do {
-      let data = try await session.viewFiles.read(card: path(cardKey), name: view.name)
+      let data = try await session.viewFiles.read(card: path(cardKey), index: index, name: view.name)
       guard let html = String(data: data, encoding: .utf8) else { throw CardViewFileError.notText }
       try Task.checkCancellation()
       try await created.mount(html)

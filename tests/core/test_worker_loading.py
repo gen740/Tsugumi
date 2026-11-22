@@ -213,7 +213,7 @@ def test_v8_card_reports_failure_cleanly(tmp_path):
             assert b"returned 8" in result.value.failure.diagnostic
 
 
-@pytest.mark.parametrize("kind", [FailureKind.type_mismatch, 60000])
+@pytest.mark.parametrize("kind", [FailureKind.validation_failed, 60000])
 def test_encoded_failure_preserves_source(tmp_path, kind):
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>

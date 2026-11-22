@@ -110,6 +110,12 @@ auto NixEvaluator::build_client(int, char**) -> std::optional<int> {
 }
 auto NixStore::init_process() -> void {}
 
+// Tests that serve view files name the folder standing in for the store.
+auto NixStore::store_dir() -> std::string {
+  const char* dir = std::getenv("TSUGUMI_MOCK_STORE");
+  return dir && *dir ? dir : "/nix/store";
+}
+
 auto NixStore::substituters() -> std::vector<std::string> { return {}; }
 
 auto NixStore::closure(const std::string& path) -> std::vector<std::string> {

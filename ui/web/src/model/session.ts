@@ -728,8 +728,9 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.CardViewsUpdated: {
-        const { card, views } = e.value as R.CardViewsUpdatedT
-        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })))
+        const { card, views, failure } = e.value as R.CardViewsUpdatedT
+        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })),
+          failure ? s(failure.diagnostic) || (D.FailureKind[failure.kind] ?? String(failure.kind)) : undefined)
         break
       }
       case R.NotificationPayload.DisplayUpdated: {

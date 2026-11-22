@@ -38,6 +38,19 @@ std::string read_file_or_throw(const stdfs::path& p);
 // the file does not exist.
 std::optional<std::string> read_range(const stdfs::path& p, uint64_t offset,
                                       uint64_t size);
+// A page of a regular file whose resolved location is inside `root` (also
+// resolved). The file is opened once and its size and bytes come from that
+// descriptor, so a symlink that leads out of root, or a file replaced after
+// the check, is never read. Bytes are read only when `offset` <= size.
+struct ContainedRange {
+  uint64_t size = 0;
+  std::string bytes;
+};
+// nullopt when the file is missing, not a regular file, or outside root.
+std::optional<ContainedRange> read_range_inside(const stdfs::path& root,
+                                                const stdfs::path& p,
+                                                uint64_t offset,
+                                                uint64_t limit);
 // SHA-256 (hex) of a file's content, read in parts.
 std::string sha256_file(const stdfs::path& p);
 // SHA-256 (hex) of a directory tree: every directory name and every regular

@@ -3,7 +3,7 @@ import { L } from '../i18n'
 import type { CardLiveViews, LiveView, ViewMessage } from '../model/liveViews'
 import { errorText } from '../model/session'
 
-export type ReadHtmlView = (name: string, signal: AbortSignal) => Promise<string>
+export type ReadHtmlView = (view: LiveView, signal: AbortSignal) => Promise<string>
 
 /** Each mount owns both frame contexts and the subscription to its view. */
 export function HtmlViewFrame({ view, card, read }: { view: LiveView; card: CardLiveViews; read: ReadHtmlView }) {
@@ -21,7 +21,7 @@ export function HtmlViewFrame({ view, card, read }: { view: LiveView; card: Card
       target?.contentWindow?.postMessage({ tsugumi: 'view', message }, '*', transfer)
     const flush = () => {
       scheduled = false
-      if (loading.signal.aborted || card.views.get(view.declaration.name) !== view || !ready || html === undefined) return
+      if (loading.signal.aborted || card.views[view.index] !== view || !ready || html === undefined) return
       if (!mounted) {
         post({ type: 'mount', html })
         mounted = true
@@ -52,7 +52,7 @@ export function HtmlViewFrame({ view, card, read }: { view: LiveView; card: Card
     window.addEventListener('message', receive)
     target?.contentWindow?.postMessage({ tsugumi: 'probe' }, '*')
     setError('')
-    void read(view.declaration.name, loading.signal).then(source => {
+    void read(view, loading.signal).then(source => {
       if (loading.signal.aborted) return
       html = source
       schedule()

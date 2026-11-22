@@ -1,13 +1,12 @@
-"""Real SDK Card fixtures shared by host and VM integration scenarios."""
+"""Small ABI 9 Card fixtures (built with the kit's pythonCard) shared by host
+and VM integration scenarios."""
 
 import json
 import socket
 import threading
 from pathlib import Path
 
-from projects import card, run_and_wait
 from tsugumi_client import path, text
-from Tsugumi.Data.RunState import RunState
 
 NUM = "namespace t; table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;"
 
@@ -90,16 +89,13 @@ def txt_main(body: str) -> str:
             + body + "\n    return Output(out=TxtT(value=RESULT))\n")
 
 
-def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **settings) -> dict:
-    attrs = [f"run = {nix_string(script)};"]
-    if pre:
-        attrs.append(f"preRun = {nix_string(pre)};")
-    if post:
-        attrs.append(f"postRun = {nix_string(post)};")
-    body = {"type": "code", "inputs": [{"name": i} for i in inputs], **settings}
-    body["_outputs"] = outputs
-    body["_nix"] = "{ pkgs, inputs, params, ... }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
-    return body
+# main.py returning out = Num(1).
+ONE_MAIN = """from card import Output
+from outputs.out.t.Num import NumT
+
+def run(input):
+    return Output(out=NumT(value=1))
+"""
 
 
 def log(c, run_id, card_id, stream=1, inv=1):
@@ -107,76 +103,44 @@ def log(c, run_id, card_id, stream=1, inv=1):
                        stream=stream, limitBytes=262144).text)
 
 
-PYTHON_NIX = ('{ pkgs, inputs, params, ... }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in\n'
-              '{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };%s }\n')
+# main.py reporting what its process environment holds: what the module's top
+# set, what an earlier run set, HOME, TMPDIR and the working directory, through
+# os.environ and the C environment (what native libraries read).
+ENVIRONMENT_MAIN = """import ctypes, json, os
+from card import Output
+from outputs.out.t.Txt import TxtT
 
-
-PYTHON_OUTPUTS = "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;"
-
-
-CWD_AT_LOAD_MAIN = '''
-import os
 AT_LOAD = os.getcwd()
-
-def main(inputs, report):
-    report.text(AT_LOAD)
-'''
-
-
-ENV_MAIN = '''
-import ctypes, json, os
-assert os.path.isdir(os.getcwd())
 os.environ["FROM_TOP"] = "top"
-os.environ["FROM_TOP_AND_PRE"] = "top"
 libc = ctypes.CDLL(None)
 libc.getenv.argtypes = [ctypes.c_char_p]
 libc.getenv.restype = ctypes.c_char_p
+NAMES = ["FROM_TOP", "FROM_RUN", "HOME", "TMPDIR", "TSUGUMI_RUN_ID"]
 
-def main(inputs, report):
-    names = ["FROM_PRE", "FROM_TOP", "FROM_TOP_AND_PRE", "FROM_MAIN", "TSUGUMI_RUN_ID"]
-    values = {n: os.environ.get(n) for n in names}
-    native = {n: (libc.getenv(n.encode()) or b"").decode() or None for n in names}
-    report.text(json.dumps({"cwd": os.getcwd(), "python": values, "native": native}))
-    os.environ["FROM_MAIN"] = "main"
-'''
-
-
-ENV_PRE_RUN = "mkdir -p there && cd there && export FROM_PRE=pre FROM_TOP_AND_PRE=pre"
+def run(input):
+    seen = {"load": AT_LOAD, "cwd": os.getcwd(),
+            "python": {n: os.environ.get(n) for n in NAMES},
+            "native": {n: (libc.getenv(n.encode()) or b"").decode() or None for n in NAMES}}
+    os.environ["FROM_RUN"] = "run"
+    return Output(out=TxtT(value=json.dumps(seen)))
+"""
 
 
-def python_probe_project(main: str, pre: str | None = None) -> tuple:
-    """(defs, cards, conns, files) of a trigger and a Python Card `show`."""
-    attrs = f" preRun = {nix_string(pre)};" if pre else ""
-    defs = {"trigger": {"type": "trigger"},
-            "show": {"type": "code", "reuseWorker": True, "_outputs": PYTHON_OUTPUTS, "_nix": PYTHON_NIX % attrs}}
-    return defs, [card("start", "trigger"), card("show", "show")], [], {"definitions/show/src/main.py": main}
-
-
-def shown_by_probe(c) -> tuple[str, str]:
-    """A run from the trigger: its id and what `show` displayed."""
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
-    return run_id, text(c.call("RunRecordRequest", runId=run_id, card=path("show")).record.display.value.text)
-
-
-def check_python_card_environment(c) -> None:
-    """preRun's exports and `cd`, and what the module's top set, reach main
-    through both os.environ and the C environment, on every run of the worker;
-    changes main makes to its environment survive reuse."""
-    _, first = shown_by_probe(c)
-    first = json.loads(first)
-    second_id, second = shown_by_probe(c)
-    second = json.loads(second)
-    reused, = c.call("RunInvocationsRequest", runId=second_id, card=path("show")).records
-    assert reused.workerReused
-    assert first["cwd"].endswith("/there"), first
-    for seen, previous in ((first, None), (second, "main")):
+def check_process_environment(first: dict, second: dict) -> None:
+    """Two runs of ENVIRONMENT_MAIN on one reused worker: the environment,
+    HOME, TMPDIR and the working directory (HOME) are the process's, set once
+    at launch and never reset per call."""
+    import os
+    home = os.path.realpath(first["python"]["HOME"])
+    assert os.path.isdir(first["load"]) and os.path.realpath(first["load"]) == home, first
+    assert os.path.realpath(second["cwd"]) == home, second
+    for seen, previous in ((first, None), (second, "run")):
         for values in (seen["python"], seen["native"]):
-            assert values["FROM_PRE"] == "pre", seen
             assert values["FROM_TOP"] == "top", seen
-            assert values["FROM_TOP_AND_PRE"] == "pre", seen  # preRun runs later, so it wins
-            assert values["FROM_MAIN"] == previous, seen
+            assert values["FROM_RUN"] == previous, seen
             assert values["TSUGUMI_RUN_ID"] is None, seen
+            assert values["HOME"] == first["python"]["HOME"], seen
+            assert values["TMPDIR"] == first["python"]["TMPDIR"], seen
 
 
 # A Card that declares jq to its builder: the worker puts only the package's

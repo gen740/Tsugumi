@@ -16,7 +16,7 @@ from conftest import SharedVM, VMEnv, write_project
 from harness.host import HostConnection
 from projects import card
 from projects import run_and_wait, start_run, wait_for_log, wait_run, write
-from test_cards_shared_vm import bash, log
+from harness.real_cards import ONE_MAIN, log, python_card
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.Host.EventPayload import EventPayload
@@ -28,14 +28,23 @@ pytestmark = pytest.mark.skipif(
     reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 
-def project(root, script, name):
-    write(root, {"trigger": {"type": "trigger"}, "step": bash(script)}, [card("start", "trigger"), card("step", "step")], [])
+HOLDING_MAIN = """import time
+
+def run(input):
+    print("HOLDING", flush=True)
+    while True:
+        time.sleep(60)
+"""
+
+
+def project(root, main, name):
+    write(root, {"trigger": {"type": "trigger"}, "step": python_card(main)}, [card("start", "trigger"), card("step", "step")], [])
     return VMEnv(root).start()
 
 
 def test_projects_share_the_store_but_not_users_views_or_processes(tmp_path):
-    a = project(tmp_path / "a", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "a")
-    b = project(tmp_path / "b", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "b")
+    a = project(tmp_path / "a", ONE_MAIN, "a")
+    b = project(tmp_path / "b", ONE_MAIN, "b")
     try:
         # Separate users.
         ua, ub = a.exec("id -u").strip().splitlines()[-1], b.exec("id -u").strip().splitlines()[-1]
@@ -60,7 +69,7 @@ def test_projects_share_the_store_but_not_users_views_or_processes(tmp_path):
 
 
 def test_project_cannot_read_cache_credentials_or_change_daemon_trust(tmp_path):
-    env = project(tmp_path / "cache-trust", "true", "cache-trust")
+    env = project(tmp_path / "cache-trust", ONE_MAIN, "cache-trust")
 
     try:
         hidden = env.exec(
@@ -84,8 +93,8 @@ def test_project_cannot_read_cache_credentials_or_change_daemon_trust(tmp_path):
 
 
 def test_stopping_one_project_keeps_the_other_running(tmp_path):
-    slow = project(tmp_path / "slow", 'echo HOLDING; exec tail -f /dev/null', "slow")
-    other = project(tmp_path / "other", 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "other")
+    slow = project(tmp_path / "slow", HOLDING_MAIN, "slow")
+    other = project(tmp_path / "other", ONE_MAIN, "other")
     try:
         c = slow.client()
         run_id = start_run(c, "start")
@@ -103,17 +112,6 @@ def test_stopping_one_project_keeps_the_other_running(tmp_path):
         other.stop()
 
 
-CPP_ONE = '''
-#include <card.hh>
-
-auto run(const Card::Inputs& inputs) -> Card::Output {
-  Card::Output out;
-  out.out.emplace().value = 1;
-  return out;
-}
-'''
-
-
 def build_outcome(c, run_id, card_id):
     """Outcome of the build stage of the Card's first invocation (2 done: built, 3 cached: in the store)."""
     rec = c.call("RunInvocationsRequest", runId=run_id, card=path(card_id)).records[0]
@@ -127,21 +125,9 @@ def test_build_roots_across_reopen_store_cleanup_and_copies(tmp_path):
     by vmd only."""
     from Tsugumi.Data.Phase import Phase
     from projects import card as c_
-    nix = ('''{ pkgs, inputs, params }:
-let
-  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
-in
-'''
-           '''{
-  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
-}
-''')
-    from test_cards_shared_vm import NUM
-    from projects import put
     root = tmp_path / "P"
-    write(root, {"trigger": {"type": "trigger"}, "one": {"type": "code", "_outputs": NUM, "_nix": nix}},
+    write(root, {"trigger": {"type": "trigger"}, "one": python_card(ONE_MAIN)},
          [c_("start", "trigger"), c_("one", "one")], [])
-    put(root / "definitions" / "one" / "src" / "card.cc", CPP_ONE)
     p = VMEnv(root).start()
     copy = None
     try:
@@ -186,7 +172,7 @@ in
 
 def test_run_history_lives_in_the_vm_with_a_copy_in_the_project(tmp_path):
     root = tmp_path / "hist"
-    env = project(root, 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', "hist")
+    env = project(root, ONE_MAIN, "hist")
     try:
         def listed():
             return [text(r.status.runId) for r in env.client().call("RunHistoryRequest", limit=100).runs]

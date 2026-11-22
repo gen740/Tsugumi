@@ -234,7 +234,7 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
         "default.nix": ARGUMENTS + """: {
           run = throw "run must stay lazy";
           views = [
-            { name = "text"; type = "html"; blob = pkgs.writeText "text.html" "<p>text</p>"; }
+            { name = "scene"; type = "dawn"; blob = pkgs.writeText "scene.wasm" "opaque"; }
             { name = "notes"; type = "html"; blob = ./notes.html; }
           ];
         }""",
@@ -246,8 +246,33 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
         lambda note: note.valueType == NotificationPayload.CardViewsUpdated
         and note.value.card.segments == [b"work"] and bool(note.value.views)
     ).value
-    assert [text(view.name) for view in update.views] == ["text", "notes"]
-    assert Path(text(update.views[-1].blob)).read_text() == "<p>Available before a run</p>"
+    assert [(text(view.name), text(view.type)) for view in update.views] == [("scene", "dawn"), ("notes", "html")]
+    assert Path(text(update.views[0].blob)).read_text() == "opaque"
+    assert Path(text(update.views[1].blob)).read_text() == "<p>Available before a run</p>"
+
+
+def test_a_failed_view_evaluation_is_relayed_apart_from_an_empty_list(core_factory, project):
+    """A broken declaration says why; a Card that declares nothing sends no failure."""
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + ': { run = []; views = throw "views are broken"; }',
+    }).save(client)
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
+    failed = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and note.value.failure
+    ).value
+    assert not failed.views
+    assert failed.failure.kind != FailureKind.unspecified
+    assert "views are broken" in text(failed.failure.diagnostic)
+
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": ARGUMENTS + ": { run = []; views = [ ]; }",
+    }).save(client)
+    empty = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.CardViewsUpdated and not note.value.failure
+    ).value
+    assert not empty.views
 
 
 @pytest.mark.parametrize("body, message", [

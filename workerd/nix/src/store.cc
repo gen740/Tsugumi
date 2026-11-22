@@ -9,6 +9,11 @@ auto NixStore::init_process() -> void {
   static std::once_flag initialized;
   std::call_once(initialized, [] { nix::initLibStore(true); });
 }
+auto NixStore::store_dir() -> std::string {
+  static const std::string dir = nix::openStore()->storeDir;
+  return dir;
+}
+
 std::vector<std::string> NixStore::substituters() {
   std::vector<std::string> urls;
   for (const auto& ref : nix::settings.getWorkerSettings().substituters.get())

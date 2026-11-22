@@ -1,6 +1,6 @@
 import { flushSync } from 'react-dom'
 import { createRoot } from 'react-dom/client'
-import { CardLiveViews } from '../src/model/liveViews'
+import { CardLiveViews, type LiveView } from '../src/model/liveViews'
 import { CardViewsPanel } from '../src/ui/cardViews'
 
 const root = createRoot(document.getElementById('root')!)
@@ -10,6 +10,8 @@ card.declare([
   { name: 'second', type: 'html', blob: '/nix/store/second' },
   { name: 'gpu', type: 'dawn', blob: '/nix/store/gpu' },
   { name: 'bad', type: 'unexpected-type', blob: '/nix/store/bad' },
+  { name: 'twin', type: 'dawn', blob: '/nix/store/twin-a' },
+  { name: 'twin', type: 'dawn', blob: '/nix/store/twin-b' },
 ])
 card.data('missing', Uint8Array.of(1))
 
@@ -31,7 +33,8 @@ const requested: string[] = []
 let resolveSecond!: (html: string) => void
 const secondSource = new Promise<string>(resolve => { resolveSecond = resolve })
 let loadingSignal: AbortSignal | undefined
-const read = async (name: string, signal: AbortSignal): Promise<string> => {
+const read = async (view: LiveView, signal: AbortSignal): Promise<string> => {
+  const name = view.declaration.name
   requested.push(name)
   if (name === 'waiting') {
     loadingSignal = signal
@@ -91,6 +94,7 @@ async function test() {
   assert(document.body.textContent?.includes('Dawn'), 'Dawn shows a placeholder')
   const errors = [...document.querySelectorAll('[role=alert]')].map(e => e.textContent)
   assert(errors.some(t => t?.includes('unexpected-type')) && errors.some(t => t?.includes('missing')), 'Both view errors are visible')
+  assert(errors.some(t => t?.includes('twin')), 'A repeated view name is reported')
   assert(reports.filter(r => r.kind === 'empty').every(r => r.origin === 'null'), 'View frames have opaque origins')
   await until(() => ['connect-src', 'img-src', 'frame-src'].every(d => reports.some(r => r.kind === 'blocked' && r.value === d)))
   assert(!have('network-open'), 'The view could not make a network request')
@@ -114,6 +118,10 @@ async function test() {
   render()
   await until(() => loadingSignal !== undefined)
   assert(!first.isConnected, 'Declaration changes detach the old frame')
+  card.declare([], 'views are broken')
+  render()
+  assert([...document.querySelectorAll('[role=alert]')].some(e => e.textContent?.includes('views are broken')),
+    'A failed declaration evaluation is shown')
   flushSync(() => root.unmount())
   assert(!document.querySelector('iframe'), 'Closing the panel removes every frame')
   assert(loadingSignal?.aborted, 'A pending blob read is cancelled on disposal')

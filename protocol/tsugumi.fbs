@@ -795,17 +795,23 @@ table ViewSaveRequest {
   view_json:string (id: 2, required);
 }
 
-/// -> FileContent. Read a page of the file a Card declared as the view `name`
-/// (the blob of that entry in its views list, as CardViewsUpdated last sent
-/// it). Only declared files are served, and their bytes are relayed without
-/// being interpreted. FileContent.name is the view name and hash is the
-/// declared store path, which names immutable content. offset defaults to 0
-/// and limit_bytes to 1 MiB (1..1048576).
+/// -> FileContent. Read a page of the file of one view declaration: entry
+/// `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name`
+/// must be that entry's name, so a read made against a list that has since
+/// changed fails with not_found instead of serving another declaration. Names
+/// may repeat; the core never chooses between declarations by name. Only
+/// declared regular files that resolve inside the Nix store are served, read
+/// from one open descriptor, and their bytes are relayed without being
+/// interpreted. Neither RPC trace records these requests or their replies.
+/// FileContent.name is the view name and hash is the declared store path,
+/// which names immutable content. offset defaults to 0 and limit_bytes to
+/// 1 MiB (1..1048576).
 table CardViewReadRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
   offset:uint64 = null (id: 2);
   limit_bytes:uint32 = null (id: 3);
+  index:uint32 = null (id: 4);
 }
 
 /// -> ProjectActivity. Observe active runs and queued/running requests, across
@@ -1317,9 +1323,12 @@ table RunEvent {
 table DisplayUpdated { display:Tsugumi.Data.Display (id: 0, required); }
 
 /// The full list of views for a Card, available independently of a run.
+/// When evaluating the declarations failed, failure says why and views is
+/// empty; an absent failure with an empty list means the Card declares none.
 table CardViewsUpdated {
   card:Tsugumi.Data.CardPath (id: 0, required);
   views:[Tsugumi.Data.CardView] (id: 1, required);
+  failure:Tsugumi.Data.Failure (id: 2);
 }
 
 table DisplayRunStateChanged {

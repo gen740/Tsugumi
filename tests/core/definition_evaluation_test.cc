@@ -121,9 +121,8 @@ TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
 }
 
 TEST_F(DefinitionEvaluation,
-       UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
-  fs::write_atomic(root / "source" / "default.nix",
-                   "builtins.readFile ./value");
+       UnchangedReadsHitAndSourceContentsInvalidateCachedImports) {
+  fs::write_atomic(root / "source" / "default.nix", "builtins.readFile ./value");
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
@@ -152,14 +151,14 @@ TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {
 }
 
 TEST_F(DefinitionEvaluation, CopiedSourceTreeInvalidatesSourceToStoreCache) {
-  fs::write_atomic(root / "source" / "views" / "line-chart.js", "first view");
+  fs::write_atomic(root / "source" / "nested" / "page.txt", "first");
   // Interpolation copies the tree into the store, as a builder's derivation
   // inputs do. builtins.toString alone would only pass a local path string.
   auto eval = evaluator(R"("${args.root}")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "source" / "views" / "line-chart.js", "second view");
+  fs::write_atomic(root / "source" / "nested" / "page.txt", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);

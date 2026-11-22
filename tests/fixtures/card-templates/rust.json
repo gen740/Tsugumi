@@ -1,7 +1,0 @@
-{
-  "_card.json": "{\n  \"type\": \"code\",\n  \"inputs\": [\n    {\n      \"name\": \"in\"\n    }\n  ]\n}\n",
-  "default.nix": "{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ \"rust\" ]; };\nin { run = inputs.tsugumi.rustCard { inherit sdk; src = ./src; }; }\n",
-  "_outputs.fbs": "namespace @NAMESPACE@;\ntable Text { value:string; }\ntable Outputs { out:Text (required); }\nroot_type Outputs;\n",
-  "src/Cargo.toml": "[package]\nname = \"tsugumi-card\"\nversion = \"0.1.0\"\nedition = \"2024\"\n\n[lib]\ncrate-type = [\"staticlib\"]\n\n[dependencies]\ntsugumi = { path = \"tsugumi\" }\n",
-  "src/src/lib.rs": "use tsugumi::{Inputs, Output, Report, Result};\n\nfn run(_inputs: Inputs<'_>, report: &Report<'_>) -> Result<Output> {\n    report.text(\"hello\")?;\n    let mut out = tsugumi::outputs::Out::default();\n    out.value = Some(\"hello\".into());\n    Ok(Output { out: Some(out) })\n}\n\ntsugumi::export!(run);\n"
-}

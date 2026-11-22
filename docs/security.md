@@ -102,13 +102,13 @@ Only hostd talks to the signed Mac helper, over the owner-only Unix socket using
 
 The contract this section implements is [The sandbox contract](SandboxContract.md).
 
-Linux workers use bubblewrap to apply the Card's requested isolation. File visibility is limited to the realized Nix closure, worker files, the active inputs and enabled grants. Separate PID and IPC namespaces and a mapped uid of 65534 with capabilities dropped are enabled by default. Linux's network grant controls sharing the network namespace. With filesystem isolation disabled, files and pathname-based Unix sockets may also be reachable.
+Linux workers use bubblewrap to apply the Card's requested isolation. File visibility is limited to the realized Nix closure, worker files, the active inputs and enabled grants. Separate PID and IPC namespaces and a mapped uid of 65534 with capabilities dropped are enabled by default. Linux's network grant controls sharing the network namespace. With filesystem isolation disabled, files and pathname-based Unix sockets may also be reachable. A Linux host without bubblewrap runs a Card only when it selects none of the isolation bubblewrap provides (filesystem, PID, IPC, identity) and is granted the network; otherwise the Card fails with a message that names the setting, instead of running without it.
 
 The shared VM hides the project's control folder and state behind mounts even when filesystem isolation is disabled. Worker teardown always ends the worker's process group. The worker reports settings it can provide. Remote workers require filesystem and PID isolation.
 
 ### Direct macOS host
 
-Native macOS reports partial filesystem and network guarantees through Seatbelt. Seatbelt exposes system file metadata and allows access to some system files. With filesystem isolation on and network granted, it continues to deny connections to the local host and almost all Unix sockets. DNS via mDNSResponder and certificate validation via trustd remain available.
+Native macOS reports partial filesystem and network guarantees through Seatbelt. Seatbelt exposes system file metadata and allows access to some system files, but not to `/bin` or `/usr/bin`: a Card can run only store paths (the tools it declared), the worker and files in its own folders and grants. With filesystem isolation on and network granted, it continues to deny connections to the local host and almost all Unix sockets. DNS via mDNSResponder and certificate validation via trustd remain available.
 
 The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker replaces inputs and clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With enforced read-only inputs, the core stages validated regular files using hardlinks where possible. It uses a copy when an input cannot be protected by the read-only mount. A retained descriptor can still read the inode opened during an earlier call.
 
