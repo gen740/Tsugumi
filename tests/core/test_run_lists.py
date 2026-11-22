@@ -21,7 +21,7 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
 DIRECTORY = ('attribute "tsugumi"; table Directory { value:string; } '
-             'table Outputs { out:Directory (tsugumi:"directory"); } root_type Outputs;')
+             'table Outputs { out:Directory (tsugumi: "path"); } root_type Outputs;')
 
 
 def mock_plan(runs, *, execution_list=False, **options):

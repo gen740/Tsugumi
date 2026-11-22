@@ -33,7 +33,7 @@ in
 }
 """
 DOC = ('''namespace t; table Doc { value:string; }
-table Outputs { doc:Doc (required, tsugumi: "file"); }
+table Outputs { doc:Doc (required, tsugumi: "path"); }
 '''
        '''root_type Outputs;
 attribute "tsugumi";

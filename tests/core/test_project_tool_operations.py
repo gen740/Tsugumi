@@ -15,7 +15,7 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 FILE_FBS = 'attribute "tsugumi";\nnamespace data;\ntable Events { value:string; }\n' \
-           'table Outputs { events:Events (required, tsugumi: "file"); }\nroot_type Outputs;\n'
+           'table Outputs { events:Events (required, tsugumi: "path"); }\nroot_type Outputs;\n'
 
 
 def make(root: Path) -> None:

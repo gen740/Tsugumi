@@ -553,10 +553,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     }
     break;
   }
-  if (kind == PortKind::File)
-    attrs.push_back("tsugumi: \"file\"");
-  else if (kind == PortKind::Directory)
-    attrs.push_back("tsugumi: \"directory\"");
+  if (kind == PortKind::Path) attrs.push_back("tsugumi: \"path\"");
   std::string decl = port + ":" + written;
   if (!attrs.empty()) {
     decl += " (";
@@ -608,10 +605,8 @@ CatalogResult parse_catalog(const std::string& fbs_text,
       continue;
     }
     if (const auto* attr = field->attributes.Lookup("tsugumi")) {
-      if (attr->constant == "file")
-        port.kind = PortKind::File;
-      else if (attr->constant == "directory")
-        port.kind = PortKind::Directory;
+      if (attr->constant == "path")
+        port.kind = PortKind::Path;
       else
         r.errors.push_back(filename + ": unknown tsugumi attribute \"" +
                            attr->constant + "\"");
@@ -628,7 +623,7 @@ CatalogResult parse_catalog(const std::string& fbs_text,
       t->hash = crypto::sha256_hex(t->bfbs);
       t->root_type = t->root()->name()->str();
       if (port.kind != PortKind::FlatBuffer && !has_string_value(*t))
-        r.errors.push_back(filename + ": File/Directory port " + field->name +
+        r.errors.push_back(filename + ": Path port " + field->name +
                            " needs a message with a string `value` field");
       else
         port.type = t;
@@ -680,9 +675,7 @@ auto card_catalog(const std::vector<PortType>& ports, bool inputs)
     if (!port.type) continue;
     const auto root = render_closure(*port.type, side + "." + port.name, types);
     catalog += "  " + port.name + ":" + root + " (id: " + std::to_string(id++) +
-               (port.kind == PortKind::File        ? ", tsugumi: \"file\""
-                : port.kind == PortKind::Directory ? ", tsugumi: \"directory\""
-                                                   : "") +
+               (port.kind == PortKind::Path ? ", tsugumi: \"path\"" : "") +
                (inputs && !port.optional ? ", required" : "") + ");\n";
   }
   return types + catalog + "}\nroot_type " + table + ";\n";

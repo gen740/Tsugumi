@@ -1,14 +1,13 @@
 // Collect Card values: an ordered list of input values gathered into one
-// output value.
+// output value, without opening or rebuilding any member.
 //
-// FlatBuffer inputs become `tsugumi.collect.Collected { items:[In] (required)
-// }` whose items point to copies of the verified input tables.
+// FlatBuffer inputs become `tsugumi.builtin.Collected { items:[CardPort] }`,
+// one opaque envelope per element (the Card ABI's CardPort: its ordinal as
+// name, kind FlatBuffer and the element's bytes).
 //
-// File / Directory inputs are copied into a new Directory output, one ordinal
-// folder per element (`0/<basename>`, `1/<basename>`, ...), described by
-// `tsugumi.collect.Directory { value:string; items:[Entry] }` where each
-// Entry holds the element's original basename and its path relative to
-// `value`.
+// Path inputs are copied into a new Path output, one directory with an
+// ordinal folder per element (`0/<basename>`, `1/<basename>`, ...), each a
+// regular file or a whole directory as found.
 #pragma once
 
 #include <atomic>
@@ -28,7 +27,7 @@ struct CollectFileLimits {
 };
 
 // Collects `members` (values of the `source` port, in order) into one value of
-// the `output` port. File / Directory members must live below
+// the `output` port. Path members must live below
 // one of `file_roots`; their copies are staged beside
 // `output_dir` (which must not exist yet) and moved there only once complete.
 // Throws Failed (cancelled, output_invalid or internal_error).

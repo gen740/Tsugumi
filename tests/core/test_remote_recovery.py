@@ -95,13 +95,9 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             self.results[digest] = data
             return digest
 
-        value = flatbuffers.Builder(64)
-        output_path = value.CreateString("out/result.txt")
-        value.StartObject(1)
-        value.PrependUOffsetTRelativeSlot(0, output_path, 0)
-        value.Finish(value.EndObject())
-        value_bytes = b"\x00" if result_fault == "type" else value.Output()
-        result = WorkerResultT(outputs=[WorkerOutputT(name="doc", bytes=value_bytes)])
+        # A Path output carries its job-relative path; "path" drops it.
+        output = WorkerOutputT(name="doc", path=None if result_fault == "path" else "out/result.txt")
+        result = WorkerResultT(outputs=[output])
         message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerResult, value=result)
         buffer = flatbuffers.Builder(128)
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
@@ -500,7 +496,7 @@ def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_g
     assert result.state == RunState.failed and result.failure.kind == FailureKind.output_invalid
 
 
-@pytest.mark.parametrize("fault", ["type", "escape", "size", "oversize", "log", "display"])
+@pytest.mark.parametrize("fault", ["path", "escape", "size", "oversize", "log", "display"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job

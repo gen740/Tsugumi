@@ -1079,9 +1079,7 @@ class Builder {
         std::string error;
         if (auto type = collect_output_type(*in, error)) {
           n.outputs[0].type = std::move(type);
-          n.outputs[0].kind = in->kind == PortKind::FlatBuffer
-                                  ? PortKind::FlatBuffer
-                                  : PortKind::Directory;
+          n.outputs[0].kind = in->kind;
           changed = true;
         } else if (derive_failed_.insert(path_key(n.path)).second) {
           n.diags.push_back(

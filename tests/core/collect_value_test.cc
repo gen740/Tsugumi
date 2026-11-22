@@ -14,6 +14,7 @@
 #include <string>
 #include <vector>
 
+#include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -44,11 +45,6 @@ table Message { label:string (id: 0); inner:Inner (id: 1); }
                       "test.Message");
 }
 
-auto path_type() -> types::TypeRef {
-  return compile_type("namespace test; table Path { value:string (id: 0); }",
-                      "test.Path");
-}
-
 auto finish(flatbuffers::FlatBufferBuilder& b, flatbuffers::uoffset_t root)
     -> std::string {
   b.Finish(flatbuffers::Offset<flatbuffers::Table>(root));
@@ -73,30 +69,29 @@ auto message(const types::TypeRef& type, const std::string& label, uint64_t big,
                std::nullopt};
 }
 
-auto path_value_of(const types::TypeRef& type, PortKind kind,
-                   const stdfs::path& path) -> Value {
-  flatbuffers::FlatBufferBuilder b;
-  const auto text = b.CreateString(path.string());
-  const auto start = b.StartTable();
-  b.AddOffset(kSlot0, text);
-  return Value{"in", kind, type, finish(b, b.EndTable(start)), std::nullopt};
+auto path_member(const stdfs::path& path) -> Value {
+  Value value{"in", PortKind::Path, nullptr, {}, std::nullopt};
+  value.path = path.string();
+  return value;
 }
 
 auto root_of(const Value& v) -> const flatbuffers::Table* {
   return flatbuffers::GetRoot<flatbuffers::Table>(v.bytes.data());
 }
 
-auto items_of(const flatbuffers::Table* table, flatbuffers::voffset_t slot)
-    -> const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::Table>>* {
-  return table->GetPointer<
-      const flatbuffers::Vector<flatbuffers::Offset<flatbuffers::Table>>*>(
-      slot);
+using Envelopes =
+    flatbuffers::Vector<flatbuffers::Offset<Tsugumi::Card::CardPort>>;
+
+// The items of tsugumi.builtin.Collected: one CardPort per member.
+auto envelopes(const Value& v) -> const Envelopes* {
+  return root_of(v)->GetPointer<const Envelopes*>(kSlot0);
 }
 
-auto string_of(const flatbuffers::Table* table, flatbuffers::voffset_t slot)
-    -> std::string {
-  const auto* s = table->GetPointer<const flatbuffers::String*>(slot);
-  return s ? s->str() : "<missing>";
+auto bytes_of(const Tsugumi::Card::CardPort* port) -> std::string {
+  return port->bytes() ? std::string(reinterpret_cast<const char*>(
+                                         port->bytes()->data()),
+                                     port->bytes()->size())
+                       : "";
 }
 
 auto write_text(const stdfs::path& path, const std::string& text) -> void {
@@ -129,14 +124,13 @@ class CollectFiles : public ::testing::Test {
     return {name, kind, false, std::move(type)};
   }
 
-  auto collect(PortKind kind, const std::vector<Value>& members,
+  auto collect(const std::vector<Value>& members,
                CollectFileLimits limits = {}) -> Value {
-    const auto source = port("in", kind, path_type());
+    const auto source = port("in", PortKind::Path, nullptr);
     std::string error;
     const auto type = collect_output_type(source, error);
     EXPECT_TRUE(type) << error;
-    return collect_values(source, port("out", PortKind::Directory, type),
-                          members,
+    return collect_values(source, port("out", PortKind::Path, type), members,
                           std::vector{state / "runs", state / "inputs"},
                           output_dir, cancel, limits);
   }
@@ -157,19 +151,30 @@ TEST(CollectValue, EmptyFlatBufferListHasEmptyItems) {
   std::string error;
   const auto out = collect_output_type(source, error);
   ASSERT_TRUE(out) << error;
-  EXPECT_EQ(out->root_type, "tsugumi.collect.Collected");
+  EXPECT_EQ(out->root_type, "tsugumi.builtin.Collected");
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(
       source, {"list", PortKind::FlatBuffer, false, out}, {}, {}, {}, cancel);
   EXPECT_EQ(value.name, "list");
   EXPECT_EQ(value.type, out);
   ASSERT_TRUE(types::verify(*out, value.bytes));
-  const auto* items = items_of(root_of(value), kSlot0);
-  ASSERT_NE(items, nullptr);
-  EXPECT_EQ(items->size(), 0u);
+  ASSERT_NE(envelopes(value), nullptr);
+  EXPECT_EQ(envelopes(value)->size(), 0u);
 }
 
-TEST(CollectValue, FlatBufferListKeepsOrderAndExactValues) {
+TEST(CollectValue, CollectedTypeDoesNotDependOnTheMemberType) {
+  std::string error;
+  const auto first = collect_output_type(
+      {"in", PortKind::FlatBuffer, false, message_type()}, error);
+  const auto second = collect_output_type(
+      {"in", PortKind::FlatBuffer, false,
+       compile_type("namespace other; table Other { x:int; }", "other.Other")},
+      error);
+  ASSERT_TRUE(first && second) << error;
+  EXPECT_EQ(first, second);
+}
+
+TEST(CollectValue, FlatBufferListKeepsOrderAndExactBytes) {
   const auto in = message_type();
   const types::PortType source{"in", PortKind::FlatBuffer, false, in};
   std::string error;
@@ -186,75 +191,24 @@ TEST(CollectValue, FlatBufferListKeepsOrderAndExactValues) {
       collect_values(source, {"list", PortKind::FlatBuffer, false, out},
                      members, {}, {}, cancel);
   ASSERT_TRUE(types::verify(*out, value.bytes));
-  const auto* items = items_of(root_of(value), kSlot0);
+  const auto* items = envelopes(value);
   ASSERT_NE(items, nullptr);
   ASSERT_EQ(items->size(), 2u);
-
-  const auto* first = items->Get(0);
-  EXPECT_EQ(string_of(first, kSlot0), "first");
-  const auto* inner = first->GetPointer<const flatbuffers::Table*>(kSlot1);
-  ASSERT_NE(inner, nullptr);
-  EXPECT_EQ(inner->GetField<uint64_t>(kSlot0, 0),
-            std::numeric_limits<uint64_t>::max());
-  EXPECT_EQ(std::bit_cast<uint64_t>(inner->GetField<double>(kSlot1, 0.0)),
-            kNanBits);
-  EXPECT_TRUE(inner->CheckField(kSlot2));  // optional present with value 0
-  EXPECT_EQ(inner->GetField<int32_t>(kSlot2, 1), 0);
-
-  const auto* second = items->Get(1);
-  EXPECT_EQ(string_of(second, kSlot0), "second");
-  inner = second->GetPointer<const flatbuffers::Table*>(kSlot1);
-  ASSERT_NE(inner, nullptr);
-  EXPECT_EQ(inner->GetField<uint64_t>(kSlot0, 0), 1u);
-  EXPECT_EQ(inner->GetField<double>(kSlot1, 0.0),
-            -std::numeric_limits<double>::infinity());
-  EXPECT_FALSE(inner->CheckField(kSlot2));  // optional absent stays absent
+  for (flatbuffers::uoffset_t i = 0; i < items->size(); ++i) {
+    const auto* item = items->Get(i);
+    EXPECT_EQ(item->name()->str(), std::to_string(i));
+    EXPECT_EQ(item->kind(), PortKind::FlatBuffer);
+    EXPECT_EQ(item->path(), nullptr);
+    EXPECT_EQ(bytes_of(item), members[i].bytes);
+    // Each member is still readable in place.
+    EXPECT_EQ((reinterpret_cast<const char*>(item->bytes()->data()) -
+               value.bytes.data()) %
+                  FLATBUFFERS_MAX_ALIGNMENT,
+              0);
+  }
 }
 
-TEST(CollectValue, FlatBufferListKeepsUnionAndNestedVectors) {
-  const auto in = compile_type(R"(namespace test;
-table Nested { value:long; }
-table Payload { numbers:[long]; nested:[Nested]; }
-union Member { Payload }
-table Value { member:Member; }
-)",
-                               "test.Value");
-  const types::PortType source{"in", PortKind::FlatBuffer, false, in};
-  std::string error;
-  const auto out = collect_output_type(source, error);
-  ASSERT_TRUE(out) << error;
-  std::string bytes;
-  ASSERT_TRUE(types::json_to_flatbuffer(
-      *in,
-      R"({"member_type":"Payload","member":{"numbers":[-1,7],"nested":[{"value":42}]}})",
-      &bytes, &error))
-      << error;
-  const std::vector<Value> members{
-      {"in", PortKind::FlatBuffer, in, std::move(bytes), std::nullopt}};
-  const std::atomic<bool> cancel{false};
-  const auto value =
-      collect_values(source, {"list", PortKind::FlatBuffer, false, out},
-                     members, {}, {}, cancel);
-  const auto* items = items_of(root_of(value), kSlot0);
-  ASSERT_NE(items, nullptr);
-  ASSERT_EQ(items->size(), 1u);
-  const auto* member = items->Get(0);
-  ASSERT_EQ(member->GetField<uint8_t>(kSlot0, 0), 1u);
-  const auto* payload = member->GetPointer<const flatbuffers::Table*>(kSlot1);
-  ASSERT_NE(payload, nullptr);
-  const auto* numbers =
-      payload->GetPointer<const flatbuffers::Vector<int64_t>*>(kSlot0);
-  ASSERT_NE(numbers, nullptr);
-  ASSERT_EQ(numbers->size(), 2u);
-  EXPECT_EQ(numbers->Get(0), -1);
-  EXPECT_EQ(numbers->Get(1), 7);
-  const auto* nested = items_of(payload, kSlot1);
-  ASSERT_NE(nested, nullptr);
-  ASSERT_EQ(nested->size(), 1u);
-  EXPECT_EQ(nested->Get(0)->GetField<int64_t>(kSlot0, 0), 42);
-}
-
-TEST(CollectValue, FlatBufferRejectsInvalidMemberAndCancel) {
+TEST(CollectValue, FlatBufferMembersAreNotOpened) {
   const auto in = message_type();
   const types::PortType source{"in", PortKind::FlatBuffer, false, in};
   std::string error;
@@ -263,14 +217,15 @@ TEST(CollectValue, FlatBufferRejectsInvalidMemberAndCancel) {
   ASSERT_TRUE(output.type) << error;
   std::atomic<bool> cancel{false};
 
-  const std::vector<Value> broken{
+  const std::vector<Value> opaque{
       Value{"in", PortKind::FlatBuffer, in, "garbage", std::nullopt}};
-  try {
-    (void)collect_values(source, output, broken, {}, {}, cancel);
-    FAIL() << "an unverifiable member was accepted";
-  } catch (const Failed& e) {
-    EXPECT_EQ(e.failure.kind, FailureKind::output_invalid);
-  }
+  const auto value = collect_values(source, output, opaque, {}, {}, cancel);
+  ASSERT_EQ(envelopes(value)->size(), 1u);
+  EXPECT_EQ(bytes_of(envelopes(value)->Get(0)), "garbage");
+
+  const std::vector<Value> wrong_kind{path_member("/tmp/x")};
+  EXPECT_THROW((void)collect_values(source, output, wrong_kind, {}, {}, cancel),
+               Failed);
 
   cancel = true;
   const std::vector<Value> members{message(in, "x", 1, 1.0, std::nullopt)};
@@ -305,9 +260,8 @@ TEST_F(CollectFiles, RejectsFilesOverTheFileCountLimit) {
   const auto source = state / "runs" / "tree";
   write_text(source / "first", "content");
   write_text(source / "second", "");
-  const auto member = path_value_of(path_type(), PortKind::Directory, source);
   try {
-    (void)collect(PortKind::Directory, {member}, {.files = 1});
+    (void)collect({path_member(source)}, {.files = 1});
     FAIL() << "the file count limit was ignored";
   } catch (const Failed& failure) {
     EXPECT_EQ(failure.failure.kind, FailureKind::output_invalid);
@@ -319,11 +273,9 @@ TEST_F(CollectFiles, CountsMembersAgainstTheFilesystemEntryLimit) {
   const auto source = state / "runs" / "tree";
   stdfs::create_directories(source / "first");
   stdfs::create_directory(source / "second");
-  const auto member = path_value_of(path_type(), PortKind::Directory, source);
-  EXPECT_THROW((void)collect(PortKind::Directory, {member}, {.entries = 2}),
-               Failed);
+  EXPECT_THROW((void)collect({path_member(source)}, {.entries = 2}), Failed);
   EXPECT_TRUE(invocation_is_clean());
-  EXPECT_NO_THROW((void)collect(PortKind::Directory, {member}, {.entries = 3}));
+  EXPECT_NO_THROW((void)collect({path_member(source)}, {.entries = 3}));
 }
 
 TEST_F(CollectFiles, SavedArtifactCopyKeepsItsHashAndDiscardsCancelledWrites) {
@@ -358,95 +310,51 @@ TEST_F(CollectFiles, SavedArtifactCopyKeepsItsHashAndDiscardsCancelledWrites) {
 }
 
 TEST_F(CollectFiles, EmptyListMakesEmptyRoot) {
-  const auto value = collect(PortKind::File, {});
+  const auto value = collect({});
   ASSERT_TRUE(stdfs::is_directory(output_dir));
   EXPECT_TRUE(stdfs::is_empty(output_dir));
-  EXPECT_EQ(path_value(value), output_dir.string());
-  const auto* items = items_of(root_of(value), kSlot1);
-  ASSERT_NE(items, nullptr);
-  EXPECT_EQ(items->size(), 0u);
+  EXPECT_EQ(value.kind, PortKind::Path);
+  EXPECT_EQ(value.path, output_dir.string());
+  EXPECT_TRUE(value.bytes.empty());
 }
 
 TEST_F(CollectFiles, CopiesFromExplicitInvocationScratchRoot) {
   const auto scratch = state / "scratch";
   const auto file = scratch / "run" / "out" / "result.txt";
   write_text(file, "latest run scratch");
-  const auto source = port("in", PortKind::File, path_type());
+  const auto source = port("in", PortKind::Path, nullptr);
   std::string error;
   const auto type = collect_output_type(source, error);
   ASSERT_TRUE(type) << error;
-  const std::vector members{path_value_of(source.type, PortKind::File, file)};
   const std::vector roots{state / "runs", state / "inputs", scratch};
   const auto value =
-      collect_values(source, port("out", PortKind::Directory, type), members,
-                     roots, output_dir, cancel);
-  EXPECT_EQ(path_value(value), output_dir.string());
+      collect_values(source, port("out", PortKind::Path, type),
+                     std::vector{path_member(file)}, roots, output_dir, cancel);
+  EXPECT_EQ(value.path, output_dir.string());
   EXPECT_EQ(read_text(output_dir / "0" / "result.txt"), "latest run scratch");
 }
 
-TEST_F(CollectFiles, FilesKeepOrderAndDuplicateBasenames) {
+TEST_F(CollectFiles, FilesAndDirectoriesKeepOrderAndDuplicateBasenames) {
   write_text(state / "runs" / "a" / "out" / "report.txt", "from run");
   write_text(state / "inputs" / "b" / "report.txt", "from input");
-  write_text(state / "runs" / "c" / "empty.bin", "");
-  const auto type = path_type();
-  const auto value =
-      collect(PortKind::File,
-              {
-                  path_value_of(type, PortKind::File,
-                                state / "runs" / "a" / "out" / "report.txt"),
-                  path_value_of(type, PortKind::File,
-                                state / "inputs" / "b" / "report.txt"),
-                  path_value_of(type, PortKind::File,
-                                state / "runs" / "c" / "empty.bin"),
-              });
+  write_text(state / "runs" / "c" / "data" / "sub" / "deep.txt", "deep");
+  stdfs::create_directories(state / "runs" / "c" / "data" / "empty");
+  const auto value = collect({
+      path_member(state / "runs" / "a" / "out" / "report.txt"),
+      path_member(state / "inputs" / "b" / "report.txt"),
+      path_member(state / "runs" / "c" / "data"),
+  });
   EXPECT_EQ(value.name, "out");
-  EXPECT_EQ(value.kind, PortKind::Directory);
-  ASSERT_TRUE(types::verify(*value.type, value.bytes));
-  EXPECT_EQ(path_value(value), output_dir.string());
+  EXPECT_EQ(value.kind, PortKind::Path);
+  EXPECT_EQ(value.path, output_dir.string());
   EXPECT_EQ(read_text(output_dir / "0" / "report.txt"), "from run");
   EXPECT_EQ(read_text(output_dir / "1" / "report.txt"), "from input");
-  EXPECT_EQ(read_text(output_dir / "2" / "empty.bin"), "");
-
-  const auto* items = items_of(root_of(value), kSlot1);
-  ASSERT_NE(items, nullptr);
-  ASSERT_EQ(items->size(), 3u);
-  EXPECT_EQ(string_of(items->Get(0), kSlot0), "report.txt");
-  EXPECT_EQ(string_of(items->Get(0), kSlot1), "0/report.txt");
-  EXPECT_EQ(string_of(items->Get(1), kSlot0), "report.txt");
-  EXPECT_EQ(string_of(items->Get(1), kSlot1), "1/report.txt");
-  EXPECT_EQ(string_of(items->Get(2), kSlot1), "2/empty.bin");
+  EXPECT_EQ(read_text(output_dir / "2" / "data" / "sub" / "deep.txt"), "deep");
+  EXPECT_TRUE(stdfs::is_directory(output_dir / "2" / "data" / "empty"));
   // Only the output folder was added beside it.
   EXPECT_EQ(std::distance(stdfs::directory_iterator(state / "invocation"),
                           stdfs::directory_iterator()),
             1);
-}
-
-TEST_F(CollectFiles, DirectoriesKeepNestedFilesAndEmptyChildren) {
-  write_text(state / "runs" / "r1" / "data" / "top.txt", "top");
-  write_text(state / "runs" / "r1" / "data" / "sub" / "deep.txt", "deep");
-  stdfs::create_directories(state / "runs" / "r1" / "data" / "empty");
-  write_text(state / "runs" / "r2" / "data" / "other.txt", "other");
-  const auto type = path_type();
-  const auto value = collect(PortKind::Directory,
-                             {
-                                 path_value_of(type, PortKind::Directory,
-                                               state / "runs" / "r1" / "data"),
-                                 path_value_of(type, PortKind::Directory,
-                                               state / "runs" / "r2" / "data"),
-                             });
-  EXPECT_EQ(read_text(output_dir / "0" / "data" / "top.txt"), "top");
-  EXPECT_EQ(read_text(output_dir / "0" / "data" / "sub" / "deep.txt"), "deep");
-  EXPECT_TRUE(stdfs::is_directory(output_dir / "0" / "data" / "empty"));
-  EXPECT_TRUE(stdfs::is_empty(output_dir / "0" / "data" / "empty"));
-  EXPECT_EQ(read_text(output_dir / "1" / "data" / "other.txt"), "other");
-  EXPECT_FALSE(stdfs::exists(output_dir / "1" / "data" / "top.txt"));
-
-  const auto* items = items_of(root_of(value), kSlot1);
-  ASSERT_NE(items, nullptr);
-  ASSERT_EQ(items->size(), 2u);
-  EXPECT_EQ(string_of(items->Get(0), kSlot0), "data");
-  EXPECT_EQ(string_of(items->Get(0), kSlot1), "0/data");
-  EXPECT_EQ(string_of(items->Get(1), kSlot1), "1/data");
 }
 
 TEST_F(CollectFiles, RejectsSymlinksAndLeavesNoOutput) {
@@ -455,11 +363,10 @@ TEST_F(CollectFiles, RejectsSymlinksAndLeavesNoOutput) {
                         state / "runs" / "r1" / "data" / "link.txt");
   stdfs::create_symlink(state / "runs" / "r1" / "data",
                         state / "runs" / "r1" / "alias");
-  const auto type = path_type();
 
-  const auto expect_invalid = [&](PortKind kind, const stdfs::path& path) {
+  const auto expect_invalid = [&](const stdfs::path& path) {
     try {
-      (void)collect(kind, {path_value_of(type, kind, path)});
+      (void)collect({path_member(path)});
       ADD_FAILURE() << "accepted " << path;
     } catch (const Failed& e) {
       EXPECT_EQ(e.failure.kind, FailureKind::output_invalid) << e.what();
@@ -468,24 +375,22 @@ TEST_F(CollectFiles, RejectsSymlinksAndLeavesNoOutput) {
     EXPECT_TRUE(invocation_is_clean());
   };
   // A link inside a collected directory.
-  expect_invalid(PortKind::Directory, state / "runs" / "r1" / "data");
-  // A link as the collected file itself.
-  expect_invalid(PortKind::File, state / "runs" / "r1" / "data" / "link.txt");
+  expect_invalid(state / "runs" / "r1" / "data");
+  // A link as the collected path itself.
+  expect_invalid(state / "runs" / "r1" / "data" / "link.txt");
   // A link on an intermediate component.
-  expect_invalid(PortKind::File, state / "runs" / "r1" / "alias" / "real.txt");
+  expect_invalid(state / "runs" / "r1" / "alias" / "real.txt");
   // Paths leaving the trusted folders.
   write_text(state / "outside.txt", "secret");
-  expect_invalid(PortKind::File, state / "outside.txt");
-  expect_invalid(PortKind::File, state / "runs" / ".." / "outside.txt");
+  expect_invalid(state / "outside.txt");
+  expect_invalid(state / "runs" / ".." / "outside.txt");
 }
 
 TEST_F(CollectFiles, CancelLeavesNoOutput) {
   write_text(state / "runs" / "a" / "f.txt", "data");
   cancel = true;
   try {
-    (void)collect(PortKind::File,
-                  {path_value_of(path_type(), PortKind::File,
-                                 state / "runs" / "a" / "f.txt")});
+    (void)collect({path_member(state / "runs" / "a" / "f.txt")});
     FAIL() << "cancellation was ignored";
   } catch (const Failed& e) {
     EXPECT_EQ(e.failure.kind, FailureKind::cancelled);

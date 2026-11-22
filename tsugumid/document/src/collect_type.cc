@@ -6,54 +6,42 @@ namespace tsugumi {
 
 namespace {
 
-constexpr const char* kDirectorySchema = R"(namespace tsugumi.collect;
-table Entry {
-  name:string (id: 0);
-  path:string (id: 1);
+// Opaque envelopes, the Card ABI's own CardPort: the core never reflects or
+// rebuilds member types.
+constexpr const char* kCollectedSchema = R"(namespace Tsugumi.Data;
+enum PortKind : ubyte { unspecified = 0, Path = 1, FlatBuffer = 2 }
+namespace Tsugumi.Card;
+table CardPort {
+  name:string (id: 0, required);
+  kind:Tsugumi.Data.PortKind (id: 1);
+  bytes:[ubyte] (id: 2);
+  path:string (id: 3);
 }
-table Directory {
-  value:string (id: 0);
-  items:[Entry] (id: 1);
+namespace tsugumi.builtin;
+table Collected {
+  items:[Tsugumi.Card.CardPort] (id: 0);
 }
 )";
 
-// The message of a collected File / Directory list (compiled once).
-auto directory_type() -> types::TypeRef {
+}  // namespace
+
+auto collected_type() -> types::TypeRef {
   static const types::TypeRef type = [] {
     std::string error;
     auto compiled =
-        types::compile(kDirectorySchema, "tsugumi.collect.Directory", &error);
+        types::compile(kCollectedSchema, "tsugumi.builtin.Collected", &error);
     if (!compiled)
-      throw std::logic_error("collect Directory type failed: " + error);
+      throw std::logic_error("Collected type failed: " + error);
     return *compiled;
   }();
   return type;
 }
 
-}  // namespace
-
 auto collect_output_type(const types::PortType& source, std::string& error)
     -> types::TypeRef {
-  if (!source.type) {
-    error = "the collected input " + source.name + " has no resolved type";
-    return nullptr;
-  }
-  if (source.kind == types::PortKind::FlatBuffer) {
-    std::string text;
-    const auto member = types::render_closure(
-        *source.type, "tsugumi.collect.member", text, /*nested=*/true);
-    text += "namespace tsugumi.collect;\ntable Collected {\n  items:[" +
-            member + "] (id: 0, required);\n}\n";
-    auto type = types::compile(text, "tsugumi.collect.Collected", &error);
-    return type ? *type : nullptr;
-  }
-  if (!types::has_string_value(*source.type)) {
-    error = "the collected File/Directory input " + source.name +
-            " needs a string `value` field";
-    return nullptr;
-  }
+  if (source.kind == types::PortKind::Path) return types::empty_type();
   try {
-    return directory_type();
+    return collected_type();
   } catch (const std::exception& e) {
     error = e.what();
     return nullptr;

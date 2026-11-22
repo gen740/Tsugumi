@@ -4,7 +4,6 @@ from harness.fixtures import add_worker, mock_plan, worker_project
 from harness.native_card import native_card
 from harness.observations import decode_scalar, read_output
 from harness.scenario import FILE_OUTPUT, Project, run, wait_run
-from harness.values import encode_message
 from tsugumi_client import path
 from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
@@ -40,7 +39,6 @@ def test_invalid_artifact_is_a_run_failure_not_a_service_crash(project, core_fac
 
 
 def test_output_copy_failure_keeps_the_resident_worker(project, core_factory, tmp_path):
-    payload = encode_message(tmp_path / "path", FILE_OUTPUT, {"value": "result"}, root_type="File")
     package = native_card(tmp_path / "package", """
 #include <stdio.h>
 
@@ -57,7 +55,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
     return 0;
 }
-""", [("doc", PortKind.File, payload)])
+""", [("doc", PortKind.Path, "result")])
     client = core_factory(mocked_builds=True).connect()
     Project(project).card("work", {"type": "code", "reuseWorker": True, "sandbox": {
         "filesystem": False, "pid": False, "ipc": False, "identity": False,

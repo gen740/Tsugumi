@@ -1,7 +1,6 @@
 #include "history.hh"
 
 #include <fcntl.h>
-#include <flatbuffers/reflection.h>
 #include <unistd.h>
 
 #include <algorithm>
@@ -537,7 +536,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
   artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, output TEXT NOT NULL, kind INTEGER NOT NULL, name TEXT NOT NULL,
+  invocation INTEGER NOT NULL, output TEXT NOT NULL, directory INTEGER NOT NULL, name TEXT NOT NULL,
   members TEXT NOT NULL);
 CREATE INDEX IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
@@ -545,9 +544,9 @@ CREATE INDEX IF NOT EXISTS )SQL" +
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-// Includes the definition paths recorded when a run is accepted and the
-// log line index.
-constexpr int kHistoryVersion = 17;
+// Includes the definition paths recorded when a run is accepted, the log line
+// index, and Path values recorded as their path text.
+constexpr int kHistoryVersion = 18;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -986,19 +985,26 @@ void History::complete_invocation(sql::Db& db,
       .bind(2, key(s.card))
       .run();
   {
+    // A FlatBuffer row keeps its bytes and schema. A Path row keeps the
+    // recorded state-relative path as UTF-8 bytes and no schema; its content
+    // hash is the file's, or the tree's for a directory.
     auto put = [&](const Value& v, int side) {
-      std::string h = put_schema(db, *v.type);
+      const bool path = v.kind == PortKind::Path;
+      std::string h = !path && v.type ? put_schema(db, *v.type) : "";
       std::optional<std::string> file_content_hash;
-      if (v.kind == PortKind::File && v.recorded_path) {
+      if (path && v.recorded_path) {
         const auto root = path_.parent_path();
-        const auto path = root / *v.recorded_path;
+        const auto content = root / *v.recorded_path;
         std::error_code error;
-        if (fs::resolves_inside(root, path) && std::filesystem::is_regular_file(path, error))
-          file_content_hash = fs::sha256_file(path);
+        const auto status = std::filesystem::symlink_status(content, error);
+        if (fs::resolves_inside(root, content)) {
+          if (std::filesystem::is_regular_file(status))
+            file_content_hash = fs::sha256_file(content);
+          else if (std::filesystem::is_directory(status))
+            file_content_hash = fs::sha256_tree(content);
+        }
       }
-      const auto stored = v.kind == PortKind::FlatBuffer
-                              ? v
-                              : with_path(v, v.recorded_path.value_or(""));
+      const auto& stored = path ? v.recorded_path.value_or("") : v.bytes;
       auto ins = db.prepare(
           "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
           "side, port, kind, schema_hash, "
@@ -1011,10 +1017,10 @@ void History::complete_invocation(sql::Db& db,
           .bind(5, v.name)
           .bind(6, static_cast<int>(v.kind))
           .bind(7, h)
-          .bind(8, v.type->root_type)
-          .bind(9, static_cast<uint64_t>(stored.bytes.size()))
-          .bind_blob(10, stored.bytes)
-          .bind(11, crypto::sha256_hex(stored.bytes))
+          .bind(8, !path && v.type ? v.type->root_type : std::string())
+          .bind(9, static_cast<uint64_t>(stored.size()))
+          .bind_blob(10, stored)
+          .bind(11, crypto::sha256_hex(stored))
           .bind(12, v.artifact_id)
           .bind(13, file_content_hash)
           .run();
@@ -1036,10 +1042,11 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
     *entry.partial_result = group.partial_result;
     for (const auto& v : group.values) {
       schema::SavedInputJson j;
+      const bool path = v.kind == PortKind::Path;
       *j.kind = static_cast<int>(v.kind);
-      *j.schema = put_schema(db, *v.type);
-      *j.root_type = v.type->root_type;
-      *j.data_b64 = crypto::base64(v.bytes);
+      *j.schema = !path && v.type ? put_schema(db, *v.type) : "";
+      *j.root_type = !path && v.type ? v.type->root_type : "";
+      *j.data_b64 = crypto::base64(path ? v.path : v.bytes);
       *j.recorded_path = v.recorded_path.value_or("");
       entry.values->push_back(std::move(j));
     }
@@ -1066,14 +1073,14 @@ void History::put_artifact(sql::Db& db, const ArtifactData& a) {
   }
   db.prepare(
         "INSERT INTO artifacts(artifact_id, run_id, card, invocation, "
-        "output, kind, name, members) "
+        "output, directory, name, members) "
         "VALUES(?,?,?,?,?,?,?,?)")
       .bind(1, a.artifact_id)
       .bind(2, a.run_id)
       .bind(3, key(a.card))
       .bind(4, a.invocation)
       .bind(5, a.output)
-      .bind(6, static_cast<int>(a.kind))
+      .bind(6, a.directory)
       .bind(7, a.name)
       .bind(8, schema::encode(m))
       .run();
@@ -1410,7 +1417,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
   auto st = db.prepare(
       "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, "
       "v.artifact_id, v.hash, v.file_content_hash FROM ivalues v "
-      "JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND "
+      "LEFT JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND "
       "card=? AND invocation=? AND side=? "
       "ORDER BY v.port");
   st.bind(1, run_id).bind(2, key(card)).bind(3, n).bind(4, input ? 0 : 1);
@@ -1419,7 +1426,7 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
     StoredValueMeta m;
     m.name = st.text(0);
     m.kind = static_cast<PortKind>(st.i64(1));
-    m.bfbs = st.blob(2);
+    if (!st.is_null(2)) m.bfbs = st.blob(2);
     m.root_type = st.text(3);
     m.size_bytes = st.u64(4);
     if (!st.is_null(5)) m.artifact_id = st.text(5);
@@ -1552,6 +1559,13 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
       Value v;
       v.name = group.port;
       v.kind = static_cast<PortKind>(**value.kind);
+      if (v.kind == PortKind::Path) {
+        if (!crypto::base64_decode(**value.data_b64, v.path)) return std::nullopt;
+        if (const auto* path = schema::get(value.recorded_path); path && !path->empty())
+          v.recorded_path = *path;
+        group.values.push_back(std::move(v));
+        continue;
+      }
       auto [type, inserted] = loaded_types.try_emplace(
           std::make_pair(**value.schema, **value.root_type));
       if (inserted) {
@@ -1583,7 +1597,7 @@ ArtifactData artifact_row(const sql::Stmt& st) {
   a.card = unkey(st.text(2));
   a.invocation = st.u64(3);
   a.output = st.text(4);
-  a.kind = static_cast<PortKind>(st.i64(5));
+  a.directory = st.i64(5) != 0;
   a.name = st.text(6);
   schema::MemberList list;
   if (!schema::decode(st.text(7), list))
@@ -1597,7 +1611,7 @@ std::optional<ArtifactData> History::artifact(sql::Db& db,
                                               const std::string& artifact_id) {
   auto st = db.prepare(
       "SELECT artifact_id, run_id, card, invocation, output, "
-      "kind, name, members "
+      "directory, name, members "
       "FROM artifacts WHERE artifact_id=?");
   st.bind(1, artifact_id);
   if (!st.step()) return std::nullopt;
@@ -1609,7 +1623,7 @@ std::vector<ArtifactData> History::artifacts(
     std::optional<uint64_t> invocation, const std::string& after,
     uint64_t limit) {
   std::string q =
-      "SELECT artifact_id, run_id, card, invocation, output, kind, "
+      "SELECT artifact_id, run_id, card, invocation, output, directory, "
       "name, members FROM artifacts "
       "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL "
       "OR invocation=?3) AND "
@@ -1804,41 +1818,25 @@ auto History::file_referencing_runs(sql::Db& db, const std::string& run_id)
     -> std::vector<std::string> {
   const auto prefix = "runs/" + run_id + "/";
   auto st = db.prepare(
-      "SELECT v.run_id, v.kind, s.bfbs, v.root_type, v.bytes FROM ivalues v "
-      "JOIN schemas s ON s.hash=v.schema_hash "
-      "WHERE v.run_id<>? AND v.kind IN (?,?) AND instr(v.bytes,?)>0 "
-      "ORDER BY v.run_id");
+      "SELECT DISTINCT run_id FROM ivalues WHERE run_id<>? AND kind=? "
+      "AND substr(bytes, 1, ?)=? ORDER BY run_id");
   st.bind(1, run_id)
-      .bind(2, static_cast<int>(PortKind::File))
-      .bind(3, static_cast<int>(PortKind::Directory))
+      .bind(2, static_cast<int>(PortKind::Path))
+      .bind(3, static_cast<int64_t>(prefix.size()))
       .bind_blob(4, prefix);
   std::vector<std::string> runs;
-  while (st.step()) {
-    auto id = st.text(0);
-    if (!runs.empty() && runs.back() == id) continue;
-    auto type = std::make_shared<types::Type>();
-    type->bfbs = st.blob(2);
-    type->root_type = st.text(3);
-    flatbuffers::Verifier schema(
-        reinterpret_cast<const uint8_t*>(type->bfbs.data()), type->bfbs.size());
-    if (!reflection::VerifySchemaBuffer(schema) || !type->root()) continue;
-    const auto bytes = st.blob(4);
-    if (!types::verify(*type, bytes)) continue;
-    auto path = path_value({"", static_cast<PortKind>(st.i64(1)), type, bytes, {}});
-    if (path && path->starts_with(prefix)) runs.push_back(std::move(id));
-  }
+  while (st.step()) runs.push_back(st.text(0));
   return runs;
 }
 
 auto History::owns_recorded_file(sql::Db& db, const std::string& run_id,
                                  const std::string& path) -> bool {
   auto st = db.prepare(
-      "SELECT 1 FROM ivalues WHERE run_id=? AND side=1 AND kind IN (?,?) "
-      "AND instr(bytes,?)>0 LIMIT 1");
+      "SELECT 1 FROM ivalues WHERE run_id=? AND side=1 AND kind=? "
+      "AND bytes=? LIMIT 1");
   st.bind(1, run_id)
-      .bind(2, static_cast<int>(PortKind::File))
-      .bind(3, static_cast<int>(PortKind::Directory))
-      .bind_blob(4, path + '\0');
+      .bind(2, static_cast<int>(PortKind::Path))
+      .bind_blob(3, path);
   return st.step();
 }
 
@@ -1861,10 +1859,9 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
           .bind(1, run_id).bind(2, static_cast<int>(PortKind::FlatBuffer)).run();
       break;
     case R::RunRecordCategory::Files:
-      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind IN (?,?)")
+      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind=?")
           .bind(1, run_id)
-          .bind(2, static_cast<int>(PortKind::File))
-          .bind(3, static_cast<int>(PortKind::Directory))
+          .bind(2, static_cast<int>(PortKind::Path))
           .run();
       db.prepare("DELETE FROM artifacts WHERE run_id=?").bind(1, run_id).run();
       db.prepare("UPDATE runs SET has_artifacts=0 WHERE run_id=?")

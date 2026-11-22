@@ -64,7 +64,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
-        R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"file"); } root_type Outputs;)"},
+        R"(attribute "tsugumi"; table File { value:string; } table Outputs { out:File (tsugumi:"path"); } root_type Outputs;)"},
        {"definitions/dest/_card.json",
         R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing","optional":true}]})"}});
   const auto result = Present(*graph, {"dest"});
@@ -84,7 +84,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
-  EXPECT_EQ(result.inputs[1]->kind, "file");
+  EXPECT_EQ(result.inputs[1]->kind, "path");
   EXPECT_NE(result.inputs[1]->definition.find("value:string"),
             std::string::npos);
   EXPECT_EQ(result.inputs[2]->state, "no_source");

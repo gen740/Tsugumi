@@ -12,7 +12,7 @@ from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 
 DIRECTORY_OUTPUT = ('attribute "tsugumi"; table Directory { value:string; } '
-                    'table Outputs { doc:Directory (tsugumi:"directory"); } root_type Outputs;')
+                    'table Outputs { doc:Directory (tsugumi: "path"); } root_type Outputs;')
 
 
 @pytest.mark.parametrize("target,kind", [

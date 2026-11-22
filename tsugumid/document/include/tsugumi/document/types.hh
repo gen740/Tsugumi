@@ -46,9 +46,8 @@ struct CatalogResult {
 };
 
 // Parses an _outputs.fbs text. The root table is the port catalog; each field
-// is one port carrying the field's table type. `tsugumi:"file"` /
-// `tsugumi:"directory"` on a catalog field marks File/Directory ports, whose
-// message must have a string `value` field.
+// is one port carrying the field's table type. `tsugumi:"path"` on a catalog
+// field marks a Path port, whose message must have a string `value` field.
 CatalogResult parse_catalog(const std::string& fbs_text,
                             const std::string& filename);
 

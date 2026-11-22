@@ -1,6 +1,6 @@
 #include "collect_value.hh"
 
-#include <flatbuffers/reflection.h>
+#include <flatbuffers/flatbuffers.h>
 
 #include <cstdint>
 #include <fstream>
@@ -8,6 +8,7 @@
 #include <system_error>
 #include <vector>
 
+#include "tsugumi/protocol/card_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -29,18 +30,6 @@ auto invalid_member(size_t index, const std::string& why) -> Failed {
                 "collect element " + std::to_string(index) + ": " + why);
 }
 
-auto field_of(const reflection::Object& object, const char* name)
-    -> const reflection::Field& {
-  return *object.fields()->LookupByKey(name);
-}
-
-// The Collect schema defines items as a vector of tables.
-auto element_object(const types::Type& type, const reflection::Field& field)
-    -> const reflection::Object& {
-  return *type.schema()->objects()->Get(
-      static_cast<flatbuffers::uoffset_t>(field.type()->index()));
-}
-
 auto as_string(const flatbuffers::FlatBufferBuilder& builder) -> std::string {
   return {reinterpret_cast<const char*>(builder.GetBufferPointer()),
           builder.GetSize()};
@@ -48,19 +37,15 @@ auto as_string(const flatbuffers::FlatBufferBuilder& builder) -> std::string {
 
 auto check_member(const types::PortType& source, const Value& member,
                   size_t index) -> void {
-  if (member.kind != source.kind || !member.type)
-    throw invalid_member(index, "wrong kind or no type");
-  if (member.type != source.type &&
-      !types::compatible(*source.type, *member.type))
-    throw invalid_member(index, "type does not match the input port");
-  if (!types::verify(*source.type, member.bytes))
-    throw invalid_member(index, "value does not verify");
+  if (member.kind != source.kind) throw invalid_member(index, "wrong kind");
 }
 
 // --- FlatBuffer members -----------------------------------------------------
 
+// tsugumi.builtin.Collected { items:[Tsugumi.Card.CardPort] (id: 0); }: one
+// envelope per member, named by its ordinal, with the member's bytes copied
+// unopened.
 auto collect_messages(const types::PortType& source,
-                      const types::PortType& output,
                       std::span<const Value> members,
                       const std::atomic<bool>& cancel) -> std::string {
   size_t total = 0;
@@ -72,29 +57,28 @@ auto collect_messages(const types::PortType& source,
       throw Failed(FailureKind::output_invalid,
                    "collected values exceed 16 MiB");
   }
-  const auto& items = field_of(*output.type->root(), "items");
-
-  // Relocating a whole verified buffer leaves its internal offsets intact.
-  // The vector points at each relocated root table. This preserves shared
-  // tables, scalar bits and optional fields without rebuilding the graph.
   flatbuffers::FlatBufferBuilder builder(total + 1024);
-  std::vector<flatbuffers::Offset<const flatbuffers::Table*>> tables;
-  tables.reserve(members.size());
-  for (const auto& member : members) {
+  std::vector<flatbuffers::Offset<Tsugumi::Card::CardPort>> items;
+  items.reserve(members.size());
+  for (size_t i = 0; i < members.size(); ++i) {
     check_cancel(cancel);
-    const auto* data = reinterpret_cast<const uint8_t*>(member.bytes.data());
-    const auto root = flatbuffers::ReadScalar<flatbuffers::uoffset_t>(data);
-    builder.PreAlign(member.bytes.size(), FLATBUFFERS_MAX_ALIGNMENT);
-    builder.PushBytes(data, member.bytes.size());
-    tables.emplace_back(
-        static_cast<flatbuffers::uoffset_t>(builder.GetSize() - root));
+    const auto& bytes = members[i].bytes;
+    const auto name = builder.CreateString(std::to_string(i));
+    // Each member is read in place by the next Card's SDK.
+    builder.ForceVectorAlignment(bytes.size(), sizeof(uint8_t),
+                                 FLATBUFFERS_MAX_ALIGNMENT);
+    const auto data = builder.CreateVector(
+        reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+    items.push_back(Tsugumi::Card::CreateCardPort(
+        builder, name, PortKind::FlatBuffer, data));
     if (builder.GetSize() > kMaxMessageBytes)
       throw Failed(FailureKind::output_invalid,
                    "collected value exceeds 16 MiB");
   }
-  const auto vector = builder.CreateVector(tables);
+  const auto vector = builder.CreateVector(items);
+  constexpr flatbuffers::voffset_t kItems = 4;  // field id 0
   const auto start = builder.StartTable();
-  builder.AddOffset(items.offset(), vector);
+  builder.AddOffset(kItems, vector);
   builder.Finish(
       flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
   if (builder.GetSize() > kMaxMessageBytes)
@@ -102,18 +86,13 @@ auto collect_messages(const types::PortType& source,
   return as_string(builder);
 }
 
-// --- File / Directory members -----------------------------------------------
+// --- Path members ------------------------------------------------------------
 
 // Where a member lives: a trusted root (runs or inputs) and a path below it.
 struct MemberSource {
   stdfs::path root;
   stdfs::path rel;
   std::string name;  // original basename
-};
-
-struct Entry {
-  std::string name;
-  std::string path;  // relative to the output root
 };
 
 struct Budget {
@@ -124,9 +103,8 @@ struct Budget {
 
 auto member_source(const Value& member, std::span<const stdfs::path> file_roots,
                    size_t index) -> MemberSource {
-  const auto value = path_value(member);
-  if (!value) throw invalid_member(index, "has no path");
-  const stdfs::path path(*value);
+  if (member.path.empty()) throw invalid_member(index, "has no path");
+  const stdfs::path path(member.path);
   if (!path.is_absolute() || path.lexically_normal() != path)
     throw invalid_member(index, "path must be absolute and normal");
   for (const auto& folder : file_roots) {
@@ -225,44 +203,14 @@ auto copy_directory(const stdfs::path& root, const stdfs::path& rel,
   }
 }
 
-auto directory_message(const types::Type& type, const std::string& value,
-                       const std::vector<Entry>& entries) -> std::string {
-  const auto& root = *type.root();
-  const auto& value_field = field_of(root, "value");
-  const auto& items_field = field_of(root, "items");
-  const auto& entry = element_object(type, items_field);
-  const auto& name_field = field_of(entry, "name");
-  const auto& path_field = field_of(entry, "path");
-
-  flatbuffers::FlatBufferBuilder builder;
-  std::vector<flatbuffers::Offset<flatbuffers::Table>> tables;
-  tables.reserve(entries.size());
-  for (const auto& e : entries) {
-    const auto name = builder.CreateString(e.name);
-    const auto path = builder.CreateString(e.path);
-    const auto start = builder.StartTable();
-    builder.AddOffset(name_field.offset(), name);
-    builder.AddOffset(path_field.offset(), path);
-    tables.emplace_back(builder.EndTable(start));
-  }
-  const auto items = builder.CreateVector(tables);
-  const auto path = builder.CreateString(value);
-  const auto start = builder.StartTable();
-  builder.AddOffset(value_field.offset(), path);
-  builder.AddOffset(items_field.offset(), items);
-  builder.Finish(
-      flatbuffers::Offset<flatbuffers::Table>(builder.EndTable(start)));
-  if (builder.GetSize() > kMaxMessageBytes)
-    throw Failed(FailureKind::output_invalid, "collected value exceeds 16 MiB");
-  return as_string(builder);
-}
-
-auto collect_files(const types::PortType& source, const types::PortType& output,
+// One directory with an ordinal folder per member: <output>/<i>/<basename>,
+// each a regular file or a whole directory as found.
+auto collect_files(const types::PortType& source,
                    std::span<const Value> members,
                    std::span<const stdfs::path> file_roots,
                    const stdfs::path& output_dir,
                    const std::atomic<bool>& cancel, CollectFileLimits limits)
-    -> std::string {
+    -> void {
   if (members.size() > limits.entries)
     throw Failed(FailureKind::output_invalid, "too many collected elements");
   std::error_code ec;
@@ -283,8 +231,6 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
   try {
     Staging staging(output_dir);
     Budget budget{limits.files, limits.entries - members.size()};
-    std::vector<Entry> entries;
-    entries.reserve(sources.size());
     for (size_t i = 0; i < sources.size(); ++i) {
       check_cancel(cancel);
       const auto& member = sources[i];
@@ -293,20 +239,17 @@ auto collect_files(const types::PortType& source, const types::PortType& output,
       stdfs::create_directory(staging.path() / ordinal);
       const auto destination = staging.path() / ordinal / member.name;
       try {
-        if (source.kind == PortKind::File)
-          copy_file(member.root, member.rel, destination, budget, cancel);
-        else
+        if (fs::directory_beneath(member.root, member.rel))
           copy_directory(member.root, member.rel, destination, budget, cancel,
                          i);
+        else
+          copy_file(member.root, member.rel, destination, budget, cancel);
       } catch (const fs::Error& e) {
         throw invalid_member(i, e.what());
       }
-      entries.push_back({member.name, ordinal + "/" + member.name});
     }
     check_cancel(cancel);
-    auto bytes = directory_message(*output.type, output_dir.string(), entries);
     staging.commit(output_dir);
-    return bytes;
   } catch (const stdfs::filesystem_error& e) {
     throw Failed(FailureKind::internal_error,
                  std::string("collect staging failed: ") + e.what());
@@ -325,19 +268,16 @@ auto collect_values(const types::PortType& source,
                     const std::filesystem::path& output_dir,
                     const std::atomic<bool>& cancel, CollectFileLimits limits)
     -> Value {
-  if (!source.type)
-    throw Failed(FailureKind::internal_error,
-                 "collect input " + source.name + " has no type");
   check_cancel(cancel);
   Value result;
   result.name = output.name;
   result.kind = output.kind;
   result.type = output.type;
   if (source.kind == PortKind::FlatBuffer) {
-    result.bytes = collect_messages(source, output, members, cancel);
+    result.bytes = collect_messages(source, members, cancel);
   } else {
-    result.bytes = collect_files(source, output, members, file_roots,
-                                 output_dir, cancel, limits);
+    collect_files(source, members, file_roots, output_dir, cancel, limits);
+    result.path = output_dir.string();
   }
   return result;
 }

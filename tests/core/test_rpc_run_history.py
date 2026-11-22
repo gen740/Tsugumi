@@ -206,7 +206,7 @@ def test_category_deletion_through_host_keeps_summaries_and_marks_forwarded_file
     client = daemon.connect()
     graph = Project(project)
     outputs = FILE_OUTPUT.replace("table Outputs", "table Label { value:string; } table Outputs").replace(
-        'doc:File (tsugumi:"file");', 'doc:File (tsugumi:"file"); label:Label;')
+        'doc:File (tsugumi: "path");', 'doc:File (tsugumi: "path"); label:Label;')
     add_worker(graph, "work", tmp_path / "package", [
         {"op": "log", "stream": "stdout", "text": "recorded"},
         {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},

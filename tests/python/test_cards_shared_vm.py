@@ -514,7 +514,7 @@ let sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; in
 { run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }
 '''
     a_out = RICH.format(ns="a") + '''table Doc { value:string; }
-table Outputs { rich:Rich (required); doc:Doc (required, tsugumi: "file"); }
+table Outputs { rich:Rich (required); doc:Doc (required, tsugumi: "path"); }
 root_type Outputs;
 attribute "tsugumi";
 '''
@@ -632,7 +632,7 @@ def test_cpp_sdk_card_api(env):
     seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
     calc_out = ('''namespace t; table Num { value:ulong; } table Doc { value:string; }
 '''
-                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "file"); runtime:Doc; }
+                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "path"); runtime:Doc; }
 '''
                 '''root_type Outputs;
 attribute "tsugumi";
