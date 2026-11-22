@@ -54,7 +54,7 @@ TEST(DocumentConnect, OneOutputCanFeedSeveralInputs) {
 }
 TEST(DocumentConnect, InputReplacementKeepsDraftDefinitionsUnchanged) {
   const std::string state =
-      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code","language":"python"}}}})";
+      R"({"project":{"canvas":{"cards":[{"id":"old"},{"id":"new"},{"id":"dest"}],"connections":[{"from":{"card":"old","port":""},"to":{"card":"dest","port":"in"}}]}},"definitions":{"old":{"card":{"type":"draft"},"meta":{"content":"planned"}},"new":{"card":{"type":"trigger"}},"dest":{"card":{"type":"code"}}}})";
   const auto replaced = ConnectDocuments(state, "new", "out", "dest", "in");
   EXPECT_EQ(ConnectionWires(replaced),
             (std::set<std::string>{"new.out>dest.in"}));
@@ -77,91 +77,36 @@ TEST(DocumentConnect,
                std::runtime_error);
 }
 
-TEST(DocumentTemplate,
-     BuiltinsAndCodeTemplatesHaveTheirSharedInitialDefinition) {
-  const auto draft =
-      json::Object(WriteTemplate("draft", "new-card").definition_json);
-  EXPECT_EQ(json::Text(json::Object(draft.at("card")), "type"), "draft");
-  EXPECT_EQ(json::Text(json::Object(draft.at("meta")), "content"), "");
-  for (const auto* name :
-       {"trigger", "branch", "fork", "collect", "merge", "input"}) {
-    const auto reply = WriteTemplate(name, "new-card.2");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "type"), name);
-    if (std::string_view(name) == "merge")
-      EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
-    if (std::string_view(name) == "fork")
-      EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
-    if (std::string_view(name) == "input") {
-      ASSERT_EQ(reply.files.size(), 1);
-      EXPECT_NE(reply.files[0].text.find("namespace new_card_2;"),
+TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
+  using Kind = Tsugumi::Host::BuiltinCard;
+  const auto draft = BuiltinCard(Kind::Draft, "new-card");
+  EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
+  EXPECT_EQ(json::Text(json::Object(draft.at("_meta.json")), "content"), "");
+  for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
+                                  {Kind::Branch, "branch"},
+                                  {Kind::Fork, "fork"},
+                                  {Kind::Collect, "collect"},
+                                  {Kind::Merge, "merge"},
+                                  {Kind::InputValue, "input"},
+                                  {Kind::BooleanInput, "input"}}) {
+    const auto files = BuiltinCard(kind, "new-card.2");
+    const auto card = json::Object(files.at("_card.json"));
+    EXPECT_EQ(json::Text(card, "type"), type);
+    if (kind == Kind::Merge) EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
+    if (kind == Kind::Fork) EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
+    if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
+      const auto schema = files.at("_outputs.fbs");
+      EXPECT_NE(schema.find("namespace new_card_2;"), std::string::npos);
+      EXPECT_NE(schema.find(kind == Kind::BooleanInput ? "value:bool" : "value:double"),
                 std::string::npos);
-      EXPECT_EQ(reply.files[0].text.find("@NAMESPACE@"), std::string::npos);
     }
-  }
-  for (const auto* name : {"python", "go", "rust", "ruby", "cpp", "csharp"}) {
-    const auto reply = WriteTemplate(name, "new-card.2");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(json::Text(card, "language"), name);
-    EXPECT_EQ(json::Array(card.at("inputs")).size(), 1);
-    std::set<std::string> paths;
-    for (const auto& file : reply.files) {
-      paths.insert(file.path);
-      EXPECT_FALSE(file.path.starts_with('/'));
-      EXPECT_EQ(file.text.find("@NAMESPACE@"), std::string::npos);
-      if (file.path == "src/main.py")
-        EXPECT_NE(file.text.find("outputs.out.new_card_2.Text"),
-                  std::string::npos);
-    }
-    EXPECT_TRUE(paths.contains("_outputs.fbs"));
-    EXPECT_TRUE(paths.contains("default.nix"));
-    EXPECT_TRUE(std::ranges::any_of(
-        paths, [](const auto& path) { return path.starts_with("src/"); }));
-    if (std::string_view(name) == "go") {
-      EXPECT_TRUE(paths.contains("src/go.mod"));
-      EXPECT_TRUE(paths.contains("src/go.sum"));
-    }
-    if (std::string_view(name) == "rust")
-      EXPECT_TRUE(paths.contains("src/Cargo.toml"));
-  }
-  EXPECT_THROW(WriteTemplate("missing", "new-card"), std::runtime_error);
-}
-TEST(DocumentTemplate,
-     NotebookReportsAndPlotsKeepTheirSourceAndArtifactContracts) {
-  for (const auto* name : {"marimo", "report_rmarkdown", "report_quarto",
-                           "visualization_matplotlib", "visualization_plotly",
-                           "visualization_altair"}) {
-    const auto reply = WriteTemplate(name, "new-card");
-    const auto card =
-        json::Object(json::Object(reply.definition_json).at("card"));
-    EXPECT_EQ(card.at("retainArtifact"), "true");
-    const bool plot = std::string_view(name).starts_with("visualization_");
-    EXPECT_EQ(json::Text(card, "artifactOutput"), plot ? "figure" : "report");
-    std::set<std::string> files;
-    for (const auto& file : reply.files) files.insert(file.path);
-    EXPECT_TRUE(files.contains("default.nix"));
-    EXPECT_TRUE(files.contains("_outputs.fbs"));
-    if (std::string_view(name) == "marimo") {
-      EXPECT_EQ(card.at("reuseWorker"), "false");
-      EXPECT_TRUE(files.contains("src/notebook.py"));
-    }
-    if (plot) {
-      EXPECT_TRUE(files.contains("src/main.py"));
-      const auto params = json::Array(card.at("params"));
-      EXPECT_TRUE(std::ranges::any_of(params, [](const auto& raw) {
-        const auto param = json::Object(raw);
-        return json::Text(param, "name") == "kind" &&
-               json::Text(param, "data") == "line";
-      }));
-    }
+    EXPECT_FALSE(files.contains("default.nix"));
   }
 }
 
 TEST(DocumentCopy, DefinitionKeepsSettingsAndGivesCommentsTheirOwnIdentity) {
   const std::string state =
-      R"({"definitions":{"a":{"card":{"type":"code","language":"python","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
+      R"({"definitions":{"a":{"card":{"type":"code","params":[{"name":"n","data":9007199254740993}],"settings":{"sandbox":false}},"meta":{"name":"original","description":"Plots","comments":[{"id":"old","text":"one","author":"user","resolved":true,"cards":["a"]}]}}}})";
   const auto edit =
       CopyDocuments(state,
                     {"definitions/a/src/asset.bin", "definitions/a/_card.json",

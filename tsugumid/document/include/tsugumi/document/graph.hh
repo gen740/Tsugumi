@@ -81,12 +81,13 @@ inline constexpr char kLocalExecutionService[] = "local";
 struct Settings {
   std::string name;  // the Card id
   std::string symbol;
-  std::string
-      language;  // "", cpp, python, go, rust, csharp, bash, r, julia, ruby
   bool any_mode = false;  // trigger "eachInput"
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
+  bool record_logs = true;
+  bool record_displays = true;
+  uint64_t log_limit_bytes = schema::kDefaultLogLimitBytes;
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;

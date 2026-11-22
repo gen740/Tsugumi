@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 // A Card's summary is in its _meta.json, whatever its kind, and only there.
 import assert from 'node:assert/strict'
 import { get, parse, str } from '../shared/json'
@@ -23,7 +23,7 @@ const session = () => {
 
 {
   const s = session()
-  const code = await s.addCard('python', [], { x: 0, y: 0 })
+  const code = await addCodeCard(s, { x: 0, y: 0 })
   s.updateCard(code, (c) => c.set('description', 'in the settings'))
   await s.save()
   assert.equal(s.nodeData(code).summary, undefined, 'the settings hold no summary')

@@ -77,7 +77,7 @@ def sdk_card(language):
         files['Cargo.toml'] = (ROOT / 'sdk/rust/template/Cargo.toml').read_text()
     nix = {'r': R_NIX, 'julia': JULIA_NIX, 'ruby': RUBY_NIX}.get(language,
         '{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["' + language + '"];};in {run=inputs.tsugumi.' + helper + ' {inherit sdk;src=./src;};}')
-    return {'card': {'type': 'code', 'language': language, 'inputs': [{'name': 'number'}], 'recordIO': True},
+    return {'card': {'type': 'code', 'inputs': [{'name': 'number'}], 'recordIO': True},
             'outputs': SCHEMA, 'src': files, 'nix': nix}
 
 
@@ -85,7 +85,7 @@ def sdk_card(language):
 @pytest.mark.parametrize('language', list(SOURCES))
 def test_numeric_meaning_survives_each_sdk(project, language):
     root, connect = project
-    make = {'card': {'type': 'code', 'language': 'python'}, 'outputs': SCHEMA,
+    make = {'card': {'type': 'code'}, 'outputs': SCHEMA,
             'nix': '{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["python"];};in {run=inputs.tsugumi.pythonCard {inherit sdk;src=./src;};}',
             'src': {'main.py': 'v=' + repr(VECTORS) + '''
 def main(inputs):

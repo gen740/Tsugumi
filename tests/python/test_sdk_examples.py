@@ -111,7 +111,7 @@ def test_line_chart_uses_binary_view_input(tmp_path):
     root = tmp_path / "line-chart"
     shutil.copytree(ROOT / "tests/fixtures/view-point-cloud", root)
     definition = root / "definitions/cloud"
-    (definition / "_card.json").write_text('{"type":"code","language":"python","inputs":[{"name":"start"}],"sandbox":{"filesystem":false}}')
+    (definition / "_card.json").write_text('{"type":"code","inputs":[{"name":"start"}],"sandbox":{"filesystem":false}}')
     (definition / "default.nix").write_text(
         '{ pkgs, inputs, params }: let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; '
         'in { run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }')

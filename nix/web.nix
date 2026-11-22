@@ -38,7 +38,6 @@ buildNpmPackage {
         ../hostd/agent/Shared/demo-skill.md
         ../ui/shared/i18n/en.json
         ../ui/shared/modules
-        ../ui/shared/templates
         (lib.fileset.fileFilter (file: file.hasExt "fbs") ../protocol)
       ]
       ++ lib.optionals (!typecheckOnly) [

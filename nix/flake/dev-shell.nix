@@ -34,11 +34,8 @@
               ]))
               # Card shell steps use jq (the package gives them the same tools).
               jq
-              # Pinned host formatters (their absolute paths come from core.devEnv).
               clang-tools
-              ruff
               nixfmt
-              shfmt
               # The web UI (web/) and its contract test with the Swift Agent.
               nodejs
             ]
@@ -46,6 +43,10 @@
           MACOSX_DEPLOYMENT_TARGET = "26.0";
         }
         // core.devEnv
+        // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          TSUGUMI_TEMPLATE_GIT_SOURCE = pkgs.git.src;
+          TSUGUMI_TEMPLATE_GIT_SOURCE_URL = builtins.head pkgs.git.src.urls;
+        }
       );
     };
 }

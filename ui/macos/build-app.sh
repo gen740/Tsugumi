@@ -93,6 +93,8 @@ done
 cp "$repo/ui/macos/Sources/Grammars/LICENSE.tree-sitter" "$licenses/"
 cp -R "$repo/hostd/formatters/third-party" "$licenses/formatters"
 cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
+cp -R "$repo/build-host/Resources/git" "$app/Contents/Resources/git"
+cp -R "$repo/build-host/Resources/git-licenses" "$licenses/git"
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The page hostd serves (CoreHostClient passes it as --web-root) and its licences.
 cp -R "$web_out/share/tsugumi/ui/web/dist/public" "$app/Contents/Resources/web"
@@ -147,7 +149,7 @@ for library in "$app/Contents/Frameworks/"*.dylib; do
   /usr/bin/strip -S "$library"
   codesign --force --sign "$identity" "$library" >/dev/null
 done
-for tool in "$app/Contents/Resources/formatters/"*; do
+for tool in "$app/Contents/Resources/"{formatters,git}/*; do
   codesign --force --sign "$identity" "$tool" >/dev/null
 done
 for binary in "$app/Contents/MacOS/"*; do

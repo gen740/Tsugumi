@@ -17,12 +17,12 @@ def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path
         f'head -c {size} /dev/zero | tr "\\000" x > "$TSUGUMI_OUTPUT_DIR/dense"; '
         f'test "$(wc -c < "$TSUGUMI_OUTPUT_DIR/dense")" -eq {size} || exit 21; '
         'printf \'{"doc":{"value":"%s/dense"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-        outputs=FILE_FBS, recordIO=True)
+        outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     read = bash(
         f'test "$(wc -c < "$FILE_DOC")" -eq {size} || exit 22; '
         f'test "$(sha256sum "$FILE_DOC" | cut -d " " -f 1)" = {digest} || exit 23; '
         'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-        inputs=["doc"], outputs=FILE_FBS, recordIO=True)
+        inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
@@ -71,7 +71,7 @@ int tsugumi_main(const tsugumi_call* c) {
 }
 '''
     make = {
-        "type": "code", "language": "cpp", "recordIO": True, "_outputs": FILE_FBS,
+        "type": "code", "retainArtifact": True, "_outputs": FILE_FBS,
         "_nix": '''{ pkgs, inputs, params }: {
   run = pkgs.runCommandCC "sparse-output" {} ''
     mkdir -p $out/lib
@@ -83,7 +83,7 @@ int tsugumi_main(const tsugumi_call* c) {
     read = bash('du -k "$FILE_DOC" | { read -r allocated ignored; test "$allocated" -lt 1024; } || exit 23; '
                 'printf \'{"text":"%s"}\' "$FILE_DOC" > "$TSUGUMI_REPORT"; '
                 'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-                inputs=["doc"], outputs=FILE_FBS, recordIO=True, reuseWorker=True)
+                inputs=["doc"], outputs=FILE_FBS, recordIO=True, retainArtifact=True, reuseWorker=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": read}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")], {"definitions/make/src/main.c": source})

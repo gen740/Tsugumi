@@ -119,6 +119,34 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
   std::lock_guard saving(save_mutex);
   const auto& project = operation.project_id;
   auto resolved_context = context;
+  resolved_context.host_templates = dependencies.host_templates;
+  if (context.origin == "agent" && operation.body.AsProjectTemplateCopy()) {
+    resolved_context.reserve_template_id = [&](const auto& source,
+                                               const auto& allocate) {
+      // Approval names the destination Card. Remember the core's
+      // reservation across retries of the same operation.
+      const auto scope =
+          "template-copy:" +
+          crypto::sha256_hex(project + '\n' + operation.op_id + '\n' + source);
+      {
+        std::lock_guard lock(mutex);
+        auto reserved = db.prepare("SELECT id FROM identifiers WHERE scope=?");
+        reserved.bind(1, scope);
+        if (reserved.step()) return reserved.text(0);
+      }
+      const auto id = allocate();
+      std::lock_guard lock(mutex);
+      db.prepare("INSERT INTO identifiers VALUES(?,?)")
+          .bind(1, scope)
+          .bind(2, id)
+          .run();
+      return id;
+    };
+  }
+  if (context.origin == "ui")
+    resolved_context.read_template_source = [&](const auto& source) {
+      return host::ReadTemplateSource(source, stop);
+    };
   resolved_context.demo = [&](const auto& name) {
     const auto folder = demo_references.Project(name);
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
@@ -132,6 +160,54 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
                                   stop, &reply.wire);
                               return reply;
                             });
+}
+
+auto Tools::ListTemplates(const std::string& project, bool agent,
+                          std::stop_token stop) -> H::TemplateListT {
+  const auto base = host::CaptureSaveBase(InspectProject(project, stop));
+  const auto excluded =
+      agent ? std::optional(ExclusionsFor(project, base)) : std::nullopt;
+  auto visible = [&](const auto& path) {
+    return !excluded || !excluded->Contains(path);
+  };
+  H::TemplateListT result;
+  auto entry = [&](H::TemplateStore store, const auto& name) {
+    auto item = std::make_unique<H::TemplateEntryT>();
+    item->store = store;
+    item->name = name;
+    result.entries.push_back(std::move(item));
+  };
+  std::set<std::string> names;
+  std::set<std::string> hidden;
+  for (const auto& path : host::ProjectPaths(base)) {
+    if (!path.starts_with("templates/")) continue;
+    const auto relative = std::string_view(path).substr(10);
+    const auto slash = relative.find('/');
+    if (slash == std::string_view::npos) continue;
+    const std::string name(relative.substr(0, slash));
+    if (!host::TemplateName(name)) continue;
+    if (!visible(path)) hidden.insert(name);
+    const auto card = relative.substr(slash + 1);
+    if (card.ends_with("/_card.json") && card.find('/') == card.rfind('/'))
+      names.insert(name);
+  }
+  for (const auto& name : names)
+    if (!hidden.contains(name) && visible("templates/" + name))
+      entry(H::TemplateStore::Project, name);
+  host::TemplatePathCheck check;
+  if (excluded) check = [&](const auto& path) { excluded->Check(path); };
+  for (const auto& name :
+       host::HostTemplateNames(dependencies.host_templates, check))
+    entry(H::TemplateStore::Host, name);
+  return result;
+}
+
+auto Tools::AddHostTemplate(const H::TemplateAddT& request,
+                            std::stop_token stop,
+                            const host::TemplatePathCheck& check) -> void {
+  const auto contents = host::ReadTemplateSource(request, stop, check);
+  std::lock_guard saving(save_mutex);
+  host::AddHostTemplate(dependencies.host_templates, request.name, contents);
 }
 
 auto Tools::SaveProject(const std::string& project, json::Members original,
@@ -205,11 +281,6 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
 
 auto Tools::InputTypesQuery(const std::string& project, json::Members args,
                             std::stop_token stop) -> H::InputTypesT {
-  std::optional<std::string> language;
-  if (args.contains("language")) {
-    language = json::Text(args, "language");
-    args.erase("language");
-  }
   std::string bytes;
   const auto envelope =
       RawProjectCall(project, "input_types", json::Encode(args), stop, &bytes);
@@ -219,7 +290,7 @@ auto Tools::InputTypesQuery(const std::string& project, json::Members args,
         json::Object(json::Get(json::Object(envelope), "value", "{}"));
     throw Failure(json::Text(value, "kind"), json::Text(value, "diagnostic"));
   }
-  return host::InputTypes(*reply->value_as_InputTypesResult(), language);
+  return host::InputTypes(*reply->value_as_InputTypesResult());
 }
 
 auto Tools::InspectProject(const std::string& project, std::stop_token stop)
@@ -264,6 +335,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
   const auto inspected = InspectProject(project, stop);
   const auto policy = ExclusionsFor(project, host::CaptureSaveBase(inspected));
   auto args = json::Object(arguments);
+  if (name == "log_range") args.erase("live");
   const bool recorded = UsesRecordedDefinitions(name);
   policy.CheckRequest(name, args, recorded);
   if (name == "project_inspect") {
@@ -404,14 +476,6 @@ auto Tools::UnfilteredProjectCall(const std::string& project,
     H::FileFormatRequestT request;
     request.path = json::Text(args, "path");
     request.text = json::Text(args, "text");
-    const auto language = json::Text(args, "language");
-    bool known = language.empty();
-    for (auto value : Tsugumi::Data::EnumValuesFormatLanguage())
-      if (language == Tsugumi::Data::EnumNameFormatLanguage(value)) {
-        request.language = value;
-        known = true;
-      }
-    if (!known) throw Failure("unsupported", "Unknown formatting language");
     auto formatted = host::Format(request);
     std::vector<std::string> diagnostics;
     for (const auto& d : formatted.diagnostics) {
@@ -1006,20 +1070,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
       call.name == "run_environment_paths") {
     if (!args.contains("limit")) args["limit"] = "8";
   }
-  if (call.name == "document_template") {
-    const auto edit =
-        host::WriteTemplate(json::Text(args, "name"), json::Text(args, "id"));
-    std::vector<std::string> files;
-    for (const auto& file : edit.files)
-      files.push_back(json::Encode(json::Members{
-          {"path", json::Quote(file.path)}, {"text", json::Quote(file.text)}}));
-    return {json::Encode(json::Members{
-                {"definition_json", json::Quote(edit.definition_json)},
-                {"files", json::Encode(files)}}),
-            false,
-            {},
-            {}};
-  }
   if (call.name == "demo_list" || call.name == "demo_read") {
     const auto policy = Exclusions(project, stop);
     return {call.name == "demo_list"
@@ -1334,8 +1384,23 @@ auto Tools::ExecuteTool(const std::string& conversation,
   // Reissuing it after a daemon restart may execute it a second time.
   std::string result;
   std::vector<std::string> file_resources;
-  if (call.name == "project_edit" || call.name == "project_connect" ||
-      call.name == "project_make_subgraph" || call.name == "project_layout") {
+  if (call.name == "template_list") {
+    const auto items = ListTemplates(project, true, stop);
+    std::vector<std::string> entries;
+    for (const auto& item : items.entries)
+      entries.push_back(json::Encode(json::Members{
+          {"name", json::Quote(item->name)},
+          {"store",
+           json::Quote(item->store == H::TemplateStore::Project ? "project"
+                                                                : "host")}}));
+    result = json::Encode(json::Members{
+        {"reply", json::Quote("TemplateList")},
+        {"value",
+         json::Encode(json::Members{{"entries", json::Encode(entries)}})}});
+  } else if (call.name == "project_edit" || call.name == "project_connect" ||
+             call.name == "project_make_subgraph" ||
+             call.name == "project_layout" || call.name == "template_copy" ||
+             call.name == "template_add" || call.name == "template_import") {
     result = EditProjectTool(conversation, project, call, args, op_id, boundary,
                              interrupted, stop);
   } else if (interrupted && spec->mutating) {
@@ -1471,7 +1536,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
       } else if (call.name == "project_edit" ||
                  call.name == "project_connect" ||
                  call.name == "project_make_subgraph" ||
-                 call.name == "project_layout") {
+                 call.name == "project_layout" ||
+                 call.name == "template_copy") {
         result = EditProjectTool(conversation, project, call, args, op_id,
                                  boundary, false, stop);
       } else {
@@ -1766,6 +1832,21 @@ auto Tools::Handle(const RequestIn& request, bool human,
               conversations->GetConversation(conversation).project;
           const auto digest = crypto::sha256_hex(call.name + "\n" + project +
                                                  "\n" + json::Encode(args));
+          // Explicitly guarded calls wait for approval before recording a
+          // sent receipt. A retry must resume the approved call ID.
+          if (spec->approval_required) {
+            auto approval = db.prepare(
+                "SELECT call FROM permission_requests WHERE conversation=? "
+                "AND project=? AND access=? AND digest=? AND state "
+                "IN ('pending','allowed') ORDER BY rowid DESC LIMIT 1");
+            approval.bind(1, conversation)
+                .bind(2, project)
+                .bind(3, static_cast<int>(host::ApprovalKind::Operation))
+                .bind(4, digest);
+            if (approval.step()) result.id = approval.text(0);
+          }
+          if (!result.id.empty())
+            return wire::AgentReply(request.request_id, std::move(result));
           auto receipts =
               conversations->ConversationDatabase(conversation)
                   .prepare(
@@ -1817,6 +1898,7 @@ auto Tools::Handle(const RequestIn& request, bool human,
       std::shared_ptr<std::stop_source> shell_stop;
       const auto shell_key = std::make_pair(id, call.id);
       if (call.name == "project_shell" || call.name == "project_copy" ||
+          call.name == "template_add" || call.name == "template_import" ||
           call.name == "run_status" || call.name == "run") {
         if (file_calls.contains(shell_key))
           throw Failure("busy", "This tool call is already running");

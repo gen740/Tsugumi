@@ -1,10 +1,9 @@
 #include "host/format.hh"
 
 #include <algorithm>
-#include <atomic>
 #include <cctype>
-#include <chrono>
 #include <filesystem>
+#include <optional>
 #include <regex>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -94,19 +93,6 @@ auto pretty_json(const std::string& raw) -> std::string {
   return out + "\n";
 }
 
-auto language_of(const std::string& path) -> std::optional<D::FormatLanguage> {
-  auto ext = stdfs::path(path).extension().string();
-  if (ext == ".json") return D::FormatLanguage::json;
-  if (ext == ".cc" || ext == ".cpp" || ext == ".cxx" || ext == ".hh" ||
-      ext == ".hpp" || ext == ".h")
-    return D::FormatLanguage::cpp;
-  if (ext == ".py") return D::FormatLanguage::python;
-  if (ext == ".nix") return D::FormatLanguage::nix;
-  if (ext == ".sh" || ext == ".bash") return D::FormatLanguage::bash;
-  if (ext == ".fbs") return D::FormatLanguage::fbs;
-  return std::nullopt;
-}
-
 // Byte offset of 1-based line/column in text.
 auto offset_of(const std::string& text, uint64_t line, uint64_t col)
     -> uint64_t {
@@ -122,18 +108,14 @@ auto offset_of(const std::string& text, uint64_t line, uint64_t col)
 }  // namespace
 
 auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
-  const auto* r = &request;
-  std::string rel = r->path;
+  const auto& rel = request.path;
   if (!fs::valid_relative_path(rel))
     throw ProjectFailure("invalid_path", "invalid path " + rel);
-  auto lang = r->language != D::FormatLanguage::unspecified
-                  ? std::optional(r->language)
-                  : language_of(rel);
-  if (!lang)
-    throw ProjectFailure("unsupported", "the language of " + rel +
-                                            " is not known; pass language");
+  const auto extension = stdfs::path(rel).extension();
+  if (extension != ".json" && extension != ".nix")
+    throw ProjectFailure("unsupported", "Formatting supports .json and .nix");
   H::FileFormatResultT result;
-  std::string text = r->text;
+  auto text = request.text;
   auto syntax = [&](const std::string& message,
                     std::optional<uint64_t> offset) {
     auto d = std::make_unique<D::DiagnosticT>();
@@ -145,7 +127,7 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
                        : flatbuffers::nullopt;
     result.diagnostics.push_back(std::move(d));
   };
-  if (*lang == D::FormatLanguage::json) {
+  if (extension == ".json") {
     try {
       schema::Json j;
       j.value() = schema::capture(text);
@@ -154,40 +136,7 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
       syntax(e.what(), std::nullopt);
     }
   } else {
-    // tool, arguments before the file, whether it rewrites the file in place
-    struct Tool {
-      const char* exe;
-      std::vector<std::string> args;
-      bool in_place;
-      const char* ext;
-    };
-    Tool tool;
-    switch (*lang) {
-      case D::FormatLanguage::cpp:
-        tool = {TSUGUMI_FORMAT_CLANG,
-                {"--style={BasedOnStyle: Google, ColumnLimit: 110}",
-                 "--fallback-style=none"},
-                false,
-                ".cc"};
-        break;
-      case D::FormatLanguage::python:
-        tool = {TSUGUMI_FORMAT_RUFF,
-                {"format", "--isolated", "--no-cache", "--target-version",
-                 "py313", "--line-length", "88"},
-                true,
-                ".py"};
-        break;
-      case D::FormatLanguage::nix:
-        tool = {TSUGUMI_FORMAT_NIX, {}, true, ".nix"};
-        break;
-      case D::FormatLanguage::bash:
-        tool = {TSUGUMI_FORMAT_SH, {"-i", "2", "-ln", "bash"}, false, ".sh"};
-        break;
-      default:
-        throw ProjectFailure("unsupported",
-                             "no formatter is provided for this language");
-    }
-    std::string exe = tool.exe;
+    std::string exe = TSUGUMI_FORMAT_NIX;
 #ifdef __APPLE__
     if (exe.starts_with("@bundle/")) {
       uint32_t size = 0;
@@ -203,11 +152,10 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
 #endif
     if (exe.empty() || !stdfs::path(exe).is_absolute())
       throw ProjectFailure("unsupported",
-                           "This host build does not provide the formatter");
+                           "This host build does not provide nixfmt");
     auto dir =
         stdfs::temp_directory_path() / ("tsugumi-format-" + crypto::uuid4());
-    auto file = dir / (std::string("source") + tool.ext);
-    fs::write_atomic(file, text, 0600);
+    const auto file = dir / "source.nix";
     struct Cleanup {
       stdfs::path d;
       ~Cleanup() {
@@ -215,14 +163,12 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
         stdfs::remove_all(d, ec);
       }
     } cleanup{dir};
+    fs::write_atomic(file, text, 0600);
     proc::Spec spec;
-    spec.argv = {exe};
-    spec.argv.insert(spec.argv.end(), tool.args.begin(), tool.args.end());
-    spec.argv.push_back(file.string());
+    spec.argv = {exe, file.string()};
     // No user/project configs, locale, executable lookup or home directory.
     spec.env = {"LANG=C", "LC_ALL=C", "HOME=" + dir.string(),
-                "XDG_CONFIG_HOME=" + dir.string(),
-                "SHFMT_NO_EDITORCONFIG=true"};
+                "XDG_CONFIG_HOME=" + dir.string()};
     spec.cwd = dir.string();
     std::string err;
     auto res = proc::run(spec, nullptr, std::nullopt, [&](auto chunk) {
@@ -236,13 +182,13 @@ auto Format(const H::FileFormatRequestT& request) -> H::FileFormatResultT {
       std::optional<uint64_t> off;
       if (std::regex_search(err, m, pos))
         off = offset_of(text, std::stoull(m[1]), std::stoull(m[2]));
-      std::string msg = err.empty() ? std::string(tool.exe) + " failed" : err;
+      std::string msg = err.empty() ? "nixfmt failed" : err;
       std::string shown = file.string();
       for (size_t at; (at = msg.find(shown)) != std::string::npos;)
         msg.replace(at, shown.size(), rel);
       syntax(msg, off);
     } else {
-      text = tool.in_place ? fs::read_file_or_throw(file) : res.out;
+      text = fs::read_file_or_throw(file);
     }
   }
   result.text = std::move(text);

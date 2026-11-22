@@ -19,6 +19,7 @@
 #include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/log.hh"
+#include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/module_source.hh"
 #include "tsugumi/workerd/protocol.hh"
 #include "tsugumi/workerd/store_result.hh"
@@ -251,7 +252,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  if (spawn.program.bash || job.r_params_environment)
+  if (spawn.program.bash)
     for (const auto* v : *call.environment())
       if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
         request.params.json = v->value()->str();
@@ -342,7 +343,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
   std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
-  InvocationLog invocation_log(job->log_limit_bytes);
+  InvocationLog invocation_log(kRemoteLogTransportBytes);
   const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;

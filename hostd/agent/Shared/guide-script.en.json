@@ -126,7 +126,7 @@
         "farewell": {
           "show": {
             "highlight": "chat",
-            "say": "You can edit this copy freely. Call me any time with $demo.",
+            "say": "You can edit this copy freely. Call me any time with $demo. To reuse Cards and their wiring in another workflow, choose Add Card → From Template… in that workflow.",
             "actions": [
               {
                 "kind": "show_demos",

@@ -1,15 +1,5 @@
 include(${CMAKE_CURRENT_LIST_DIR}/agent-resources.cmake)
 
-set(_template_files "")
-foreach(name basic input/Sources/InputTemplates/inputs visualization reports csharp marimo go rust)
-  list(APPEND _template_files ${PROJECT_SOURCE_DIR}/ui/shared/templates/${name}.json)
-endforeach()
-add_custom_command(OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
-  COMMAND ${CMAKE_COMMAND} -DINPUT_DIR=${PROJECT_SOURCE_DIR}/ui/shared/templates
-    -DOUTPUT=${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
-    -P ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
-  DEPENDS ${_template_files} ${PROJECT_SOURCE_DIR}/cmake/embed_templates.cmake
-    ${PROJECT_SOURCE_DIR}/cmake/embed.cmake VERBATIM)
 include(${CMAKE_CURRENT_LIST_DIR}/host-agent-sources.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/host-util-sources.cmake)
 include(${CMAKE_CURRENT_LIST_DIR}/host-transport-sources.cmake)
@@ -39,7 +29,6 @@ add_library(tsugumi_host_core STATIC
   ${PROJECT_SOURCE_DIR}/hostd/src/project_operations.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/document_edits.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/templates.cc
-  ${CMAKE_CURRENT_BINARY_DIR}/host_templates.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/permission_kinds.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/guide.cc
   ${PROJECT_SOURCE_DIR}/hostd/src/service.cc
@@ -51,11 +40,11 @@ add_library(tsugumi_host_core STATIC
   ${PROJECT_SOURCE_DIR}/hostd/src/projects.cc
   ${_tsugumi_host_environment_sources}
 )
-# Absolute paths to the pinned host tools. Empty means unavailable; never search PATH.
-foreach(tool CLANG RUFF NIX SH)
-  set(TSUGUMI_FORMAT_${tool} "" CACHE STRING "Host formatter ${tool}: absolute path or @bundle/name on macOS")
-  target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_FORMAT_${tool}="${TSUGUMI_FORMAT_${tool}}")
-endforeach()
+find_program(TSUGUMI_TEMPLATE_GIT NAMES git REQUIRED)
+target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_TEMPLATE_GIT="${TSUGUMI_TEMPLATE_GIT}")
+# Empty disables Nix formatting.
+set(TSUGUMI_FORMAT_NIX "" CACHE STRING "nixfmt: absolute path or @bundle/name on macOS")
+target_compile_definitions(tsugumi_host_core PRIVATE TSUGUMI_FORMAT_NIX="${TSUGUMI_FORMAT_NIX}")
 if(APPLE)
   target_link_libraries(tsugumi_host_core PRIVATE "-framework CoreFoundation")
 else()
@@ -65,7 +54,7 @@ endif()
 target_include_directories(tsugumi_host_core PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/private ${CMAKE_CURRENT_SOURCE_DIR}/agent/private)
 target_compile_options(tsugumi_host_core PRIVATE -Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
 target_link_libraries(tsugumi_host_core PUBLIC tsugumi_trace_codec tsugumi_rpc_schema tsugumi_protocol tsugumi_json flatbuffers::flatbuffers
-  Threads::Threads tsugumi_transport tsugumi_document tsugumi_sdk_describe tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
+  Threads::Threads tsugumi_transport tsugumi_document tsugumi_client CURL::libcurl tsugumi_worker_protocol tsugumi_peer_tls tsugumi_launch_paths)
 target_link_libraries(tsugumi_host_core PRIVATE native_sqlite)
 if(NOT APPLE)
   target_link_libraries(tsugumi_host_core PRIVATE PkgConfig::CRYPTO)

@@ -49,7 +49,7 @@ RUN_LIST_OUTPUT = 'table Number { value:ulong; } table Outputs { out:Number (req
 # Each remote job realizes its dependencies in a private store, even during a batch.
 RUN_LIST_TIMEOUT_SECONDS = 1200
 RUN_LIST_REMOTE = {
-    "type": "code", "language": "bash", "recordIO": True, "executionService": "remote-test",
+    "type": "code", "recordIO": True, "executionService": "remote-test",
     "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS, "_outputs": RUN_LIST_OUTPUT,
 }
 
@@ -290,7 +290,7 @@ def fixture(project):
     source = {"type": "input", "params": [{"name": "value", "type": "string", "data": "payload.txt"}],
               "_outputs": FILE_FBS}
     settings = {
-        "type": "code", "language": "bash", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
+        "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
         "executionService": "remote-test",
         "retainArtifact": True, "artifactOutput": "doc", "recordIO": True, "timeoutSeconds": 600,
     }
@@ -377,7 +377,7 @@ def test_remote_display_serves_card_owned_modules(project, core_factory, module_
             ''}}/index.js $out/index.js
           '';
         """
-    definition = {"type": "code", "language": "bash", "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
+    definition = {"type": "code", "timeoutSeconds": RUN_LIST_TIMEOUT_SECONDS,
                   "_outputs": "table Outputs {} root_type Outputs;",
                   "_nix": "{ pkgs, inputs, params }: { " + views + " run = ''" + script + "''; }"}
     write(project, {"display": definition},
@@ -449,7 +449,7 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
 def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
     definitions = {
         "source": {
-            "type": "code", "language": "bash", "_outputs": RUN_LIST_OUTPUT,
+            "type": "code", "_outputs": RUN_LIST_OUTPUT,
             "_nix": """
                 { pkgs, inputs, params }: {
                   run = [
@@ -548,7 +548,7 @@ def test_remote_transfers_only_declared_outputs(project, core_factory, remote_br
               'mkfifo "$TSUGUMI_WORK_DIR/undeclared-fifo"; '
               'mkfifo "$TSUGUMI_TMP_DIR/undeclared-fifo"; '
               'printf \'{"doc":{"value":"%s/%s"}}\' "$TSUGUMI_OUTPUT_DIR" "$result" > "$TSUGUMI_OUTPUT"')
-    definition = bash(script, outputs=schema, executionService="remote-test", recordIO=True,
+    definition = bash(script, outputs=schema, executionService="remote-test", retainArtifact=True,
                       timeoutSeconds=600)
     write(project, {"copy": definition}, [card("copy", "copy")], [])
     scratch = tmp_path / "scratch"
@@ -567,7 +567,7 @@ def test_remote_tools_come_from_the_definition_and_are_recorded(project, core_fa
     """Remote bodies and hooks use the same definition-owned tools and inventory as local runs."""
     from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
 
-    write(project, {"work": {"type": "code", "language": "bash", "recordIO": True, "executionService": "remote-test",
+    write(project, {"work": {"type": "code", "recordIO": True, "executionService": "remote-test",
                              "timeoutSeconds": 600, "_outputs": TXT, "_nix": DEFINITION_TOOLS_NIX}},
           [card("work", "work")], [])
     client = core_factory().connect()

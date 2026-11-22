@@ -30,7 +30,7 @@ from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerResult import WorkerResultT
-from tsugumi_client import RpcFailure, make, new_id, path, text
+from tsugumi_client import change, RpcFailure, make, new_id, path, text
 
 
 class Gateway(socketserver.ThreadingUnixStreamServer):
@@ -327,17 +327,25 @@ def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, rem
 
 
 @pytest.fixture
-def running_job(project, remote_gateway, core_factory, tmp_path):
+def running_job(project, remote_gateway, core_factory, tmp_path, request):
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [], outputs=FILE_FBS, executionService="cluster",
                    retainArtifact=True, artifactOutput="doc",
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
+    limit = getattr(request, "param", 128 << 20)
+    if hasattr(request, "param"):
+        snapshot = client.call("ProjectInspectRequest")
+        config = json.loads(text(snapshot.projectJson))
+        config["logLimitBytes"] = limit
+        client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
+                    changes=[change("SetProject", json=json.dumps(config))])
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     job_id = text(live.executionJobId)
     assert remote_gateway.submit_count == 1
     spec = remote_gateway.specs[job_id]
+    assert spec.logLimitBytes == limit
     assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
     try:
         yield remote_gateway, daemon, client, run_id, job_id
@@ -412,7 +420,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
 def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_factory):
     """A target-system evaluation error is visible before any upload or submission."""
     client = core_factory(mocked_builds=True).connect()
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {}, "executionService": "cluster"},
+    Project(project).card("work", {"type": "code", "sandbox": {}, "executionService": "cluster"},
                           outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
@@ -676,11 +684,12 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
     assert gateway.download_count == 0 and gateway.submit_count == 1
 
 
+@pytest.mark.parametrize("running_job", [6], indirect=True)
 def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
-    limit = 128 << 20
+    limit = 6
     logs = b'{"stream":1,"text":"remote output"}\n'
-    gateway.receipts[job_id]["log_truncated"] = True
+    gateway.live_logs[job_id] = logs
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
         and text(n.value.runId) == run_id
@@ -690,7 +699,10 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     live = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1)
     assert live.record.summary.logTruncatedAtBytes == limit
     assert live.record.summary.state == CardState.running
-    gateway.finish(job_id, logs=logs, log_truncated=True)
+    full = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
+                       stream=LogStream.standard_output, tail=True, live=True)
+    assert text(full.text) == "remote output"
+    gateway.finish(job_id, logs=logs)
     assert wait_run(client, run_id).state == RunState.succeeded
     daemon.restart()
     client = daemon.connect()
@@ -702,7 +714,7 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     journal = client.call("LogRangeRequest", runId=run_id, card=path("work"), invocation=1,
                           stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
-    assert text(stdout.text).strip() == "remote output"
+    assert text(stdout.text) == "remote"
 
 
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):

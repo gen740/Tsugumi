@@ -106,7 +106,10 @@ struct RunLogView: View {
   @State private var exportError: String?
 
   private var source: LogStreamReader.Source {
-    LogStreamReader.Source(runId: runId, card: card, invocation: card == nil ? nil : (invocation ?? resolved), stream: stream)
+    LogStreamReader.Source(runId: runId, card: card, invocation: card == nil ? nil : (invocation ?? resolved), stream: stream,
+                           live: session.runActive && runId == session.currentRunId &&
+                             (stream == .standardOutput || stream == .standardError),
+                           recordingRevision: session.recordingRevision)
   }
 
   var body: some View {
@@ -131,7 +134,7 @@ struct RunLogView: View {
       LogTextView(reader: reader, placeholder: emptyReason)
         .frame(maxWidth: .infinity, maxHeight: .infinity)
       if let limit = reader.truncatedAt {
-        Text("ログはここで切り詰めました（上限 \(limit / 1_048_576) MiB）").font(.caption.weight(.semibold)).padding(.horizontal, 6)
+        Text("ログはここで切り詰めました（上限 \(limit) バイト）").font(.caption.weight(.semibold)).padding(.horizontal, 6)
       }
       if let error = reader.error ?? exportError { Text(error).font(.caption).foregroundStyle(.red).padding(.horizontal, 6) }
     }

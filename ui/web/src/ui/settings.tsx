@@ -346,13 +346,9 @@ std::vector<uint64_t> steps(uint64_t n, size_t limit = 1000) {
   return seen;
 }
 `,
-  nix: `# A Python Card with one extra package
+  nix: `# A Nix definition with a helper export
 { pkgs, inputs, params }:
 {
-  run = inputs.tsugumi.pythonCard {
-    src = ./src;
-    packages = ps: [ ps.numpy ];
-  };
   exports = { scale = x: x * 2; };
 }
 `,

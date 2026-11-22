@@ -50,14 +50,14 @@ TEST_F(VersionNote,
   Put("tsugumi.json",
       R"({"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
   Put("definitions/a/_card.json",
-      R"({"type":"code","language":"python","params":[{"name":"secret","data":"FIRST"}]})");
+      R"({"type":"code","params":[{"name":"secret","data":"FIRST"}]})");
   Put("definitions/b/_card.json", R"({"type":"code"})");
   Put("definitions/a/src/main.py", std::string(15000, '#') + "\n");
   Versions versions(root);
   const auto first = versions.init();
   ExpectChanges(versions.note(first).record_json, {"a", "b"}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"type":"code","language":"python","params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
+      R"({"type":"code","params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
   const auto params = versions.commit_all("Parameters");
   const auto neutral = versions.note(params).record_json;
   ExpectChanges(neutral, {}, {}, {{"a", {"parameters"}}});
@@ -65,12 +65,12 @@ TEST_F(VersionNote,
   EXPECT_EQ(neutral.find("PRIVATE_SENTINEL"), std::string::npos);
   Put("definitions/a/_card.json",
       "{ \"params\": [ { \"data\": \"PRIVATE_SENTINEL\", \"name\": \"secret\" "
-      "} ], \"language\": \"python\", \"type\": \"code\" "
+      "} ], \"type\": \"code\" "
       "}");
   const auto formatting = versions.commit_all("Formatting");
   ExpectChanges(versions.note(formatting).record_json, {}, {}, {});
   Put("definitions/a/_card.json",
-      R"({"type":"code","language":"python","grants":{"network":true},"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
+      R"({"type":"code","grants":{"network":true},"params":[{"name":"secret","data":"PRIVATE_SENTINEL"}]})");
   Put("definitions/a/src/main.py",
       "# CHANGED_SOURCE_SENTINEL\n" + std::string(15000, '#'));
   Put("definitions/c/_card.json", R"({"type":"code"})");
@@ -92,10 +92,12 @@ TEST_F(VersionNote,
   EXPECT_TRUE(versions.diff(change).text.empty());
   EXPECT_THROW(versions.note(std::string(40, '0')), std::exception);
   Put("definitions/a/src/main.rs", "fn main() {}");
-  Put("definitions/a/src/_card.json", "not a Card document");
+  Put("definitions/a/src/_card.json", "nested source");
   change = versions.commit_all("Source inputs");
   ExpectChanges(versions.note(change).record_json, {}, {}, {{"a", {"source"}}});
-  EXPECT_TRUE(versions.diff(change).text.empty());
+  const auto diff = versions.diff(change).text;
+  EXPECT_NE(diff.find("fn main() {}"), std::string::npos);
+  EXPECT_NE(diff.find("nested source"), std::string::npos);
 }
 TEST_F(VersionNote, NestedCardsAndTheEntryLimitUseTheFullDiff) {
   Put("tsugumi.json",
@@ -137,6 +139,30 @@ TEST_F(VersionNote, NeutralCommitsAndRunNotesSurviveReopening) {
   EXPECT_TRUE(*Record<version_record::Run>(
                    facts.commits.front().runs.front().record_json)
                    .whole);
+}
+TEST_F(VersionNote, DiffIncludesTextAcrossTheDefinitionAndExcludesData) {
+  Put("tsugumi.json", "{}");
+  Put("definitions/a/binary", std::string("old\0binary", 10));
+  Put("definitions/a/large", std::string(1024 * 1024 + 1, 'x'));
+  Versions versions(root);
+  versions.init();
+  Put("definitions/a/binary", "changed from binary");
+  Put("definitions/a/large", "changed from oversized");
+  Put("definitions/a/added.bin", std::string("new\0binary", 10));
+  Put("definitions/a/config/settings.toml", "threshold = 3\n");
+  Put("definitions/a/README", "definition text\n");
+  Put("definitions/a/data/hidden.txt", "data sentinel\n");
+  Put("definitions/a/src/measurements.csv", "raw csv sentinel\n");
+  Put("otherwise.txt", "outside sentinel\n");
+  std::filesystem::create_symlink("README", root / "definitions/a/link");
+  const auto diff = versions.diff(versions.commit_all("Change")).text;
+  EXPECT_NE(diff.find("threshold = 3"), std::string::npos);
+  EXPECT_NE(diff.find("definition text"), std::string::npos);
+  EXPECT_EQ(diff.find("definitions/a/binary"), std::string::npos);
+  EXPECT_EQ(diff.find("definitions/a/added.bin"), std::string::npos);
+  EXPECT_EQ(diff.find("definitions/a/large"), std::string::npos);
+  EXPECT_EQ(diff.find("definitions/a/link"), std::string::npos);
+  EXPECT_EQ(diff.find("sentinel"), std::string::npos);
 }
 TEST_F(VersionNote, DiffComparesTheChosenVersionsWithoutChangingGit) {
   Put("tsugumi.json", "{}");

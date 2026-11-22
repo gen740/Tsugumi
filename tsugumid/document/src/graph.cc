@@ -331,8 +331,6 @@ class Builder {
       if (const auto* v = schema::get(f)) out = *v;
     };
     str(d.symbol, s.symbol);
-    if (const auto* lang = schema::get(d.language))
-      s.language = *lang == "none" ? "" : *lang;
     if (const auto* t = schema::get(d.trigger)) {
       if (*t == "allInputs" || *t == "eachInput")
         s.any_mode = *t == "eachInput";
@@ -369,6 +367,8 @@ class Builder {
             s.timeout_seconds);
     timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds),
             s.build_timeout_seconds);
+    boolean(d.record_logs, s.record_logs);
+    boolean(d.record_displays, s.record_displays);
     boolean(d.record_io, s.record_io);
     boolean(d.retain_artifact, s.retain_artifact);
     if (const auto* sandbox = schema::get(d.sandbox)) {
@@ -671,6 +671,13 @@ class Builder {
       // An unreadable definition is already diagnosed above; it declares no
       // ports and cannot run, like a Draft.
       n.kind = def ? card_type_of(*def) : CardType::Draft;
+      // The accepted Document owns this resolution. Edits only affect later runs.
+      n.settings.record_logs = project.record_logs->value_or(true);
+      n.settings.record_displays = project.record_displays->value_or(true);
+      n.settings.record_io = project.record_io->value_or(false);
+      n.settings.retain_artifact = project.retain_artifact->value_or(false);
+      n.settings.log_limit_bytes =
+          project.log_limit_bytes->value_or(schema::kDefaultLogLimitBytes);
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -743,11 +750,6 @@ class Builder {
       for (const auto& in : n.input_defs)
         n.inputs.push_back(
             {in.name, PortKind::FlatBuffer, in.optional, nullptr});
-      if (n.settings.retain_artifact) {
-        if (!n.settings.artifact_output)
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "retainArtifact needs artifactOutput"));
-      }
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;

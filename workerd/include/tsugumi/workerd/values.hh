@@ -60,6 +60,8 @@ struct Value {
   types::TypeRef type;
   std::string bytes;
   std::optional<std::string> artifact_id;
+  // Project state-relative history path, carried independently of staging.
+  std::optional<std::string> recorded_path = std::nullopt;
 };
 
 auto with_path(const Value& value, const std::string& path) -> Value;

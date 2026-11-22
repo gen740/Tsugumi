@@ -35,8 +35,9 @@ class Db;
 struct ExecutionResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
-  std::vector<std::pair<LogStream, std::string>> logs;
-  bool log_truncated = false;
+  // Completed remote build and journal entries commit with the invocation.
+  std::vector<std::pair<LogStream, std::string>> auxiliary_logs = {};
+  bool auxiliary_logs_truncated = false;
 };
 
 // One invocation handed to a backend.
@@ -75,8 +76,6 @@ struct ExecutionRequest {
   uint64_t log_limit_bytes = kInvocationLogLimitBytes;
   std::function<void(std::string_view, std::string_view, uint64_t, uint64_t)>
       transfer = {};
-  // First omission reported by a remote worker, before its logs are imported.
-  std::function<void()> log_truncated = {};
   std::function<void(int64_t, int64_t)> on_remote_validation = {};
   std::stop_token stop = {};
 };

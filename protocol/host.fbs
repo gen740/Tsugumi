@@ -250,7 +250,8 @@ table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (requ
 table ProjectCopyItem { from:string (required); id:string (required); name:string; x:double; y:double; demo:string; folder:string; }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
-table ProjectCreateCard { project_path:string; id:string (required); template:string (required); name:string; x:double; y:double; automatic_placement:bool; }
+enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Branch, Fork, Merge, Collect }
+table ProjectCreateCard { project_path:string; id:string (required); kind:BuiltinCard; name:string; x:double; y:double; automatic_placement:bool; }
 enum ProjectLayoutAction:ubyte { Arrange, Untangle }
 table ProjectLayout {
   project_path:string;
@@ -268,13 +269,35 @@ table ProjectReplaceDocuments { expected_rev:ulong; documents:[ProjectDocument];
 enum ProjectSelectionAction:ubyte { Place, Delete, DeleteDefinitions, DisconnectInputs, DisconnectOutputs, RemoveConnections }
 table ProjectSelection { project_path:string; action:ProjectSelectionAction; cards:[string]; notes:[string]; connections_json:string; x:double; y:double; }
 table ProjectReload { expected_rev:ulong; approved_permissions:[string]; }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload }
+enum TemplateStore:ubyte { Unspecified, Project, Host }
+table TemplateEntry { store:TemplateStore; name:string (required); }
+table TemplateListRequest { project_id:string (required); }
+table TemplateList { entries:[TemplateEntry]; }
+// A folder path or a public HTTPS Git repository, ref and template subdirectory.
+table TemplateFolder { path:string (required); }
+table TemplateGit { url:string (required); ref:string (required); subdirectory:string (required); }
+union TemplateSource { TemplateFolder, TemplateGit }
+table TemplateAdd { name:string (required); source:TemplateSource; }
+table HostTemplateAddRequest { addition:TemplateAdd (required); }
+// The project store belongs to the root project, even when copying into a subgraph.
+table ProjectTemplateCopy {
+  project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);
   body:ProjectOperationBody;
 }
 table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
+
+table RunCategoryDeleteRequest {
+  project_id:string (required);
+  run_id:string (required);
+  category:Tsugumi.RPC.RunRecordCategory;
+  op_id:string (required);
+}
+table RunFileReferencesRequest { project_id:string (required); run_id:string (required); }
 
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
@@ -459,16 +482,13 @@ table VersionCanvasRequest {
 /// Read the project version’s comment changes from its first parent.
 table VersionCommentsRequest { project:string (required); commit:string (required); }
 
-/// -> InputTypes. Read each incoming wire's source, kind and complete input
-/// definition as Card code sees it. May help when writing a Card; routing types
-/// are resolved automatically. language defaults to the Card implementation;
-/// pass it for a Draft, or "schema" for plain tables. output_port selects
-/// one upstream output instead. No result size limit.
+/// -> InputTypes. Read the project revision and each incoming wire's source,
+/// port, kind, resolution state and full FlatBuffers schema text.
+/// output_port selects one upstream output instead. No result size limit.
 table InputTypesRequest {
   project:string (required);
   card:Tsugumi.Data.CardPath (required);
   output_port:string;
-  language:string;
   at_rev:ulong = null;
 }
 table InputType {
@@ -479,12 +499,14 @@ table InputType {
   kind:string;
   /// no_source, unresolved or resolved.
   state:string (required);
+  /// Complete .fbs schema when resolved.
   definition:string;
 }
-table InputTypes { rev:ulong = null; language:string; inputs:[InputType]; }
+table InputTypes { rev:ulong = null; inputs:[InputType]; }
 
-// Pure editing support: paths select a language and label diagnostics, never files.
-table FileFormatRequest { path:string (required); text:string (required); language:Tsugumi.Data.FormatLanguage; }
+// Format supplied editor text. The .json or .nix extension selects the formatter
+// and the supplied path labels diagnostics.
+table FileFormatRequest { path:string (required); text:string (required); }
 table FileFormatResult { text:string (required); diagnostics:[Tsugumi.Data.Diagnostic]; }
 // Language applies on every read, including commits/runs created by another client.
 table HostVersionDiffRequest { project:string (required); commit:string (required); from_commit:string; }
@@ -517,6 +539,8 @@ union RequestPayload {
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
   CardSecretListRequest, CardSecretSetRequest,
+  RunCategoryDeleteRequest, RunFileReferencesRequest,
+  TemplateListRequest, HostTemplateAddRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -531,6 +555,9 @@ union ReplyPayload {
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
   CardSecretList,
+  RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
+  RunFileReferences:Tsugumi.RPC.RunFileReferences,
+  TemplateList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

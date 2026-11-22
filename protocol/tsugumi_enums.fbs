@@ -80,8 +80,6 @@ enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 
 enum ValidateMode : ubyte { unspecified = 0, structure = 1, executable = 2 }
 
-enum FormatLanguage : ubyte { unspecified = 0, cpp = 1, python = 2, bash = 3, nix = 4, json = 5, fbs = 6 }
-
 enum OperationState : ubyte { unspecified = 0, unknown = 1, pending = 2, completed = 3 }
 
 enum SDKState : ubyte { unspecified = 0, pending = 1, ready = 2 }

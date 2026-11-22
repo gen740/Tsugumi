@@ -158,12 +158,11 @@ auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,
 
 auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
                    std::span<const Value> original_inputs, int output_root,
-                   const std::string& output_alias, int input_root,
+                   const std::string& output_alias,
                    const stdfs::path& input_directory,
                    const stdfs::path& destination, OutputDelivery delivery,
                    const std::atomic<bool>& cancel,
                    const fs::TransferProgress& progress) -> void {
-  stdfs::path forwarded;
   for (auto& value : outputs) {
     if (value.kind == PortKind::FlatBuffer) continue;
     const auto actual = path_value(value);
@@ -207,18 +206,12 @@ auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
     } else if (std::ranges::any_of(inputs, [&](const Value& in) {
                  return in.kind == value.kind && path_value(in) == actual;
                })) {
-      if (forwarded.empty()) {
-        forwarded = stdfs::path("out") / (".forwarded-" + crypto::uuid4());
-        if (!stdfs::create_directories(destination.parent_path() / forwarded))
-          throw Failed(FailureKind::output_invalid,
-                       "cannot create a private forwarded output directory");
-      }
-      rel = forwarded / std::to_string(&value - outputs.data()) /
-            stdfs::path(*actual).filename();
-      copy_output(input_root,
-                  stdfs::path(*actual).lexically_relative(input_directory),
-                  destination.parent_path() / rel, value.kind, cancel, delivery,
-                  progress);
+      const auto input = stdfs::path(*actual).lexically_relative(input_directory);
+      const auto path = remote::relative_path(input.generic_string());
+      if (*path.begin() != "inputs")
+        throw Failed(FailureKind::output_invalid, "remote forward is outside staging");
+      value = with_path(value, path.generic_string());
+      continue;
     } else {
       throw Failed(FailureKind::output_invalid,
                    "remote output points outside its output directory");
@@ -301,8 +294,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
     worker.set_logs(invocation.log);
     StagingHandle output_directory(worker.out_dir(),
                                    local ? "worker" : "remote");
-    std::optional<StagingHandle> input_directory;
-    if (!local) input_directory.emplace(invocation.input_directory, "remote");
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
     auto outcome = worker.call(std::move(frame), id, invocation.cancel,
@@ -326,8 +317,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
       const std::atomic<bool> no_cancel{false};
       stage_outputs(
           result.outputs, inputs, invocation.inputs, output_directory.get(),
-          worker.out_dir(), input_directory ? input_directory->get() : -1,
-          invocation.input_directory,
+          worker.out_dir(), invocation.input_directory,
           local && !needs_out ? stdfs::path{} : invocation.output_directory,
           invocation.delivery,
           invocation.cancel ? *invocation.cancel : no_cancel,

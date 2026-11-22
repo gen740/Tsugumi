@@ -6,7 +6,7 @@ enum HomeTips {
   static let all: [String] = [
     String(localized: "Draft を置いて線でつなぐと、まず処理の流れだけを描けるよ"),
     String(localized: "Draft の実装は、チャットから Agent に頼めるよ"),
-    String(localized: "Card は C++ でも Python でも bash でも書けるよ"),
+    String(localized: "テンプレートから複数の Card と配線をまとめてコピーできるよ"),
     String(localized: "途中の Card を直したら、保存された入力でそこから試し直せるよ"),
     String(localized: "Card の実行履歴から、前の入力と出力をいつでも見返せるよ"),
     String(localized: "実行環境は Nix で固定。同じ計算をもう一度確かめられるよ"),

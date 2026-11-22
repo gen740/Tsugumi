@@ -255,9 +255,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     const auto ptype = NixRunner::params_type(node);
     return workerd::InvocationParameters{
         ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node),
-        build.bash || node.settings.language == "r"
-            ? std::optional(NixRunner::params_json(node, false))
-            : std::nullopt};
+        build.bash ? std::optional(NixRunner::params_json(node, false))
+                   : std::nullopt};
   };
   invocation.output_directory = request.directory / "out";
   if (uid && ::geteuid() == 0 && worker_uid_on_host())
@@ -304,8 +303,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
-  return {
-      std::move(completed.outputs), std::move(completed.failure), {}, false};
+  return {std::move(completed.outputs), std::move(completed.failure)};
 }
 
 }  // namespace tsugumi

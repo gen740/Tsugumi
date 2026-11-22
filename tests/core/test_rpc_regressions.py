@@ -12,7 +12,7 @@ def test_changed_shell_steps_are_used_on_the_next_run(project, core_factory):
     """Changing a Card's shell steps changes what its next run executes."""
     client = core_factory(mocked_builds=True).connect()
     body = 'printf \'{"out":{"value":"%s"}}\' "${MARK:-missing}" > "$TSUGUMI_OUTPUT"'
-    definition = {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "reuseWorker": True, "recordIO": True}
+    definition = {"type": "code", "sandbox": {"filesystem": False}, "reuseWorker": True, "recordIO": True}
     graph = Project(project).card("work", definition, outputs=STRING_OUTPUT,
                                  manifest={"run": {"bash": body}, "preRun": "export MARK=old | cat", "postRun": "true"})
     graph.save(client)

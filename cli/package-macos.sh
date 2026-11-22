@@ -46,7 +46,7 @@ build_opts=(-c release --build-system swiftbuild --arch arm64)
 bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 
 rm -rf "$dist/cli"
-mkdir -p "$tree/bin" "$tree/ui/web" "$tree/Frameworks"
+mkdir -p "$tree/bin" "$tree/ui/web" "$tree/Frameworks" "$tree/Resources"
 cp "$repo/VERSION" "$tree/"
 mkdir -p "$tree/licenses"
 cp -R "$repo/third-party/". "$tree/licenses/"
@@ -54,10 +54,15 @@ install -m 755 "$repo/cli/tsugumi-macos" "$tree/tsugumi"
 
 cp "$bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$repo/build-host/cli/tsugumi" "$tree/bin/"
 cp "$repo/build-host/Frameworks/"*.dylib "$tree/Frameworks/"
+cp -R "$repo/build-host/Resources/git" "$tree/Resources/git"
+cp -R "$repo/build-host/Resources/git-licenses" "$tree/licenses/git"
 
 for library in "$tree/Frameworks/"*.dylib; do
   /usr/bin/strip -S "$library"
   codesign --force --sign "$sign_identity" "$library"
+done
+for tool in "$tree/Resources/git/"*; do
+  codesign --force --sign "$sign_identity" "$tool"
 done
 for binary in "$tree/bin/"*; do
   /usr/bin/strip -S "$binary"

@@ -84,7 +84,6 @@ TEST_F(AgentProjectFixture,
       input_defs.push_back(json::Encode(json::Members{{"name", Quote(name)}}));
     const auto definition = json::Encode(json::Members{
         {"type", Quote("code")},
-        {"language", Quote("python")},
         {"inputs", json::Encode(input_defs)},
         {"params",
          R"([{"name":"rate","type":"double","data":0.001},{"name":"regularization","type":"double","data":1.0}])"}});

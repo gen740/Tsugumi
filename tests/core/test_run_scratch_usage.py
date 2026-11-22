@@ -8,7 +8,7 @@ from pathlib import Path
 import pytest
 
 from harness.fixtures import worker_project
-from harness.observations import decode_scalar, read_output, read_pages
+from harness.observations import read_output, read_pages
 from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -39,7 +39,7 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     first = run(client)
     assert wait_run(client, first).state == RunState.succeeded
     usage_when(client, lambda u: current(u).scratchBytes == len(payload))
-    saved = Path(decode_scalar(read_output(client, first, port="doc")))
+    saved = Path(text(client.call("RunRecordRequest", runId=first, card=path("work")).record.outputs[0].filePath))
 
     # A separate package is fixture setup; saving uses the same public Card.
     worker_project(client, project, tmp_path / "second", [
@@ -124,7 +124,7 @@ def test_copied_history_reports_kept_file_location_or_missing_content(core_facto
     client = original.connect()
     worker_project(client, project, tmp_path / "source", [
         {"op": "file", "port": "doc", "path": "result.txt", "text": "kept independently"},
-    ], outputs=FILE_OUTPUT, recordIO=True)
+    ], outputs=FILE_OUTPUT, retainArtifact=True)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     evidence = read_output(client, run_id, port="doc")

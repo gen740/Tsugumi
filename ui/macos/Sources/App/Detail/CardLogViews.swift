@@ -108,11 +108,6 @@ struct DependenciesCategory: View {
             Button("default.nix を開く") { model.openDefinition() }
           } else if model.kind == .code {
             Text("default.nix がありません").foregroundStyle(.secondary)
-            Button("default.nix を作成") {
-              model.createFile("default.nix", text: "{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n")
-              model.openDefinition()
-            }
-            .disabled(!session.isEditable)
           }
         }
 

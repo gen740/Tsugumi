@@ -24,7 +24,6 @@ lib.fileset.toSource {
     ../cli/CMakeLists.txt
     ../cli/src
     ../sdk
-    (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
     # Documentation tooling does not affect the native runtime.
     ../protocol/CMakeLists.txt
     ../protocol/include
