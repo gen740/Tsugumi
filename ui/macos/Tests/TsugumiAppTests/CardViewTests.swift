@@ -26,6 +26,8 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
 @MainActor private func declared(_ card: CardKey, _ views: [CardViewDeclaration], failure: String? = nil) -> Tsugumi_RPC_NotificationPayloadUnion {
   let u = Tsugumi_RPC_CardViewsUpdatedT()
   u.card = cardPath(card)
+  // The generated initializer creates a FailureT even for an optional field.
+  u.failure = nil
   if let failure {
     let f = Tsugumi_Data_FailureT()
     f.kind = .nixFailed
@@ -114,7 +116,7 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   #expect(s.cardViews.ambiguous("plot") == ["chart"])
   s.applyViewNotification(sent("plot", "chart", [4]))
   #expect(chart.last == .data(Data([9])))
-  #expect(s.cardViews.undeclared("plot").isEmpty)
+  #expect(s.cardViews.undeclared("plot") == ["missing"])
   s.applyViewNotification(declared("plot", [], failure: "views are broken"))
   #expect(s.cardViews.failures["plot"] == "views are broken")
   #expect(s.cardViews.undeclared("plot").isEmpty, "a failed evaluation is shown instead of undeclared names")
