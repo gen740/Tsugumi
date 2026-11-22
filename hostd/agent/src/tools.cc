@@ -694,6 +694,10 @@ auto Tools::RawProjectCall(const std::string& project, const std::string& name,
                     })
                     .get();
   if (stop.stop_requested()) throw Cancelled();
+  // Only a call that changes something can leave its outcome unknown.
+  if (result.error && name == "run_status")
+    throw Failure("unavailable", "Project connection lost while waiting: " +
+                                     result.error.message);
   if (result.error) throw Failure("outcome_unknown", result.error.message);
   if (raw)
     raw->assign(reinterpret_cast<const char*>(result.bytes.data()),
