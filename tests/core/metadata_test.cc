@@ -88,7 +88,7 @@ TEST_F(OpaqueMetadata, PortAndParamDiagnosticsNameWhatFixesThem) {
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
   fs::write_atomic(
       root / "definitions/b/_card.json",
-      R"({"type":"code","language":"python","params":[{"name":"x","type":"float","data":1}]})");
+      R"({"type":"code","params":[{"name":"x","type":"float","data":1}]})");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();
@@ -108,7 +108,7 @@ TEST_F(OpaqueMetadata,
       root / "tsugumi.json",
       R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})");
   fs::write_atomic(root / "definitions/b/_card.json",
-                   R"({"type":"code","language":"python"})");
+                   R"({"type":"code"})");
   Store store({root, ""});
   store.open();
   const auto* node = store.current()->resolution->find({"b"});

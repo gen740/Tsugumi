@@ -1,6 +1,8 @@
 #include "host/project_operations.hh"
 
 #include <algorithm>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <set>
 
@@ -61,7 +63,7 @@ auto Prepare(
     const H::ProjectOperationBodyUnion& body, const SaveBase& base,
     const EditFileRead& read,
     const std::function<void(const std::string&)>& authorize,
-    const std::function<std::filesystem::path(const std::string&)>& demo)
+    const OperationContext& context, const OperationCall& call)
     -> json::Members {
   if (const auto* edits = body.AsProjectEdits())
     return PrepareProjectEdits(*edits, base, read, authorize);
@@ -148,7 +150,17 @@ auto Prepare(
     prefix = Prefix(imported->project_path);
   else if (const auto* create = body.AsProjectCreateCard())
     prefix = Prefix(create->project_path);
-  else
+  else if (const auto* copy = body.AsProjectTemplateCopy())
+    prefix = Prefix(copy->project_path);
+  else if (const auto* add = body.AsTemplateAdd()) {
+    if (!TemplateName(add->name) || !context.read_template_source)
+      throw Failure("invalid_request", "Cannot add this template");
+    const auto destination = "templates/" + add->name + '/';
+    empty(destination);
+    const auto contents = context.read_template_source(*add);
+    for (const auto& [path, bytes] : contents.files)
+      put(destination + path, bytes);
+  } else
     throw Failure("invalid_request", "missing operation body");
   const auto project = required(prefix + "tsugumi.json");
   const auto layout_path = prefix + "layout.json";
@@ -285,6 +297,30 @@ auto Prepare(
     }
     state["externals"] = json::Encode(externals);
     return json::Encode(state);
+  };
+  auto copy_wires = [&](const std::vector<std::string>& source_wires,
+                        const std::map<std::string, std::string>& copied_ids) {
+    auto root = json::Object(required(prefix + "tsugumi.json"),
+                             prefix + "tsugumi.json");
+    auto graph = json::Object(json::Get(root, "canvas", "{}"),
+                              prefix + "tsugumi.json.canvas");
+    auto wires = json::Array(json::Get(graph, "connections", "[]"),
+                             prefix + "tsugumi.json.canvas.connections");
+    for (const auto& raw : source_wires) {
+      auto wire = json::Object(raw);
+      auto from = json::Object(json::Get(wire, "from", "{}")),
+           to = json::Object(json::Get(wire, "to", "{}"));
+      const auto f = json::Text(from, "card"), t = json::Text(to, "card");
+      if (!copied_ids.contains(f) || !copied_ids.contains(t)) continue;
+      from["card"] = json::Quote(copied_ids.at(f));
+      to["card"] = json::Quote(copied_ids.at(t));
+      wire["from"] = json::Encode(from);
+      wire["to"] = json::Encode(to);
+      wires.push_back(json::Encode(wire));
+    }
+    graph["connections"] = json::Encode(wires);
+    root["canvas"] = json::Encode(graph);
+    put(prefix + "tsugumi.json", json::Encode(root));
   };
   if (const auto* selection = body.AsProjectSelection()) {
     if (selection->action == H::ProjectSelectionAction::Place) {
@@ -452,15 +488,120 @@ auto Prepare(
     put(prefix + "tsugumi.json", json::Object(connected).at("project"));
   } else if (const auto* create = body.AsProjectCreateCard()) {
     empty(prefix + "definitions/" + create->id + '/');
-    const auto prepared = WriteTemplate(create->template_, create->id);
-    auto state = json::Object(prepared.definition_json);
-    auto meta = json::Object(json::Get(state, "meta", "{}"));
+    auto files = BuiltinCard(create->kind, create->id);
+    auto meta = json::Object(json::Get(files, "_meta.json", "{}"));
     if (!create->name.empty()) meta["name"] = json::Quote(create->name);
-    state["meta"] = json::Encode(meta);
+    files["_meta.json"] = json::Encode(meta);
     const auto dir = prefix + "definitions/" + create->id + '/';
-    definition(dir, json::Encode(state));
-    for (const auto& file : prepared.files) put(dir + file.path, file.text);
+    for (const auto& [path, bytes] : files) put(dir + path, bytes);
     place(create->id, create->x, create->y, create->automatic_placement);
+  } else if (const auto* copy = body.AsProjectTemplateCopy()) {
+    if (!TemplateName(copy->name) || !std::isfinite(copy->x) ||
+        !std::isfinite(copy->y))
+      throw Failure("invalid_request",
+                    "Invalid template selection or position");
+    DocumentTemplate contents;
+    if (copy->store == H::TemplateStore::Host) {
+      contents =
+          ReadHostTemplate(context.host_templates, copy->name, authorize);
+    } else if (copy->store == H::TemplateStore::Project) {
+      const auto source = "templates/" + copy->name + '/';
+      if (authorize) authorize(source);
+      size_t count = 0;
+      uint64_t size = 0;
+      for (const auto& raw :
+           json::Array(json::Get(base.snapshot, "sources", "[]"))) {
+        const auto entry = json::Object(raw);
+        if (!json::Text(entry, "path").starts_with(source)) continue;
+        const auto bytes = json::Get(entry, "size_bytes");
+        const auto length = json::UInt(json::String(bytes, bytes));
+        if (length > kTemplateBytes - size || ++count > kTemplateEntries)
+          throw Failure("resource_limit", "Template exceeds the copy limit");
+        size += length;
+      }
+      TemplateFiles files;
+      for (auto it = paths.lower_bound(source);
+           it != paths.end() && it->starts_with(source); ++it)
+        files.emplace(it->substr(source.size()), required(*it));
+      if (files.empty())
+        throw Failure("not_found", "Project template not found");
+      contents = CheckTemplate(std::move(files));
+    } else {
+      throw Failure("invalid_request", "Unknown template store");
+    }
+
+    TemplateFiles source_files{{"tsugumi.json", "{}"}};
+    std::vector<std::string> source_paths;
+    for (const auto& id : contents.cards) {
+      for (auto it = contents.files.lower_bound(id + '/');
+           it != contents.files.end() && it->first.starts_with(id + '/');
+           ++it) {
+        auto path = "definitions/" + it->first;
+        source_paths.push_back(path);
+        source_files.emplace(std::move(path), it->second);
+      }
+    }
+    const auto state = document_state(source_files);
+    const auto layout =
+        json::Object(json::Get(contents.files, "layout.json", "{}"));
+    const auto positions = json::Object(json::Get(layout, "cards", "{}"));
+    auto offset_x = std::numeric_limits<double>::infinity();
+    auto offset_y = std::numeric_limits<double>::infinity();
+    auto right = -std::numeric_limits<double>::infinity();
+    for (const auto& [id, raw] : positions) {
+      (void)id;
+      const auto position = json::Object(raw);
+      const auto x = std::stod(json::Get(position, "x", "0"));
+      const auto y = std::stod(json::Get(position, "y", "0"));
+      offset_x = std::min(offset_x, x);
+      offset_y = std::min(offset_y, y);
+      right = std::max(right, x);
+    }
+    double next_x = positions.empty() ? 0 : right - offset_x + 250;
+    std::map<std::string, std::string> copied_ids;
+    for (const auto& old : contents.cards) {
+      auto allocate = [&] {
+        const auto result =
+            Value(call("card_id", {{"stem", json::Quote(CardStem(old))},
+                                   {"project_path", json::Quote(prefix)}}));
+        const auto id = json::Text(result, "id");
+        if (!valid_id(id))
+          throw Failure("unavailable", "No Card id was allocated");
+        return id;
+      };
+      const auto id = context.reserve_template_id
+                          ? context.reserve_template_id(old, allocate)
+                          : allocate();
+      copied_ids.emplace(old, id);
+      const auto to = prefix + "definitions/" + id + '/';
+      empty(to);
+      empty(prefix + "externals/" + id + '/');
+      const auto patch = CopyDocuments(state, source_paths,
+                                       "definitions/" + old + '/', to, {});
+      for (const auto& [dir, raw] :
+           json::Object(json::Object(patch.edits_json).at("definitions")))
+        definition(dir, raw);
+      for (const auto& file : patch.files)
+        put(file.to, source_files.at(file.from));
+      auto position = json::Object(json::Get(positions, old, "{}"));
+      double x = next_x, y = 0;
+      if (positions.contains(old)) {
+        x = std::stod(json::Get(position, "x", "0")) - offset_x;
+        y = std::stod(json::Get(position, "y", "0")) - offset_y;
+      } else {
+        next_x += 250;
+      }
+      x += copy->x;
+      y += copy->y;
+      if (!std::isfinite(x) || !std::isfinite(y))
+        throw Failure("invalid_document", "Template placement is out of range");
+      place(id, x, y, true);
+      write_position(id, std::to_string(x), std::to_string(y), std::move(position));
+    }
+    const auto fragment = json::Object(json::Get(contents.files, "tsugumi.json", "{}"));
+    const auto canvas = json::Object(json::Get(fragment, "canvas", "{}"));
+    const auto wires = json::Array(json::Get(canvas, "connections", "[]"));
+    if (!wires.empty()) copy_wires(wires, copied_ids);
   } else if (const auto* imported = body.AsProjectImport()) {
     empty(prefix + "definitions/" + imported->id + '/');
     const auto destination = prefix + "externals/" + imported->id + '/';
@@ -498,12 +639,12 @@ auto Prepare(
       auto from = item->from;
       const bool imported = !item->demo.empty() || !item->folder.empty();
       if (imported) {
-        if ((!item->demo.empty() && (!demo || !item->folder.empty())) ||
+        if ((!item->demo.empty() && (!context.demo || !item->folder.empty())) ||
             copy->copy_connections || !valid_id(item->from))
           throw Failure("invalid_request",
                         "Choose a source project and a Card id");
         source_root = item->demo.empty() ? std::filesystem::path(item->folder)
-                                         : demo(item->demo);
+                                         : context.demo(item->demo);
         imported_files = ReadProjectFiles(
             source_root.string(), item->folder.empty() ? nullptr : authorize);
         source_paths.clear();
@@ -564,28 +705,8 @@ auto Prepare(
       place(item->id, x, y);
     }
     if (copy->copy_connections) {
-      auto root = json::Object(required(prefix + "tsugumi.json"),
-                               prefix + "tsugumi.json");
-      auto graph = json::Object(json::Get(root, "canvas", "{}"),
-                                prefix + "tsugumi.json.canvas");
-      auto wires = json::Array(json::Get(graph, "connections", "[]"),
-                               prefix + "tsugumi.json.canvas.connections");
-      const auto previous = wires;
-      for (const auto& raw : previous) {
-        auto wire = json::Object(raw);
-        auto from = json::Object(json::Get(wire, "from", "{}")),
-             to = json::Object(json::Get(wire, "to", "{}"));
-        const auto f = json::Text(from, "card"), t = json::Text(to, "card");
-        if (!copied_ids.contains(f) || !copied_ids.contains(t)) continue;
-        from["card"] = json::Quote(copied_ids.at(f));
-        to["card"] = json::Quote(copied_ids.at(t));
-        wire["from"] = json::Encode(from);
-        wire["to"] = json::Encode(to);
-        wires.push_back(json::Encode(wire));
-      }
-      graph["connections"] = json::Encode(wires);
-      root["canvas"] = json::Encode(graph);
-      put(prefix + "tsugumi.json", json::Encode(root));
+      const auto canvas = json::Object(json::Get(json::Object(project), "canvas", "{}"));
+      copy_wires(json::Array(json::Get(canvas, "connections", "[]")), copied_ids);
     }
   } else if (const auto* subgraph = body.AsProjectMakeSubgraph()) {
     const auto nested = MakeSubgraph(project, subgraph->cards, subgraph->id);
@@ -872,7 +993,7 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         [&](const auto& path) {
           if (context.authorize_file) context.authorize_file(path, base);
         },
-        context.demo);
+        context, call);
     if (json::Array(plan.at("changes")).empty())
       plan["changes"] = json::Encode(std::vector<std::string>{
           Change("SetProject",

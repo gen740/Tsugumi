@@ -200,7 +200,21 @@ auto AgentExclude::Filter(const std::string& raw, const std::string& prefix,
   return j::Encode(object);
 }
 auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
-                             const SourcePatches& patches) const -> void {
+                             const SourcePatches& patches,
+                             bool allow_template_writes) const -> void {
+  auto check_source = [&](const std::string& path) {
+    Check(path);
+    if (allow_template_writes) return;
+    auto local = std::string_view(path);
+    while (local.starts_with("externals/")) {
+      const auto end = local.find('/', 10);
+      if (end == std::string_view::npos) return;
+      local.remove_prefix(end + 1);
+    }
+    if (local.starts_with("templates/"))
+      throw Failure("permission_denied",
+                    "Use an approved template store operation");
+  };
   const auto hidden_tree = [&](const std::string& path) {
     const auto resolved = Resolve(root_ / path);
     return Contains(path) ||
@@ -308,7 +322,7 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
         document(dir + "/_card.json", j::Text(value, "card_json", "{}"));
     } else if (value.contains("path")) {
       const auto path = j::Text(value, "path");
-      Check(path);
+      check_source(path);
       if (type == "RemoveSource" && card_document(path)) document(path, "{}");
       if (type == "PutSource" &&
           (path == "tsugumi.json" || path == "layout.json" ||
@@ -332,6 +346,6 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
     }
   }
   for (const auto& raw : j::Array(j::Get(plan, "transfers", "[]")))
-    Check(j::Text(j::Object(raw), "path"));
+    check_source(j::Text(j::Object(raw), "path"));
 }
 }  // namespace tsugumi::host

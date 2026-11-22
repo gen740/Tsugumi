@@ -32,7 +32,7 @@ def go(source,**card):
         source+='''
 func onRunStart(inputs tsugumi.Inputs) error { return nil }
 '''
-    return {'card':{'type':'code','language':'go',**card},'nix':NIX,'src':{
+    return {'card':{'type':'code',**card},'nix':NIX,'src':{
         'go.mod':(ROOT/'sdk/go/template/go.mod').read_text(),
         'go.sum':'','card.go':source}}
 
@@ -87,7 +87,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
 }''',inputs=[{'name':'number'},{'name':'optional','optional':True}],params=[{'name':'offset','type':'uint64','data':7}])
     card['outputs']=NUMBER
     write_project(root,{
-        'make':{'card':{'type':'code','language':'python'},'outputs':NUMBER.replace('out:Number(required);','out:Number(required);other:Number(required);'),
+        'make':{'card':{'type':'code'},'outputs':NUMBER.replace('out:Number(required);','out:Number(required);other:Number(required);'),
                 'nix':'{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["python"];};in {run=inputs.tsugumi.pythonCard {inherit sdk;src=./src;};}',
                 'src':{'main.py':'''import tsugumi
 import outputs.out.t.Number as N
@@ -101,7 +101,7 @@ def main(inputs):
  return result
 '''}},
         'go':card,
-        'check':{'card':{'type':'code','language':'cpp','inputs':[{'name':'number'}]},
+        'check':{'card':{'type':'code','inputs':[{'name':'number'}]},
                  'nix':'{pkgs,inputs,params}:let sdk=inputs.tsugumi.sdk {languages=["cpp"];};in {run=inputs.tsugumi.cppCard {inherit sdk;src=./src;};}',
                  'src':{'card.cc':'''#include <card.hh>
 auto run(const Card::Inputs& inputs, tsugumi::Report& report)->Card::Output {if(inputs.number.value!=9007199254741000ULL)throw std::runtime_error("wrong value");report.text("exact");return {};}'''}},
@@ -233,7 +233,7 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
  return tsugumi.Output{Report:&tsugumi.OutputReport{Value:file}},nil
 }''',inputs=[{'name':'file'},{'name':'directory'}],retainArtifact=True,artifactOutput='report')
     card['outputs']='attribute "tsugumi";namespace t;table Path{value:string;}table Outputs{report:Path(required,tsugumi:"file");}root_type Outputs;'
-    write_project(root,{'make':{'card':{'type':'code','language':'bash'},'nix':make,'outputs':schema},'go':card},[('make',p,'go',p) for p in ('file','directory')])
+    write_project(root,{'make':{'card':{'type':'code'},'nix':make,'outputs':schema},'go':card},[('make',p,'go',p) for p in ('file','directory')])
     c=connect()
     run=succeeded(c)
     artifact=next(a for a in c.call('ArtifactListRequest',runId=run).artifacts if text(a.output)=='report')
@@ -296,8 +296,8 @@ func run(inputs tsugumi.Inputs, report *tsugumi.Report, run *tsugumi.Run)(tsugum
     card['nix']=NIX.replace('run=inputs.tsugumi.goCard {inherit sdk;src=./src;};', 'run=(inputs.tsugumi.goCard {inherit sdk;src=./src;}).overrideAttrs (old:{env=old.env // {GOEXPERIMENT="cgocheck2";};});')
     make='{pkgs,inputs,params}:{run=\'\'echo \'{"out":{"value":9007199254740993}}\' > "$TSUGUMI_OUTPUT"\'\';}'
     check='{pkgs,inputs,params}:{run=\'\'jq -n --rawfile v "$JSON_NUMBER" \'{text:$v}\' > "$TSUGUMI_REPORT"\'\';}'
-    write_project(root,{'make':{'card':{'type':'code','language':'bash'},'outputs':NUMBER,'nix':make},'go':card,
-                        'check':{'card':{'type':'code','language':'bash','inputs':[{'name':'number'}]},'nix':check}},[('make','out','go','number'),('go','out','check','number')])
+    write_project(root,{'make':{'card':{'type':'code'},'outputs':NUMBER,'nix':make},'go':card,
+                        'check':{'card':{'type':'code','inputs':[{'name':'number'}]},'nix':check}},[('make','out','go','number'),('go','out','check','number')])
     c=connect()
     assert json.loads(text(shown(c,succeeded(c),'check').value.text))=={'value':9007199254740993}
 

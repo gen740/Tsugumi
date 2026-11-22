@@ -22,6 +22,7 @@ struct GraphCanvas: View {
   @State private var marquee: (start: CGPoint, end: CGPoint)?
   @State private var zoomStart: Double?
   @State private var size: CGSize = .zero
+  @State private var templatePlacement: TemplatePlacement?
   @State private var editingNote: String?
   @State private var editingGroup: String?
   @State private var hover: HoverTarget?
@@ -261,10 +262,7 @@ struct GraphCanvas: View {
         for (i, item) in items.enumerated() {
           let w = world(loc)
           let at = CGPoint(x: w.x + Double(i) * 24, y: w.y + Double(i) * 24)
-          if let t = DefinitionDrag.template(item) {
-            session.performCardEdit { tab.selection = [try await session.addCard(template: t, in: tab.scope, at: at)] }
-            accepted = true
-          } else if let id = DefinitionDrag.id(item) {
+          if let id = DefinitionDrag.id(item) {
             placed.append(session.placeDefinition(id, at: at))
           } else if item.hasPrefix(DefinitionDrag.externalDefinitionPrefix) {
             let parts = item.dropFirst(DefinitionDrag.externalDefinitionPrefix.count).split(separator: "\n").map(String.init)
@@ -298,8 +296,16 @@ struct GraphCanvas: View {
         if (n.object as? UUID) == tab.id { addNote() }
       }
       .onReceive(NotificationCenter.default.publisher(for: .canvasAddBuiltin)) { n in
-        guard (n.object as? UUID) == tab.id, let raw = n.userInfo?["template"] as? String, let t = DefinitionTemplate(rawValue: raw) else { return }
-        addBuiltin(t, at: world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60)))
+        guard (n.object as? UUID) == tab.id else { return }
+        let at = world(CGPoint(x: size.width / 2 - 120, y: size.height / 2 - 60))
+        if let raw = n.userInfo?["template"] as? String, let kind = DefinitionTemplate(rawValue: raw) {
+          addBuiltin(kind, at: at)
+        } else {
+          templatePlacement = TemplatePlacement(scope: tab.scope, point: at)
+        }
+      }
+      .sheet(item: $templatePlacement) { placement in
+        TemplatePicker(session: session, placement: placement)
       }
       .modifier(CommandHandlers(canvas: self))
       .overlay(alignment: .topLeading) {
@@ -688,7 +694,9 @@ struct GraphCanvas: View {
     .onTapGesture(coordinateSpace: .named("canvas")) { loc in backgroundTap(loc) }
     .contextMenu {
       Menu("Card を追加") {
-        BuiltinCardItems { t in addBuiltin(t, at: world(pointer)) }
+        NewCardItems(add: { addBuiltin($0, at: world(pointer)) }, pickTemplate: {
+          templatePlacement = TemplatePlacement(scope: tab.scope, point: world(pointer))
+        })
       }
       .disabled(!session.isEditable)
       Button("付箋を追加") { addNote(at: world(pointer)) }
@@ -1544,35 +1552,5 @@ struct ScrollCatcher: NSViewRepresentable {
     override func mouseDown(with e: NSEvent) { panning = true }
     override func mouseDragged(with e: NSEvent) { onScroll(Double(e.deltaX), Double(e.deltaY), 0, nil) }
     override func mouseUp(with e: NSEvent) { panning = false }
-  }
-}
-
-/// The built-in Cards, for the canvas menu and the + button.
-struct BuiltinCardItems: View {
-  let add: (DefinitionTemplate) -> Void
-
-  /// The Cards a person writes, then the ones with a fixed role.
-  static let written: [DefinitionTemplate] = [.python, .cpp, .go, .rust, .ruby, .csharp, .draft, .marimo]
-  static let visualizations: [DefinitionTemplate] = [.matplotlib, .plotly, .altair]
-  static let fixed: [DefinitionTemplate] = [.trigger, .input, .booleanInput, .branch, .fork, .merge, .collect]
-
-  var body: some View {
-    Menu("レポート（HTML・PDF 未対応）") {
-      ForEach([DefinitionTemplate.report_rmarkdown, .report_quarto], id: \.self) { t in
-        Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
-      }
-    }
-    ForEach(Self.written, id: \.self) { t in
-      Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
-    }
-    Menu("可視化（図を描く Card）") {
-      ForEach(Self.visualizations, id: \.self) { t in
-        Button(t.label) { add(t) }
-      }
-    }
-    Divider()
-    ForEach(Self.fixed, id: \.self) { t in
-      Button { add(t) } label: { Label(t.label, systemImage: t.symbol) }
-    }
   }
 }

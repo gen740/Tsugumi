@@ -184,7 +184,7 @@ def test_build_wait_can_be_interrupted(core_factory, project, cancel):
     client = daemon.connect()
     gate = Gate(daemon.gates, "build")
     Project(project).card(
-        "work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "buildTimeoutSeconds": 10 if cancel else 1},
+        "work", {"type": "code", "sandbox": {"filesystem": False}, "buildTimeoutSeconds": 10 if cancel else 1},
         outputs=STRING_OUTPUT, manifest={"run": {"bash": "true"}}, plan={"gate": "build"},
     ).save(client)
 
@@ -207,7 +207,7 @@ def test_build_failure_becomes_an_inspectable_card_failure(core_factory, project
     """
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}},
+    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}},
                           outputs=STRING_OUTPUT, plan={"error": "dependency unavailable"}).save(client)
     run_id = run(client)
     status = wait_run(client, run_id)

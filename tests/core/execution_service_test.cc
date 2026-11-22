@@ -104,7 +104,7 @@ TEST(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
 }  // namespace
 }  // namespace tsugumi
 
-TEST(GraphLanguage, ArbitraryAndOmittedLanguagesRemainExecutable) {
+TEST(GraphDefinition, CodeCardSelectsItsImplementationInNix) {
   namespace ts = tsugumi;
   const auto root = std::filesystem::temp_directory_path() /
                     ("tsugumi-language-" + ts::crypto::uuid4());
@@ -120,11 +120,9 @@ TEST(GraphLanguage, ArbitraryAndOmittedLanguagesRemainExecutable) {
                        "{pkgs,inputs,params}:{run=\"true\";}");
   ts::fs::write_atomic(root / "definitions/card/_outputs.fbs",
                        "table Outputs {} root_type Outputs;");
-  for (const auto* definition : {R"({"type":"code"})", R"({"type":"code","language":"custom-sdk"})"}) {
-    ts::fs::write_atomic(root / "definitions/card/_card.json", definition);
-    ts::Store store({root, ""});
-    store.open();
-    const auto& node = store.current()->resolution->nodes.at(0);
-    EXPECT_TRUE(node.exec_diags.empty());
-  }
+  ts::fs::write_atomic(root / "definitions/card/_card.json", R"({"type":"code"})");
+  ts::Store store({root, ""});
+  store.open();
+  const auto& node = store.current()->resolution->nodes.at(0);
+  EXPECT_TRUE(node.exec_diags.empty());
 }

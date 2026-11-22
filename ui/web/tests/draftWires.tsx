@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 // A wire to or from a Draft is dotted, whatever else it shows, until the Draft
 // has code. The Mac app checks the same (UILogicTests: draftWiresAreDotted).
 import assert from 'node:assert/strict'
@@ -45,7 +45,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
 {
   const s = session()
   const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const log = await addCodeCard(s, { x: 600, y: 0 }, 'log')
   const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   await s.connect([start, 'out'], [log, 'in'], [])
   assert.deepEqual(dotted(s), { 'start>log': false }, 'Cards with code keep their solid wire')
@@ -68,7 +68,6 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   await s.applyMutation((x) => {
     x.updateCard(draft, (c) => {
       c.set('type', 'code')
-      c.set('language', 'python')
       c.set('inputs', parse('[{"name":"in"}]'))
     })
     x.updateGraph([], (g) => g.set('connections', parse(`[
@@ -84,7 +83,7 @@ const dotted = (s: InstanceType<typeof ProjectSession>, scope: string[] = [], se
   // In a Card in Card: its bars' wires to an inner Draft are dotted, the wires of the Card itself are not.
   const s = session()
   const start = await s.addCard('trigger', [], { x: 0, y: 0 }, 'start')
-  const log = await s.addCard('python', [], { x: 600, y: 0 }, 'log')
+  const log = await addCodeCard(s, { x: 600, y: 0 }, 'log')
   const draft = await s.addCard('draft', [], { x: 300, y: 0 }, 'plan')
   await s.connect([start, 'out'], [draft, NEW_PORT], [])
   await s.connect([draft, NEW_PORT], [log, 'in'], [])

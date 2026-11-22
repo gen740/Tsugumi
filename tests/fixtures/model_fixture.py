@@ -315,7 +315,7 @@ def last_draft_task(messages):
 
 def implement(definition, meta):
     """A bash Card that fulfils a Draft: its planned outputs carry a short text."""
-    card = {**definition, "type": "code", "language": "bash"}
+    card = {**definition, "type": "code"}
     outs = [o["name"] for o in (meta or {}).get("outputs", [])] or ["out"]
     fbs = "namespace generated;\ntable Text { value:string; }\ntable Outputs { " + \
         " ".join(f"{o}:Text;" for o in outs) + " }\nroot_type Outputs;\n"

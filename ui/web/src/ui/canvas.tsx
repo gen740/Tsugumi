@@ -15,12 +15,12 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession, TEMPLATES, templateIcon,
+  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
 import {
-  DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog, TEMPLATE_DRAG,
+  DEFINITION_DRAG, EXTERNAL_DEFINITION_DRAG, EXTERNAL_DRAG, openCard, openWorkflowWindow, runCard, showLog,
 } from './actions'
 import { BoundaryBarView, CardNodeView, drive, gridStyle, idleText, runText, WireLayer } from './cardNode'
 import { BatchInvocations } from './batchInvocations'
@@ -28,7 +28,7 @@ import { Button, MenuItem, Segmented, Sheet, showMenu, Stepper, TextField, Toggl
 import { Icon } from './icons'
 import { Markdown } from './markdown'
 import { L } from '../i18n'
-import { visualizationTemplates } from '../model/visualizationTemplates'
+import { newCardItems, TemplatePicker, type TemplatePlacement } from './cardTemplates'
 
 // Kept here for the views that import them from the canvas.
 export { DEFINITION_DRAG, openWorkflowWindow }
@@ -57,6 +57,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const cv = canvasFor(session, tab)
   useObserve(session, tab, cv, prefs, agentAppearance)
   const root = useRef<HTMLDivElement>(null)
+  const [templatePlacement, setTemplatePlacement] = useState<TemplatePlacement>()
   const [cardDrag, setCardDrag] = useState<SceneDrag['cards']>()
   const [boundaryDrag, setBoundaryDrag] = useState<SceneDrag['boundary']>()
   /** A wire being drawn from a port: from an output (to an input), or from an input back to an output. */
@@ -454,10 +455,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     if (!item || !session.isEditable) return
     e.preventDefault()
     const at = cv.world(local(e))
-    if (item.startsWith(TEMPLATE_DRAG)) {
-      const t = item.slice(TEMPLATE_DRAG.length) as DefinitionTemplate
-      if (TEMPLATES.some((x) => x.id === t)) void session.addCard(t, scope, at).then((k) => tab.setSelection([k])).catch((e) => { session.notice = String(e); session.changed() })
-    } else if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
+    if (item.startsWith(EXTERNAL_DEFINITION_DRAG)) {
       const parts = item.slice(EXTERNAL_DEFINITION_DRAG.length).split('\n')
       if (parts.length === 2) void session.placeDefinitionCopy(parts[0], parts[1], scope, at).then((k) => k && tab.setSelection([k]))
     } else if (item.startsWith(EXTERNAL_DRAG)) {
@@ -470,7 +468,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
   const backgroundMenu = (e: React.MouseEvent) => {
     const at = cv.world(local(e))
     showMenu(e, [
-      { label: L('Card を追加'), disabled: !session.isEditable, submenu: builtinCardItems((t) => addBuiltin(t, at)) },
+      { label: L('Card を追加'), disabled: !session.isEditable, submenu: newCardItems((t) => addBuiltin(t, at), () => setTemplatePlacement({ scope: [...scope], at })) },
       { label: L('付箋を追加'), action: () => cv.addNote(at) },
       'divider',
       { label: L('全体表示'), action: () => cv.fitAll() },
@@ -775,6 +773,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
       {cv.editingGroup && session.groups(scope).some((g) => str(g.get('id')) === cv.editingGroup) && (
         <GroupEditor session={session} scope={scope} groupId={cv.editingGroup} onClose={() => cv.set('editingGroup', undefined)} />
       )}
+      {templatePlacement && <TemplatePicker session={session} placement={templatePlacement} onClose={() => setTemplatePlacement(undefined)} />}
     </div>
   )
 }
@@ -794,17 +793,6 @@ function bubblePosition(at: Pt, size: { width: number; height: number }, view: {
 }
 
 // ---- Menus ------------------------------------------------------------------------------
-
-/** The built-in Cards, for the canvas menu and the + button. */
-export function builtinCardItems(add: (t: DefinitionTemplate) => void): MenuItem[] {
-  const item = (id: DefinitionTemplate): MenuItem => ({ label: TEMPLATES.find((t) => t.id === id)?.label ?? id, action: () => add(id) })
-  const visualization: MenuItem = {
-    label: L('可視化'),
-    submenu: visualizationTemplates.map(t => ({ label: t.label, action: () => add(t.id) })),
-  }
-  return [item('python'), item('cpp'), item('go'), item('rust'), item('ruby'), item('csharp'), { label: L('レポート（HTML・PDF 未対応）'), submenu: [item('report_rmarkdown'), item('report_quarto')] }, item('draft'), item('marimo'), visualization, 'divider', item('trigger'), item('input'), item('input_bool'), item('branch'), item('fork'), item('merge'), item('collect')]
-}
-export { templateIcon }
 
 /** Right-click menu of a Card. */
 export function cardMenu(workspace: Workspace, session: ProjectSession, tab: WorkflowTab, k: CardKey, onGroup?: () => void): MenuItem[] {

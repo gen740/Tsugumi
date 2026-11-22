@@ -742,10 +742,10 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
        R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
       {"layout.json",
        R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
-      {"definitions/a/_card.json", R"({"type":"code","language":"python"})"},
-      {"definitions/b/_card.json", R"({"type":"code","language":"python"})"},
+      {"definitions/a/_card.json", R"({"type":"code"})"},
+      {"definitions/b/_card.json", R"({"type":"code"})"},
       {"definitions/d/_card.json",
-       R"({"type":"code","language":"python","inputs":[{"name":"p"},{"name":"q"}]})"}};
+       R"({"type":"code","inputs":[{"name":"p"},{"name":"q"}]})"}};
   H::LayoutSceneT scene;
   scene.flow = "topToBottom";
   for (const auto& id : {"a", "b", "d"}) {

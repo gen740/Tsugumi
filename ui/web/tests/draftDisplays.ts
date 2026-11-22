@@ -27,7 +27,7 @@ const session = () => {
 }
 
 const { s, asked, apply } = session()
-apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code","language":"python"}')] }))
+apply(delta(1n, { definitionsUpsert: [definition('a', '{"type":"code"}')] }))
 assert.equal(s.kind('a'), 'code')
 assert.deepEqual(asked, [], 'the canvas does not subscribe when a Draft becomes code')
 

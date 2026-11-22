@@ -46,7 +46,6 @@ include(${CMAKE_CURRENT_LIST_DIR}/installed/daemon.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/installed/client.cmake)
 
-include(${CMAKE_CURRENT_LIST_DIR}/installed/sdk.cmake)
 
 include(${CMAKE_CURRENT_LIST_DIR}/installed/host.cmake)
 

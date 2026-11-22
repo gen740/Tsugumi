@@ -134,7 +134,7 @@ def invocations(c, run_id, card_id):
 
 def test_resident_worker_serves_later_runs(env):
     c = load(env, {"trigger": {"type": "trigger"},
-                   "count": {"type": "code", "language": "cpp", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
+                   "count": {"type": "code", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
     from test_cards_shared_vm import reload
@@ -158,7 +158,7 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
                 'echo "line $RANDOM-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"type": "trigger"}, "make": make,
-                   "read": {"type": "code", "language": "cpp", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
+                   "read": {"type": "code", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
@@ -187,7 +187,7 @@ root_type Outputs;
     seed = bash('echo \'{"out":{"value":3}}\' > "$TSUGUMI_OUTPUT"')
     c = load(env, {"trigger": {"type": "trigger"}, "seed": seed,
                    "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-                   "fresh": {"type": "code", "language": "cpp", "inputs": [{"name": "x"}], "maxRuns": 10,  # no reuseWorker: the default
+                   "fresh": {"type": "code", "inputs": [{"name": "x"}], "maxRuns": 10,  # no reuseWorker: the default
                              "_outputs": out, "_nix": nix}},
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
@@ -220,8 +220,8 @@ let f = x: f (x + 1); in { run = f 0; }
 ''')
     ok = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')
     c = load(env, {"trigger": {"type": "trigger"},
-                   "loop": {"type": "code", "language": "bash", "_outputs": NUM, "_nix": loop_nix},
-                   "slow": {"type": "code", "language": "bash", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
+                   "loop": {"type": "code", "_outputs": NUM, "_nix": loop_nix},
+                   "slow": {"type": "code", "buildTimeoutSeconds": 3, "_outputs": NUM, "_nix": slow_nix}, "ok": ok},
              [card("start", "trigger"), card("loop", "loop"), card("slow", "slow"), card("ok", "ok")], [])
     run_id, st = run_and_wait(c, "start")
     rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("loop", "slow", "ok")}

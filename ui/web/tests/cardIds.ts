@@ -2,7 +2,7 @@ import { operationFixture } from './operationFixture'
 // A deterministic RPC double for presentation tests. Identity behavior itself
 // is checked against the core; unrelated fixtures keep their readable keys.
 import type { ProjectSession } from '../src/model/session'
-import { get, str } from '../shared/json'
+import { get, parse, str } from '../shared/json'
 export function cardIds<T extends ProjectSession>(s: T): T {
   hostEdits(s)
   s.connected = true // This boundary stands in for the connected core.
@@ -34,3 +34,15 @@ export function cardIds<T extends ProjectSession>(s: T): T {
 }
 
 export const hostEdits = operationFixture
+
+/** Install a Code definition for tests that need one on the canvas. */
+export async function addCodeCard(s: ProjectSession, at: { x: number; y: number }, name = 'card') {
+  const card = await s.addCard('draft', [], at, name)
+  await s.applyMutation(session => {
+    session.updateCard(card, definition => {
+      definition.set('type', 'code')
+      definition.set('inputs', parse('[{"name":"in"}]'))
+    })
+  })
+  return card
+}

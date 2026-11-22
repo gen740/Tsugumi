@@ -1,6 +1,5 @@
 {
   "type": "code",
-  "language": "r",
   "inputs": [
     {
       "name": "normalized"

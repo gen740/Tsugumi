@@ -95,13 +95,7 @@ export function DependenciesCategory({ model }: { model: CardEditorModel }) {
       <div className="callout secondary">{L('この Card が使う SDK、nixpkgs の package、ほかの Card の出力は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。')}</div>
       <div className="row gap8 center">
         {hasDefinition ? <Button onClick={() => model.openDefinition()}>{L('default.nix を開く')}</Button>
-          : model.kind === 'code' && <>
-            <span className="secondary">{L('default.nix がありません')}</span>
-            <Button disabled={!session.isEditable} onClick={() => {
-              model.createFile('default.nix', '{ pkgs, inputs, params }:\n{\n  package = inputs.tsugumi.pythonCard { src = ./src; };\n}\n')
-              model.openDefinition()
-            }}>{L('default.nix を作成')}</Button>
-          </>}
+          : model.kind === 'code' && <span className="secondary">{L('default.nix がありません')}</span>}
       </div>
       <h3>{L('参照している Card')}</h3>
       {!refs.length ? <div className="secondary">{L('default.nix はほかの Card を参照していません。')}</div> : refs.map((ref) => (

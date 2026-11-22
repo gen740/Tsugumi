@@ -606,11 +606,11 @@ extension ProjectOperationTests {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
     let layout = #"{"cards":{"a":{"x":700,"y":500}},"groups":[{"id":"group","cards":["a","b"]}]}"#
-    let s = try offlineSession(dir, cards: [("a", #"{"type":"code","language":"bash"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
+    let s = try offlineSession(dir, cards: [("a", #"{"type":"code"}"#), ("b", #"{"type":"draft"}"#)], layout: layout)
     let renamed = delta(0, "rename", "unused")
     renamed.projectJson = nil; renamed.origin = "agent"
     let definition = Tsugumi_RPC_DefinitionT()
-    definition.id = "a"; definition.cardJson = #"{"type":"code","language":"bash"}"#; definition.metaJson = #"{"name":"same name"}"#
+    definition.id = "a"; definition.cardJson = #"{"type":"code"}"#; definition.metaJson = #"{"name":"same name"}"#
     let other = Tsugumi_RPC_DefinitionT()
     other.id = "b"; other.cardJson = #"{"type":"draft"}"#; other.metaJson = definition.metaJson
     renamed.definitionsUpsert = [definition, other]
@@ -626,13 +626,13 @@ extension ProjectOperationTests {
   @Test func helpersSavesAreDrawnByTheirOwnBirds() throws {
     let dir = try directory()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"code","language":"bash"}"#) })
+    let s = try offlineSession(dir, cards: ["a", "b", "c"].map { ($0, #"{"type":"code"}"#) })
     s.startHelpers([(name: "first", cards: ["a"]), (name: "second", cards: ["b"])])
     let saved = delta(0, "helper save", "unused")
     saved.origin = "agent"; saved.projectJson = nil
     saved.definitionsUpsert = ["b", "c"].map { id in
       let definition = Tsugumi_RPC_DefinitionT()
-      definition.id = id; definition.cardJson = #"{"type":"code","language":"bash","maxRuns":3}"#
+      definition.id = id; definition.cardJson = #"{"type":"code","maxRuns":3}"#
       return definition
     }
     s.applyDelta(saved)
@@ -728,7 +728,7 @@ extension ProjectOperationTests {
     var placements: [Bool] = []
     s.operateProject = { request in
       let add = try #require(request.body?.value as? Tsugumi_Host_ProjectCreateCardT)
-      #expect(add.x == here.x && add.y == here.y && add.template == "draft")
+      #expect(add.x == here.x && add.y == here.y && add.kind == .draft)
       placements.append(add.automaticPlacement)
       let d = self.delta(s.rev, request.opId, "unused")
       let cards = add.automaticPlacement ? #"{"id":"auto"}"# : #"{"id":"auto"},{"id":"drop"}"#

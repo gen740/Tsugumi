@@ -297,9 +297,8 @@ auto Catalog::shared() const -> json::Members {
 Catalog::Catalog() {
   tools_.push_back(
       {{"project_file_format",
-        "Return formatted text for path and language using the host's "
-        "formatter.",
-        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"},"language":{"type":"string","enum":["json","cpp","python","nix","bash","fbs"]}},"required":["path","text"],"additionalProperties":false})"},
+        "Format supplied editor text for a .json or .nix path.",
+        R"({"type":"object","properties":{"path":{"type":"string"},"text":{"type":"string"}},"required":["path","text"],"additionalProperties":false})"},
        "FileFormatRequest",
        false,
        false,
@@ -376,12 +375,14 @@ Catalog::Catalog() {
     const auto tool = json::Object(raw);
     const auto name = json::Text(tool, "name");
     if (Find(name)) throw std::runtime_error("duplicate host tool: " + name);
-    tools_.push_back({{name, json::Text(tool, "description"),
-                       CompactSchema(json::Get(tool, "inputSchema"))},
-                      name,
-                      false,
-                      json::Bool(json::Get(tool, "mutating", "false")),
-                      false});
+    tools_.push_back(
+        {{name, json::Text(tool, "description"),
+          CompactSchema(json::Get(tool, "inputSchema"))},
+         name,
+         false,
+         json::Bool(json::Get(tool, "mutating", "false")),
+         false,
+         json::Bool(json::Get(tool, "approval_required", "false"))});
   }
   for (auto& tool : tools_)
     tool.spec.input_schema = CompactSchema(tool.spec.input_schema);
@@ -406,11 +407,6 @@ Catalog::Catalog() {
 auto Catalog::AllSpecs() const -> std::vector<ToolSpec> {
   std::vector<ToolSpec> specs;
   for (const auto& tool : tools()) specs.push_back(tool.spec);
-  specs.push_back(
-      {"document_template",
-       "Read a Card template by name and reserved id. Returns definition_json "
-       "and source files for one project_edit under definitions/<id>/.",
-       R"({"type":"object","properties":{"name":{"type":"string"},"id":{"type":"string"}},"required":["name","id"],"additionalProperties":false})"});
   specs.push_back(
       {"demo_list",
        "List bundled demos with paths, names and one-line descriptions.",

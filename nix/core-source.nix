@@ -30,7 +30,6 @@ lib.fileset.toSource {
       ../cli/include
       ../cli/src
       ../sdk
-      (lib.fileset.fileFilter (file: file.hasExt "json") ../ui/shared/templates)
       # Documentation tooling does not affect the native runtime.
       ../protocol/CMakeLists.txt
       ../protocol/include

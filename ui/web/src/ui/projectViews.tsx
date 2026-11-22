@@ -4,7 +4,7 @@ import { app } from '../model/app'
 import { shortCommit, sourceName, unlockedRef } from '../model/nixSources'
 import { useObserve } from '../model/observable'
 import { FLOW_LABELS, FlowDirection } from '../model/prefs'
-import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession, TEMPLATES } from '../model/session'
+import { definitionKind, errorText, formatBytes, key, KIND_ICON, KIND_LABEL, path, ProjectSession } from '../model/session'
 import { arr, bool, clone, get, isObj, J, JObj, num, numText, obj, parse, serialize, str } from '../../shared/json'
 import { R, s } from '../wire/rpc'
 import { DEFINITION_DRAG } from './actions'
@@ -15,6 +15,7 @@ import { L } from '../i18n'
 import { TrustedFoldersSettings } from './trustedFolders'
 import { RevisionEdit, RevisionEditNotice } from './revisionEdit'
 import { CardSecretsSettings } from './cardSecrets'
+import { newCardItems, TemplatePicker } from './cardTemplates'
 
 // ---- Card database -----------------------------------------------------------------
 
@@ -23,6 +24,8 @@ import { CardSecretsSettings } from './cardSecrets'
 export function CardDatabaseView({ session, definition }: { session: ProjectSession; definition?: string }) {
   useObserve(session)
   const [search, setSearch] = useState('')
+  const [showTemplates, setShowTemplates] = useState(false)
+  const at = { x: 40, y: 40 }
   const [selected, setSelected] = useState<string | undefined>(() => (definition && session.definitions.has(definition) ? definition : undefined))
   const [cardText, setCardText] = useState('')
   const [metaText, setMetaText] = useState('')
@@ -119,10 +122,10 @@ export function CardDatabaseView({ session, definition }: { session: ProjectSess
         <div key="list" className="col fill">
           <div className="row gap6 center pad6">
             <TextField value={search} onChange={setSearch} placeholder={L('検索')} style={{ flex: 1 }} />
-            <MenuButton icon="plus" help={L('Card を追加')} disabled={!session.isEditable} items={() => TEMPLATES.map((t) => ({
-              label: t.label,
-              action: () => { void session.addCard(t.id, [], { x: 40, y: 40 }).then((k) => setSelected(path(k)[0])).catch((e) => { session.notice = String(e); session.changed() }) },
-            }))} />
+            <MenuButton icon="plus" help={L('Card を追加')} disabled={!session.isEditable} items={() => newCardItems((t) => {
+              void session.addCard(t, [], at).then((k) => setSelected(path(k)[0])).catch((e) => session.cardEditFailed(e))
+            }, () => setShowTemplates(true))} />
+            {showTemplates && <TemplatePicker session={session} placement={{ scope: [], at }} onClose={() => setShowTemplates(false)} />}
           </div>
           <div className="list flex1" role="listbox" aria-label={L('定義')}>
             {ids.map((id) => {

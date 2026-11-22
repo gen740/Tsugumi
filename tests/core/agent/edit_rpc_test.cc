@@ -118,8 +118,8 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(JsonString(meta, "/description"), "Make a greeting");
   EXPECT_EQ(JsonString(meta, "/content"), "Return hello.");
   EXPECT_FALSE(JsonString(meta, "/context").empty());
-  EXPECT_EQ(JsonString(Read(root / "definitions/plan/_card.json"), "/language"),
-            "bash");
+  const auto definition = Read(root / "definitions/plan/_card.json");
+  EXPECT_EQ(JsonString(definition, "/type"), "code");
   EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/default.nix"));
   EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
   const auto validation = Tool(conversation, "project_validate", "{}");

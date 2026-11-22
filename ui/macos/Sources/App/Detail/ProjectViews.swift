@@ -12,6 +12,8 @@ struct CardDatabaseView: View {
   /// The definition the window was opened for ("Edit…" in the tree).
   var initial: String? = nil
   @State private var search = ""
+  @State private var showTemplates = false
+  private let newCardPoint = CGPoint(x: 40, y: 40)
   @State private var selected: String?
   @State private var cardText = ""
   @State private var metaText = ""
@@ -27,9 +29,11 @@ struct CardDatabaseView: View {
         HStack {
           TextField("検索", text: $search).textFieldStyle(.roundedBorder)
           Menu {
-            ForEach(DefinitionTemplate.allCases) { t in
-              Button(t.label) { session.performCardEdit { selected = path(try await session.addCard(template: t, in: [], at: CGPoint(x: 40, y: 40))).first } }
-            }
+            NewCardItems(add: { kind in
+              session.performCardEdit {
+                selected = path(try await session.addCard(template: kind, in: [], at: newCardPoint)).first
+              }
+            }, pickTemplate: { showTemplates = true })
           } label: { Image(systemName: "plus") }
             .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
             .disabled(!session.isEditable)
@@ -52,6 +56,9 @@ struct CardDatabaseView: View {
       .disabled(revisionEdit.applying)
       .frame(minWidth: 240, idealWidth: 280)
       detail.frame(minWidth: 420)
+    }
+    .sheet(isPresented: $showTemplates) {
+      TemplatePicker(session: session, placement: TemplatePlacement(scope: [], point: newCardPoint))
     }
     .onChange(of: selected) { load() }
     .onAppear { if selected == nil, let initial, session.definitions[initial] != nil { selected = initial } }

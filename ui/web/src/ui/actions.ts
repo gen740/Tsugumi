@@ -67,7 +67,6 @@ export function showLog(workspace: Workspace, card: CardKey | undefined, stage?:
 /** Dragging a definition (or a template) onto the canvas carries this prefix. */
 export const DEFINITION_DRAG = 'tsugumi-definition:'
 /** A template ("tsugumi-template:python"). */
-export const TEMPLATE_DRAG = 'tsugumi-template:'
 /** A definition of an external project: "<prefix>\n<id>". */
 export const EXTERNAL_DEFINITION_DRAG = 'tsugumi-external-definition:'
 /** A Card in Card's external project to copy ("externals/<name>/"). */

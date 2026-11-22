@@ -25,6 +25,14 @@ class ProjectFixture {
     if (method == "operation_get") {
       type = "OperationResult";
       value["state"] = "\"unknown\"";
+    } else if (method == "card_id") {
+      type = "CardIdResult";
+      const auto stem = json::Text(args, "stem");
+      const auto prefix = json::Text(args, "project_path") + "definitions/";
+      auto id = stem;
+      for (size_t i = 2; files.contains(prefix + id + "/_card.json"); ++i)
+        id = stem + "-" + std::to_string(i);
+      value["id"] = json::Quote(id);
     } else if (method == "project_inspect") {
       type = "ProjectSnapshot";
       value = {{"rev", std::to_string(saves)},
@@ -51,7 +59,8 @@ class ProjectFixture {
           }
         }
         json::Members source{{"path", json::Quote(path)},
-                             {"hash", json::Quote(crypto::sha256_hex(bytes))}};
+                             {"hash", json::Quote(crypto::sha256_hex(bytes))},
+                             {"size_bytes", std::to_string(bytes.size())}};
         if (tsugumi::Document::is_external_document_file(path))
           source["document_json"] = json::Quote(bytes);
         sources.push_back(json::Encode(source));

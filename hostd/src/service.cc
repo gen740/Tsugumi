@@ -162,6 +162,10 @@ struct Service::State {
         state_gate, db, *conversations, *providers, *host_settings,
         demo_references, *turns, shutdown, *access,
         Tools::Dependencies{
+            .host_templates =
+                (options.vm.support.empty() ? options.state_dir.parent_path()
+                                            : options.vm.support) /
+                "templates",
             .scrub = [this](std::string raw) { return Scrub(std::move(raw)); },
             .event = [this](const auto& id,
                             const auto& raw) { Event(id, raw); },
@@ -659,8 +663,6 @@ struct Service::State {
                                       {"segments", json::Encode(segments)}})}};
       if (input->output_port())
         args["output_port"] = json::Quote(input->output_port()->str());
-      if (input->language())
-        args["language"] = json::Quote(input->language()->str());
       if (input->at_rev())
         args["at_rev"] = json::Quote(std::to_string(*input->at_rev()));
       lock.unlock();
@@ -861,6 +863,23 @@ struct Service::State {
                                host::PermissionKinds(Text(p->language())));
       }
 
+      case H::RequestPayload::TemplateListRequest: {
+        Human(human);
+        const auto project =
+            r->value_as_TemplateListRequest()->project_id()->str();
+        lock.unlock();
+        return wire::HostReply(
+            request.request_id,
+            tools->ListTemplates(project, false, shutdown.get_token()));
+      }
+      case H::RequestPayload::HostTemplateAddRequest: {
+        Human(human);
+        const auto input = std::unique_ptr<H::TemplateAddT>(
+            r->value_as_HostTemplateAddRequest()->addition()->UnPack());
+        lock.unlock();
+        tools->AddHostTemplate(*input, shutdown.get_token());
+        return wire::HostReply(request.request_id, S::AcknowledgementT{});
+      }
       case H::RequestPayload::RunFileReferencesRequest:
       case H::RequestPayload::RunCategoryDeleteRequest: {
         Human(human);
