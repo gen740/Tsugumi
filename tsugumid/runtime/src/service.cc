@@ -388,8 +388,21 @@ namespace {
 auto unsupported_local_option(const Settings& settings,
                               const RemoteTarget& target) -> std::string {
 #ifdef __linux__
-  if (settings.sandbox.filesystem && !target.namespace_isolation)
-    return "sandbox.filesystem requires a Linux worker with bubblewrap";
+  // Without bubblewrap only the plain worker could run, which enforces none
+  // of these: the Card fails instead of running without what it selected.
+  if (!target.namespace_isolation) {
+    if (settings.sandbox.filesystem)
+      return "sandbox.filesystem requires a Linux worker with bubblewrap";
+    if (!settings.grants.network)
+      return "a Card without grants.network requires a Linux worker with "
+             "bubblewrap to keep it off the network";
+    if (settings.sandbox.pid)
+      return "sandbox.pid requires a Linux worker with bubblewrap";
+    if (settings.sandbox.ipc)
+      return "sandbox.ipc requires a Linux worker with bubblewrap";
+    if (settings.sandbox.identity)
+      return "sandbox.identity requires a Linux worker with bubblewrap";
+  }
 #endif
   if (settings.sandbox.limits.limited() && !target.resource_limits)
     return "sandbox.limits requires a delegated cgroup v2 subtree";
@@ -412,8 +425,8 @@ auto effective_local_options(const Settings& settings,
           "network isolation does not hide filesystem Unix sockets");
 #endif
   }
-#ifdef __APPLE__
   (void)target;
+#ifdef __APPLE__
   if (settings.sandbox.filesystem)
     notes.push_back("Seatbelt filesystem isolation is partial");
   if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
@@ -422,15 +435,6 @@ auto effective_local_options(const Settings& settings,
     notes.push_back("identity isolation unavailable");
   if (settings.grants.network && settings.sandbox.filesystem)
     notes.push_back("Seatbelt still restricts access to the local host");
-#else
-  if (!target.namespace_isolation) {
-    if (!settings.grants.network)
-      notes.push_back("network isolation unavailable");
-    if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
-    if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
-    if (settings.sandbox.identity)
-      notes.push_back("identity namespace unavailable");
-  }
 #endif
   std::string message;
   for (const auto note : notes) {

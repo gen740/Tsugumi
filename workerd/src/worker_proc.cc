@@ -118,12 +118,17 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
     }
     return out + "\"";
   };
+  // No /bin or /usr/bin: the Card gets no implicit shell or system tools.
+  // What it may run are store paths (the tools it declared), the worker, and
+  // files in its own folders and grants.
   std::string read =
       "(literal \"/\") (subpath \"/nix/store\") (subpath \"/usr/lib\") "
       "(subpath \"/usr/share\")"
-      " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") "
-      "(subpath \"/private/etc\")"
+      " (subpath \"/System\") (subpath \"/private/etc\")"
       " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+  std::string exec = "(subpath \"/nix/store\") (literal " +
+                     quote(sp.worker_binary) + ") (subpath " + quote(scratch) +
+                     ")";
   if (std::string_view(TSUGUMI_CACERT).size())
     read += " (literal " + quote(TSUGUMI_CACERT) + ")";
   read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
@@ -133,18 +138,22 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
       quote(scratch) + ")";
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
+    exec += " (subpath " + quote(p) + ")";
   }
   std::string read_only_grants;
   for (const auto& bind : sp.binds) {
     const auto rule = " (subpath " + quote(bind.source) + ")";
     read += rule;
+    exec += rule;
     if (bind.write)
       write += rule;
     else
       read_only_grants += rule;
   }
   return "(version 1)\n(deny default)\n"
-         "(allow process-fork)\n(allow process-exec)\n(allow signal (target "
+         "(allow process-fork)\n(allow process-exec " +
+         exec +
+         ")\n(allow signal (target "
          "same-sandbox))\n"
          "(allow sysctl-read)\n(allow ipc-posix-shm)\n(allow "
          "file-read-metadata)\n"
@@ -301,8 +310,13 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     proc::Spec repair;
     repair.cwd = "/";
+    // The Card's own profile, plus exactly the one system tool the repair
+    // runs; the Card itself never gets /bin.
     if (!profile.empty())
-      repair.argv = {"/usr/bin/sandbox-exec", "-p", profile};
+      repair.argv = {"/usr/bin/sandbox-exec", "-p",
+                     profile +
+                         "(allow file-read* process-exec (literal "
+                         "\"/bin/chmod\"))\n"};
     repair.argv.insert(repair.argv.end(),
                        {"/bin/chmod", "-h", "u+rwx", target.string()});
     repair.uid = uid;
@@ -344,8 +358,10 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #else
   const bool bwrap = worker_has_bwrap();
   const bool filesystem = sp.sandbox.filesystem;
+  // Never the plain worker in place of isolation or a grant it cannot enforce.
   if (!bwrap && (filesystem || !sp.hidden_paths.empty() || sp.gui ||
-                 sp.sandbox.limits.limited()))
+                 sp.sandbox.limits.limited() || !sp.network ||
+                 sp.sandbox.pid || sp.sandbox.ipc || sp.sandbox.identity))
     throw Failed(FailureKind::unsupported,
                  "the requested Card isolation requires bubblewrap");
   if (bwrap) {

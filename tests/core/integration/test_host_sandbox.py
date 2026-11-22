@@ -2,8 +2,8 @@
 a Card allowed the network resolves names but reaches nothing else on this
 host (tsugumid's ports and sockets, the web server, by any of its addresses)
 and nothing of the user's session (the clipboard, LaunchServices), and it
-writes only its own output folders. A Python Card works there as anywhere:
-it can ask for its directory while it loads and `main` gets its environment."""
+writes only its own output folders. It can run only the tools it declared,
+never /bin or /usr/bin."""
 
 from __future__ import annotations
 
@@ -30,7 +30,12 @@ def log_of(c, run_id: str, card_id: str) -> str:
 
 def stdout_of_network_card(core_factory, tmp_path, body: str) -> str:
     """Run `body` (Python, indented by 4) as a sandboxed Card allowed the network; what it printed."""
-    probe = python_card(txt_main(body + "\n    RESULT = 'done'"), outputs=TXT, grants={"network": True})
+    return stdout_of_card(core_factory, tmp_path, body, grants={"network": True})
+
+
+def stdout_of_card(core_factory, tmp_path, body: str, *, tools: str = "", **settings) -> str:
+    """Run `body` (Python, indented by 4) as a sandboxed Card; what it printed."""
+    probe = python_card(txt_main(body + "\n    RESULT = 'done'"), outputs=TXT, tools=tools, **settings)
     root = tmp_path / "p"
     write(root, {"start": {"type": "trigger"}, "probe": dict(probe, inputs=[{"name": "start"}])},
           [card("start", "start"), card("probe", "probe")], [conn("start", "out", "probe", "start")])
@@ -176,3 +181,32 @@ def test_a_card_with_network_resolves_a_name(core_factory, tmp_path):
     except OSError as e:
         print("name: unresolved", e, flush=True)""")
     assert "name: resolved" in out
+
+
+SYSTEM_TOOLS = """
+    import shutil, subprocess
+    for tool in ("/bin/sh", "/usr/bin/env"):
+        try:
+            with open(tool, "rb") as f:
+                f.read(1)
+            print(tool, "read", flush=True)
+        except OSError:
+            print(tool, "unreadable", flush=True)
+        try:
+            subprocess.run([tool, "-c", "true"], stdin=subprocess.DEVNULL, capture_output=True)
+            print(tool, "ran", flush=True)
+        except OSError:
+            print(tool, "not run", flush=True)
+    jq = shutil.which("jq")
+    version = subprocess.run([jq, "--version"], capture_output=True, text=True, check=True).stdout
+    print("declared:", jq.startswith("/nix/store/") and version.startswith("jq-"), flush=True)"""
+
+
+def test_a_sandboxed_card_runs_only_what_it_declared(core_factory, tmp_path):
+    """Seatbelt gives the Card no system shell or tools: /bin and /usr/bin can be
+    neither read nor run, while the tool it declared to its builder runs."""
+    out = stdout_of_card(core_factory, tmp_path, SYSTEM_TOOLS, tools="[ pkgs.jq ]")
+    for tool in ("/bin/sh", "/usr/bin/env"):
+        assert f"{tool} unreadable" in out and f"{tool} not run" in out, out
+    assert "declared: True" in out, out
+
