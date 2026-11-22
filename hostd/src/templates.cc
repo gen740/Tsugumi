@@ -223,14 +223,14 @@ auto CheckTemplate(TemplateFiles files) -> DocumentTemplate {
       throw Failure("invalid_document",
                     "A template Card cannot reference an external project");
   }
-  // A template's layout.bin is read as its JSON view.
+  // Inspect the layout while keeping the stored bytes for both template stores.
   if (files.contains("layout.bin")) {
+    json::Members layout;
     try {
-      files["layout.bin"] = LayoutView(files.at("layout.bin"), {});
+      layout = json::Object(LayoutView(files.at("layout.bin")));
     } catch (const std::exception&) {
       throw Failure("invalid_document", "Template layout.bin is not a layout");
     }
-    const auto layout = json::Object(files.at("layout.bin"));
     if (layout.contains("displays") || layout.contains("frames"))
       throw Failure("invalid_document", "Template layout must be frame-free");
     for (const auto& [id, raw] :

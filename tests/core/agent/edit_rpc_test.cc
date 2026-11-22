@@ -108,7 +108,7 @@ TEST_F(AgentProjectFixture,
 }
 
 TEST_F(AgentProjectFixture,
-       NarrowEditPreservesAllUntouchedProjectBytesAndReplaysTheToolCall) {
+       NarrowEditKeepsCanonicalProjectTextAndReplaysTheToolCall) {
   StartProject();
   const auto conversation = Conversation("atomic-edit");
   Grant(conversation);
@@ -122,6 +122,9 @@ TEST_F(AgentProjectFixture,
   auto expected = before;
   expected.replace(expected.find("PRIVATE_PROJECT_SENTINEL"),
                    std::string("PRIVATE_PROJECT_SENTINEL").size(), "Renamed");
+  const auto schema = document_text::Schema::Project;
+  expected = document_text::print(
+      schema, document_text::parse(schema, "tsugumi.json", expected));
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), expected);
   const auto retry = Tool(conversation, "project_edit", args, "rename");
   ASSERT_TRUE(retry.Code().empty()) << retry.View();
@@ -134,7 +137,6 @@ TEST_F(AgentProjectFixture,
       "format-name");
   ASSERT_TRUE(formatted.Code().empty()) << formatted.View();
   ASSERT_FALSE(JsonBool(formatted.View(), "/isError")) << formatted.View();
-  expected.replace(expected.find("\"name\":"), 7, "\"name\" : ");
   EXPECT_EQ(Read(directory.path / "project/tsugumi.json"), expected);
   const auto stale =
       Tool(conversation, "project_edit", args, "stale-old-value");

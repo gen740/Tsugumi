@@ -382,7 +382,7 @@ TEST_F(AgentProjectFixture,
           {"base_rev", json::Get(snapshot, "rev")},
           {"changes",
            json::Encode(std::vector<std::string>{
-               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}","readme":"Shared container"}})"})}}),
+               R"({"value_type":"PutDefinition","value":{"id":"alias","card_json":"{\"type\":\"subgraph\",\"external\":\"storage\"}","readme":"---\ndescription: Shared container\n---\n"}})"})}}),
       "add-alias");
   EXPECT_FALSE(JsonBool(alias.View(), "/isError")) << alias.View();
   ASSERT_TRUE(Call(*human, A::RequestPayload::AccessResolveRequest,

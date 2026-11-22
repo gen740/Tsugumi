@@ -8,6 +8,7 @@
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/save.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 
 namespace tsugumi::agent {
@@ -594,9 +595,10 @@ auto HelperScope::CheckCurrentSave(const json::Members& args,
     const auto path =
         type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
     if (type == "SetLayout" ||
-        (type == "PutSource" && (path.ends_with("/layout.bin") ||
-                                 path.starts_with("notes/") ||
-                                 path.find("/notes/") != std::string::npos)))
+        (type == "PutSource" &&
+         (Document::is_note_file(path) ||
+          (path.ends_with("/layout.bin") &&
+           Document::is_external_document_file(path)))))
       continue;
     if (type == "SetProject" ||
         (type == "PutSource" && path.ends_with("/tsugumi.json"))) {

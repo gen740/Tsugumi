@@ -43,8 +43,8 @@ def write_project(root: Path, project: dict | None = None, layout: dict | None =
         write_layout(root, layout)
 
 
-from harness.control import read_ready
 from harness.daemon import Daemon as CoreDaemon
+from harness.control import read_ready
 
 
 class Daemon(CoreDaemon):
