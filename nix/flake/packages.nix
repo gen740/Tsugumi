@@ -54,7 +54,9 @@ in
           chmod -R u+w $out
           cp ${../../flake.nix} $out/flake.nix
           cp ${../../flake.lock} $out/flake.lock
-          cp -R ${../.} $out/nix
+          mkdir -p $out/nix
+          cp -R ${../.}/. $out/nix/
+          chmod -R u+w $out/nix
           cp -R ${../../vm/guest}/. $out/vm/guest/
         '';
         site-player = web.sitePlayer;
