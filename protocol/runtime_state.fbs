@@ -3,6 +3,8 @@
 // run history (history.sqlite), a file of the project's state folder, or a
 // file of its control folder. Nothing here is a project document.
 
+include "data.fbs";
+
 namespace Tsugumi.State;
 
 // ---- Control folder ------------------------------------------------------------
@@ -99,8 +101,7 @@ table InvocationDetail {
   ready_at:long = null;
   emulator:string;
   environment_id:string;
-  /// The params handed to default.nix, as that JSON.
-  params:string;
+  params:Tsugumi.Data.InvocationParams;
   execution_service:string;
   execution_job_id:string;
   execution_system:string;

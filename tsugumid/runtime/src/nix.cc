@@ -8,13 +8,12 @@
 #include <sstream>
 
 #include "nix_eval.hh"
-#include "runtime_schema.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
-#include "tsugumi/util/json_object.hh"
-#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/flat_file.hh"
+#include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
 
@@ -217,7 +216,13 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-static auto nixpkgs_pin(const std::string& pkgs) -> schema::NixpkgsPin {
+// nixpkgs.json is read by the Card's Nix evaluation.
+struct NixpkgsPin {
+  schema::t::String<"url"> url;
+  schema::t::String<"narHash"> nar_hash;
+};
+
+static auto nixpkgs_pin(const std::string& pkgs) -> NixpkgsPin {
   std::string url;
   std::string hash;
   if (pkgs == "tsugumi:default") {
@@ -238,7 +243,7 @@ static auto nixpkgs_pin(const std::string& pkgs) -> schema::NixpkgsPin {
     url = m[1];
     hash = m[2];
   }
-  schema::NixpkgsPin pin;
+  NixpkgsPin pin;
   *pin.url = url;
   *pin.nar_hash = hash;
   return pin;

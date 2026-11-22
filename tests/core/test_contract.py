@@ -523,7 +523,7 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     journal = client.call("LogRangeRequest", **args, stream=LogStream.journal)
     assert journal.logTruncatedAtBytes == limit
     for line in text(journal.text).splitlines():
-        assert isinstance(json.loads(line), dict)
+        assert " · " in line and line.endswith("Z]")
 
 
 @pytest.mark.parametrize("project_logs,card_logs,limit,recorded", [

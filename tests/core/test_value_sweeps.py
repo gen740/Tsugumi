@@ -101,7 +101,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     assert [row.implementationIndex for row in page.records] == list(range(1, 7)) * 2
     assert [row.batchIndex for row in page.records] == list(range(1, 13))
     first = client.call("RunRecordRequest", runId=run_id, card=path("values"), invocation=2).record
-    assert json.loads(text(first.paramsJson)) == {"left": 1, "right": 20}
+    assert {text(p.name): json.loads(text(p.value)) for p in first.params.entries} == {"left": 1, "right": 20}
     assert recorded_input_json(client, tmp_path / "decode", run_id, "values", invocation=7, port="start") == {
         "value": 8}
     assert collected(client, tmp_path / "decode", run_id) == [{"left": a, "right": b} for a, b in pairs] * 2

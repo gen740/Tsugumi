@@ -19,7 +19,7 @@ def param(name, value):
 
 def recorded_params(client, run_id, card):
     result = client.call("RunRecordRequest", runId=run_id, card=path(card))
-    return result, json.loads(text(result.record.paramsJson))
+    return result, {text(p.name): json.loads(text(p.value)) for p in result.record.params.entries}
 
 
 def set_param(client, card, name, value):

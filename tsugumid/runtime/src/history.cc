@@ -71,7 +71,15 @@ std::string detail_bytes(const InvocationSummaryData& s) {
   if (s.ready_at) d.ready_at = *s.ready_at;
   d.emulator = s.emulator;
   d.environment_id = s.environment_id;
-  d.params = s.params_json;
+  if (s.params) {
+    d.params = std::make_unique<Tsugumi::Data::InvocationParamsT>();
+    for (const auto& [name, value] : *s.params) {
+      auto param = std::make_unique<Tsugumi::Data::InvocationParamT>();
+      param->name = name;
+      param->value = value;
+      d.params->entries.push_back(std::move(param));
+    }
+  }
   d.execution_service = s.execution_service;
   d.execution_job_id = s.execution_job_id;
   d.execution_system = s.execution_system;
@@ -109,7 +117,11 @@ void detail_into(const std::string& bytes, InvocationSummaryData& s) {
   if (d.ready_at) s.ready_at = *d.ready_at;
   s.emulator = d.emulator;
   s.environment_id = d.environment_id;
-  s.params_json = d.params;
+  if (d.params) {
+    auto& params = s.params.emplace();
+    for (const auto& param : d.params->entries)
+      params.emplace_back(param->name, param->value);
+  }
   if (!d.execution_service.empty()) s.execution_service = d.execution_service;
   s.execution_job_id = d.execution_job_id;
   s.execution_system = d.execution_system;

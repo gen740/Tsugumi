@@ -91,8 +91,8 @@ struct InvocationSummaryData {
   // another system (binfmt_misc); "" when it ran natively.
   std::string emulator;
   std::string environment_id;
-  std::string
-      params_json;  // the invocation's parameters, not the current document
+  // The invocation's parameters, captured from its immutable document.
+  std::optional<std::vector<std::pair<std::string, std::string>>> params;
   std::string execution_service;
   std::string transfer_name, transfer_direction;
   uint64_t transfer_done = 0, transfer_total = 0;

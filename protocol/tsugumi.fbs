@@ -1185,7 +1185,7 @@ table InvocationRecord {
   input_sources:[InputSource] (id: 3, required);
   record_io:bool = null (id: 4);
   /// Parameters captured from the run's immutable document; absent if unavailable.
-  params_json:string (id: 5);
+  params:Tsugumi.Data.InvocationParams (id: 5);
 }
 
 table HistoryState {

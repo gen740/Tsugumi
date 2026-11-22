@@ -201,9 +201,8 @@ struct LogPage: Sendable {
     case .terminal:
       text = raw
     case .journal:
-      guard let record = try? JSONValue.parse(raw), let phase = record["phase"]?.string,
-            phase == "validate" || phase == "save" else { return nil }
-      text = "\(phase) · \(record["event"]?.string ?? ""): \(record["message"]?.string ?? "")"
+      guard raw.hasPrefix("validate · ") || raw.hasPrefix("save · ") else { return nil }
+      text = raw
     }
     return "\(number)\t\(text)"
   }

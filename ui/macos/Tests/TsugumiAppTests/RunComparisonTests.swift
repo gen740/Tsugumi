@@ -18,13 +18,21 @@ import Testing
   }
 
   @Test func parametersAlignByNameAndRetainMissingSides() throws {
-    func record(_ json: String) -> ComparedRunCard {
+    func record(_ values: [(String, String)]) -> ComparedRunCard {
       let result = Tsugumi_RPC_RecordResultT()
       result.record = Tsugumi_RPC_InvocationRecordT()
-      result.record?.paramsJson = json
+      let params = Tsugumi_Data_InvocationParamsT()
+      params.entries = values.map { name, value in
+        let param = Tsugumi_Data_InvocationParamT()
+        param.name = name
+        param.value = value
+        return param
+      }
+      result.record?.params = params
       return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
     }
-    let a = record(#"{"low":600,"boundary":1650}"#), b = record(#"{"boundary":1800,"low":600,"added":true}"#)
+    let a = record([("low", "600"), ("boundary", "1650")])
+    let b = record([("boundary", "1800"), ("low", "600"), ("added", "true")])
     let fields = RunComparison.params(a, b)
     let added = try #require(fields.first { $0.name == "added" })
     let boundary = try #require(fields.first { $0.name == "boundary" })

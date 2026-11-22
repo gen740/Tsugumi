@@ -118,14 +118,14 @@ struct ComparedRunField: Identifiable {
   /// A side that has the Card but no recorded parameters (or no readable record) cannot be compared.
   static func paramsUnavailable(_ c: ComparedRunCard?) -> Bool {
     guard let c else { return false }
-    return (c.record?.record?.paramsJson ?? "").isEmpty
+    return c.record?.record?.params == nil
   }
 
-  /// Parameters pair by name and compare as serialized JSON.
+  /// Parameters pair by name and compare as recorded.
   static func params(_ left: ComparedRunCard?, _ right: ComparedRunCard?) -> [ComparedRunField] {
     func values(_ c: ComparedRunCard?) -> [String: String] {
-      guard let text = c?.record?.record?.paramsJson, let json = try? JSONValue.parse(text), let entries = json.object else { return [:] }
-      return Dictionary(entries.map { ($0.0, $0.1.serialized().trimmingCharacters(in: .whitespacesAndNewlines)) }, uniquingKeysWith: { x, _ in x })
+      let entries = c?.record?.record?.params?.entries.compactMap { $0 } ?? []
+      return Dictionary(entries.map { ($0.name, $0.value) }, uniquingKeysWith: { first, _ in first })
     }
     let a = values(left), b = values(right), unknown = paramsUnavailable(left) || paramsUnavailable(right)
     return names(a, b).map {
@@ -480,7 +480,7 @@ private struct ComparedRunCardView: View {
         if let error = side.error ?? v.failure?.diagnostic { Text(error).foregroundStyle(.red) }
         if side.record?.record?.recordIo == false { Text("入出力は記録されていません").foregroundStyle(.secondary) }
         if side.record?.truncated == true { Text("大きな値は概要のみ表示しています。").foregroundStyle(.secondary) }
-        if side.record != nil, (side.record?.record?.paramsJson ?? "").isEmpty { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
+        if side.record != nil, side.record?.record?.params == nil { Text("パラメータの記録がありません").foregroundStyle(.secondary) }
       }
     } else { Text("この実行にはありません").foregroundStyle(.secondary) }
   }

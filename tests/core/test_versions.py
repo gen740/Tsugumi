@@ -358,7 +358,7 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     for run_id, expected_value in ((first_run, "second"), (second_run, "third")):
         row = restored.call("RunRecordRequest", runId=run_id, card=path("src"))
         assert text(row.run.status.runId) == run_id
-        assert json.loads(text(row.record.paramsJson))["text"] == expected_value
+        assert {text(p.name): json.loads(text(p.value)) for p in row.record.params.entries}["text"] == expected_value
 
 
 def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):

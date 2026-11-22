@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <fstream>
 #include <future>
@@ -17,12 +18,10 @@
 #include "nix.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
-#include "runtime_schema.hh"
 #include "service.hh"
-#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/log.hh"
 #include "wire.hh"
@@ -140,22 +139,26 @@ std::string journal_line(const char* phase, const char* event,
                          const std::optional<CardPath>& card,
                          std::optional<uint64_t> inv,
                          const std::string& message) {
-  if (card) {
-    schema::CardJournalLine l;
-    *l.time_ms = now_ms();
-    *l.phase = phase;
-    *l.event = event;
-    *l.card = *card;
-    *l.invocation = inv.value_or(0);
-    *l.message = message;
-    return schema::encode(l) + "\n";
+  std::string line = std::string(phase) + " · " + event + ": ";
+  for (char c : message) {
+    if (c == '\n')
+      line += "\\n";
+    else if (c == '\r')
+      line += "\\r";
+    else if (c == '\\')
+      line += "\\\\";
+    else
+      line += c;
   }
-  schema::RunJournalLine l;
-  *l.time_ms = now_ms();
-  *l.phase = phase;
-  *l.event = event;
-  *l.message = message;
-  return schema::encode(l) + "\n";
+  const auto now = std::time(nullptr);
+  std::tm utc{};
+  gmtime_r(&now, &utc);
+  char timestamp[32]{};
+  std::strftime(timestamp, sizeof timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc);
+  line += " [";
+  if (card)
+    line += path_key(*card) + " #" + std::to_string(inv.value_or(0)) + ", ";
+  return line + timestamp + "]\n";
 }
 
 const char* phase_name(Phase p) {
@@ -171,6 +174,16 @@ const char* phase_name(Phase p) {
     default:
       return "run";
   }
+}
+
+auto recorded_params(const std::vector<ParamDef>& params)
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> result;
+  for (const auto& param : params)
+    if (param.data)
+      result.emplace_back(param.name,
+                          param_value_json(param.type, *param.data));
+  return result;
 }
 
 // Opens stage `p` of an invocation, closing a still open previous stage as
@@ -1305,7 +1318,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
-    s.params_json = NixRunner::params_json(node, false);
+    s.params = recorded_params(node.settings.params);
     s.invocation = w.invocation;
     s.batch_activation = w.activation;
     s.started_at = now_ms();
@@ -1329,7 +1342,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       auto member = value_sweep_member(node.settings, *w.sweep_index);
       s.implementation_index = static_cast<uint32_t>(*w.sweep_index + 1);
       s.implementation_label = std::move(member.label);
-      s.params_json = NixRunner::params_json(member.params, false);
+      s.params = recorded_params(member.params);
     }
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
@@ -2150,7 +2163,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       InvocationRecordData rec;
       rec.summary.run_id = run_id_;
       rec.summary.card = n.node->path;
-      rec.summary.params_json = NixRunner::params_json(*n.node, false);
+      rec.summary.params = recorded_params(n.node->settings.params);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];

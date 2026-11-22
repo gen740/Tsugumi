@@ -1,8 +1,6 @@
 // Card evaluation and builds, and the build cache.
 #pragma once
 
-#include "tsugumi/protocol/runtime_state_generated.h"
-
 #include <atomic>
 #include <condition_variable>
 #include <filesystem>
@@ -17,8 +15,8 @@
 
 #include "model.hh"
 #include "nix_eval.hh"
-#include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/workerd/card_plan.hh"
 
 namespace tsugumi {

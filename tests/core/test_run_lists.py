@@ -161,9 +161,8 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
         assert batch.complete and batch.executionList and batch.invocationCount == 0
     assert collected(client, tmp_path / "decode", run_id) == []
     journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
-    lines = [json.loads(line) for line in text(journal.text).splitlines()]
-    assert any(diagnostic in line["message"] and "left activation 1" in line["message"]
-               for line in lines)
+    assert any(diagnostic in line and "left activation 1" in line
+               for line in text(journal.text).splitlines())
 
     assert not any(
         note.valueType == NotificationPayload.RunEvent

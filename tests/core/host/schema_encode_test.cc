@@ -3,7 +3,6 @@
 #include <limits>
 
 #include "../agent_fixture_server.hh"
-#include "runtime_schema.hh"
 #include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
