@@ -7,9 +7,9 @@ Draft entries with a finished counterpart declare both language-qualified counte
 
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
-## TODO: port the demos to Card ABI 9
+## TODO: port the demos to the current Card ABI
 
-The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for Card ABI 8: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
+The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for the previous Card ABI: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
 
 | Demo | Subject | What it shows |
 | --- | --- | --- |

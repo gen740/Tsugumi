@@ -147,7 +147,7 @@ Trying code interactively, representing processing as a graph, and managing depe
 | Represent the relationships of processing as a graph | Make the displayed connections the basis of type derivation and the rules of execution |
 | Manage versions of environments, code and experiments | Tie runs to versions of the code, and start the next attempt from a past version |
 
-Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI 9](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
+Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
 
 **What Tsugumi aims for is a research environment in which people and AI design, run and keep thinking on the same structure.**
 With that structure, researchers can return to the trials an AI pushed forward and test their own questions as concrete changes.

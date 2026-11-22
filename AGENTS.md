@@ -13,7 +13,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums. The Card ABI is core-owned here: [`card.fbs`](protocol/card.fbs) and [`card_abi.h`](protocol/include/tsugumi/card_abi.h) ([Card ABI 9](docs/CardABI.md)) |
+| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums. The Card ABI is core-owned here: [`card.fbs`](protocol/card.fbs) and [`card_abi.h`](protocol/include/tsugumi/card_abi.h) ([Card ABI](docs/CardABI.md)) |
 | [util/](util/), [rpc/](rpc/) | Generic filesystem/process/JSON mechanisms and protocol-free transport/TLS |
 | [tsugumid/](tsugumid/) | Project document contracts, runtime, scheduling, history and versions; narrow shared runtime accounting |
 | [hostd/](hostd/) | Human/Agent policy, settings, credentials, document operations and environment adapters |

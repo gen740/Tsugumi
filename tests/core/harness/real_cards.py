@@ -1,4 +1,4 @@
-"""Small ABI 9 Card fixtures (built with the kit's pythonCard) shared by host
+"""Small Card fixtures (built with the kit's pythonCard) shared by host
 and VM integration scenarios."""
 
 import json
@@ -55,7 +55,7 @@ def run(input):
 
 
 def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str:
-    """The Nix expression of an ABI 9 run whose main.py is `main`, built with
+    """The Nix expression of a run whose main.py is `main`, built with
     the kit's pythonCard. `values` binds Python names to Nix string expressions
     (store paths, evaluated names); their string context builds them into the
     Card's closure. `tools` is a Nix list of packages for subprocesses."""

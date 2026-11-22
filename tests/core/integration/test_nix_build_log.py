@@ -21,7 +21,7 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
 
-# ABI 9 Cards that depend on the probe derivation through main.py's text.
+# Cards that depend on the probe derivation through main.py's text.
 PROBE_MAIN = """import os
 from card import Output
 

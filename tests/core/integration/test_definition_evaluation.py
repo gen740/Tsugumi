@@ -196,7 +196,7 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
 def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, list_run):
     """Keep declaration order and build references, including a standalone HTML file."""
     client = core_factory().connect()
-    library = synthetic_run('"abi9"')
+    library = synthetic_run('"views"')
     # A passthru entry would fail if the evaluator tried to read or merge it.
     library = "(" + library + ').overrideAttrs (_: { passthru.views = throw "implicit views"; })'
     body = '[ { label = "first"; run = library; } library ]' if list_run else 'library'

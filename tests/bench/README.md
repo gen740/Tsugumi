@@ -1,7 +1,7 @@
 # Manual execution baseline
 
 These are operator-run measurement tools, restored from the two probes removed
-by `58079032` and updated for Card ABI 9, ports and public RPC. They are not pytest tests, are not named `test_*.py`, and are not
+by `58079032` and updated for the Card ABI, ports and public RPC. They are not pytest tests, are not named `test_*.py`, and are not
 registered with CTest or CI. No product implementation, cache, worker ownership,
 retention policy or execution setting is patched by these tools.
 

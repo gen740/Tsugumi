@@ -1,9 +1,9 @@
-# Card ABI 9 cutover lanes
+# Card ABI cutover lanes
 
 Branch each lane from the shared contracts with `origin/main` merged through
 #422. Send changes outside your lane to the file owner. The lead owns
 `protocol/**`, `cmake/protocol.cmake`, the Swift FlatBuffers plugin,
-`docs/dev/abi9-lanes.md`, `docs/Protocol.md`, and
+`docs/dev/card-abi-lanes.md`, `docs/Protocol.md`, and
 `tests/core/test_rpc_schema.py`. The lead integrates the lanes.
 
 ## Shared contracts
@@ -147,7 +147,7 @@ payloads, or `ModuleRead` request.
 - Use language-free Card definitions. Document the Project and Host template
   stores. The examples and language starters ship in the kit; the core tests
   the template stores with opaque fixture trees.
-- Document and use the explicit `views` list, ABI 9 `CardInput` and
+- Document and use the explicit `views` list, Card ABI `CardInput` and
   `CardResult`, and the kit's `card::display::send(...)` interface. Port
   both Japanese and English demos for all eight SDKs, including Drafts.
 - Accept when the demo suite builds and runs on its supported platforms, the

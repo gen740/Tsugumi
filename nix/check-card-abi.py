@@ -1,7 +1,7 @@
 """Compare the vendored Card ABI with the canonical core declarations.
 
 The ABI is card.fbs, every schema it includes (transitively) and card_abi.h.
-The kit vendors exactly these files, under the same names, in abi/<version>/.
+The kit vendors exactly these files, under the same names, in abi/.
 """
 
 import re

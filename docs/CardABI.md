@@ -1,6 +1,6 @@
-# Card ABI 9
+# Card ABI
 
-**Status:** decided by the owner on 2026-11-13, 2026-11-21 and 2026-11-22. The ABI 9 cutover implements it and removes ABI 8 without a compatibility layer.
+**Status:** decided by the owner on 2026-11-13, 2026-11-21 and 2026-11-22. The Card ABI cutover implements it and removes the previous ABI without a compatibility layer.
 Points that are not decided yet are listed under [Open](#open).
 
 The ABI is the contract between the core and a [language SDK](CoreAndSDK.md#terms): `tsugumi_main` in `lib/main.so` plus the FlatBuffers of [card.fbs](../protocol/card.fbs). The reference is [card_abi.h](../protocol/include/tsugumi/card_abi.h). What the worker builds around the call is in [The sandbox contract](SandboxContract.md).
@@ -13,6 +13,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 - The call carries `{abi_version, input, host, effects}`. `input` is a `CardInput` FlatBuffer.
 - `abi_version` comes first and is checked before any other part of the layout is read. A library built for another version fails cleanly.
+- The version is 0 until Tsugumi v1.0.0: the ABI is unstable, changes carry no guarantees and do not raise the number. At v1.0.0 it is frozen as 1. After that it rises only when the ABI changes, independently of Tsugumi's own version.
 - The host calls serially: one call at a time per process.
 - A zero return writes a borrowed `CardResult` to `result`, including a result that carries a failure. The bytes stay valid until the next call.
 - A nonzero return means that no result could be built.

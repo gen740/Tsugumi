@@ -54,7 +54,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **_language_ SDK** | The swappable part for one language (C++ SDK, Python SDK, …) that turns a Card's sources into `lib/main.so`; chosen per Card in `default.nix`. The core knows no language ([The core and the language SDKs](CoreAndSDK.md#terms)) |
 | **tsugumi-kit** | The repository of the eight default language SDKs (C++, Python, Go, Rust, C#, Julia, R, Ruby) and example templates, pinned by Tsugumi |
 | **Template** | A folder of Card definitions to copy into a Workflow, from the project's `templates/` or the host's store ([Templates](CoreAndSDK.md#templates)) |
-| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` in `lib/main.so` plus `card.fbs`, version 9 ([Card ABI 9](CardABI.md)) |
+| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` in `lib/main.so` plus `card.fbs`, version 0 while unstable ([Card ABI](CardABI.md)) |
 | **Worker** | The core's process that loads a Card's `lib/main.so` and calls it. Can stay resident across runs with `reuseWorker` ([The sandbox contract](SandboxContract.md#the-unit-of-isolation-is-the-card)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **pkgsPath** | The nixpkgs that Cards use, pinned (`tsugumi.json`) |

@@ -55,7 +55,7 @@ try {
     await assert.rejects(routes['POST /api/settings']({ revision: revision(0), model: 'stale' }, url) as Promise<unknown>, /conflict/)
     assert.equal(values['agent.model'], 'new')
     // The folder editor still displays revision 1. Another tab removes the
-    // folder, and this tab's unrelated settings request sees revision 2.
+    // folder, and this tab's unrelated settings request sees the second revision.
     await routes['POST /api/settings']({ revision: revision(1), skillFolders: [] }, url)
     assert.equal((await routes['GET /api/settings']({}, url) as any).revision, revision(2))
     await assert.rejects(routes['POST /api/settings']({

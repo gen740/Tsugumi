@@ -54,7 +54,7 @@ def _result_literal(outputs):
 
 
 def synthetic_sources(outputs=()):
-    """A minimal ABI 9 Card in C, independent of any kit SDK: it prints VALUE
+    """A minimal Card in C, independent of any kit SDK: it prints VALUE
     (from value.h) and returns `outputs` [(name, kind, bytes)]."""
     return {
         "card_abi.h": (ROOT / "protocol/include/tsugumi/card_abi.h").read_text(),

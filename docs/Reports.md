@@ -1,6 +1,6 @@
 # R report Cards
 
-> The demo described here is written for the previous Card ABI and is to be ported with the other demos ([TODO](Demos.md#todo-port-the-demos-to-card-abi-9)). This page describes the Cards as they are to be ported.
+> The demo described here is written for the previous Card ABI and is to be ported with the other demos ([TODO](Demos.md#todo-port-the-demos-to-the-current-card-abi)). This page describes the Cards as they are to be ported.
 
 Open the **R reports** demo for working R Markdown and Quarto report Cards. Connect a typed upstream output to `data`, edit `src/report.Rmd` or `src/report.qmd`, and set the Card's parameters. The demo aggregates observations and renders both formats.
 

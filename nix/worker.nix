@@ -1,4 +1,4 @@
-# Build the ABI 9 worker against the same package set and system as the Card.
+# Build the worker against the same package set and system as the Card.
 { pkgs }:
 pkgs.stdenv.mkDerivation {
   name = "tsugumi-worker";

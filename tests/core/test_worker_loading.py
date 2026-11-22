@@ -137,7 +137,7 @@ def test_worker_passes_inputs_unopened_and_preserves_binary_parameters(tmp_path)
         __attribute__((constructor)) static void loaded(void) {{ puts("loaded"); }}
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
           static const uint8_t wire[] = {{RESULT_BYTES}};
-          if (call->abi_version != 9 || call->input.size < sizeof(wire)) return 4;
+          if (call->abi_version != 0 || call->input.size < sizeof(wire)) return 4;
           // Read the params vector in the CardInput table and inspect its
           // contents including embedded NUL bytes.
           const uint8_t* b = call->input.data;
@@ -185,7 +185,7 @@ def test_worker_loads_once_with_launch_secrets_and_no_legacy_environment(tmp_pat
               getenv("TSUGUMI_OUTPUT_DIR") || getenv("TSUGUMI_TMP_DIR") ||
               getenv("TSUGUMI_WORK_DIR")) return 2;
           *result = (tsugumi_bytes){wire, sizeof(wire)};
-          return call->abi_version != 9;
+          return call->abi_version != 0;
         }
     ''')
     with worker(tmp_path, startup={"startup_key": "test-value"}) as (p, data, _):
@@ -375,7 +375,7 @@ def card_package(body, *, declarations=""):
     return f"""
 let
 {bindings}
-in pkgs.runCommandCC "abi9-native-card" {{
+in pkgs.runCommandCC "native-card" {{
   nativeBuildInputs = [ pkgs.flatbuffers ];
   buildInputs = [ pkgs.flatbuffers ];
 }} ''

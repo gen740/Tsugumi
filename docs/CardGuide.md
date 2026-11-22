@@ -659,7 +659,7 @@ working copy open for correction.
 
 | To know | Document |
 | --- | --- |
-| Branches, merges and loops, passing files, data pinned with Nix | [The bundled demos](Demos.md) (their code is still to be ported to Card ABI 9: [TODO](Demos.md#todo-port-the-demos-to-card-abi-9)) |
+| Branches, merges and loops, passing files, data pinned with Nix | [The bundled demos](Demos.md) (their code is still to be ported to the current Card ABI: [TODO](Demos.md#todo-port-the-demos-to-the-current-card-abi)) |
 | Examples of code that runs | [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates) |
 | One language's API, dependencies and threads | [tsugumi-kit](https://github.com/gen740/tsugumi-kit/tree/main) |
 | The contract between the core and an SDK | [Card ABI](CardABI.md) |

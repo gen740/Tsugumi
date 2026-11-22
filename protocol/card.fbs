@@ -1,4 +1,4 @@
-// FlatBuffer payloads of the ABI 9 Card entry point.
+// FlatBuffer payloads of the Card entry point.
 include "card_enums.fbs";
 
 namespace Tsugumi.Card;

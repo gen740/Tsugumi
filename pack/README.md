@@ -138,7 +138,7 @@ it whenever `pack/` or the native runtime changes).
 
 `demos/en/cell-count` (seven Python and Bash Cards), exported and
 run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
-measurement predates Card ABI 9. The demo is still ABI 8 and does not build
+measurement predates the current Card ABI. The demo still uses the previous ABI and does not build
 now. TODO: repeat the check once the demos are ported
 ([Demos](../docs/Demos.md)).
 

@@ -1,7 +1,7 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM): backpressure stalls, cancellation, isolation, delegated limits,
 Nix upstream references, stages and caching, the process a Card runs in,
-unselected branches and worker crashes. The Cards are small ABI 9 Python
+unselected branches and worker crashes. The Cards are small Python
 Cards; what an SDK offers is checked in the kit."""
 
 from __future__ import annotations

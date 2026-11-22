@@ -1,15 +1,15 @@
 # The core and the language SDKs
 
-**Status** — decided by the owner on 2026-11-13, 2026-11-21 and 2026-11-22. The ABI 9 cutover implements it.
+**Status** — decided by the owner on 2026-11-13, 2026-11-21 and 2026-11-22. The Card ABI cutover implements it.
 Points that are not decided yet are listed under [Open](#open).
 
-The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
+The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
 
 ## Terms
 
 | Term | Meaning |
 | --- | --- |
-| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` plus `card.fbs` ([Card ABI 9](CardABI.md)) |
+| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` plus `card.fbs` ([Card ABI](CardABI.md)) |
 | **_language_ SDK** (C++ SDK, Python SDK, …) | The swappable part for one language: the Nix builder that produces `lib/main.so`, the code generation for the typed entry and `tsugumi_main`, the runtime library (`send`, `cancelled()`, `remaining_ms()`, and an embedded interpreter where one is needed), its views and its documentation |
 | **tsugumi-kit** | The separate repository ([gen740/tsugumi-kit](https://github.com/gen740/tsugumi-kit)) that holds the default language SDKs and the example templates |
 | **View** | A display surface that a Card declares: a name, a type (`html` or `dawn`) and one file ([Views](#views)) |
@@ -76,7 +76,7 @@ A language SDK's Nix builder only returns the derivation. There is no manifest. 
 There is no language SDK metadata. The interface between the core and a language SDK is only:
 
 1. **a Nix builder** that takes the Card's `schemas` and returns a derivation containing `lib/main.so` and `share/tsugumi/api/`;
-2. **[Card ABI 9](CardABI.md).**
+2. **[Card ABI](CardABI.md).**
 
 What a language SDK might otherwise have described lives elsewhere:
 
@@ -129,10 +129,10 @@ in
 ```
 
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
-- An SDK's own views are added explicitly with `sdk.views`. Nothing is merged implicitly. The C++ SDK's list holds html views for text, Markdown, tables, images, line charts (`LineChart`) and points (`Points`), and the Python SDK's list adds Plotly. Each view's bytes format is private to its SDK. The SDKs that had line charts and points before ABI 9 keep them as html views; a `dawn` version comes later. An SDK with an empty list sends to views taken from another SDK's list, or the Card declares its own.
+- An SDK's own views are added explicitly with `sdk.views`. Nothing is merged implicitly. The C++ SDK's list holds html views for text, Markdown, tables, images, line charts (`LineChart`) and points (`Points`), and the Python SDK's list adds Plotly. Each view's bytes format is private to its SDK. The SDKs that had line charts and points before the Card ABI cutover keep them as html views; a `dawn` version comes later. An SDK with an empty list sends to views taken from another SDK's list, or the Card declares its own.
 - The core reads the list and sends it to the UIs (`CardViewsUpdated`) before any run. An empty list clears the Card's views. The core does not interpret names, types or blob contents.
 - The UIs bundle no views. Each UI shows a Card's declared views in the Card's view window, routed by `type`, and draws nothing on the Canvas.
-- A Card sends to a view with the ABI's `send(view, bytes)` ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)). The core relays `{view, bytes}` without resolving the name. The UI matches the name against the Card's declarations and shows an error for an unknown one.
+- A Card sends to a view with the ABI's `send(view, bytes)` ([Card ABI](CardABI.md#effects-and-their-lifetimes)). The core relays `{view, bytes}` without resolving the name. The UI matches the name against the Card's declarations and shows an error for an unknown one.
 - Nothing in the display path is recorded. A view shows live data. Results that people check later are typed outputs, files and artifacts ([What a run records](CardABI.md#what-a-run-records)).
 
 ### html views

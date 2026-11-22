@@ -241,14 +241,14 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
               output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
-        pytest.skip("needs the installed ABI 9 worker build sources")
+        pytest.skip("needs the installed worker build sources")
     expression = """
       { system, nixDirectory }:
       let
         pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
         worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
         card = """ + card_package(body) + """;
-      in pkgs.writeText "remote-abi9-card-plan" (builtins.toJSON {
+      in pkgs.writeText "remote-card-plan" (builtins.toJSON {
         runs = [ "${card}" ];
         views = [];
         worker = "${worker}/bin/tsugumi-worker";
