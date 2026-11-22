@@ -51,7 +51,7 @@ class WorkerDelivery : public testing::TestWithParam<OutputDelivery> {
     const std::vector<types::PortType> ports{{"result", kind, false, type_}};
     auto outputs = accept_outputs(outcome.outputs, ports);
     stage_outputs(outputs, inputs, original, output_,
-                  (root_ / "worker/out").string(), input_,
+                  (root_ / "worker/out").string(),
                   root_ / "worker/inputs", root_ / "result/files/out",
                   GetParam(), cancel);
     for (size_t i = 0; i < outputs.size(); ++i)
@@ -104,9 +104,9 @@ TEST_P(WorkerDelivery, EscapingLinkIsATransferFailureAndCannotReadOutside) {
 }
 
 TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
-  fs::write_atomic(root_ / "worker/inputs/file", "forwarded");
+  fs::write_atomic(root_ / "worker/inputs/inputs/0/file", "forwarded");
   const auto staged =
-      value("input", PortKind::File, root_ / "worker/inputs/file");
+      value("input", PortKind::File, root_ / "worker/inputs/inputs/0/file");
   const auto original =
       value("input", PortKind::File, root_ / "recorded/original");
   WorkerOutcome outcome{{{"result", staged.bytes}}, {}};
@@ -118,8 +118,8 @@ TEST_P(WorkerDelivery, ForwardedInputsKeepCarrierSpecificDelivery) {
     EXPECT_EQ(*delivered, (root_ / "recorded/original").string());
     EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
   } else {
-    EXPECT_TRUE(delivered->starts_with("out/.forwarded-"));
-    EXPECT_EQ(fs::read_file(root_ / "result/files" / *delivered), "forwarded");
+    EXPECT_EQ(*delivered, "inputs/0/file");
+    EXPECT_FALSE(stdfs::exists(root_ / "result/files"));
   }
 }
 

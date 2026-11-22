@@ -623,7 +623,8 @@ enum Shared {
     ],
     "LogRangeRequest": [
       "terminal",
-      "terminal_since"
+      "terminal_since",
+      "live"
     ]
   },
   "draftRequest": {

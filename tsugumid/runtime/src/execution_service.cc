@@ -303,8 +303,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
-  return {
-      std::move(completed.outputs), std::move(completed.failure), {}, false};
+  return {std::move(completed.outputs), std::move(completed.failure)};
 }
 
 }  // namespace tsugumi

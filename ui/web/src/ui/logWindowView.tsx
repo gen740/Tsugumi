@@ -7,7 +7,7 @@ import { errorText, key, ProjectSession } from '../model/session'
 import { D, RPCFailure, s, segs } from '../wire/rpc'
 import { Button } from './controls'
 
-export interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream }
+export interface LogSource { runId: string; card: string[] | null; invocation: bigint | null; stream: D.LogStream; live?: boolean; revision?: number }
 
 const EMPTY = new LogWindow('terminal')
 type View = Pick<LogWindow, 'blocks' | 'loaded' | 'size' | 'start' | 'end' | 'waiting' | 'following' | 'truncatedAt'> & {
@@ -21,7 +21,7 @@ type View = Pick<LogWindow, 'blocks' | 'loaded' | 'size' | 'start' | 'end' | 'wa
 }
 
 export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLogs'>, source: LogSource | undefined, form: LogForm): View {
-  const id = source ? JSON.stringify([source.runId, source.card, String(source.invocation), source.stream, form]) : ''
+  const id = source ? JSON.stringify([source.runId, source.card, String(source.invocation), source.stream, source.live, source.revision, form]) : ''
   const empty: View = {
     id, blocks: EMPTY.blocks, loaded: false, size: 0, start: 0, end: 0, rawSize: 0, waiting: false, following: true,
     follow: () => {}, page: () => {}, visible: () => {}, jump: () => {},
@@ -77,7 +77,7 @@ export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLog
       try {
         const result = await rpc.logRange(source.runId, source.card, source.invocation, source.stream,
           before === null ? BigInt(request.offset) : 0n, request.kind === 'tail', request.limit, before, form === 'terminal',
-          request.since === undefined ? null : BigInt(request.since))
+          request.since === undefined ? null : BigInt(request.since), source.live)
         return () => {
           const slice = {
             text: decodeLog(result.text), offset: Number(result.offset), end: Number(result.nextOffset),
@@ -107,7 +107,7 @@ export function useLogStream(session: Pick<ProjectSession, 'rpc' | 'subscribeLog
     })
     const off = session.subscribeLogs((notice) => {
       if (notice) {
-        if (s(notice.runId) !== source.runId || (key(segs(notice.card)) !== key(source.card ?? []))
+        if (notice.live !== !!source.live || s(notice.runId) !== source.runId || (key(segs(notice.card)) !== key(source.card ?? []))
             || (source.invocation !== null && notice.invocation !== source.invocation)
             || (notice.endOffset !== null && notice.stream !== source.stream)) return
         if (notice.endOffset !== null && source.invocation === notice.invocation) {

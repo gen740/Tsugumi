@@ -497,15 +497,20 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     release = tmp_path / "release"
     os.mkfifo(release)
     body = f"""
-        head -c {136 << 20} /dev/zero | tr '\\000' x
+        printf '1234567890'
         read -r release < {shlex.quote(str(release))}
         printf '%s' '{{"out":{{"value":"ok"}}}}' > "$TSUGUMI_OUTPUT"
     """
     Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}}, outputs=STRING_OUTPUT,
                           manifest={"run": {"bash": body}}).save(client)
+    snap = client.call("ProjectInspectRequest")
+    config = project_json(snap)
+    config["logLimitBytes"] = 7
+    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(config))])
     run_id = start_run(client, "work", propagate=False)
     args = dict(runId=run_id, card=path("work"), invocation=1)
-    limit = 128 << 20
+    limit = 7
     try:
         stderr = wait_for_log(client, run_id, "work", LogStream.standard_error,
                               lambda log: log.logTruncatedAtBytes is not None)
@@ -514,7 +519,9 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
         assert live.state == CardState.running
         assert live.logTruncatedAtBytes == limit
         stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True)
-        assert 120 << 20 < stdout.sizeBytes <= limit
+        assert stdout.sizeBytes == limit and text(stdout.text) == "1234567"
+        live_stdout = client.call("LogRangeRequest", **args, stream=LogStream.standard_output, tail=True, live=True)
+        assert text(live_stdout.text) == "1234567890" and live_stdout.logTruncatedAtBytes is None
     finally:
         if client.call("RunStatusRequest", runId=run_id).state == RunState.running:
             with release.open("w") as gate:
@@ -524,6 +531,49 @@ def test_live_log_truncation_reaches_record_and_empty_streams(project, tmp_path,
     assert journal.logTruncatedAtBytes == limit
     for line in text(journal.text).splitlines():
         assert isinstance(json.loads(line), dict)
+
+
+@pytest.mark.parametrize("project_logs,card_logs,limit,recorded", [
+    (False, None, 16, ""),
+    (False, True, 16, "output"),
+    (True, False, 16, ""),
+    (True, None, 0, ""),
+])
+def test_recording_switch_and_zero_limit_leave_live_output(project, tmp_path, core_factory,
+                                                            project_logs, card_logs, limit, recorded):
+    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
+    from harness.scenario import Gate
+    gate = Gate(tmp_path, "live")
+    settings = {"recordLogs": card_logs} if card_logs is not None else {}
+    worker_project(client, project, tmp_path / "case", [
+        {"op": "log", "stream": "stdout", "text": "output"},
+        gate.action(),
+        {"op": "failure", "message": "record the failure summary"},
+    ], recordIO=False, **settings)
+    snap = client.call("ProjectInspectRequest")
+    config = project_json(snap)
+    for invalid in (-1, (1 << 30) + 1):
+        with pytest.raises(RpcFailure) as failure:
+            client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                        changes=[change("SetProject", json=json.dumps(dict(config, logLimitBytes=invalid)))])
+        assert failure.value.kind == "invalid_document"
+    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(dict(config, recordLogs=project_logs,
+                                                                   logLimitBytes=limit)))])
+    run_id = start_run(client, "work", propagate=False)
+    args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.standard_output)
+    try:
+        gate.wait()
+        client.wait_notification(lambda n: n.valueType == NotificationPayload.LogAvailable and
+                                 n.value.live and text(n.value.runId) == run_id and n.value.invocation == 1)
+        assert text(client.call("LogRangeRequest", **args, live=True).text).strip() == "output"
+    finally:
+        gate.release()
+    assert wait_run(client, run_id).state == RunState.failed
+    assert text(client.call("LogRangeRequest", **args).text).strip() == recorded
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert "record the failure summary" in text(record.summary.failure.diagnostic)
+    assert record.summary.durationMs is not None and not record.outputs
 
 
 def test_terminal_update_after_a_carriage_return_in_an_earlier_append(project, tmp_path, core_factory):

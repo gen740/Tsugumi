@@ -168,6 +168,8 @@ class Service : public RequestSink {
   void cache_usage(RequestIn& req);
   void scratch_delete(RequestIn& req);
   void history_delete(RequestIn& req);
+  void history_category_delete(RequestIn& req);
+  void history_file_references(RequestIn& req);
   void run(RequestIn& req);
   void sdk_prepare(RequestIn& req);
   void version_init(RequestIn& req);

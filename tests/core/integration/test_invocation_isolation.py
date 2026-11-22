@@ -16,7 +16,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
     root = tmp_path / "p"
     make = bash('echo wired > "$TSUGUMI_OUTPUT_DIR/data"; '
                 'printf \'{"doc":{"value":"%s/data"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                outputs=FILE_FBS, recordIO=True)
+                outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     # First produce an independently recorded File with no wire to the reader.
     write(root, {"make": make}, [card("secret", "make")], [])
     c = core_factory(project_root=root).connect()
@@ -30,7 +30,7 @@ def test_only_wired_files_are_visible_and_worker_reuse_survives(core_factory, tm
                   'if echo corrupt >> "$FILE_DOC"; then exit 3; fi; '
                   'echo "input=$FILE_DOC"; '
                   'printf \'{"doc":{"value":"%s"}}\' "$FILE_DOC" > "$TSUGUMI_OUTPUT"',
-                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
+                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
     write(root, {"make": make, "read": reader},
           [card("secret", "make"), card("source", "make"), card("reader", "read")],
           [conn("source", "doc", "reader", "doc")])
@@ -116,7 +116,7 @@ def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_
                   'test ! -e "$TSUGUMI_OUTPUT_DIR/first-output" || exit 13; fi; '
                   'echo current > "$TSUGUMI_OUTPUT_DIR/current"; '
                   'printf \'{"doc":{"value":"%s/current"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, recordIO=True)
+                  inputs=["doc"], outputs=FILE_FBS, reuseWorker=True, retainArtifact=True)
     root = tmp_path / "p"
     write(root, {"make": make, "read": reader}, [card("make", "make"), card("read", "read")],
           [conn("make", "doc", "read", "doc")])
@@ -178,7 +178,7 @@ def test_successful_call_ignores_undeclared_special_entries(core_factory, tmp_pa
                       'mkdir "$stage/nested"; ' + create + '; done; '
                       'echo safe > "$TSUGUMI_OUTPUT_DIR/result"; '
                       'printf \'{"doc":{"value":"%s/result"}}\' "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_OUTPUT"',
-                      outputs=FILE_FBS, recordIO=True)
+                      outputs=FILE_FBS, recordIO=True, retainArtifact=True)
     write(tmp_path / "p", {"copy": definition}, [card("copy", "copy")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     run_id, st = run_and_wait(c, "copy")
@@ -239,7 +239,7 @@ int tsugumi_main(const tsugumi_call* c) {
 '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = {
         "type": "code",
-        "recordIO": True,
+        "retainArtifact": True,
         "_outputs": FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"'),
         "_nix": '''{ pkgs, inputs, params }: {
   run = pkgs.runCommandCC "racing-output" {} ''

@@ -728,6 +728,25 @@ extension ProjectSession {
     return result
   }
 
+  func runFileReferences(_ runId: String) async throws -> [String] {
+    guard connected, let projectId else { throw RPCError.disconnected }
+    let request = Tsugumi_Host_RunFileReferencesRequestT()
+    request.projectId = projectId
+    request.runId = runId
+    let reply: Tsugumi_RPC_RunFileReferencesT = try await CoreHostClient.shared.hostCall(.runfilereferencesrequest, request)
+    return reply.runIds.compactMap { $0 }
+  }
+
+  func deleteRunCategory(_ runId: String, _ category: Tsugumi_RPC_RunRecordCategory) async throws {
+    guard connected, let projectId else { throw RPCError.disconnected }
+    let request = Tsugumi_Host_RunCategoryDeleteRequestT()
+    request.projectId = projectId
+    request.runId = runId
+    request.category = category
+    request.opId = UUID().uuidString.lowercased()
+    let _: Tsugumi_RPC_RunCategoryDeleteResultT = try await CoreHostClient.shared.hostCall(.runcategorydeleterequest, request)
+  }
+
   func deleteRunHistory(endedBefore: Date?) async throws -> Tsugumi_RPC_RunHistoryDeleteResultT {
     guard let rpc else { throw RPCError.disconnected }
     return try await rpc.deleteHistory(opId: UUID(), endedBefore: endedBefore)

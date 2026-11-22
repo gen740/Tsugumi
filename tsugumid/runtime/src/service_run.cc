@@ -650,7 +650,7 @@ void Service::run_record(RequestIn& req) {
       o.record = History::invocation(db, run_id, card, *o.selected);
       o.status = History::status(db, run_id, card, *o.selected);
       if (o.status) history_->overlay(*o.status);
-      if (o.record && o.record->record_io) {
+      if (o.record) {
         o.in_meta = History::value_metas(db, run_id, card, *o.selected, true);
         o.out_meta = History::value_metas(db, run_id, card, *o.selected, false);
         for (const auto& m : o.in_meta)
@@ -737,6 +737,7 @@ void Service::run_record(RequestIn& req) {
                              : b.CreateString(m.file_content_hash);
         flatbuffers::Offset<flatbuffers::String> file_path;
         bool file_missing = false;
+        bool file_deleted = false;
         if (m.kind != PortKind::FlatBuffer) {
           file_missing = true;
           auto type = std::make_shared<types::Type>();
@@ -748,23 +749,24 @@ void Service::run_record(RequestIn& req) {
               types::verify(*type, data[i])) {
             Value value{m.name, m.kind, type, data[i], {}};
             if (const auto recorded = path_value(value)) {
-              const auto anchor = "/runs/" + run_id + "/values/";
-              const auto position = recorded->rfind(anchor);
-              if (position != std::string::npos) {
-                const auto relative =
-                    recorded->substr(position + anchor.size());
-                const auto root =
-                    store_->state_dir() / "runs" / run_id / "values";
-                const auto content = root / relative;
-                std::error_code error;
-                if (fs::valid_relative_path(relative) &&
-                    fs::resolves_inside(root, content)) {
-                  const auto status = stdfs::symlink_status(content, error);
-                  file_missing = error || (m.kind == PortKind::File
-                                               ? !stdfs::is_regular_file(status)
-                                               : !stdfs::is_directory(status));
-                  if (!file_missing)
-                    file_path = b.CreateString(content.string());
+              const auto root = store_->state_dir() / "runs";
+              const auto rel = stdfs::path(*recorded).lexically_relative("runs");
+              const auto content = root / rel;
+              std::error_code error;
+              if (fs::valid_relative_path(rel.generic_string()) &&
+                  fs::resolves_inside(root, content)) {
+                const auto status = stdfs::symlink_status(content, error);
+                file_missing = error || (m.kind == PortKind::File
+                                             ? !stdfs::is_regular_file(status)
+                                             : !stdfs::is_directory(status));
+                if (!file_missing) {
+                  file_path = b.CreateString(content.string());
+                } else {
+                  const auto owner = rel.begin()->string();
+                  if (owner != run_id && crypto::is_run_id(owner))
+                    file_deleted = history_->read([&](sql::Db& db) {
+                      return !History::owns_recorded_file(db, owner, *recorded);
+                    });
                 }
               }
             }
@@ -782,6 +784,7 @@ void Service::run_record(RequestIn& req) {
         if (!file_hash.IsNull()) nb.add_file_content_hash(file_hash);
         if (!file_path.IsNull()) nb.add_file_path(file_path);
         nb.add_file_missing(file_missing);
+        nb.add_file_deleted(file_deleted);
         v.push_back(nb.Finish());
       }
       return b.CreateVector(v);
@@ -858,13 +861,12 @@ void Service::run_value_read(RequestIn& req) {
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
     auto rec = History::invocation(db, run_id, card, *r->invocation());
     if (!rec) throw Failed(FailureKind::not_found, "unknown invocation");
-    if (!rec->record_io)
-      throw Failed(FailureKind::recording_disabled,
-                   "recordIO was disabled for this invocation");
     auto p = History::value_page(db, run_id, card, *r->invocation(), input,
                                  port, offset, limit);
     if (!p)
-      throw Failed(FailureKind::not_found, "no stored value for port " + port,
+      throw Failed(rec->record_io ? FailureKind::not_found
+                                  : FailureKind::recording_disabled,
+                   "no stored value for port " + port,
                    {{"port", port}});
     return *p;
   });
@@ -1058,12 +1060,17 @@ void Service::log_range(RequestIn& req) {
   if (r->terminal_since() && (!r->terminal() || tail || before))
     throw Failed(FailureKind::invalid_request,
                  "terminal_since requires a forward terminal read");
-  auto slice = history_->read([&](sql::Db& db) {
+  const auto read = [&](sql::Db& db) {
+    return History::read_log(db, run_id, card, inv, stream, offset, tail,
+                             limit, before, r->terminal(), r->terminal_since());
+  };
+  auto slice = r->live() && (stream == LogStream::standard_output ||
+                             stream == LogStream::standard_error)
+      ? scheduler_->live_log(run_id, read)
+      : history_->read([&](sql::Db& db) {
     if (!History::run(db, run_id))
       throw Failed(FailureKind::not_found, "unknown run", {{"run_id", run_id}});
-    return history_->read_log(db, run_id, card, inv, stream, offset, tail,
-                              limit, before, r->terminal(),
-                              r->terminal_since());
+    return read(db);
   });
   FBB b(slice.text.size() + 512);
   auto t = b.CreateString(slice.text);

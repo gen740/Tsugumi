@@ -27,10 +27,10 @@ def make(root: Path) -> None:
     put(root / "layout.json", "{}")
     put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "type": "input", "params": [{"name": "value", "type": "string", "data": "data/events.txt"}]}))
+        "type": "input", "retainArtifact": True, "params": [{"name": "value", "type": "string", "data": "data/events.txt"}]}))
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
-    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
+    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, retainArtifact=True)))
 
 
 def test_reads_without_at_rev_and_the_root_as_empty_path(tmp_path, core_factory):

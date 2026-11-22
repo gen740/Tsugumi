@@ -291,6 +291,14 @@ table ProjectOperateRequest {
 }
 table ProjectOperationResult { reply:Tsugumi.RPC.Reply (required); }
 
+table RunCategoryDeleteRequest {
+  project_id:string (required);
+  run_id:string (required);
+  category:Tsugumi.RPC.RunRecordCategory;
+  op_id:string (required);
+}
+table RunFileReferencesRequest { project_id:string (required); run_id:string (required); }
+
 // Host policy owns the permission catalog. Unknown ids must still be displayed
 // verbatim by clients, and cannot become standing approvals implicitly.
 table PermissionKindsRequest { language:string; }
@@ -530,7 +538,9 @@ union RequestPayload {
   DemoListRequest, DemoReadRequest, VersionNoteRequest, LayoutCompleteRequest, IdentifierReserveRequest, InputTypesRequest, HostActivityRequest, EnvironmentListRequest,
   HostTraceRequest:Tsugumi.Trace.HostTraceRequest, HostPageRequest,
   HostHomeRequest, HostRevealRequest, HostFolderListRequest, HostFolderCreateRequest,
-  CardSecretListRequest, CardSecretSetRequest, TemplateListRequest, HostTemplateAddRequest,
+  CardSecretListRequest, CardSecretSetRequest,
+  RunCategoryDeleteRequest, RunFileReferencesRequest,
+  TemplateListRequest, HostTemplateAddRequest,
 }
 table Request { value:RequestPayload; }
 union ReplyPayload {
@@ -544,7 +554,10 @@ union ReplyPayload {
   PermissionKinds,
   ModelSelection, DemoPaths, TextResult:Tsugumi.Service.TextResult, Identifier, InputTypes, HostActivity,
   HostTrace:Tsugumi.Trace.HostTrace, EnvironmentList, HostHome, FolderListing,
-  CardSecretList, TemplateList,
+  CardSecretList,
+  RunCategoryDeleteResult:Tsugumi.RPC.RunCategoryDeleteResult,
+  RunFileReferences:Tsugumi.RPC.RunFileReferences,
+  TemplateList,
 }
 table Reply { value:ReplyPayload; }
 union Payload { Request, Reply, Event }

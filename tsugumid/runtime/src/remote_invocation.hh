@@ -9,11 +9,11 @@ namespace tsugumi {
 struct RemoteInvocationResult {
   std::vector<Value> outputs;
   std::optional<FailureData> failure;
+  // Completed remote build and journal entries commit with the invocation.
+  std::vector<std::pair<LogStream, std::string>> auxiliary_logs = {};
+  bool auxiliary_logs_truncated = false;
   BuildEnvironmentData environment;
-  // Entries after the recorded prefix.
-  std::vector<std::pair<LogStream, std::string>> logs;
   bool built = false;
-  bool log_truncated = false;
 };
 
 // The prefix of a job's JSONL log that the core already recorded while the
@@ -48,7 +48,9 @@ auto import_remote_result(
     const std::filesystem::path& directory,
     const std::filesystem::path& module_cache,
     const std::vector<types::PortType>& outputs,
+    const std::vector<Value>& inputs,
     const WorkerProc::DisplaySink& display, const RemoteLogPrefix& recorded,
+    const WorkerProc::LogSink& log,
     std::stop_token stop,
     const std::function<void(std::string_view, uint64_t, uint64_t)>& progress,
     const std::function<void(int64_t, int64_t)>& on_validation)

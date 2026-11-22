@@ -1,16 +1,19 @@
 """History portability and deletion, checked through public RPC."""
 
 import shutil
+from contextlib import closing
 
 import pytest
 
-from harness.fixtures import worker_project
+from harness.fixtures import add_worker, worker_project
+from harness.host import Host, HostConnection, HostFailure
 from harness.observations import read_output, read_pages
-from harness.scenario import FILE_OUTPUT, Gate, run, wait_run
+from harness.scenario import FILE_OUTPUT, Gate, Project, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 
 
 CONTENTS = "retained history 日本語\n" * 500
@@ -196,3 +199,62 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
             and text(n.value.runId) == run_id and n.value.valueType == RunEventValue.RunFinished,
         )
         assert note.value.value.summary.status.state == RunState.succeeded
+
+
+def test_category_deletion_through_host_keeps_summaries_and_marks_forwarded_files(core_factory, project, tmp_path):
+    daemon = core_factory(mocked_builds=True, mocked_worker=True)
+    client = daemon.connect()
+    graph = Project(project)
+    outputs = FILE_OUTPUT.replace("table Outputs", "table Label { value:string; } table Outputs").replace(
+        'doc:File (tsugumi:"file");', 'doc:File (tsugumi:"file"); label:Label;')
+    add_worker(graph, "work", tmp_path / "package", [
+        {"op": "log", "stream": "stdout", "text": "recorded"},
+        {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
+        {"op": "output", "port": "label", "type": "string", "value": "keep its summary"},
+    ], outputs=outputs, retainArtifact=True, artifactOutput="doc")
+    graph.card("fork", {"type": "fork", "retainArtifact": True})
+    graph.connect("work", "doc", "fork", "value").save(client)
+    source = run(client, propagate=True)
+    assert wait_run(client, source).state == RunState.succeeded
+    forwarded = run(client, card="fork", propagate=False)
+    assert wait_run(client, forwarded).state == RunState.succeeded
+    project_id = daemon.ready["project_id"]
+
+    def record(run_id, card="work"):
+        return client.call("RunRecordRequest", runId=run_id, card=path(card)).record
+
+    before = record(source)
+    owner = next(v for v in before.outputs if text(v.name) == "doc")
+    assert all(v.filePath == owner.filePath for v in record(forwarded, "fork").outputs)
+
+    with closing(Host(tmp_path / "host")) as host:
+        with pytest.raises(HostFailure) as denied:
+            HostConnection(dict(host.ready, user_token=host.ready["external_token"]))
+        assert denied.value.code == "permission_denied"
+        host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{daemon.unix}")
+        args = dict(projectId=project_id, runId=source)
+        refs = host.call("RunFileReferencesRequest", **args)
+        assert list(map(text, refs.runIds)) == [forwarded]
+
+        def delete(category, op=None):
+            return host.call("RunCategoryDeleteRequest", **args, category=category, opId=op or new_id())
+
+        delete(RunRecordCategory.Values)
+        assert [text(v.name) for v in record(source).outputs] == ["doc"]
+        delete(RunRecordCategory.Logs)
+        assert not client.call("LogRangeRequest", runId=source, stream=1).exists
+        assert client.call("LogRangeRequest", runId=source, stream=3).exists
+
+        operation = new_id()
+        assert text(delete(RunRecordCategory.Files, operation).runId) == source
+        assert text(delete(RunRecordCategory.Files, operation).runId) == source
+        assert not client.call("ArtifactListRequest", runId=source).artifacts
+        assert not record(source).outputs
+        assert record(source).summary.state == before.summary.state
+        assert record(source).summary.durationMs == before.summary.durationMs
+        assert all(v.fileDeleted and not v.filePath for v in record(forwarded, "fork").outputs)
+
+    daemon.restart()
+    client = daemon.connect()
+    assert listed(client) == [forwarded, source]
+    assert all(v.fileDeleted for v in record(forwarded, "fork").outputs)

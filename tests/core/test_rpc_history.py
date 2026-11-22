@@ -37,14 +37,14 @@ def test_record_and_artifact_are_independent(core_factory, project, tmp_path, re
     client = daemon.connect()
     record = client.call("RunRecordRequest", runId=run_id, card=path("work"))
     assert bool(record.recordingDisabled) is not record_io
-    assert len(record.record.outputs) == int(record_io)
+    assert len(record.record.outputs) == int(retain)
     artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
     assert len(artifacts) == int(retain)
     if retain:
         contents = read_pages(client, "ArtifactReadRequest", page_bytes=65536,
                               artifactId=text(artifacts[0].artifactId))
         assert contents.decode() == CONTENTS
-    if record_io:
+    if retain:
         assert decode_scalar(read_output(client, run_id, port="doc")).endswith("/big.txt")
 
 

@@ -45,6 +45,9 @@ struct NixSource {
   Opt<"overrides", Json> overrides;
 };
 
+inline constexpr uint64_t kDefaultLogLimitBytes = uint64_t{128} << 20;
+inline constexpr uint64_t kMaxLogLimitBytes = uint64_t{1} << 30;
+
 struct Project {
   Opt<"name", Json> name;
   Opt<"pkgsPath", v::String> pkgs_path;
@@ -53,8 +56,11 @@ struct Project {
   Opt<"versionPaths", v::Array<v::String>> version_paths;
   // Host policy, carried without affecting execution.
   Opt<"agentExclude", v::Array<v::String>> agent_exclude;
-  // Finished runs are also kept in the project (.tsugumi/runs.sqlite); default
-  // true.
+  Opt<"recordLogs", v::Bool> record_logs;
+  Opt<"recordDisplays", v::Bool> record_displays;
+  Opt<"recordIO", v::Bool> record_io;
+  Opt<"retainArtifact", v::Bool> retain_artifact;
+  Opt<"logLimitBytes", v::Uint64> log_limit_bytes;
   Opt<"canvas", Obj<Graph>> canvas;
   // The ports this project has as a Card in Card (an external of another
   // project): outer port name -> a port of one of its Cards.
@@ -133,6 +139,8 @@ struct CardDefinition {
   Opt<"timeoutSeconds", Json> timeout_seconds;  // positive integer or null
   Opt<"buildTimeoutSeconds", Json>
       build_timeout_seconds;  // positive integer or null
+  Opt<"recordLogs", v::Bool> record_logs;
+  Opt<"recordDisplays", v::Bool> record_displays;
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;

@@ -269,11 +269,11 @@ export class RPCClient {
       Object.assign(new R.RunRecordRequestT(), { runId, card: cardPath(card), invocation, followLatest }),
     )
   }
-  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536, before: bigint | null = null, terminal = false, terminalSince: bigint | null = null) {
+  logRange(runId: string, card: string[] | null, invocation: bigint | null, stream: D.LogStream, offset = 0n, tail = false, limit = 65536, before: bigint | null = null, terminal = false, terminalSince: bigint | null = null, live = false) {
     return this.call<R.LogSliceT>(
       RequestPayload.LogRangeRequest,
       Object.assign(new R.LogRangeRequestT(), {
-        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail || before !== null ? null : offset, tail, limitBytes: limit, before, terminal, terminalSince,
+        runId, card: card ? cardPath(card) : null, invocation, stream, offset: tail || before !== null ? null : offset, tail, limitBytes: limit, before, terminal, terminalSince, live,
       }),
     )
   }

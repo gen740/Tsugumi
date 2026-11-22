@@ -259,6 +259,13 @@ auto check_version_paths(const schema::Project& p) -> void {
             {{"path", path}});
 }
 
+auto check_log_limit(const schema::Project& p, const std::string& where) -> void {
+  if (const auto* limit = schema::get(p.log_limit_bytes);
+      limit && *limit > schema::kMaxLogLimitBytes)
+    invalid(where + ": logLimitBytes must be between 0 and 1073741824",
+            {{"path", where}});
+}
+
 }  // namespace
 
 auto initial_project_json(const std::string& name) -> std::string {
@@ -284,6 +291,7 @@ schema::Project parse_project_json(const std::string& text) {
   if (!p.canvas->has_value()) invalid("tsugumi.json: \"canvas\" is required");
   check_nix_sources(p);
   check_version_paths(p);
+  check_log_limit(p, "tsugumi.json");
   check_graph_shape(p.canvas->value(), "tsugumi.json canvas");
   check_boundary(p, "tsugumi.json");
   return p;
@@ -292,6 +300,7 @@ schema::Project parse_project_json(const std::string& text) {
 schema::Project parse_external_project(const std::string& rel,
                                        const std::string& text) {
   auto p = decode_doc<schema::Project>(rel, text);
+  check_log_limit(p, rel);
   check_nix_sources(p);
   check_version_paths(p);
   if (!p.canvas->has_value())

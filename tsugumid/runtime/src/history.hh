@@ -18,6 +18,7 @@
 #include <vector>
 
 #include "model.hh"
+#include "tsugumi/protocol/tsugumi_generated.h"
 #include "tsugumi/util/sqlite.hh"
 
 namespace tsugumi {
@@ -66,6 +67,7 @@ struct LogEnd {
   std::optional<uint64_t> invocation;
   LogStream stream;
   std::optional<uint64_t> end_offset;
+  bool live = false;
 };
 
 struct LogRead {
@@ -127,13 +129,14 @@ class History {
   static void put_receipt(sql::Db& db, const std::string& op_id,
                           const std::string& kind, const std::string& digest,
                           const std::string& bytes);
+  static auto open_live_logs() -> std::unique_ptr<sql::Db>;
   // Appends UTF-8 text to a log stream; returns the new end offsets per scope.
   static std::vector<LogEnd> append_log(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
                                  LogStream stream, const std::string& text);
   static auto mark_log_truncated(sql::Db& db, const std::string& run_id,
                                  const CardPath& card, uint64_t invocation,
-                                 uint64_t limit_bytes) -> void;
+                                 uint64_t limit_bytes, bool build = false) -> void;
   // Run level journal lines (no card).
 
   // --- reads ---
@@ -238,12 +241,12 @@ class History {
                                                std::vector<int64_t>* seqs);
   static int64_t max_run_seq(sql::Db& db);
   static std::vector<std::string> unfinished_runs(sql::Db& db);
-  LogRead read_log(sql::Db& db, const std::string& run_id,
-                   const std::optional<CardPath>& card,
-                   std::optional<uint64_t> invocation, LogStream stream,
-                   uint64_t offset, bool tail, uint64_t limit,
-                   std::optional<uint64_t> before, bool terminal,
-                   std::optional<uint64_t> since);
+  static auto read_log(sql::Db& db, const std::string& run_id,
+                       const std::optional<CardPath>& card,
+                       std::optional<uint64_t> invocation, LogStream stream,
+                       uint64_t offset, bool tail, uint64_t limit,
+                       std::optional<uint64_t> before, bool terminal,
+                       std::optional<uint64_t> since) -> LogRead;
 
   // Cursors carry a paging position.
   std::string make_cursor(int64_t hi, const std::string& after) const;
@@ -251,6 +254,13 @@ class History {
   std::pair<int64_t, std::string> open_cursor(const std::string& cursor) const;
 
   const std::filesystem::path& path() const { return path_; }
+
+  static auto file_referencing_runs(sql::Db& db, const std::string& run_id)
+      -> std::vector<std::string>;
+  static auto owns_recorded_file(sql::Db& db, const std::string& run_id,
+                                 const std::string& path) -> bool;
+  static auto delete_category(sql::Db& db, const std::string& run_id,
+                              Tsugumi::RPC::RunRecordCategory category) -> void;
 
   // Deletes the selected finished runs from .tsugumi/runs.sqlite.
   std::vector<std::string> delete_runs(

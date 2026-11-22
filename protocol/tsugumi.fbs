@@ -272,6 +272,7 @@ union ReceiptValue {
   VersionResult = 8,
   ProjectShellResult = 9,
   RunScratchDeleteResult = 10,
+  RunCategoryDeleteResult = 11,
 }
 
 table OperationReceipt {
@@ -417,6 +418,24 @@ table ProjectCacheUsageResult {
 
 /// -> NixSourceResolved. Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use.
 table NixSourceResolveRequest { ref:string (id: 0, required); }
+
+enum RunRecordCategory:ubyte { Unspecified, Logs, Values, Files }
+
+/// -> RunCategoryDeleteResult. Delete one category from a finished run.
+table RunCategoryDeleteRequest {
+  op_id:string (id: 0, required);
+  run_id:string (id: 1, required);
+  category:RunRecordCategory (id: 2);
+}
+
+/// -> RunFileReferences. Find runs that refer to a run's retained files.
+table RunFileReferencesRequest { run_id:string (id: 0, required); }
+table RunFileReferences { run_ids:[string] (id: 0); }
+
+table RunCategoryDeleteResult {
+  run_id:string (id: 0, required);
+  category:RunRecordCategory (id: 1);
+}
 
 /// -> RunHistoryDeleteResult. Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs.
 table RunHistoryDeleteRequest {
@@ -750,6 +769,8 @@ table LogRangeRequest {
   terminal:bool = false (id: 8);
   /// Raw byte size of the previous terminal update. Read the tail if a redraw overwrote cells since then.
   terminal_since:uint64 = null (id: 9);
+  /// Read stdout or stderr from the active run's transient log.
+  live:bool = false (id: 10);
 }
 
 /// -> Ack. Replaces the subscription's Display targets. enabled = true.
@@ -830,6 +851,8 @@ union RequestPayload {
   RunDefinitionPathsRequest = 57,
   VersionDiffRequest = 58,
   VersionCommentsRequest = 59,
+  RunCategoryDeleteRequest = 60,
+  RunFileReferencesRequest = 61,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1240,6 +1263,8 @@ union ReplyPayload {
   RunDefinitionPaths = 45,
   VersionDiff = 46,
   VersionComments = 47,
+  RunCategoryDeleteResult = 48,
+  RunFileReferences = 49,
 }
 
 // ---- Notifications -----------------------------------------------------------
@@ -1285,6 +1310,7 @@ table LogAvailable {
   invocation:uint64 = null (id: 2);
   stream:Tsugumi.Data.LogStream (id: 3);
   end_offset:uint64 = null (id: 4);
+  live:bool = false (id: 5);
 }
 
 union NotificationPayload {
@@ -1293,6 +1319,7 @@ union NotificationPayload {
   DisplayUpdated = 3,
   LogAvailable = 4,
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
+  RunCategoryDeleteResult = 6,
 }
 
 // ---- Frame -------------------------------------------------------------------
