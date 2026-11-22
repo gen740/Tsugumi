@@ -60,10 +60,10 @@ const wire: Transport = { close() {}, async call(bytes) {
   const read = value as R.CardViewReadRequestT
   requests.push(read)
   const offset = Number(read.offset)
-  const bytes = [...source.subarray(offset, offset + 2)]
+  const page = [...source.subarray(offset, offset + 2)]
   const part = Object.assign(new R.FileContentT(), {
     name: read.name, hash: '/nix/store/view', sizeBytes: BigInt(source.length), offset: BigInt(offset),
-    nextOffset: BigInt(offset + bytes.length), bytes, eof: offset + bytes.length >= source.length,
+    nextOffset: BigInt(offset + page.length), bytes: page, eof: offset + page.length >= source.length,
   })
   return frame(new R.MessageT(request.requestId, R.Payload.Reply, new R.ReplyT(R.ReplyPayload.FileContent, part)))
 } }
