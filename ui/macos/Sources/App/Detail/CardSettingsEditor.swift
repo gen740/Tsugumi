@@ -1869,7 +1869,7 @@ private struct FileRow: View {
       Image(systemName: icon).font(.callout).foregroundStyle(folder != nil ? Color.accentColor : .secondary).frame(width: 16)
       Text(name).lineLimit(1).truncationMode(.middle)
       Spacer(minLength: 0)
-      if readOnly { ReadOnlyMark(why: String(localized: "接続から生成されるファイルです（手で編集しません）")) }
+      if readOnly { ReadOnlyMark(why: String(localized: "読み取り専用")) }
       if edited { Circle().fill(Color.orange).frame(width: 6, height: 6) }
     }
     .padding(.leading, 8 + CGFloat(depth) * 14).padding(.trailing, 8).padding(.vertical, 3)
