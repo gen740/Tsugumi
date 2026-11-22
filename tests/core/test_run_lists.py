@@ -190,7 +190,7 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
 
 def abi9_card(body, run="package", builder="inputs.tsugumi.cppCard { src = ./.; }"):
     return {
-        "default.nix": "{ pkgs, inputs, params }: let package = " + builder
+        "default.nix": "{ pkgs, inputs, params, ... }: let package = " + builder
                        + "; in { run = " + run + "; }",
         "main.cc": ('#include "card.hh"\n#include <filesystem>\n#include <fstream>\n'
                     '#include <iostream>\n#include <stdexcept>\n' + body),

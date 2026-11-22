@@ -691,7 +691,7 @@ struct ToolStep {
     let n = name.lowercased()
     if n == "project_reload" { return (String(localized: "プロジェクトを再読込しています"), String(localized: "プロジェクトを再読込")) }
     if n == "project_shell" { return (String(localized: "シェルコマンドを実行しています"), String(localized: "シェルコマンドを実行")) }
-    if n == "card_s_d_k_prepare" { return (String(localized: "Card SDK を準備しています"), String(localized: "Card SDK を準備")) }
+    if n == "card_api" { return (String(localized: "SDK をビルドしています"), String(localized: "SDK をビルド")) }
     if n == "layout_arrange" || n == "layout_untangle" { return (String(localized: "配置を整えています"), String(localized: "配置を整理")) }
     if n == "project_cache_clear" { return (String(localized: "ビルドキャッシュを削除しています"), String(localized: "ビルドキャッシュを削除")) }
     if n == "version_find" { return (String(localized: "過去の試行を探しています"), String(localized: "過去の試行を探しました")) }

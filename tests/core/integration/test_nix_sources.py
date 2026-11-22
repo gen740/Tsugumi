@@ -38,7 +38,7 @@ def run(input):
 
 
 def nix(body: str) -> str:
-    return "{ pkgs, inputs, params }:\n" + body + "\n"
+    return "{ pkgs, params, inputs, schemas }:\n" + body + "\n"
 
 
 DEFS = {

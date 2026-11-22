@@ -1188,7 +1188,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
          call.name == "project_file_stat" || call.name == "project_validate" ||
-         call.name == "run_plan" || call.name == "card_s_d_k_prepare")) {
+         call.name == "run_plan" || call.name == "card_api")) {
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
         inspected = host::CaptureSaveBase(InspectProject(project, stop));
@@ -1205,9 +1205,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
-                               call.name == "card_s_d_k_prepare")) {
+                               call.name == "card_api")) {
       json::Members plan{{"card", json::Get(args, "card")}};
-      if (call.name == "card_s_d_k_prepare")
+      if (call.name == "card_api")
         plan["propagate"] = "false";
       else if (args.contains("propagate"))
         plan["propagate"] = args.at("propagate");
@@ -1223,7 +1223,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     }
   }
   const bool execution = call.name == "run" || call.name == "run_cancel" ||
-                         call.name == "card_s_d_k_prepare" ||
+                         call.name == "card_api" ||
                          call.name == "project_shell";
   const bool changes_project =
       (!execution && (spec->mutating || spec->approval_required)) ||
@@ -1593,6 +1593,10 @@ auto Tools::ExecuteTool(const std::string& conversation,
     auto owned = json::Object(result);
     owned["helper_run_card"] = json::Get(args, "card");
     result = json::Encode(owned);
+  }
+  if (call.name == "card_api" && !error) {
+    const auto value = json::Object(json::Get(envelope, "value", "{}"));
+    error = json::Get(value, "failure", "null") != "null";
   }
   {
     std::lock_guard lock(mutex);

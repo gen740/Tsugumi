@@ -284,7 +284,7 @@ and its sources in src/. Choose the SDK in default.nix. Use input_types to read 
 ## Additional tools
 
 `tools {"family":"files"}` returns file utilities and their argument schemas;
-`tools {"family":"sdk"}` returns SDK preparation and flake resolution schemas.
+`tools {"family":"sdk"}` returns the Card API (`api`: the generated code under `share/tsugumi/api/` of the Card's build) and flake resolution schemas.
 Supply an action and its arguments to call it, for example:
 
 ```json

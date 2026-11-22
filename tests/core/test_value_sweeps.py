@@ -191,7 +191,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
                                       {"name": "right", "type": "uint64", "sweep": list(range(16))}]},
      "at most 256"),
     ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
-      "_nix": "{ pkgs, inputs, params }: { run = pkgs.emptyDirectory; }"},
+      "_nix": "{ pkgs, inputs, params, ... }: { run = pkgs.emptyDirectory; }"},
      "sweep is for Input Cards"),
 ])
 def test_invalid_sweeps_are_definition_errors(core_factory, project, definition, message):

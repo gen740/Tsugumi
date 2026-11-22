@@ -15,7 +15,7 @@ export enum Stage { waiting, prepare, evaluate, build, execute, validate, save, 
 
 export const STAGE_INFO: Record<Stage, { label: string; active: string; icon: string; activeIcon: string; stream: D.LogStream }> = {
   [Stage.waiting]: { label: L('入力待ち'), active: L('入力待ち'), icon: 'tray.and.arrow.down', activeIcon: 'tray.and.arrow.down', stream: D.LogStream.journal },
-  [Stage.prepare]: { label: L('SDK 準備'), active: L('SDK 準備中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
+  [Stage.prepare]: { label: L('スキーマ生成'), active: L('スキーマ生成中'), icon: 'shippingbox', activeIcon: 'shippingbox', stream: D.LogStream.build },
   [Stage.evaluate]: { label: L('Nix 評価'), active: L('Nix 評価中'), icon: 'snowflake', activeIcon: 'snowflake', stream: D.LogStream.build },
   [Stage.build]: { label: 'build', active: L('build 中'), icon: 'hammer', activeIcon: 'hammer', stream: D.LogStream.build },
   [Stage.execute]: { label: 'run', active: L('実行中'), icon: 'play', activeIcon: 'play.fill', stream: D.LogStream.standard_output },
@@ -36,7 +36,7 @@ export function stageOfPhase(p: D.Phase): Stage | undefined {
   }
 }
 
-/** Stages shown for a Card, in order: build (SDK preparation, Nix
+/** Stages shown for a Card, in order: build (schema generation, Nix
  *  evaluation and build), run, validate (output check and saving). */
 export const applicableStages = (code: boolean): Stage[] => (code ? [Stage.build, Stage.execute, Stage.validate] : [Stage.execute, Stage.validate])
 

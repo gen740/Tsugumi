@@ -243,17 +243,31 @@ table RunHistoryDeleteResult {
   freed_bytes:uint64 = null (id: 1);
 }
 
-table SDKFile {
+/// A regular file under share/tsugumi/api/ of a run implementation, as its
+/// builder wrote it.
+table CardApiFile {
+  /// Relative to share/tsugumi/api/, with / between folders.
   path:string (id: 0, required);
-  hash:string (id: 1, required);
-  size_bytes:uint64 = null (id: 2);
+  content:[ubyte] (id: 1);
 }
 
-table CardSDKPrepareResult {
-  op_id:string (id: 0, required);
-  rev:uint64 = null (id: 1);
-  state:Tsugumi.Data.SDKState (id: 2);
-  files:[SDKFile] (id: 3, required);  // empty while pending
+table CardApiImplementation {
+  /// 1-based position in the run list (1 for a single run).
+  index:uint32 = null (id: 0);
+  label:string (id: 1);
+  /// The run implementation's store path (it contains lib/main.so).
+  package:string (id: 2, required);
+  /// Empty when the builder placed nothing under share/tsugumi/api/.
+  files:[CardApiFile] (id: 3, required);
+}
+
+table CardApiResult {
+  rev:uint64 = null (id: 0);
+  implementations:[CardApiImplementation] (id: 1, required);
+  /// Set when the build failed; implementations is then empty.
+  failure:Tsugumi.Data.Failure (id: 2);
+  /// The build's output (its end when long).
+  log:string (id: 3);
 }
 
 table RunAccepted {
@@ -266,7 +280,6 @@ union ReceiptValue {
   SaveResult = 1,
   RunAccepted = 3,
   ProjectCacheClearResult = 4,
-  CardSDKPrepareResult = 5,
   Failure: Tsugumi.Data.Failure = 6,
   RunHistoryDeleteResult = 7,
   VersionResult = 8,
@@ -550,15 +563,11 @@ table OutputTypesRequest {
   kind:Tsugumi.Data.PortKind (id: 3);
 }
 
-/// -> CardSDKPrepareResult. Accepted asynchronously.
-table CardSDKPrepareRequest {
+/// -> CardApiResult. Build a Code Card from its current definition and wiring (the build a run uses) and return the files its builder placed under share/tsugumi/api/ of each run implementation: the generated API its code is written against, read without interpretation (regular files; symlinks are not followed). A failed build returns failure and the build log. Unsaved edits are not part of the build.
+table CardApiRequest {
   card:Tsugumi.Data.CardPath (id: 0, required);
   at_rev:uint64 = null (id: 1);
-  op_id:string (id: 2, required);
 }
-
-/// -> CardSDKPrepareResult or Failure.
-table CardSDKStatusRequest { op_id:string (id: 0, required); }
 
 /// -> RunPlanResult. Preview the Cards a run reaches; propagate defaults to true.
 table RunPlanRequest {
@@ -817,8 +826,7 @@ union RequestPayload {
   ProjectFileListRequest = 11,
   ProjectFileStatRequest = 12,
   ProjectFileReadRequest = 13,
-  CardSDKPrepareRequest = 15,
-  CardSDKStatusRequest = 16,
+  CardApiRequest = 15,
   RunPlanRequest = 17,
   RunRequest = 18,
   RunCancelRequest = 19,
@@ -1236,7 +1244,7 @@ union ReplyPayload {
   SourcePage = 10,
   SourceInfo = 11,
   FileContent = 12,
-  CardSDKPrepareResult = 14,
+  CardApiResult = 14,
   RunPlanResult = 15,
   RunAccepted = 16,
   RunStatus = 17,

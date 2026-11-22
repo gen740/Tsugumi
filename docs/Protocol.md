@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 53 requests.
+There are 52 requests.
 
 ## Connection
 
@@ -192,29 +192,21 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
-## Card SDKs and types
+## Card API and types
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`CardSDKPrepare`](#cardsdkprepare) | CardSDKPrepareResult | Accepted asynchronously. |
-| [`CardSDKStatus`](#cardsdkstatus) | CardSDKPrepareResult or Failure |  |
+| [`CardApi`](#cardapi) | CardApiResult | Build a Code Card from its current definition and wiring (the build a run uses) and return the files its builder placed under share/tsugumi/api/ of each run implementation: the generated API its code is written against, read without interpretation (regular files; symlinks are not followed). A failed build returns failure and the build log. Unsaved edits are not part of the build. |
 | [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
 | [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
-### CardSDKPrepare
+### CardApi
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `card` | `CardPath` | yes |  |
 | `at_rev` | `uint64` |  |  |
-| `op_id` | `string` | yes |  |
-
-### CardSDKStatus
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `op_id` | `string` | yes |  |
 
 ### InputTypes
 

@@ -520,7 +520,7 @@ function CacheSettings({ session }: { session: ProjectSession }) {
   }
   return (
     <div className="col fill pad16 gap12">
-      <div className="row"><InfoButton>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')} {L('実行中・SDK 準備中は削除できません。')}</InfoButton></div>
+      <div className="row"><InfoButton>{L('このプロジェクトの Card のビルド結果の登録（Nix の GC root）と、作業用のビルドファイルを削除します。共有 Nix store にある実体は消さず、アプリ設定の「共有 store を掃除」で登録のないものとして削除されます。文書・実行履歴・保持した成果物は削除しません。次回の実行では評価し直し、store に残っていればビルドせずに使います。')} {L('実行中は削除できません。')}</InfoButton></div>
       <div className="groupbox col gap8" style={{ overflow: 'auto' }}>
         <div className="headline">{L('キャッシュ使用量')}</div>
         <Value label={L('合計（共有パスは一度だけ計上）')} value={session.cacheUsage?.buildBytes != null ? formatBytes(session.cacheUsage.buildBytes) : L('計測中または取得できません')} />

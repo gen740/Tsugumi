@@ -24,7 +24,8 @@ the person's decision.
   links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
 - Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
-  documentation and its generated bindings or headers. demo_list and demo_read find complete example projects.
+  documentation and the Card's generated API: tools family sdk action api builds the saved Card from its current
+  wiring and returns the files its builder places under share/tsugumi/api/. demo_list and demo_read find complete example projects.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
@@ -46,7 +47,7 @@ the person's decision.
 - A project inside a person's registered trusted folder is trusted without a separate question; trust controls
   its Skills, while access and permission grants still apply.
 - tools lists a family's actions and schemas, then calls an action with its arguments. It provides file utilities,
-  SDK preparation, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
+  the Card API, templates, run status/history/logs, artifacts, versions and maintenance on demand. Destructive maintenance
   and version changes wait for the person's approval of each call. For a trial the person describes without its run,
   versions action find narrows the history to the versions that changed a Card, their runs and recorded outputs.
 - project_copy copies files into Card sources without their bytes passing through your context; it returns paths,

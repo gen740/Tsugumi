@@ -190,16 +190,11 @@ export class RPCClient {
   save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
     return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-  /** Generates the Card's contracts (_inputs.fbs, _outputs.fbs, _params.fbs)
-   *  for one revision and returns the file list when ready. */
-  async generatedContracts(card: string[], atRev: bigint): Promise<R.SDKFileT[]> {
-    let res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKPrepareRequest,
-      Object.assign(new R.CardSDKPrepareRequestT(), { card: cardPath(card), atRev, opId: uuid() }))
-    for (let i = 0; i < 100 && res.state === D.SDKState.pending; i++) {
-      await new Promise((r) => setTimeout(r, 100))
-      res = await this.call<R.CardSDKPrepareResultT>(RequestPayload.CardSDKStatusRequest, Object.assign(new R.CardSDKStatusRequestT(), { opId: res.opId }))
-    }
-    return res.files
+  /** Builds the saved Card from its current wiring and returns the files its
+   *  builder placed under share/tsugumi/api/, or the build failure and log. */
+  cardApi(card: string[], atRev: bigint) {
+    return this.call<R.CardApiResultT>(RequestPayload.CardApiRequest,
+      Object.assign(new R.CardApiRequestT(), { card: cardPath(card), atRev }))
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {

@@ -42,7 +42,7 @@ struct StageLogView: View {
 
   private var groups: [Group] {
     let code = session.kind(key(card)) == .code
-    return (code ? [Group(id: "build", title: String(localized: "SDK 準備・Nix 評価・build"), stages: [.prepare, .evaluate, .build])] : []) + [
+    return (code ? [Group(id: "build", title: String(localized: "スキーマ生成・Nix 評価・ビルド"), stages: [.prepare, .evaluate, .build])] : []) + [
       Group(id: "execute", title: String(localized: "実行"), stages: [.execute]),
       Group(id: "save", title: String(localized: "出力検証・保存"), stages: [.validate, .save]),
     ]

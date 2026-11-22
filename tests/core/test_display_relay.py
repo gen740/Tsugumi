@@ -79,7 +79,7 @@ def test_real_nix_publishes_view_files_without_building_the_card(project, core_f
     client = core_factory().connect()
     Project(project).card("work", {"type": "code"}, outputs=OUTPUTS, sources={
         "default.nix": """
-{ pkgs, inputs, params }: {
+{ pkgs, inputs, params, ... }: {
   run = throw "the view build must leave run lazy";
   views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];
 }

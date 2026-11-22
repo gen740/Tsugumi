@@ -729,8 +729,7 @@ std::vector<std::string> Service::capabilities() {
                                    "ProjectFileRead",
                                    "OutputTypes",
                                    "InputTypes",
-                                   "CardSDKPrepare",
-                                   "CardSDKStatus",
+                                   "CardApi",
                                    "RunPlan",
                                    "Run",
                                    "RunCancel",
@@ -948,8 +947,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
       return on_lane(m, std::move(req), &Service::run);
-    case P::CardSDKPrepareRequest:
-      return on_lane(m, std::move(req), &Service::sdk_prepare);
     case P::VersionInitRequest:
       return on_lane(m, std::move(req), &Service::version_init);
     case P::VersionMarkRequest:
@@ -984,8 +981,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest:
       return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::CardSDKStatusRequest:
-      return on_lane(r, std::move(req), &Service::sdk_status);
+    case P::CardApiRequest:
+      return on_lane(r, std::move(req), &Service::card_api);
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
@@ -1054,10 +1051,6 @@ std::string Service::receipt_reply(uint64_t request_id,
     case R::ReceiptValue::ProjectCacheClearResult:
       type = R::ReplyPayload::ProjectCacheClearResult;
       tname = "Tsugumi.RPC.ProjectCacheClearResult";
-      break;
-    case R::ReceiptValue::CardSDKPrepareResult:
-      type = R::ReplyPayload::CardSDKPrepareResult;
-      tname = "Tsugumi.RPC.CardSDKPrepareResult";
       break;
     case R::ReceiptValue::RunScratchDeleteResult:
       type = R::ReplyPayload::RunScratchDeleteResult;
@@ -2008,10 +2001,9 @@ void Service::cache_clear(RequestIn& req) {
   std::string digest = request_digest(project_request(req));
   if (replay_or_join(req, op_id, "cache_clear", digest)) return;
   try {
-    if (scheduler_->active_status() || nix_->sdk_jobs_active())
-      throw Failed(
-          FailureKind::busy,
-          "cache can only be cleared while no run or SDK job is active");
+    if (scheduler_->active_status())
+      throw Failed(FailureKind::busy,
+                   "cache can only be cleared while no run is active");
     if (history_->read(History::has_remote_jobs))
       throw Failed(
           FailureKind::busy,
@@ -2566,9 +2558,6 @@ void Service::file_stat(RequestIn& req) {
   } else if (auto bytes = confirmed_bytes(*doc, *store_, path)) {
     info = wire::source_info(b, path, D::SourceKind::file, true,
                              crypto::sha256_hex(*bytes), bytes->size());
-  } else if (auto sdk = nix_->sdk_file(path)) {
-    info = wire::source_info(b, path, D::SourceKind::file, true,
-                             crypto::sha256_hex(*sdk), sdk->size());
   } else {
     info = wire::source_info(b, path, D::SourceKind::file, false, std::nullopt,
                              std::nullopt);
@@ -2585,8 +2574,6 @@ void Service::file_read(RequestIn& req) {
   check_path_arg(path, false);
   uint32_t limit = chunk_limit(r->limit_bytes(), 262144, 1, 1u << 20);
   std::optional<std::string> bytes = confirmed_bytes(*doc, *store_, path);
-  if (!bytes)
-    bytes = nix_->sdk_file(path, doc->rev);  // throws when the SDK rev is stale
   if (!bytes)
     throw Failed(FailureKind::not_found, path + " does not exist",
                  {{"path", path}});

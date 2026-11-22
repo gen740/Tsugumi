@@ -3,7 +3,6 @@
 from contextlib import ExitStack
 import hashlib
 import json
-import time
 
 import pytest
 
@@ -16,7 +15,6 @@ from tsugumi_client import Client, RpcFailure, change, make, new_id, path, text
 from Tsugumi.Data.OperationState import OperationState
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RunState import RunState
-from Tsugumi.Data.SDKState import SDKState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.ReceiptValue import ReceiptValue
 from Tsugumi.RPC.RunEventValue import RunEventValue
@@ -448,38 +446,20 @@ def test_history_pagination_and_cursor_checks(builtin_client):
     assert e.value.kind == "invalid_cursor"
 
 
-def test_sdk_prepare_status_and_read(builtin_client):
-    """Prepared SDK files can be read and become stale after the project changes."""
+def test_card_api_needs_a_code_card_at_the_current_revision(builtin_client):
+    """The Card API builds only a Code Card, at the revision asked for; nothing is kept."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
+    for card, kind in ((path("missing"), "not_found"), (path("src"), "invalid_request"),
+                       (path("merge"), "not_found")):
+        with pytest.raises(RpcFailure) as e:
+            c.call("CardApiRequest", card=card, atRev=rev)
+        assert e.value.kind == kind
     op = new_id()
-    acc = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
-    assert text(acc.opId) == op
-    # SDK preparation has a status RPC but emits no completion notification.
-    while True:
-        st = c.call("CardSDKStatusRequest", opId=op)
-        if st.state == SDKState.ready:
-            break
-        assert st.state == SDKState.pending
-        time.sleep(0.02)
-    names = {text(f.path).rsplit("/", 1)[1]: f for f in st.files}
-    assert {"_inputs.fbs", "_outputs.fbs", "_params.fbs"} <= set(names)
-    got = c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev)
-    assert b"table Outputs" in bytes(got.bytes)
-    # Replay returns the receipt; an unknown job is not_found.
-    again = c.call("CardSDKPrepareRequest", card=path("src"), atRev=rev, opId=op)
-    assert text(again.opId) == op
+    save_name(c, rev, "changed", op)
     with pytest.raises(RpcFailure) as e:
-        c.call("CardSDKStatusRequest", opId=new_id())
-    assert e.value.kind == "not_found"
-    # A later revision makes the prepared SDK stale for FileRead.
-    doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
-    doc["name"] = "changed"
-    c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t", changes=[change("SetProject", json=json.dumps(doc))])
-    with pytest.raises(RpcFailure) as e:
-        c.call("ProjectFileReadRequest", path=text(names["_outputs.fbs"].path), atRev=rev + 1)
+        c.call("CardApiRequest", card=path("src"), atRev=rev)
     assert e.value.kind == "revision_conflict"
-    # Operation receipts are visible through OperationGet.
     got = c.call("OperationGetRequest", opId=op)
     assert got.state == OperationState.completed and got.receipt is not None
     # Cache clear never touches documents or history.

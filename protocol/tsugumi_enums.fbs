@@ -62,9 +62,9 @@ enum CardState : ubyte {
 
 enum RemoteExecutionState : ubyte { unspecified = 0, queued, running, disconnected, cancelling, succeeded, failed, cancelled, interrupted }
 
-/// Stages of one invocation, in order: prepare (input/output contracts and
-/// SDK files) -> evaluate (Nix) -> build -> execute -> validate (outputs) ->
-/// save (records, artifacts). Stages a Card does not need are skipped.
+/// Stages of one invocation, in order: prepare (port schemas) -> evaluate
+/// (Nix) -> build -> execute -> validate (outputs) -> save (records,
+/// artifacts). Stages a Card does not need are skipped.
 enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, validate = 4, prepare = 5, save = 6 }
 
 /// How a stage of an invocation ended. `running` is a stage still open;
@@ -72,7 +72,7 @@ enum Phase : ubyte { unspecified = 0, evaluate = 1, build = 2, execute = 3, vali
 /// build/worker kept from an earlier invocation of the same run).
 enum StageOutcome : ubyte { unspecified = 0, running = 1, done = 2, cached = 3, reused = 4, failed = 5, cancelled = 6 }
 
-/// build: what SDK preparation, Nix evaluation and build printed (kept apart
+/// build: what schema preparation, Nix evaluation and build printed (kept apart
 /// from the Card's own stderr so logs can be shown by stage).
 enum LogStream : ubyte { unspecified = 0, standard_output = 1, standard_error = 2, journal = 3, build = 4 }
 
@@ -81,7 +81,5 @@ enum ValueSide : ubyte { unspecified = 0, input = 1, output = 2 }
 enum ValidateMode : ubyte { unspecified = 0, structure = 1, executable = 2 }
 
 enum OperationState : ubyte { unspecified = 0, unknown = 1, pending = 2, completed = 3 }
-
-enum SDKState : ubyte { unspecified = 0, pending = 1, ready = 2 }
 
 enum SourceKind : ubyte { unspecified = 0, file = 1, directory = 2 }

@@ -182,7 +182,6 @@ class Service : public RequestSink {
   void history_category_delete(RequestIn& req);
   void history_file_references(RequestIn& req);
   void run(RequestIn& req);
-  void sdk_prepare(RequestIn& req);
   void version_init(RequestIn& req);
   void version_mark(RequestIn& req);
   void version_checkout(RequestIn& req);
@@ -202,7 +201,7 @@ class Service : public RequestSink {
   void output_types(RequestIn& req);
   void input_types(RequestIn& req);
   void nix_source_resolve(RequestIn& req);
-  void sdk_status(RequestIn& req);
+  void card_api(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);
   void run_status(RequestIn& req);

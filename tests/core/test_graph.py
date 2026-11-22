@@ -15,7 +15,7 @@ def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }', each_input=Fals
         "type": "code", "sandbox": {"filesystem": False},
         "trigger": "eachInput" if each_input else "allInputs",
         "inputs": [{"name": name.rstrip("?"), "optional": name.endswith("?")} for name in inputs],
-        "_outputs": outputs, "_nix": "{ pkgs, inputs, params }: " + body,
+        "_outputs": outputs, "_nix": "{ pkgs, inputs, params, ... }: " + body,
     }
 
 
@@ -231,7 +231,7 @@ def test_nix_reference_inventory_refreshes_and_deduplicates(core_factory, projec
         client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[
             change("PutSource", path="definitions/result/default.nix",
                    baseHash=next(text(s.hash) for s in snap.sources if text(s.path) == "definitions/result/default.nix"),
-                   bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
+                   bytes=list(('{ pkgs, inputs, params, ... }: ' + body).encode()))])
         snap = client.call("ProjectInspectRequest")
         result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
         assert [(text(r.name), r.valid) for r in result.nixReferences] == expected

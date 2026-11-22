@@ -63,12 +63,12 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return "(inputs.tsugumi.pythonSdk.pythonCard { src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
+    return "(inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
 
 
 def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: str = "", extra: str = "") -> str:
     """default.nix of a Card whose run is python_run(main, ...)."""
-    return ("{ pkgs, inputs, params }:\n" + (f"let\n{let}\nin\n" if let else "")
+    return ("{ pkgs, params, inputs, schemas }:\n" + (f"let\n{let}\nin\n" if let else "")
             + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
 
 
@@ -98,7 +98,7 @@ def bash(script: str, inputs=(), outputs=NUM, pre=None, post=None, extra="", **s
         attrs.append(f"postRun = {nix_string(post)};")
     body = {"type": "code", "inputs": [{"name": i} for i in inputs], **settings}
     body["_outputs"] = outputs
-    body["_nix"] = "{ pkgs, inputs, params }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
+    body["_nix"] = "{ pkgs, inputs, params, ... }:\n{\n  " + "\n  ".join(attrs) + "\n" + extra + "}\n"
     return body
 
 
@@ -107,7 +107,7 @@ def log(c, run_id, card_id, stream=1, inv=1):
                        stream=stream, limitBytes=262144).text)
 
 
-PYTHON_NIX = ('{ pkgs, inputs, params }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in\n'
+PYTHON_NIX = ('{ pkgs, inputs, params, ... }:\nlet sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in\n'
               '{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; };%s }\n')
 
 

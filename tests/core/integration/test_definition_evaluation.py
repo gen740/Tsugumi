@@ -9,40 +9,45 @@ from pathlib import Path
 
 import pytest
 
+import flatbuffers
+
 from harness.daemon import ROOT
 from harness.definition_evaluation import (
-    EMPTY_OUTPUTS, completed_definition, edit_json, reload_project,
+    EMPTY_OUTPUTS, completed_definition, edit_json, reload_project, synthetic_run, synthetic_sources,
 )
 from harness.real_cards import nix_string
 from harness.scenario import Project, run, wait_run
 from projects import card, conn, write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
-
-def cpp_library(value, *, output="return {};", extra=""):
-    return r"""inputs.tsugumi.cppCard {
-      src = pkgs.writeTextDir "main.cc" ''
-        #include <iostream>
-        #include "card.hh"
-        auto run(const Card::Inputs&) -> Card::Output {
-          std::cout << ${builtins.toJSON (VALUE)} << '\n';
-          OUTPUT
-        }
-      '';
-    }EXTRA""".replace("VALUE", value).replace("OUTPUT", output).replace("EXTRA", extra)
+ARGUMENTS = "{ pkgs, params, inputs, schemas }"
 
 
 def expression(value):
-    return "{ pkgs, inputs, params }: { run = " + cpp_library(value) + "; }"
+    return ARGUMENTS + ": { run = " + synthetic_run(value) + "; }"
 
 
-def contract_field(path):
-    return ('inputs.tsugumi.bind ({ contract, definitionDir }: '
-            f'assert definitionDir == ./.; (builtins.fromJSON (builtins.readFile '
-            f'(contract + "/_contract.json"))).{path}) {{ }}')
+def sources(entry, **extra):
+    return {**synthetic_sources(), "default.nix": entry, **extra}
+
+
+def schema_says(name, word, then, otherwise):
+    """A value taken from a port schema file the core generated for the builder."""
+    return (f'(if pkgs.lib.hasInfix "{word}" (builtins.readFile (schemas + "/{name}")) '
+            f'then "{then}" else "{otherwise}")')
+
+
+def first_table(value):
+    builder = flatbuffers.Builder(64)
+    string = builder.CreateString(value)
+    builder.StartObject(1)
+    builder.PrependUOffsetTRelativeSlot(0, string, 0)
+    builder.Finish(builder.EndObject())
+    return bytes(builder.Output())
 
 
 def definition(**extra):
@@ -51,51 +56,52 @@ def definition(**extra):
 
 @pytest.mark.parametrize("changed_input", [
     "entry", "import", "read-file", "file-added", "file-removed", "nix-param",
-    "generated-contract", "output-schema",
+    "port-schema", "output-schema",
 ])
 def test_changed_input_replaces_the_recorded_definition(core_factory, project, changed_input):
     """An input edit changes output and identity, and drops the old resident."""
     settings = definition()
     outputs = EMPTY_OUTPUTS
-    sources = {"default.nix": expression('"first"')}
+    files = {"default.nix": expression('"first"')}
     changed_file, replacement = "default.nix", expression('"second"')
     first, second = "first\n", "second\n"
     if changed_input == "import":
-        sources = {"default.nix": expression("import ./message.nix"), "message.nix": '"first"'}
+        files = {"default.nix": expression("import ./message.nix"), "message.nix": '"first"'}
         changed_file, replacement = "message.nix", '"second"'
     elif changed_input == "read-file":
-        sources = {"default.nix": expression("builtins.readFile ./message.txt"), "message.txt": "first"}
+        files = {"default.nix": expression("builtins.readFile ./message.txt"), "message.txt": "first"}
         changed_file, replacement = "message.txt", "second"
     elif changed_input in ("file-added", "file-removed"):
         # Directory enumeration and pathExists observe additions/removals even
         # when no pre-existing file has changed.
         present = ('builtins.hasAttr "optional.txt" (builtins.readDir ./.)'
                    if changed_input == "file-added" else 'builtins.pathExists ./optional.txt')
-        sources = {"default.nix": expression(
+        files = {"default.nix": expression(
             'if ' + present + ' then builtins.readFile ./optional.txt else "first"')}
         changed_file, replacement = "optional.txt", "second" if changed_input == "file-added" else None
         if changed_input == "file-removed":
-            sources[changed_file] = "second"
+            files[changed_file] = "second"
             first, second = second, first
     elif changed_input == "nix-param":
         settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": "first"}]
-        sources = {"default.nix": expression("params.message")}
+        files = {"default.nix": expression("params.message")}
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data="second")]})
-    elif changed_input == "generated-contract":
-        # SDK code generation consumes this exact contract. Observe it in the
-        # body as well so a stale generated directory cannot pass unnoticed.
-        sources = {"default.nix": expression("(builtins.head (" + contract_field("params") + ")).name")}
+    elif changed_input == "port-schema":
+        # A builder generates the Card's API from these exact schemas. Observe
+        # them in the body as well so a stale directory cannot pass unnoticed.
+        files = {"default.nix": expression(schema_says("_params.fbs", "second", "second", "first"))}
         settings["params"] = [{"name": "first", "type": "string", "data": "value"}]
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], name="second")]})
     elif changed_input == "output-schema":
-        sources = {"default.nix": expression("(builtins.head (" + contract_field("outputs") + ")).type")}
+        files = {"default.nix": expression(
+            schema_says("_outputs.fbs", "Second", "outputs.out.Second", "outputs.out.First"))}
         outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
         changed_file, replacement = "_outputs.fbs", outputs.replace("First", "Second")
         first, second = "outputs.out.First\n", "outputs.out.Second\n"
     client = core_factory().connect()
-    Project(project).card("work", settings, outputs=outputs, sources=sources).save(client)
+    Project(project).card("work", settings, outputs=outputs, sources={**synthetic_sources(), **files}).save(client)
     before = completed_definition(client)
     assert before[0] == first
 
@@ -128,7 +134,7 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
     """A new valid pin changes packages and identity; a bad hash cannot reuse them."""
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS,
-                          sources={"default.nix": expression("pkgs.lib.version")}).save(client)
+                          sources=sources(expression("pkgs.lib.version"))).save(client)
     project_file = project / "tsugumi.json"
     locked = json.loads((ROOT / "flake.lock").read_text())["nodes"]["nixpkgs"]["locked"]
     primary_pin = ("https://github.com/NixOS/nixpkgs/archive/" + locked["rev"]
@@ -159,17 +165,18 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
 def test_connected_input_change_replaces_downstream_definition(core_factory, project, dependency_input):
     """A producer's export or type is an input even with unchanged consumer files."""
     outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
-    library = cpp_library('"producer"', output=(
-        'Card::Output result; result.out.emplace().value = "token"; return result;'))
-    producer = ('{ pkgs, inputs, params }: { exports.message = "first";'
-                ' exports.unused = throw "exports must be lazy"; run = ' + library + '; }')
+    producer = (ARGUMENTS + ': { exports.message = "first";'
+                ' exports.unused = throw "exports must be lazy"; run = ' + synthetic_run('"producer"') + '; }')
     value = "inputs.data.message" if dependency_input == "export" else (
-        "(builtins.head (" + contract_field("inputs") + ")).type")
+        schema_says("_inputs.fbs", "Second", "inputs.data.Second", "inputs.data.First"))
+    files = {f"definitions/{name}/{file}": content for name, outputs_ in
+             (("producer", [("out", PortKind.FlatBuffer, first_table("token"))]), ("work", []))
+             for file, content in synthetic_sources(outputs_).items()}
     write(project, {
         "producer": {**definition(), "_outputs": outputs, "_nix": producer},
         "work": {**definition(inputs=[{"name": "data"}]),
                  "_outputs": EMPTY_OUTPUTS, "_nix": expression(value)},
-    }, [card("producer", "producer"), card("work", "work")], [conn("producer", "out", "work", "data")])
+    }, [card("producer", "producer"), card("work", "work")], [conn("producer", "out", "work", "data")], files)
     client = core_factory().connect()
     before = completed_definition(client, start="producer")
     target = project / "definitions/producer" / ("default.nix" if dependency_input == "export" else "_outputs.fbs")
@@ -189,7 +196,7 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
 def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, list_run):
     """Keep declaration order and build references, including a standalone HTML file."""
     client = core_factory().connect()
-    library = cpp_library('"abi9"')
+    library = synthetic_run('"abi9"')
     # A passthru entry would fail if the evaluator tried to read or merge it.
     library = "(" + library + ').overrideAttrs (_: { passthru.views = throw "implicit views"; })'
     body = '[ { label = "first"; run = library; } library ]' if list_run else 'library'
@@ -197,12 +204,10 @@ def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, l
       { name = "second"; type = "html"; blob = ./notes.html; }
       { name = "first"; type = "dawn"; blob = pkgs.writeText "view.wasm" "opaque"; }
     ]""" if list_run else '[ ]'
-    entry = ("{ pkgs, inputs, params }: let library = " + library + "; in { run = " + body
+    entry = (ARGUMENTS + ": let library = " + library + "; in { run = " + body
              + "; views = " + views + "; }")
-    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": entry,
-        "notes.html": "<!doctype html><p>View</p>",
-    }).save(client)
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
+        entry, **{"notes.html": "<!doctype html><p>View</p>"})).save(client)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     environment, = client.call("RunEnvironmentsRequest", runId=run_id).environments
@@ -226,9 +231,10 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
     """Visible Cards publish their ordered declarations without evaluating run."""
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": """{ pkgs, inputs, params }: {
+        "default.nix": ARGUMENTS + """: {
           run = throw "run must stay lazy";
-          views = inputs.tsugumi.cppSdk.views ++ [
+          views = [
+            { name = "text"; type = "html"; blob = pkgs.writeText "text.html" "<p>text</p>"; }
             { name = "notes"; type = "html"; blob = ./notes.html; }
           ];
         }""",
@@ -240,8 +246,7 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
         lambda note: note.valueType == NotificationPayload.CardViewsUpdated
         and note.value.card.segments == [b"work"] and bool(note.value.views)
     ).value
-    names = [text(view.name) for view in update.views]
-    assert "text" in names and names[-1] == "notes"
+    assert [text(view.name) for view in update.views] == ["text", "notes"]
     assert Path(text(update.views[-1].blob)).read_text() == "<p>Available before a run</p>"
 
 
@@ -257,7 +262,7 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
 def test_legacy_definition_forms_are_rejected(core_factory, project, body, message):
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "default.nix": "{ pkgs, inputs, params }: { " + body + " }",
+        "default.nix": ARGUMENTS + ": { " + body + " }",
     }).save(client)
     status = wait_run(client, run(client))
     assert status.state == RunState.failed
@@ -277,32 +282,21 @@ def test_project_flake_change_replaces_the_definition(core_factory, project, tmp
         second_dir = tmp_path / "second"
         second_dir.mkdir()
         changed, _ = stack.enter_context(source_fixture(second_dir, monkeypatch, message="second"))
-        entry = """{ pkgs, inputs, params }: {
-          run = inputs.tsugumi.cppCard {
-            src = pkgs.runCommand "fixture-card" { } ''
-              mkdir -p "$out"
-              printf '#define VALUE "%s"\n' "$(cat ${inputs.sources.fixture.packages.sample}/value)" > "$out/value.h"
-              cp ${./main.cc} "$out/main.cc"
-            '';
-          };
-        }"""
-        source_code = """#include <iostream>
-#include "card.hh"
-#include "value.h"
-auto run(const Card::Inputs&) -> Card::Output {
-  std::cout << VALUE << '\\n';
-  return {};
-}
-"""
+        header = ("printf '#define VALUE \"%s\"\\n' \"$(cat ${package}/value)\""
+                  " > value.h")
+        entry = (ARGUMENTS + ": let package = import ./package.nix inputs; in { run = "
+                 + synthetic_run(header=header) + "; }")
         client = core_factory().connect()
-        Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-            "default.nix": entry, "main.cc": source_code,
-        }).save(client)
-        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[source]))
+        Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
+            entry, **{"package.nix": 'inputs: inputs.sources.${"fix" + "ture"}.packages.sample'}
+        )).save(client)
+        unused = dict(source, name="unused", ref=source["ref"].replace(
+            "/flake.tar.gz?", "/missing.tar.gz?"))
+        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[unused, source]))
         reload_project(client)
         before = completed_definition(client)
         assert before[0] == "original\n"
-        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[changed]))
+        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[unused, changed]))
         reload_project(client)
         after = completed_definition(client)
         assert after[0] == "second\n" and after[1] != before[1]
@@ -318,7 +312,7 @@ def test_target_system_change_selects_new_packages_and_definition(core_factory, 
     if foreign is None:
         pytest.skip("requires a second local system with binfmt_misc and Nix extra-platforms (shared VM)")
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS,
-                          sources={"default.nix": expression("pkgs.stdenv.hostPlatform.system")}).save(client)
+                          sources=sources(expression("pkgs.stdenv.hostPlatform.system"))).save(client)
     before = completed_definition(client)
     assert before[0] == native + "\n"
     edit_json(project / "definitions/work/_card.json", lambda card: card.update(system=foreign))
@@ -336,7 +330,8 @@ def test_process_environment_is_not_an_implicit_definition_input(core_factory, p
     """Restricted evaluation masks the process environment from getEnv."""
     write(project, {"work": {**definition(), "_outputs": EMPTY_OUTPUTS,
                             "_nix": expression('"masked:" + builtins.getEnv "TSUGUMI_EVALUATION_SECRET"')}},
-          [card("work", "work")], [])
+          [card("work", "work")], [], {"definitions/work/" + name: content
+                                       for name, content in synthetic_sources().items()})
     monkeypatch.setenv("TSUGUMI_EVALUATION_SECRET", "first")
     assert completed_definition(core_factory().connect())[0] == "masked:\n"
 
@@ -345,7 +340,7 @@ def test_impure_file_read_cannot_fall_back_to_an_old_definition(core_factory, pr
     """Restricted evaluation rejects a new absolute file input outside the confirmed sources."""
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS,
-                          sources={"default.nix": expression('"first"')}).save(client)
+                          sources=sources(expression('"first"'))).save(client)
     assert completed_definition(client)[0] == "first\n"
     outside = tmp_path / "outside.txt"
     outside.write_text("must not reach Nix")
@@ -358,3 +353,70 @@ def test_impure_file_read_cannot_fall_back_to_an_old_definition(core_factory, pr
     assert status.failure.kind == FailureKind.nix_failed
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert not text(record.summary.environmentId)
+
+
+def card_api(client, card="work"):
+    return client.call("CardApiRequest", card=path(card), atRev=client.call("ProjectInspectRequest").rev)
+
+
+def api_files(implementation):
+    return {text(f.path): bytes(f.content) for f in implementation.files}
+
+
+def test_card_api_returns_what_the_builder_placed_from_the_current_wiring(core_factory, project):
+    """The Card API builds the saved Card and reads share/tsugumi/api/ without interpreting it."""
+    client = core_factory().connect()
+    producer = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
+    graph = Project(project).card("producer", definition(), outputs=producer, sources=sources(
+        expression('"producer"')))
+    graph.card("work", definition(inputs=[{"name": "data"}]), outputs=EMPTY_OUTPUTS,
+               sources=sources(expression('"work"')))
+    graph.save(client)
+    result = card_api(client)
+    assert result.failure is None, text(result.failure.diagnostic)
+    unconnected, = result.implementations
+    files = api_files(unconnected)
+    # Regular files only, nested folders included, symlinks not followed.
+    assert sorted(files) == ["README.md", "_inputs.fbs", "_outputs.fbs", "_params.fbs", "include/card.h", "raw"]
+    assert files["README.md"] == b"# Card API\n"
+    assert files["raw"] == b"\x00\xff"
+    assert b"First" not in files["_inputs.fbs"]
+    assert (Path(text(unconnected.package)) / "lib/main.so").is_file()
+    # A new wire changes the schemas the next build gets; nothing is cached.
+    graph.connect("producer", "out", "work", "data").save(client)
+    connected, = card_api(client).implementations
+    assert b"First" in api_files(connected)["_inputs.fbs"]
+    assert text(connected.package) != text(unconnected.package)
+
+
+def test_card_api_lists_each_run_implementation_and_reports_a_failed_build(core_factory, project):
+    """A run list gives one entry per implementation; a failed build gives its failure and log."""
+    client = core_factory().connect()
+    entry = (ARGUMENTS + ': { run = [ { label = "first"; run = ' + synthetic_run('"one"', name="first")
+             + '; } ' + synthetic_run('"two"', name="second") + ' ]; }')
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(entry)).save(client)
+    result = card_api(client)
+    assert result.failure is None
+    assert [(r.index, text(r.label) if r.label else None) for r in result.implementations] == [(1, "first"), (2, None)]
+    assert all("README.md" in api_files(r) for r in result.implementations)
+
+    # A symlink above the API directory may not publish files from another output.
+    linked = (ARGUMENTS + ': let real = ' + synthetic_run('"one"', name="first")
+              + """; in { run = pkgs.runCommand "linked-card" { } ''
+                mkdir -p "$out/lib"
+                cp ${real}/lib/main.so "$out/lib/"
+                ln -s ${real}/share "$out/share"
+              ''; }""")
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(linked)).save(client)
+    result = card_api(client)
+    assert result.failure is None
+    implementation, = result.implementations
+    assert not implementation.files
+
+    broken = (ARGUMENTS + ': { run = pkgs.runCommand "broken-card" { } '
+              "''\n echo deliberate-build-failure; exit 1\n''; }")
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={"default.nix": broken}).save(client)
+    failed = card_api(client)
+    assert not failed.implementations
+    assert failed.failure.kind == FailureKind.nix_failed
+    assert "deliberate-build-failure" in text(failed.log)
