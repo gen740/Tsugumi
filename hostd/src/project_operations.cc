@@ -548,7 +548,7 @@ auto Prepare(
     }
     const auto state = document_state(source_files);
     const auto layout =
-        json::Object(LayoutView(json::Get(contents.files, "layout.bin")));
+        json::Object(LayoutView(json::Get(contents.files, "layout.bin", "")));
     const auto positions = json::Object(json::Get(layout, "cards", "{}"));
     auto offset_x = std::numeric_limits<double>::infinity();
     auto offset_y = std::numeric_limits<double>::infinity();
