@@ -14,7 +14,7 @@ REQUEST  request.json from the Mac: {"start": "<trigger>", "params": {"<card>": 
 RESULT   folder for summary.json and cards/<card>/<invocation>/...
 
 The copy records every Code Card's inputs and outputs (recordIO), whatever the
-author chose: the recipient gets values back, not only displays. recordIO is
+author chose: the recipient gets the values back. recordIO is
 a setting, so this changes no build.
 """
 

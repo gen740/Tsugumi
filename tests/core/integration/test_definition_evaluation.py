@@ -5,12 +5,11 @@ require a particular number of evaluations or builds, including on reversion.
 """
 
 import json
-import shutil
 from pathlib import Path
 
 import pytest
 
-from harness.daemon import ROOT, SDK
+from harness.daemon import ROOT
 from harness.definition_evaluation import (
     EMPTY_OUTPUTS, completed_definition, edit_json, reload_project,
 )
@@ -20,10 +19,30 @@ from projects import card, conn, write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
+from Tsugumi.RPC.NotificationPayload import NotificationPayload
+
+
+def cpp_library(value, *, output="return {};", extra=""):
+    return r"""inputs.tsugumi.cppCard {
+      src = pkgs.writeTextDir "main.cc" ''
+        #include <iostream>
+        #include "card.hh"
+        auto run(const Card::Inputs&) -> Card::Output {
+          std::cout << ${builtins.toJSON (VALUE)} << '\n';
+          OUTPUT
+        }
+      '';
+    }EXTRA""".replace("VALUE", value).replace("OUTPUT", output).replace("EXTRA", extra)
 
 
 def expression(value):
-    return '{ pkgs, inputs, params }: { run = "echo ${' + value + '}"; }'
+    return "{ pkgs, inputs, params }: { run = " + cpp_library(value) + "; }"
+
+
+def contract_field(path):
+    return ('inputs.tsugumi.bind ({ contract, definitionDir }: '
+            f'assert definitionDir == ./.; (builtins.fromJSON (builtins.readFile '
+            f'(contract + "/_contract.json"))).{path}) {{ }}')
 
 
 def definition(**extra):
@@ -66,16 +85,12 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
     elif changed_input == "generated-contract":
         # SDK code generation consumes this exact contract. Observe it in the
         # body as well so a stale generated directory cannot pass unnoticed.
-        sources = {"default.nix": expression(
-            '(builtins.head (builtins.fromJSON (builtins.readFile '
-            '(inputs.tsugumi.generated + "/_contract.json"))).params).name')}
+        sources = {"default.nix": expression("(builtins.head (" + contract_field("params") + ")).name")}
         settings["params"] = [{"name": "first", "type": "string", "data": "value"}]
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], name="second")]})
     elif changed_input == "output-schema":
-        sources = {"default.nix": expression(
-            '(builtins.head (builtins.fromJSON (builtins.readFile '
-            '(inputs.tsugumi.generated + "/_contract.json"))).outputs).type')}
+        sources = {"default.nix": expression("(builtins.head (" + contract_field("outputs") + ")).type")}
         outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
         changed_file, replacement = "_outputs.fbs", outputs.replace("First", "Second")
         first, second = "outputs.out.First\n", "outputs.out.Second\n"
@@ -110,15 +125,10 @@ SECOND_PIN = ("https://github.com/NixOS/nixpkgs/archive/"
 
 
 def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, project):
-    """A new valid pin changes packages, shell, PATH and identity; a bad hash cannot reuse them."""
+    """A new valid pin changes packages and identity; a bad hash cannot reuse them."""
     client = core_factory().connect()
-    # Read nixpkgs' version and the actual shell/PATH, not the project setting
-    # echoed back by the fixture. The manifest must select all three together.
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS,
-                          sources={"default.nix": '''{ pkgs, inputs, params }: { run = ''
-                            echo ${pkgs.lib.version}
-                            printf '%s\\n' "$BASH" "$PATH"
-                          ''; }'''}).save(client)
+                          sources={"default.nix": expression("pkgs.lib.version")}).save(client)
     project_file = project / "tsugumi.json"
     locked = json.loads((ROOT / "flake.lock").read_text())["nodes"]["nixpkgs"]["locked"]
     primary_pin = ("https://github.com/NixOS/nixpkgs/archive/" + locked["rev"]
@@ -129,9 +139,7 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
     edit_json(project_file, lambda doc: doc.update(pkgsPath=SECOND_PIN))
     reload_project(client)
     after = completed_definition(client)
-    old_tools, new_tools = before[0].splitlines(), after[0].splitlines()
-    assert len(old_tools) == len(new_tools) == 3
-    assert all(old != new for old, new in zip(old_tools, new_tools)), (old_tools, new_tools)
+    assert before[0] != after[0]
     assert after[1] != before[1]
     assert after[2].workerReused is False
 
@@ -151,12 +159,12 @@ def test_nixpkgs_revision_and_hash_select_the_next_definition(core_factory, proj
 def test_connected_input_change_replaces_downstream_definition(core_factory, project, dependency_input):
     """A producer's export or type is an input even with unchanged consumer files."""
     outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
-    script = '''printf '%s' '{"out":{"value":"token"}}' > "$TSUGUMI_OUTPUT"'''
-    producer = ('{ pkgs, inputs, params }: { exports.message = "first"; run = '
-                + nix_string(script) + '; }')
+    library = cpp_library('"producer"', output=(
+        'Card::Output result; result.out.emplace().value = "token"; return result;'))
+    producer = ('{ pkgs, inputs, params }: { exports.message = "first";'
+                ' exports.unused = throw "exports must be lazy"; run = ' + library + '; }')
     value = "inputs.data.message" if dependency_input == "export" else (
-        '(builtins.head (builtins.fromJSON (builtins.readFile '
-        '(inputs.tsugumi.generated + "/_contract.json"))).inputs).type')
+        "(builtins.head (" + contract_field("inputs") + ")).type")
     write(project, {
         "producer": {**definition(), "_outputs": outputs, "_nix": producer},
         "work": {**definition(inputs=[{"name": "data"}]),
@@ -177,56 +185,84 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
     assert after[2].workerReused is False
 
 
-@pytest.mark.parametrize(("sdk_input", "restart"), [
-    pytest.param("nix/default.nix", False, id="resident"),
-    pytest.param("views/line-chart.js", True, id="restart"),
+@pytest.mark.parametrize("list_run", [False, True])
+def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, list_run):
+    """Keep declaration order and build references, including a standalone HTML file."""
+    client = core_factory().connect()
+    library = cpp_library('"abi9"')
+    # A passthru entry would fail if the evaluator tried to read or merge it.
+    library = "(" + library + ').overrideAttrs (_: { passthru.views = throw "implicit views"; })'
+    body = '[ { label = "first"; run = library; } library ]' if list_run else 'library'
+    views = """[
+      { name = "second"; type = "html"; blob = ./notes.html; }
+      { name = "first"; type = "dawn"; blob = pkgs.writeText "view.wasm" "opaque"; }
+    ]""" if list_run else '[ ]'
+    entry = ("{ pkgs, inputs, params }: let library = " + library + "; in { run = " + body
+             + "; views = " + views + "; }")
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": entry,
+        "notes.html": "<!doctype html><p>View</p>",
+    }).save(client)
+    run_id = run(client)
+    assert wait_run(client, run_id).state == RunState.succeeded
+    environment, = client.call("RunEnvironmentsRequest", runId=run_id).environments
+    plan_path = Path(text(environment.manifest))
+    plan = json.loads(plan_path.read_text())
+    assert set(plan) == {"runs", "views"}
+    assert len(plan["runs"]) == (2 if list_run else 1)
+    assert all((Path(package) / "lib/main.so").is_file() for package in plan["runs"])
+    assert [(view["name"], view["type"]) for view in plan["views"]] == (
+        [("second", "html"), ("first", "dawn")] if list_run else [])
+    if list_run:
+        assert Path(plan["views"][0]["blob"]).read_text() == "<!doctype html><p>View</p>"
+        records = client.call("RunInvocationsRequest", runId=run_id, card=path("work")).records
+        assert [text(row.implementationLabel) or "" for row in records] == ["first", ""]
+    paths = client.call("RunEnvironmentPathsRequest", runId=run_id, environmentId=text(environment.id),
+                        limit=500).paths
+    assert {str(plan_path), *plan["runs"], *(view["blob"] for view in plan["views"])} <= set(map(text, paths))
+
+
+def test_declared_views_are_available_without_a_run_build(core_factory, project):
+    """Visible Cards publish their ordered declarations without evaluating run."""
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": """{ pkgs, inputs, params }: {
+          run = throw "run must stay lazy";
+          views = inputs.tsugumi.cppSdk.views ++ [
+            { name = "notes"; type = "html"; blob = ./notes.html; }
+          ];
+        }""",
+        "notes.html": "<p>Available before a run</p>",
+    }).save(client)
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
+    update = client.wait_notification(
+        lambda note: note.valueType == NotificationPayload.CardViewsUpdated
+        and note.value.card.segments == [b"work"] and bool(note.value.views)
+    ).value
+    names = [text(view.name) for view in update.views]
+    assert "text" in names and names[-1] == "notes"
+    assert Path(text(update.views[-1].blob)).read_text() == "<p>Available before a run</p>"
+
+
+@pytest.mark.parametrize("body, message", [
+    ('run = "echo legacy";', "must be a derivation"),
+    ('run = "legacy"; preRun = "true";', "unknown Card attributes: preRun"),
+    ('run = "legacy"; postRun = "true";', "unknown Card attributes: postRun"),
+    ('run = "legacy"; sdk = {};', "unknown Card attributes: sdk"),
+    ('run = []; views = {};', "Card views must be a list"),
+    ('run = []; views = [{ name = "x"; type = "js"; blob = ./default.nix; }];',
+     "a Card view must declare"),
 ])
-def test_sdk_deployment_changes_the_next_definition(core_factory, project, tmp_path, sdk_input, restart):
-    """Changed SDK contents at the same path replace the definition, with or without restart."""
-    sdk = tmp_path / "sdk"
-    shutil.copytree(SDK, sdk)
-    write(project, {"work": {**definition(), "_outputs": EMPTY_OUTPUTS,
-                            "_nix": expression('"sdk"')}}, [card("work", "work")], [])
-    daemon = core_factory(args=["--sdk-dir", str(sdk)])
-    client = daemon.connect()
-    before = completed_definition(client)
-    if restart:
-        daemon.stop()
-    target = sdk / sdk_input
-    # Installed Nix SDK files are read-only; edit only this private copy.
-    target.chmod(target.stat().st_mode | 0o200)
-    if sdk_input == "nix/default.nix":
-        upstream = target.read_text()
-        target.write_text("args:\nlet sdk = (\n" + upstream + r'''
-) args;
-in sdk // {
-  manifestFor = remote: card: sdk.manifestFor remote (card // {
-    run = card.run + "\necho sdk-updated";
-  });
-}
-''')
-    else:
-        with (sdk / sdk_input).open("a") as file:
-            file.write('\nexport const evaluationRevision = "updated";\n')
-    if restart:
-        daemon.start()
-        client = daemon.connect()
-    after = completed_definition(client)
-    observed = json.dumps({"sdk_input": sdk_input, "before_stdout": before[0], "after_stdout": after[0],
-                           "before_environment": before[1], "after_environment": after[1],
-                           "worker_reused": after[2].workerReused})
-    if sdk_input == "nix/default.nix":
-        assert before[0] == "sdk\n" and after[0] == "sdk\nsdk-updated\n", observed
-    else:
-        # This SDK file reaches the manifest via the bundled view, not stdout.
-        # Inspect the actual built artifact in the recorded manifest.
-        environment, = client.call("RunEnvironmentsRequest", runId=text(after[2].runId)).environments
-        manifest = json.loads(Path(text(environment.manifest)).read_text())
-        views = json.loads(manifest["views"])
-        updated_bundle = "updated" in (Path(views["line-chart"]) / "index.js").read_text()
-        assert updated_bundle, observed
-    assert after[1] != before[1], observed
-    assert after[2].workerReused is False, observed
+def test_legacy_definition_forms_are_rejected(core_factory, project, body, message):
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "default.nix": "{ pkgs, inputs, params }: { " + body + " }",
+    }).save(client)
+    status = wait_run(client, run(client))
+    assert status.state == RunState.failed
+    assert status.failure.kind == FailureKind.nix_failed
+    assert message in text(status.failure.diagnostic)
 
 
 def test_project_flake_change_replaces_the_definition(core_factory, project, tmp_path, monkeypatch):
@@ -241,12 +277,29 @@ def test_project_flake_change_replaces_the_definition(core_factory, project, tmp
         second_dir = tmp_path / "second"
         second_dir.mkdir()
         changed, _ = stack.enter_context(source_fixture(second_dir, monkeypatch, message="second"))
-        write(project, {"work": {**definition(), "_outputs": EMPTY_OUTPUTS,
-                                "_nix": '{ pkgs, inputs, params }: { run = '
-                                '"cat ${inputs.sources.fixture.packages.sample}/value"; }'}},
-              [card("work", "work")], [])
-        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[source]))
+        entry = """{ pkgs, inputs, params }: {
+          run = inputs.tsugumi.cppCard {
+            src = pkgs.runCommand "fixture-card" { } ''
+              mkdir -p "$out"
+              printf '#define VALUE "%s"\n' "$(cat ${inputs.sources.fixture.packages.sample}/value)" > "$out/value.h"
+              cp ${./main.cc} "$out/main.cc"
+            '';
+          };
+        }"""
+        source_code = """#include <iostream>
+#include "card.hh"
+#include "value.h"
+auto run(const Card::Inputs&) -> Card::Output {
+  std::cout << VALUE << '\\n';
+  return {};
+}
+"""
         client = core_factory().connect()
+        Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+            "default.nix": entry, "main.cc": source_code,
+        }).save(client)
+        edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[source]))
+        reload_project(client)
         before = completed_definition(client)
         assert before[0] == "original\n"
         edit_json(project / "tsugumi.json", lambda doc: doc.update(nixSources=[changed]))
@@ -273,6 +326,9 @@ def test_target_system_change_selects_new_packages_and_definition(core_factory, 
     after = completed_definition(client)
     assert after[0] == foreign + "\n" and after[1] != before[1]
     assert text(after[2].executionSystem) == foreign
+    plan = json.loads(Path(after[1][1]).read_text())
+    assert plan["worker"].endswith("/bin/tsugumi-worker")
+    assert Path(plan["worker"]).is_file()
     assert after[2].workerReused is False
 
 

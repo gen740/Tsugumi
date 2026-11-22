@@ -2,12 +2,12 @@
 # clang-format (.clang-format) for C and C++.
 # The core's tests are not here: `ci-core` packages their binaries and runner,
 # and CI runs them outside the build sandbox (.github/workflows/ci-platform.yml).
-{ ... }:
+{ inputs, ... }:
 {
   perSystem =
     {
       pkgs,
-      lib,
+      system,
       config,
       ...
     }:
@@ -18,20 +18,21 @@
       operationDriver = config.packages.ci-core.override {
         target = "tsugumi_document_edit_driver";
       };
+      abi = pkgs.runCommand "tsugumi-kit-card-abi" { nativeBuildInputs = [ pkgs.python3 ]; } ''
+        python3 ${../check-card-abi.py} ${../../protocol} ${inputs.tsugumi-kit}/abi/9
+        touch "$out"
+      '';
     in
     {
       checks = {
+        card-abi = abi;
+        card-kit = pkgs.linkFarm "tsugumi-card-kit-checks" (
+          inputs.tsugumi-kit.checks.${system} // { card-abi = abi; }
+        );
         web-typecheck = web.override { typecheckOnly = true; };
         web = pkgs.callPackage ../web-checks.nix {
           inherit web operationDriver;
         };
-      }
-      // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
-        # The display part; CI also runs the full check with a host.
-        linux-ui = pkgs.runCommand "tsugumi-gtk-display-check" { } ''
-          ${lib.getExe config.packages.linux-ui-check} --no-host
-          touch $out
-        '';
       };
       formatter = pkgs.treefmt.withConfig {
         runtimeInputs = [

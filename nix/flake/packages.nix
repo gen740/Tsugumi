@@ -15,11 +15,14 @@ in
     {
       pkgs,
       lib,
-      config,
       ...
     }:
     let
-      core = pkgs.callPackage ../core.nix { inherit cardNixpkgs hosq; };
+      core = pkgs.callPackage ../core.nix {
+        inherit cardNixpkgs hosq;
+        kitSource = inputs.tsugumi-kit;
+        flakePartsSource = inputs.flake-parts;
+      };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
         inherit core hosq;
@@ -69,20 +72,6 @@ in
         cli = pkgs.callPackage ../cli.nix {
           tsugumid = core;
           inherit web;
-        };
-        # The desktop UI (ui/linux): GTK 4 windows on the same host.
-        linux-ui = pkgs.callPackage ../linux-ui.nix {
-          inherit
-            cardNixpkgs
-            hosq
-            core
-            web
-            ;
-        };
-        # Its headless GTK check, full (hostd and a project) outside the sandbox.
-        linux-ui-check = pkgs.callPackage ../linux-ui-check.nix {
-          linux-ui = config.packages.linux-ui;
-          inherit core;
         };
       }
       // lib.optionalAttrs (pkgs.stdenv.hostPlatform.system == "aarch64-linux") {

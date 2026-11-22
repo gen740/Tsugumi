@@ -1,0 +1,28 @@
+set(TSUGUMI_KIT_DIR "$ENV{TSUGUMI_KIT_DIR}" CACHE PATH "Pinned Tsugumi kit source")
+set(TSUGUMI_FLAKE_PARTS_DIR "$ENV{TSUGUMI_FLAKE_PARTS_DIR}" CACHE PATH "Pinned flake-parts source")
+
+# Use the same layout beside installed programs and in the CMake build tree.
+set(TSUGUMI_CARD_NIX_OUTPUT share/tsugumi/nix)
+function(tsugumi_card_nix_files directory)
+  set(destination "${TSUGUMI_CARD_NIX_OUTPUT}")
+  if(directory)
+    string(APPEND destination "/${directory}")
+  endif()
+  foreach(path IN LISTS ARGN)
+    get_filename_component(name "${path}" NAME)
+    configure_file("${path}" "${PROJECT_BINARY_DIR}/${destination}/${name}" COPYONLY)
+    install(FILES "${path}" DESTINATION "${destination}")
+  endforeach()
+endfunction()
+
+tsugumi_card_nix_files("" nix/card-entry.nix nix/kit-entry.nix)
+foreach(binding "kit;TSUGUMI_KIT_DIR" "flake-parts;TSUGUMI_FLAKE_PARTS_DIR")
+  list(GET binding 0 name)
+  list(GET binding 1 source)
+  if(${source})
+    file(CREATE_LINK "${${source}}" "${PROJECT_BINARY_DIR}/${TSUGUMI_CARD_NIX_OUTPUT}/${name}" SYMBOLIC)
+    install(CODE "
+      file(CREATE_LINK \"${${source}}\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${TSUGUMI_CARD_NIX_OUTPUT}/${name}\" SYMBOLIC)
+    ")
+  endif()
+endforeach()

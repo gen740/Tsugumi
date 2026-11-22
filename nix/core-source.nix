@@ -29,7 +29,9 @@ lib.fileset.toSource {
       ../cli/CMakeLists.txt
       ../cli/include
       ../cli/src
-      ../sdk
+      ../nix/card-entry.nix
+      ../nix/kit-entry.nix
+      ../nix/worker.nix
       # Documentation tooling does not affect the native runtime.
       ../protocol/CMakeLists.txt
       ../protocol/include
