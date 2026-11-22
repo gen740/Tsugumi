@@ -431,9 +431,11 @@ TEST(HostCardPlacement, APersonsDropIsSavedWithoutAddingDerivedPositions) {
   ASSERT_EQ(changes.size(), 2u);
   const auto value = json::Object(json::Get(json::Object(changes[1]), "value"));
   const auto positions =
-      json::Object(json::Object(json::Text(value, "bytes")).at("cards"));
-  EXPECT_EQ(json::Object(positions.at("dropped")).at("x"), "17");
-  EXPECT_EQ(json::Object(positions.at("dropped")).at("y"), "29");
+      json::Object(json::Object(LayoutView(DecodeSourceBytes(value.at("bytes"))))
+                       .at("cards"));
+  const auto dropped = json::Object(positions.at("dropped"));
+  EXPECT_DOUBLE_EQ(std::stod(dropped.at("x")), 17);
+  EXPECT_DOUBLE_EQ(std::stod(dropped.at("y")), 29);
   EXPECT_FALSE(positions.contains("new"));
 }
 }  // namespace

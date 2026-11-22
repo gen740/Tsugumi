@@ -384,9 +384,17 @@ TEST(ProjectEdit, AuthorizesEveryReadBeforeMaterializingIt) {
                Failure);
   EXPECT_FALSE(read);
 }
-TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
+TEST(ProjectEdit, FirstCommentUndoAndRedoAddressItsId) {
   const std::string path = "definitions/a/_comments.json";
-  const std::string meta = R"({"comments":[{"id":"c","text":"first"}]})";
+  const std::string first = R"({"comments":[{"id":"c","text":"first"}]})";
+  const auto saved_comments = [](const json::Members& plan) {
+    const auto change = json::Object(json::Array(plan.at("changes")).at(0));
+    const auto value = json::Object(change.at("value"));
+    return json::Text(value, "comments_json");
+  };
+  const auto comments = [](const std::string& text) {
+    return json::Array(json::Object(text).at("comments"));
+  };
   SaveBase base;
   base.snapshot["rev"] = "0";
   base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
@@ -398,7 +406,7 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   create.old_value = std::make_unique<H::ProjectValueT>();
   create.new_value = std::make_unique<H::ProjectValueT>();
   create.new_value->present = true;
-  create.new_value->json = meta;
+  create.new_value->json = first;
   H::ProjectEditsT edits;
   auto entry = std::make_unique<H::ProjectEditT>();
   entry->value.Set(std::move(create));
@@ -406,24 +414,31 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   const auto plan = PrepareProjectEdits(edits, base, read);
   const auto undo = ReverseProjectChanges(plan, base, read);
   ASSERT_EQ(undo.edits.size(), 1u);
-  ASSERT_NE(undo.edits.front()->value.AsProjectFileRemove(), nullptr);
-  base.files[path] = meta;
+  const auto* remove = undo.edits.front()->value.AsProjectFieldEdit();
+  ASSERT_NE(remove, nullptr);
+  ASSERT_EQ(remove->selector.size(), 2u);
+  EXPECT_EQ(remove->selector[0]->field, "comments");
+  EXPECT_EQ(json::Text(json::Object(remove->selector[1]->match_json), "id"), "c");
+  base.files[path] = first;
   const auto undone = PrepareProjectEdits(undo, base, read);
+  const auto empty = saved_comments(undone);
+  EXPECT_TRUE(comments(empty).empty());
   const auto redo = ReverseProjectChanges(undone, base, read);
   ASSERT_EQ(redo.edits.size(), 1u);
-  const auto* put = redo.edits.front()->value.AsProjectFilePut();
-  ASSERT_NE(put, nullptr);
-  EXPECT_EQ(put->file_path, path);
-  EXPECT_TRUE(put->expect_missing);
-  EXPECT_EQ(std::string(put->bytes.begin(), put->bytes.end()), meta);
-  base.files.erase(path);
-  const auto redone = PrepareProjectEdits(redo, base, read);
-  const auto changes = json::Array(redone.at("changes"));
-  ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(
-      json::Text(json::Object(json::Get(json::Object(changes[0]), "value")),
-                 "comments_json"),
-      meta);
+  base.files[path] = empty;
+  const auto restored =
+      comments(saved_comments(PrepareProjectEdits(redo, base, read)));
+  ASSERT_EQ(restored.size(), 1u);
+  const auto comment = json::Object(restored.front());
+  EXPECT_EQ(json::Text(comment, "id"), "c");
+  EXPECT_EQ(json::Text(comment, "text"), "first");
+
+  base.files[path] =
+      R"({"comments":[{"id":"c","text":"first"},{"id":"later","text":"another"}]})";
+  const auto remaining =
+      comments(saved_comments(PrepareProjectEdits(undo, base, read)));
+  ASSERT_EQ(remaining.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(remaining.front()), "id"), "later");
 }
 
 TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
