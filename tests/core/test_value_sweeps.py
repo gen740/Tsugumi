@@ -177,8 +177,8 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
 @pytest.mark.parametrize("definition,message", [
     ({"type": "input", "params": [{"name": "value", "type": "uint64", "data": {"uint64": 1}, "sweep": [{"uint64": 1}]}]},
      "not both"),
-    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"uint64": -2}]}]},
-     "sweep[1]: expected uint64"),
+    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"int64": -2}]}]},
+     'sweep[1]: a uint64 value is written as {"uint64": ...}'),
     ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(17))]},
                                       {"name": "right", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(16))]}]},
      "at most 256"),
