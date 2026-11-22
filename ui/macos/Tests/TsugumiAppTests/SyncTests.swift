@@ -18,7 +18,7 @@ import TsugumiTestSupport
     let dir: URL
     var ready: [String: Any] = [:]
 
-    init(project: URL, mockedBuilds: Bool = false) throws {
+    init(project: URL, mockedBuilds: Bool = false, worker: URL? = nil) throws {
       dir = URL(fileURLWithPath: ProcessInfo.processInfo.environment["TSUGUMI_SOCKET_DIR"] ?? "/tmp").appendingPathComponent("tsugumi-\(UUID().uuidString.prefix(8))")
       try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
       let env = ProcessInfo.processInfo.environment
@@ -31,7 +31,7 @@ import TsugumiTestSupport
                            "--run-scratch-dir", canonicalDirectory(dir).appendingPathComponent("run-scratch").path,
                            "--project", project.path, "--unix", dir.appendingPathComponent("s").path,
                            "--control-dir", dir.appendingPathComponent("control").path,
-                           "--worker", env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
+                           "--worker", worker?.path ?? env["TSUGUMI_WORKER"] ?? build.appendingPathComponent("workerd/tsugumi-worker").path,
                            "--nix-dir", env["TSUGUMI_NIX_DIR"] ?? build.appendingPathComponent("share/tsugumi/nix").path,
                            "--allow-missing-origin", "--listen", "127.0.0.1:0"]
       process.standardOutput = FileHandle.nullDevice
