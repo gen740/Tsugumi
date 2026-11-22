@@ -1,5 +1,7 @@
 # Program boundaries and release-built guest — #290 + #293
 
+> **Historical in part (2026-11-22).** The program boundaries, guest build and measurements recorded here still describe what was done. The instructions about worker-side JSON conversion, shared built-in views, `CardManifest`, `sdk/describe`, UI Card scaffolds and a worker built from the installed SDK are superseded by Card ABI 9: see [The core and the language SDKs](../docs/CoreAndSDK.md), [Card ABI 9](../docs/CardABI.md) and [The sandbox contract](../docs/SandboxContract.md). The language SDKs and example templates live in [tsugumi-kit](https://github.com/gen740/tsugumi-kit).
+
 ## Basis, constraints, and settled choices
 
 | Item | Plan basis |

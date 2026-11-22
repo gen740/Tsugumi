@@ -69,10 +69,12 @@ A thick wire carries a batch of values. Its count shows how many items are in th
 
 ## Live displays
 
-Right-click a Code Card and choose **Open Display**. The window can be opened
-before the first run and follows new display data as they arrive. Try it with
-the **Live Stream** demo. Compare Runs and chat evidence can also open retained
-displays.
+Right-click a Code Card and choose **Open Display**. The window shows the views
+the Card declares in its `default.nix`, so it can be opened before the first run,
+and each view follows what the Card sends to it while it works. A view is live:
+nothing a Card sends is recorded, so it cannot be reopened from Run History,
+compared between runs or cited in chat. Keep a result to check later as an
+output value, a file or an artifact. [Views](CardGuide.md#views)
 
 ## Project terminal
 

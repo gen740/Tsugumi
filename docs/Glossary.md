@@ -9,7 +9,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
 | **Card type** | What a Card is, stated as `"type"` in its `_card.json`: `code`, `draft`, `trigger`, `input`, `branch`, `fork`, `merge`, `collect` or `subgraph` ([Kinds of Card](features.md#kinds-of-card)) |
-| **Code Card** | A Card whose environment is defined in `default.nix` and whose processing is in `src/` or its Nix `run` script ([Your first Card](CardGuide.md)) |
+| **Code Card** | A Card whose `default.nix` builds its processing with a language SDK into `lib/main.so`, usually from sources in `src/` ([Your first Card](CardGuide.md)) |
 | **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Fork, Merge or Collect |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
@@ -36,7 +36,8 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history (off by default) |
 | **`retainArtifact`** | A setting that keeps a Card's artifacts |
 | **Artifact** | A file or folder a Card output |
-| **Display** | The result a Card shows on screen: text, a table, an image, a chart and so on ([Visualisation](features.md#7-visualisation)) |
+| **View** | A display surface a Card declares in its `default.nix`: a name, a type (`html` or `dawn`) and one file ([Views](CoreAndSDK.md#views)) |
+| **Display** | What a Card sends to one of its views while it works: text, a table, an image, a chart and so on. Live only: displays are not recorded, so check results in outputs and artifacts ([Visualisation](features.md#7-visualisation)) |
 | **Version** | A commit of the project's git. A named version is an annotated tag ([Versions](Versions.md)) |
 
 ## The runtime
@@ -51,9 +52,11 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Shared VM** | The one Linux VM that the Mac app and the Mac's `tsugumi` command share. The signed helper holds `vm.lock` and hostd manages its resident project environments ([Architecture](features.md#1-architecture)) |
 | **`tsugumi-vmd`** | The managing process inside the VM. Starts each project's `tsugumid` with its own uid, namespaces and cgroup |
 | **`tsugumi-workerd`** | The persistent listener on a remote worker machine; starts `tsugumi-worker` processes to run Cards ([Remote execution](RemoteExecution.md)) |
-| **_language_ SDK** | The swappable part for one language (C++ SDK, Python SDK, …) that turns a Card's sources into `lib/main.so`; chosen per Card. Decided: the core knows no language ([The core and the language SDKs](CoreAndSDK.md#terms)) |
-| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` in `lib/main.so` plus `card.fbs`. ABI 8 today; ABI 9 is decided ([Card ABI 9](CardABI.md)) |
-| **Worker** | The process that runs a Card's code. Can stay resident across runs ([Worker state](CardGuide.md#worker-state)) |
+| **_language_ SDK** | The swappable part for one language (C++ SDK, Python SDK, …) that turns a Card's sources into `lib/main.so`; chosen per Card in `default.nix`. The core knows no language ([The core and the language SDKs](CoreAndSDK.md#terms)) |
+| **tsugumi-kit** | The repository of the eight default language SDKs (C++, Python, Go, Rust, C#, Julia, R, Ruby) and example templates, pinned by Tsugumi |
+| **Template** | A folder of Card definitions to copy into a Workflow, from the project's `templates/` or the host's store ([Templates](CoreAndSDK.md#templates)) |
+| **Card ABI** | The contract between the core and a language SDK: `tsugumi_main` in `lib/main.so` plus `card.fbs`, version 9 ([Card ABI 9](CardABI.md)) |
+| **Worker** | The core's process that loads a Card's `lib/main.so` and calls it. Can stay resident across runs with `reuseWorker` ([The sandbox contract](SandboxContract.md#the-unit-of-isolation-is-the-card)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **pkgsPath** | The nixpkgs that Cards use, pinned (`tsugumi.json`) |
 

@@ -1,37 +1,39 @@
 # marimo notebook Cards
 
-Open the **marimo notebook → typed result** demo for a complete notebook Card. The starting point is an ordinary Python Card containing editable `src/notebook.py`, its small `src/main.py` adapter, `default.nix`, and a typed output schema. The implementation uses the pinned `ps.marimo` package through the existing Python SDK. Add notebook dependencies in `default.nix`; no package installation happens when opening a result.
+> The demo described here is written for the previous Card ABI and is to be ported with the other demos ([TODO](Demos.md#todo-port-the-demos-to-card-abi-9)). This page describes the Cards as they are to be ported.
+
+Open the **marimo notebook → typed result** demo for a complete notebook Card. It is an ordinary Python Card: `src/notebook.py` is the editable notebook, `src/main.py` maps the Card's input to notebook variables and returns the result, and `src/runner.py` runs the notebook in a child process. `default.nix` takes marimo and Matplotlib from the project's pinned nixpkgs (`packages = ps: [ ps.marimo ps.matplotlib ];`) and the Python SDK supplies the kit's IPAexGothic as Matplotlib's Japanese fallback font. Nothing is installed when a notebook runs or when a result is opened.
 
 ## One committed invocation
 
-Connect a typed value to `data`. The default binding maps `inputs.data.value` to the notebook variable `source`, and `param.factor` to the notebook variable `factor`. The notebook computes `result`; the adapter returns a mapping with that finite numeric value on `value` and the saved notebook Directory on `report`: `{"value": {"value": value}, "report": {"value": str(folder)}}`. This follows the ordinary Card form `main(inputs[, report[, run]]) -> outputs`; the SDK encodes the mapping using the output schema. Edit the schema and returned mapping for other result types.
+Connect a typed value to `data`. The Card's parameters say what goes in and what comes out:
 
-| Setting | Meaning |
+| Parameter | Meaning |
 | --- | --- |
 | `notebook` | A `.py` notebook inside the Card's source directory, default `notebook.py` |
 | `bindings` | JSON mapping notebook variables to `inputs.<port>.<field>` or `param.<field>` paths |
-| `selected` | Notebook variable to emit as the starting point's numeric output |
-| `factor` | Example ordinary Card parameter, available to the binding map |
+| `selected` | The notebook variable returned on the `value` output |
+| `factor` | An ordinary parameter of the example, available to the bindings |
 
-The adapter reads generated input and parameter types. Bindings can pass scalar values, row/column structures, or a File/Directory's `value` path. The mapping must provide **all variables defined by an overridden configuration cell**: this is the behavior of [marimo's public `App.run(defs=…)` API](https://docs.marimo.io/api/app/). Put unrelated configuration in separate cells. Notebook source and the adapter remain editable in the normal Card source editor.
+The default bindings map `inputs.data.source` to the notebook variable `source` and `param.factor` to `factor`. The notebook computes `result`, and the Card returns it on `value` with the saved notebook folder on the `report` Directory output. To return another type, edit `_outputs.fbs` and the end of `main.py`.
 
-Each invocation copies its source into a private working directory and starts a fresh Python child process. After it succeeds, the worker copies the completed snapshot to the invocation's output directory. It calls `App.run()` once, obtains the returned cell outputs and definitions, and writes a static snapshot. The adapter publishes typed outputs only after that process succeeds. It does not call `marimo export` afterward: the [export command runs the notebook again](https://docs.marimo.io/guides/exporting/static_html/), which could repeat side effects. Notebook reactive dependencies determine the order of cells inside that one execution; they never directly emit Card messages or start downstream Cards.
+A binding replaces a variable the notebook defines, so the mapping must provide **all variables defined by an overridden cell**: this is the behaviour of [marimo's `App.run(defs=…)`](https://docs.marimo.io/api/app/). Put unrelated configuration in separate cells.
 
-The scaffold sets `reuseWorker: false`. Its child remains in the worker's process group. On failure, cancellation, deadline, project shutdown, and normal completion, the scheduler owns termination of that worker and anything it started. There is no detached session, browser, listening socket or interactive notebook server in this scaffold. Changing params and running again produces a new invocation and artifact, without rewriting a previous result.
+Each call copies the source into a scratch folder and runs the notebook once with `App.run()` in a child Python process, which stays in the worker's process group: failure, cancellation, the deadline and stopping the project end it. The Card does not call `marimo export` afterwards, because the [export command runs the notebook again](https://docs.marimo.io/guides/exporting/static_html/) and could repeat side effects. Reactive dependencies order the cells inside that one execution; cells never send Card outputs or start downstream Cards. There is no marimo server, browser or interactive session. While it works, the Card shows the selected values in its `markdown` view, which is live and not saved.
 
 ## Saved results and source
 
-The `report` Directory is retained as an artifact and includes:
+The `report` Directory is retained as an artifact and contains:
 
-- `index.html`: the static cell outputs, selected values and source-cell names/line numbers;
-- `assets/`: saved PNG figures, also embedded as data images in HTML;
-- `result.json`, `bindings.json`, `metadata.json`: selected definitions, supplied values and run/Card/invocation identity;
-- `source/`: the exact notebook and adapter source copied for that invocation.
+- `index.html`: the static cell outputs, the selected values and the source cells with their names and line numbers;
+- `result.json` and `bindings.json`: the selected definitions and the values supplied;
+- `metadata.json`: the notebook source path;
+- `source/`: the exact notebook and adapter source of that call.
 
-The static HTML includes ordinary Markdown/HTML, text and Matplotlib figures. It needs no JavaScript, CDN or running kernel. Frontend-only custom widgets are replaced by a note pointing to the saved source; this is a snapshot, not marimo's complete interactive frontend. The shared static HTML preview displays this self-contained HTML in both clients with scripts disabled. A saved result can be reopened from history after restarting the project. Editing the downloaded HTML does not change recorded results or send downstream messages.
+The HTML holds ordinary Markdown and HTML, text and Matplotlib figures as embedded images. It needs no JavaScript, CDN or kernel. Frontend-only widgets are replaced by a note pointing to the saved source: this is a snapshot, not marimo's interactive frontend. Both clients preview it with scripts disabled, also after the project is reopened. Editing a downloaded copy does not change the recorded result.
 
-A notebook error fails the Card and emits no typed result. Logs list source-cell names and source lines before execution, then retain the Python/marimo traceback. The invocation failure retains the traceback and identifies the failed cell, its notebook path and the failing source line. In either client, open the invocation’s **Info** tab and choose the cell link to open that line in the current notebook source. A failure before cell execution has no cell link. Graph errors, missing bindings, absent selected variables and nonnumeric selected values are errors rather than partial successful reports.
+A notebook error fails the Card and returns no output. The log lists the cells and their source lines before execution, then the Python traceback. The failure names the failed cell and its line; open the invocation's **Info** tab and choose the cell link to open that line in the notebook source.
 
-In the bilingual **marimo notebook → typed result** demo, the upstream Card supplies a measurement of 7. The notebook binds `source` to `inputs.data.source` and `factor` directly to `param.factor`, computes and visualizes the scaled value, and sends the selected value of 14 to an ordinary Bash Card. Change `factor` on the notebook Card to 3 and rerun to get 21 and a new snapshot.
+In the bilingual demo, the upstream Card supplies a measurement of 7. The notebook scales it by `factor` = 2, draws it, and returns 14, which the `result` Card prints and shows. Set the notebook Card's `factor` to 3 and rerun to save a result of 21 next to the earlier one.
 
-Interactive notebook sessions are tracked separately in [#267](https://github.com/gen740/tsugumi/issues/267); they are outside the committed invocation described here.
+Interactive notebook sessions are tracked in [#267](https://github.com/gen740/tsugumi/issues/267); they are outside the committed invocation described here.

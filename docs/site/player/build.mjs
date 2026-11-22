@@ -93,8 +93,8 @@ function readCard(root, id, ports, wires) {
   const summary = kind === 'draft' ? meta.content || description : description
   const details = [description, kind === 'draft' ? meta.content : undefined].filter(Boolean)
   const permissions = []
-  if (def.network === true) permissions.push('network')
-  if (def.sandbox === false) permissions.push('sandbox_off')
+  if (def.grants?.network === true) permissions.push('network')
+  if (Object.values(def.sandbox ?? {}).some((on) => on === false)) permissions.push('sandbox_off')
   return {
     id, kind, symbol: def.symbol || undefined, summary: summary || undefined, details, inputs, outputs,
     params: kind === 'input' ? allParams.filter((p) => INLINE_TYPES.has(p.type)) : [], allParams, permissions,

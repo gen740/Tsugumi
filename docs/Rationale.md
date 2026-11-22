@@ -43,7 +43,7 @@ As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-si
 
 Intentions are written in words and relationships as wires, so people and AI point at the same place as they design, implement and check.
 
-**AI takes on the work of building a structure that is easy to check.** Pinning environments, defining input and output types and splitting the processing all make checking easier, but if a person had to arrange them by hand every time, even a short trial would carry that preparation. From the purpose written in a Draft and its connections, the Agent implements all of it: it defines the environment in `default.nix`, writes the output types in `_outputs.fbs`, writes the processing in C++ / Python / bash / R / Julia, and fixes it while running it. **Because implementation can be left to AI, a structure people can check easily can be there from the start of an analysis.** That is why Tsugumi takes this shape now. People state the purpose of each step and how they relate, weigh the implementation and results, and ask the next question.
+**AI takes on the work of building a structure that is easy to check.** Pinning environments, defining input and output types and splitting the processing all make checking easier, but if a person had to arrange them by hand every time, even a short trial would carry that preparation. From the purpose written in a Draft and its connections, the Agent implements all of it: it defines the environment in `default.nix`, writes the output types in `_outputs.fbs`, writes the processing with a language SDK (C++, Python, Go, Rust, C#, Julia, R or Ruby), and fixes it while running it. **Because implementation can be left to AI, a structure people can check easily can be there from the start of an analysis.** That is why Tsugumi takes this shape now. People state the purpose of each step and how they relate, weigh the implementation and results, and ask the next question.
 
 The Agent and the UI go through the same operations and the same validation rules of the core. Cards the AI saved stay as ordinary project files that people can open and edit, and a finished Workflow runs without an LLM.
 
@@ -64,7 +64,7 @@ Analysis software can require complex environments. Tsugumi uses Nix to pin each
 
 - Each Card's environment (its language toolchain and libraries) is built by Nix from that Card's `default.nix`. The definition stays with the project's version, so the same environment can be built on another machine.
 - A heavy computation (a long simulation, say) can be a Nix build with its seed and conditions written in. While the definition and the dependencies do not change, its output is reused from the Nix store, so the later analysis or plotting can be tried any number of times.
-- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `eachInput` Card) or state kept by a resident worker (only a Card that sets `reuseWorker: true` has one; by default every invocation starts fresh), the Card has to decide that condition: make the seed a parameter, write per-run initialisation in `onRunStart` / `on_run_start`, and so on.
+- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `eachInput` Card) or state kept by a resident worker (only a Card that sets `reuseWorker: true` has one; by default every invocation starts fresh), the Card has to decide that condition: make the seed a parameter, reset kept state from what arrives on its inputs, and so on.
 
 ## What is recorded, and where
 
@@ -98,9 +98,9 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. C++, Python, R and Julia Cards are called by a worker that loads their shared library. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
+The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
 
-A reused worker's state carries across runs, and the initialisation it needs can be written in `onRunStart` / `on_run_start`. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
+A reused worker's state carries across runs; there is no run-start hook, so a Card that keeps state resets it from its inputs. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 
 ### Partial runs without gathering inputs again
 
@@ -147,7 +147,7 @@ Trying code interactively, representing processing as a graph, and managing depe
 | Represent the relationships of processing as a graph | Make the displayed connections the basis of type derivation and the rules of execution |
 | Manage versions of environments, code and experiments | Tie runs to versions of the code, and start the next attempt from a past version |
 
-Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the worker that calls a C++ Card as a shared library in [Card guide](CardGuide.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
+Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI 9](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
 
 **What Tsugumi aims for is a research environment in which people and AI design, run and keep thinking on the same structure.**
 With that structure, researchers can return to the trials an AI pushed forward and test their own questions as concrete changes.
