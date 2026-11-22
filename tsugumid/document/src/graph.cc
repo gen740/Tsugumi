@@ -368,7 +368,6 @@ class Builder {
     timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds),
             s.build_timeout_seconds);
     boolean(d.record_logs, s.record_logs);
-    boolean(d.record_displays, s.record_displays);
     boolean(d.record_io, s.record_io);
     boolean(d.retain_artifact, s.retain_artifact);
     if (const auto* sandbox = schema::get(d.sandbox)) {
@@ -673,11 +672,14 @@ class Builder {
       n.kind = def ? card_type_of(*def) : CardType::Draft;
       // The accepted Document owns this resolution. Edits only affect later runs.
       n.settings.record_logs = project.record_logs->value_or(true);
-      n.settings.record_displays = project.record_displays->value_or(true);
       n.settings.record_io = project.record_io->value_or(false);
       n.settings.retain_artifact = project.retain_artifact->value_or(false);
       n.settings.log_limit_bytes =
           project.log_limit_bytes->value_or(schema::kDefaultLogLimitBytes);
+      n.settings.output_limit_bytes = project.output_limit_bytes->value_or(
+          schema::kDefaultOutputLimitBytes);
+      n.settings.output_limit_entries = project.output_limit_entries->value_or(
+          schema::kDefaultOutputLimitEntries);
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:

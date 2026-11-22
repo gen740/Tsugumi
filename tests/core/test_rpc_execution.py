@@ -2,7 +2,7 @@
 
 import pytest
 
-from harness.fixtures import add_worker, worker_project
+from harness.fixtures import mock_plan, add_worker, worker_project
 from harness.observations import decode_scalar, read_output
 from harness.scenario import STRING_OUTPUT, Gate, Project, run, wait_run
 from tsugumi_client import path, text
@@ -185,7 +185,7 @@ def test_build_wait_can_be_interrupted(core_factory, project, cancel):
     gate = Gate(daemon.gates, "build")
     Project(project).card(
         "work", {"type": "code", "sandbox": {"filesystem": False}, "buildTimeoutSeconds": 10 if cancel else 1},
-        outputs=STRING_OUTPUT, manifest={"run": {"bash": "true"}}, plan={"gate": "build"},
+        outputs=STRING_OUTPUT, plan=mock_plan(["/unused"], gate="build"),
     ).save(client)
 
     run_id = run(client)

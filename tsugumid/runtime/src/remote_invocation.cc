@@ -3,7 +3,7 @@
 #include <algorithm>
 #include <cctype>
 #include <fstream>
-#include <iterator>
+#include <map>
 #include <set>
 #include <sstream>
 
@@ -243,6 +243,8 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   job.derivation = request.build.derivation.path;
   job.output = request.build.derivation.output;
   job.log_limit_bytes = request.log_limit_bytes;
+  job.output_limit_bytes = request.node.settings.output_limit_bytes;
+  job.output_limit_entries = request.node.settings.output_limit_entries;
   // Names only: the values follow in a JobSecretsRequest once the worker
   // waits for them.
   job.secrets = request.node.settings.secrets;
@@ -313,42 +315,43 @@ auto import_remote_result(
     }
   } remove{temp};
   std::set<stdfs::path> written;
-  uint64_t total = 0;
+  auto output_bytes = job->output_limit_bytes;
+  auto output_entries = job->output_limit_entries;
+  const auto count_entry = [&] {
+    if (!output_entries)
+      throw Failed(FailureKind::output_invalid,
+                   "remote outputs exceed the entry limit");
+    --output_entries;
+  };
   for (const auto* file : *files) {
-    const auto name_value = file->path()->str();
-    const auto digest_value = file->sha256()->str();
-    const auto size_value = file->size();
-    const auto* name = &name_value;
-    const auto* digest = &digest_value;
-    const auto* size = &size_value;
-    const auto rel = remote::relative_path(*name);
-    const auto base = *rel.begin();
-    if (base != "files" && rel != "environment.json" &&
-        rel != "logs.jsonl")
+    const auto name = file->path()->str();
+    const auto digest = file->sha256()->str();
+    const auto size = file->size();
+    const auto rel = remote::relative_path(name);
+    const bool output_file = name.starts_with("files/out/");
+    if (!output_file && name != "environment.json" && name != "logs.jsonl")
       throw std::runtime_error("unexpected remote result member");
-    if (base == "files") {
-      auto part = std::next(rel.begin());
-      if (part == rel.end() ||
-          (*part != "out" && *part != "work" && *part != "tmp") ||
-          std::next(part) == rel.end())
-        throw std::runtime_error("unexpected remote file member");
+    if (output_file) {
+      count_entry();
+      if (size > output_bytes)
+        throw Failed(FailureKind::output_invalid,
+                     "remote outputs exceed the byte limit");
+      output_bytes -= size;
     }
-    if (!crypto::is_sha256_hex(*digest) || *size > kMaxBlobBytes - total ||
-        !written.insert(rel).second)
+    if (!crypto::is_sha256_hex(digest) || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
-    const auto max_size = base == "files"       ? kMaxBlobBytes
-                          : rel == "logs.jsonl" ? kRemoteLogTransportBytes
-                                                : kMaxWorkerBytes;
-    if (*size > max_size)
+    const auto max_size = output_file            ? kMaxBlobBytes
+                          : name == "logs.jsonl" ? kRemoteLogTransportBytes
+                                                 : kMaxWorkerBytes;
+    if (size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
-    total += *size;
     const auto path = temp / rel;
     stdfs::create_directories(path.parent_path());
     std::ofstream destination(path, std::ios::binary | std::ios::trunc);
     if (!destination) throw std::runtime_error("cannot stage remote result");
-    client.get_blob(service, instance, job_id, *digest, destination, *size,
-                    *size, stop, [&](uint64_t done, uint64_t bytes) {
-                      if (progress) progress(*name, done, bytes);
+    client.get_blob(service, instance, job_id, digest, destination, size, size,
+                    stop, [&](uint64_t done, uint64_t bytes) {
+                      if (progress) progress(name, done, bytes);
                     });
     destination.close();
     if (!destination) throw std::runtime_error("cannot close remote result");
@@ -370,36 +373,48 @@ auto import_remote_result(
           std::string(reinterpret_cast<const char*>(output->bytes()->data()),
                       output->bytes()->size()));
     result.outputs = workerd::accept_outputs(std::move(raw), outputs);
+    std::map<std::string, std::string> forwards;
+    for (const auto* output : *worker->outputs())
+      if (output->forwarded_from())
+        forwards.emplace(output->name()->str(),
+                         output->forwarded_from()->str());
     std::vector<std::pair<stdfs::path, PortKind>> returned_paths;
     for (auto& value : result.outputs) {
-      if (value.kind == PortKind::FlatBuffer) continue;
+      const auto forward = forwards.find(value.name);
+      if (value.kind == PortKind::FlatBuffer && forward == forwards.end())
+        continue;
+      const auto invalid = [&](std::string message) {
+        return Failed(FailureKind::output_invalid, std::move(message),
+                      {{"port", value.name}});
+      };
+      if (value.kind == PortKind::FlatBuffer)
+        throw invalid("a value output cannot forward a file");
       const auto relative = path_value(value);
-      if (!relative) throw std::runtime_error("missing remote output path");
+      if (!relative) throw invalid("missing remote output path");
       const auto rel = remote::relative_path(*relative);
-      if (*rel.begin() == "inputs") {
-        std::optional<std::string> original;
-        for (size_t i = 0; i < inputs.size(); ++i)
-          if (inputs[i].kind == value.kind)
-            if (auto path = path_value(inputs[i]);
-                path && rel == staged_input_path(i, *path)) {
-              original = std::move(path);
-              break;
-            }
-        if (!original)
-          throw std::runtime_error("remote output forwards an unknown input");
+      if (forward != forwards.end()) {
+        const auto input =
+            std::ranges::find(inputs, forward->second, &Value::name);
+        if (input == inputs.end() || input->kind != value.kind)
+          throw invalid("remote output forwards an unknown input");
+        const auto original = path_value(*input);
+        if (!original ||
+            rel != staged_input_path(input - inputs.begin(), *original))
+          throw invalid("remote output does not match the forwarded input");
         value = with_path(value, *original);
         continue;
       }
-      if (*rel.begin() != "out")
-        throw std::runtime_error("remote output is outside its output folder");
+      if (*rel.begin() != "out" || rel == "out")
+        throw invalid("remote output is outside its output folder");
       returned_paths.emplace_back(rel, value.kind);
       value = with_path(value, (directory / rel).string());
     }
+    std::set<stdfs::path> directories;
     for (const auto& dir : *environment.directories) {
       const auto rel = remote::relative_path(dir);
-      const auto top = *rel.begin();
-      if (top != "out" && top != "work" && top != "tmp")
+      if (*rel.begin() != "out" || !directories.insert(rel).second)
         throw std::runtime_error("invalid remote result directory");
+      if (rel != "out") count_entry();
       stdfs::create_directories(temp / "files" / rel);
     }
     for (const auto& [rel, kind] : returned_paths) {
@@ -414,10 +429,9 @@ auto import_remote_result(
     }
     if (stop.stop_requested())
       throw BrokerDisconnected("remote result import stopped");
-    for (const char* name : {"out", "work", "tmp"}) {
-      const auto staged = temp / "files" / name;
-      if (!stdfs::is_directory(staged)) continue;
-      const auto target = directory / name;
+    const auto staged = temp / "files" / "out";
+    if (stdfs::is_directory(staged)) {
+      const auto target = directory / "out";
       stdfs::remove_all(target);
       stdfs::rename(staged, target);
     }

@@ -247,6 +247,7 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
   // Plan requests can occupy every reader while the execution broker is down.
   cancel_lane_ = std::make_unique<Lane>(1);
   shell_lane_ = std::make_unique<Lane>(2);
+  card_views_lane_ = std::make_unique<Lane>(1);
 }
 
 Service::~Service() { shutdown(); }
@@ -685,6 +686,7 @@ auto Service::execution_diagnostic(const Node& node,
 
 void Service::shutdown() {
   remote_jobs_.stop();
+  card_views_shutdown_.request_stop();
   {
     std::lock_guard lock(cancellations_mu_);
     shell_stopping_ = true;
@@ -696,6 +698,7 @@ void Service::shutdown() {
   if (shell_lane_) shell_lane_->stop();
   if (cancel_lane_) cancel_lane_->stop();
   if (scheduler_) scheduler_->shutdown();
+  if (card_views_lane_) card_views_lane_->stop();
   execution_service_.reset();  // the project's resident and standby workers end
   // Queued history writes announce themselves through the server, which
   // outlives the service only until it is closed.
@@ -812,6 +815,7 @@ void Service::disconnected(ConnId conn) {
   }
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
+  visible_cards_.erase(conn);
 }
 
 void Service::on_lane(Lane& lane, RequestIn req,
@@ -1521,6 +1525,7 @@ void Service::open_project(RequestIn& req) {
   {
     std::lock_guard<std::mutex> l(subs_mu_);
     subscriptions_[req.conn] = sub;
+    visible_cards_.erase(req.conn);
   }
   server_->subscribe(req.conn, sub, std::move(bytes));
 }
@@ -1728,8 +1733,11 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
       check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
   reply(req, receipt_reply(req.request_id, response.receipt, false));
-  if (staged.delta.doc)
+  if (staged.delta.doc) {
     publish_delta(staged.delta, response.notification_bytes);
+    if (staged.delta.doc->execution_rev != base.execution_rev)
+      refresh_card_views(staged.delta.doc);
+  }
   finish_op(op_id, response.receipt);
 }
 
@@ -2011,7 +2019,12 @@ void Service::cache_clear(RequestIn& req) {
       std::lock_guard lock(worker_selection_mutex_);
       resident_targets_.clear();
     }
-    auto result = nix_->clear_cache();
+    card_views_cancel_.request_stop();
+    card_views_rev_.reset();
+    const auto result = [&] {
+      std::lock_guard lock(card_views_build_mu_);
+      return nix_->clear_cache();
+    }();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"
                            : opts_.gcroots_dir;
@@ -2712,18 +2725,124 @@ void Service::view_save(RequestIn& req) {
                          off.Union()));
 }
 
+namespace {
+
+auto card_views_note(CardPath card, std::vector<schema::CardView> views)
+    -> Note {
+  Note note;
+  note.kind = Note::Kind::CardViews;
+  note.card_key = path_key(card);
+  for (const auto& view : views)
+    note.approx_bytes +=
+        view.name->size() + view.type->size() + view.blob->size() + 64;
+  note.build = std::make_shared<const Note::Build>(
+      [card = std::move(card), views = std::move(views)](FBB& b) {
+        std::vector<flatbuffers::Offset<D::CardView>> declarations;
+        declarations.reserve(views.size());
+        for (const auto& view : views)
+          declarations.push_back(D::CreateCardView(
+              b, b.CreateString(*view.name), b.CreateString(*view.type),
+              b.CreateString(*view.blob)));
+        const auto value = R::CreateCardViewsUpdated(
+            b, wire::path(b, card), b.CreateVector(declarations));
+        return std::make_pair(R::NotificationPayload::CardViewsUpdated,
+                              value.Union());
+      });
+  return note;
+}
+
+}  // namespace
+
+auto Service::refresh_card_views(DocumentPtr doc) -> void {
+  if (card_views_shutdown_.stop_requested()) return;
+  if (card_views_rev_ != doc->execution_rev) {
+    card_views_cancel_.request_stop();
+    card_views_cancel_ = std::stop_source{};
+    card_views_rev_ = doc->execution_rev;
+    card_views_.clear();
+  }
+  std::set<std::string> visible;
+  {
+    std::lock_guard lock(subs_mu_);
+    for (const auto& [conn, cards] : visible_cards_)
+      visible.insert(cards.begin(), cards.end());
+  }
+  for (const auto& key : visible) {
+    const auto [cached, inserted] = card_views_.try_emplace(key);
+    if (!inserted) continue;
+    auto card = path_from_key(key);
+    const auto* node = doc->resolution->find(card);
+    if (!node || node->kind != CardType::Code) {
+      cached->second = card_views_note(std::move(card), {});
+      server_->broadcast(*cached->second);
+      continue;
+    }
+    // Build only the declared immutable paths on the native store serving
+    // the UI. Evaluation belongs to the confirmed document snapshot.
+    card_views_lane_->submit([this, doc, node, card = std::move(card), key,
+                              cancel = card_views_cancel_]() mutable {
+      std::stop_callback shutdown(card_views_shutdown_.get_token(),
+                                  [&] { cancel.request_stop(); });
+      const auto stop = cancel.get_token();
+      if (stop.stop_requested()) return;
+      std::vector<schema::CardView> views;
+      try {
+        std::lock_guard lock(card_views_build_mu_);
+        if (stop.stop_requested()) return;
+        BuildRequest request;
+        request.node = node;
+        request.doc = doc;
+        request.cancel = stop;
+        request.timeout_seconds = node->settings.build_timeout_seconds;
+        views = nix_->declared_views(request);
+      } catch (const std::exception&) {
+        // A definition without realized views clears the previous list.
+      }
+      if (stop.stop_requested()) return;
+      auto note = card_views_note(std::move(card), std::move(views));
+      mutation_lane_->submit([this, key, stop, note = std::move(note)] {
+        if (stop.stop_requested()) return;
+        card_views_.at(key) = note;
+        server_->broadcast(note);
+      });
+    });
+  }
+}
+
 void Service::view_set_visible(RequestIn& req) {
   const auto* r = project_request(req)->value_as_ViewSetVisibleRequest();
   std::set<std::string> cards;
   for (const auto* c : *r->cards())
     cards.insert(path_key(wire::card_arg(c, "cards")));
-  bool enabled = r->enabled().value_or(true);
+  const bool enabled = r->enabled().value_or(true);
+  const std::string id = r->subscription_id()->str();
+  bool matches;
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto sub = subscriptions_.find(req.conn);
+    matches = sub != subscriptions_.end() && sub->second == id;
+    if (matches) {
+      if (enabled)
+        visible_cards_[req.conn] = cards;
+      else
+        visible_cards_.erase(req.conn);
+    }
+  }
+  const auto doc = store_->current();
+  std::vector<Note> initial;
+  if (enabled && matches && card_views_rev_ == doc->execution_rev) {
+    for (const auto& key : cards)
+      if (auto cached = card_views_.find(key);
+          cached != card_views_.end() && cached->second)
+        initial.push_back(*cached->second);
+  }
   FBB b;
   auto ack = R::CreateAck(b);
-  std::string ack_bytes =
+  auto ack_bytes =
       wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union());
-  server_->set_visible(req.conn, r->subscription_id()->str(), std::move(cards),
-                       enabled, std::move(ack_bytes), {});
+  server_->set_visible(req.conn, id, std::move(cards), enabled,
+                       std::move(ack_bytes), std::move(initial));
+  if (enabled && matches) refresh_card_views(doc);
 }
 
 }  // namespace tsugumi

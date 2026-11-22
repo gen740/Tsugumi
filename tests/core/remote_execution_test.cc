@@ -143,7 +143,6 @@ TEST(RemoteExecutionLifetime,
       EXPECT_EQ(record->summary.failure->to_bytes(),
                 run->status.failure->to_bytes());
       EXPECT_TRUE(record->outputs.empty());
-      EXPECT_FALSE(record->display);
       if (id != local_run)
         EXPECT_EQ(record->summary.execution_state,
                   RemoteExecutionState::interrupted);

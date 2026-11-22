@@ -20,12 +20,14 @@ from harness.fixtures import worker_project
 from harness.scenario import Project
 from projects import FILE_FBS, start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
+from Tsugumi.Data.DisplayRunState import DisplayRunState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerMessage import WorkerMessageT
 from Tsugumi.Worker.WorkerOutput import WorkerOutputT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
@@ -85,6 +87,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.live_logs = {}
         self.hidden_live_logs = False
         self.log_offsets = []
+        self.live_displays = {}
 
     def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
         def blob(data):
@@ -112,6 +115,8 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         }
         if logs is not None:
             files["logs.jsonl"] = logs
+        if result_fault == "display":
+            files["display.fb"] = b"old display result"
         if result_fault == "log":
             files["logs.jsonl"] = b'{"stream":1,"text":"message"} trailing data\n'
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
@@ -129,7 +134,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.core_ids.add(R.string(q.coreLifeId))
         kind, body = q.bodyType, q.body
         caps = R.CapabilitiesT(serverId=self.registered_server, nativeSystem=self.system, systems=[self.system],
-                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=12)
+                               resourceLimits=self.resource_limits, maxJobs=8, workerContract=13)
         if kind == R.RequestBody.CatalogRequest:
             caps.resourceLimits = self.catalog_resource_limits
             caps.workerContract = self.catalog_contract
@@ -143,7 +148,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             caps.instanceId = self.instance
             for key, value in self.probe_overrides.items():
                 setattr(caps, key, value)
-            if caps.workerContract != 12 or not caps.maxJobs:
+            if caps.workerContract != 13 or not caps.maxJobs:
                 return R.failure(R.ErrorCode.Rejected, "invalid capabilities")
             return R.reply(R.ReplyBody.Capabilities, caps)
         assert R.string(q.instanceId) == self.instance
@@ -206,6 +211,8 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             status.logOffset = body.logOffset
             status.logSize = len(log)
             status.logBytes = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
+        if body.logLimit:
+            status.displays = self.live_displays.pop(job, None)
         return R.reply(R.ReplyBody.JobStatus, status)
 
 
@@ -346,6 +353,7 @@ def running_job(project, remote_gateway, core_factory, tmp_path, request):
     assert remote_gateway.submit_count == 1
     spec = remote_gateway.specs[job_id]
     assert spec.logLimitBytes == limit
+    assert spec.outputLimitBytes == 64 << 30 and spec.outputLimitEntries == 1000
     assert spec.cpuMillis == 500 and spec.memoryBytes == 256 << 20
     try:
         yield remote_gateway, daemon, client, run_id, job_id
@@ -443,7 +451,56 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     assert wait_run(client, run_id).state == RunState.succeeded
 
 
-@pytest.mark.parametrize("fault", ["type", "escape", "size", "oversize", "log"])
+def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remote_gateway, core_factory, tmp_path):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster",
+                   retainArtifact=True, artifactOutput="doc")
+    subscription = text(client.open().subscriptionId)
+    client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    job_id = text(live.executionJobId)
+    view = "unmatched/remote-view"
+    payload = b"remote-view\x00\xff\xfe"
+    remote_gateway.live_displays[job_id] = [WorkerDisplayT(view=view, bytes=payload)]
+    started = client.wait_notification(
+        lambda n: n.valueType == NotificationPayload.DisplayRunStateChanged, timeout=10)
+    shown = client.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=10)
+    assert started.value.state == DisplayRunState.started and text(started.value.runId) == run_id
+    assert started.seq < shown.seq
+    update = shown.value.display
+    assert update.card.segments == [b"work"]
+    assert text(update.runId) == run_id and text(update.view) == view and bytes(update.bytes) == payload
+    remote_gateway.finish(job_id)
+    ended = client.wait_notification(
+        lambda n: n.valueType == NotificationPayload.DisplayRunStateChanged, timeout=10)
+    assert ended.value.state == DisplayRunState.ended and text(ended.value.runId) == run_id
+    assert shown.seq < ended.seq
+    assert wait_run(client, run_id).state == RunState.succeeded
+    assert all(payload not in blob for blob in remote_gateway.results.values())
+    saved = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    assert saved.outputs and not hasattr(saved, "display")
+
+
+@pytest.mark.parametrize("field", ["outputLimitBytes", "outputLimitEntries"])
+def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_gateway, core_factory, tmp_path, field):
+    client = core_factory(mocked_builds=True).connect()
+    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster")
+    snapshot = client.call("ProjectInspectRequest")
+    config = json.loads(text(snapshot.projectJson))
+    config[field] = 0
+    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProject", json=json.dumps(config))])
+    run_id = start_run(client, "work", propagate=False)
+    live = wait_for_state(client, run_id, RemoteExecutionState.running)
+    job_id = text(live.executionJobId)
+    assert getattr(remote_gateway.specs[job_id], field) == 0
+    remote_gateway.finish(job_id)
+    result = wait_run(client, run_id)
+    assert result.state == RunState.failed and result.failure.kind == FailureKind.output_invalid
+
+
+@pytest.mark.parametrize("fault", ["type", "escape", "size", "oversize", "log", "display"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job
@@ -573,7 +630,7 @@ def test_core_restart_interrupts_the_external_job(running_job, outage, completed
     assert gateway.receipts[job_id]["state"] == ("succeeded" if completed else "cancelled")
     assert len(gateway.core_ids) == 2
     record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
-    assert not record.outputs and not record.display
+    assert not record.outputs
     assert not client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts
     assert gateway.submit_count == 1 and gateway.download_count == 0
 

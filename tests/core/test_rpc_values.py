@@ -1,92 +1,15 @@
-"""Typed values reach the bundled Bash display Card through the real worker and public RPC."""
-
+"""Structured values round-trip through the ABI, execution and public value RPC."""
 import json
 import math
-import re
-from pathlib import Path
-import shlex
 
-import pytest
-
-from harness.real_cards import PYTHON_NIX, nix_string
-from harness.scenario import Project
-from projects import run_and_wait
+from harness.fixtures import mock_plan
+from harness.native_card import native_card
+from harness.observations import read_output
+from harness.scenario import Project, run, wait_run
 from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
+from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
-
-
-DEFINITION = Path(__file__).resolve().parents[2] / "demos/en/marimo/definitions/result"
-
-
-def display_graph(project, schema, source_script=None, *, payload=None, display_format="text", markdown_field="value"):
-    graph = Project(project)
-    if payload is None:
-        graph.card("source", {"type": "code"}, outputs=schema, sources={
-            "default.nix": "{ pkgs, inputs, params }: { run = " + nix_string(source_script) + "; }",
-        })
-    else:
-        # A binary producer lets non-finite values bypass Bash output JSON parsing.
-        graph.card("source", {"type": "code", "params": [
-            {"name": "payload", "type": "string", "data": payload.hex()},
-        ]}, outputs=schema, sources={
-            "default.nix": PYTHON_NIX % "",
-            "src/main.py": """from tsugumi import contract
-
-def main(inputs, report):
-    return {"out": bytes.fromhex(contract.params_object(inputs).payload)}
-""",
-        })
-    definition = json.loads((DEFINITION / "_card.json").read_text())
-    for param in definition["params"]:
-        param["data"] = {"format": display_format, "markdown_field": markdown_field}[param["name"]]
-    graph.card("display", definition, outputs=(DEFINITION / "_outputs.fbs").read_text(),
-               sources={"default.nix": (DEFINITION / "default.nix").read_text()})
-    return graph.connect("source", "out", "display", "in")
-
-
-def recorded_display(client, run_id):
-    record = client.call("RunRecordRequest", runId=run_id, card=path("display"))
-    return record.record.display and record.record.display.value
-
-
-def emit(value):
-    return 'printf "%s" ' + shlex.quote('{"out":' + value + '}') + ' > "$TSUGUMI_OUTPUT"'
-
-
-TEXT_SCHEMA = "table Message { note:string; value:string; other:double; } table Outputs { out:Message; } root_type Outputs;"
-
-
-def test_display_renders_the_selected_markdown_field(client, project):
-    markdown = "**日本語**\n\n$x^2$"
-    script = emit(json.dumps({"note": markdown, "value": "other"}))
-    display_graph(project, TEXT_SCHEMA, script, display_format="markdown", markdown_field="note").save(client)
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    shown = recorded_display(client, run_id)
-    assert shown.markdown and text(shown.text) == markdown
-
-
-@pytest.mark.parametrize(("field", "message"), [
-    ("note", {"value": "other"}),
-    ("other", {"value": "other", "other": 42}),
-], ids=["missing", "not-a-string"])
-def test_display_rejects_a_missing_or_non_string_markdown_field(client, project, field, message):
-    display_graph(project, TEXT_SCHEMA, emit(json.dumps(message)),
-                  display_format="markdown", markdown_field=field).save(client)
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.failed
-    assert recorded_display(client, run_id) is None
-
-
-def test_display_marks_large_unicode_previews(client, project):
-    script = 'jq -n \'{out:{value:("\\uD83D\\uDE00" * 270000)}}\' > "$TSUGUMI_OUTPUT"'
-    display_graph(project, TEXT_SCHEMA, script).save(client)
-    run_id, status = run_and_wait(client, "source")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    shown = text(recorded_display(client, run_id).text)
-    assert 0 < shown.count("😀") < 270000
-    assert "\ufffd" not in shown
 
 
 STRUCTURED_SCHEMA = """
@@ -131,29 +54,36 @@ FINITE_DOUBLES = [0.30000000000000004, 123456.78901234567, -1.5e-7, 5e-324, 1.79
 FINITE_FLOATS = [0.1, 16777216, 1.17549435e-38, 3.4028235e38, 1e-7]
 
 
-def test_display_preserves_structured_values_and_defaults(client, project, tmp_path):
-    """Typed values survive worker display and an independent FlatBuffers round trip."""
+def test_structured_values_survive_a_native_call_and_history(project, tmp_path, core_factory):
+    """The real worker and saved value transport preserve the original bytes."""
     value = dict(STRUCTURED_VALUE, finite_doubles=FINITE_DOUBLES, finite_floats=FINITE_FLOATS)
-    finite_payload = encode_message(tmp_path / "finite", STRUCTURED_SCHEMA, value, root_type="t.Message")
     encoded = json.dumps(value, ensure_ascii=False)[:-1] + ', "non_finite": [nan, inf, -inf]}'
     payload = encode_message(tmp_path / "encoded", STRUCTURED_SCHEMA, encoded, root_type="t.Message")
-    display_graph(project, STRUCTURED_SCHEMA, payload=payload).save(client)
-    run_id, status = run_and_wait(client, "source")
+    package = native_card(tmp_path / "structured-card", """
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+""", [("out", PortKind.FlatBuffer, payload)])
+    client = core_factory(mocked_builds=True).connect()
+    Project(project).card("work", {"type": "code", "recordIO": True, "sandbox": {
+        "filesystem": False, "pid": False, "ipc": False, "identity": False,
+    }}, outputs=STRUCTURED_SCHEMA, plan=mock_plan([package])).save(client)
+    run_id = run(client)
+    status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    shown = text(recorded_display(client, run_id).text)
-    values = re.sub(r"\b(?:nan|inf)\b", lambda token: {"nan": "NaN", "inf": "Infinity"}[token[0]], shown)
-    actual = json.loads(values, strict=False)
+    assert read_output(client, run_id) == payload
+    record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+    output, = record.outputs
+    assert text(output.rootType) == "t.Message"
+    assert bytes(output.inlineBytes) == payload
+    # An independent FlatBuffers encoder provides the expected finite values.
+    finite = encode_message(tmp_path / "finite", STRUCTURED_SCHEMA, value, root_type="t.Message")
+    expected = reference_json(tmp_path / "expected", STRUCTURED_SCHEMA, finite, root_type="t.Message")
+    actual = reference_json(tmp_path / "actual", bytes(output.schemaBfbs), payload, root_type="t.Message", non_finite=True)
     nan, positive, negative = actual.pop("non_finite")
     assert math.isnan(nan) and positive == math.inf and negative == -math.inf
-    expected = reference_json(tmp_path / "reference", STRUCTURED_SCHEMA, finite_payload, root_type="t.Message")
-    # The resolved schema presents the deprecated source field as a scalar.
-    assert actual.pop("dep") == 0
-    # flatc's JSON printer and the display can round differently. Re-encode
-    # only these vectors and compare their binary values at the schema widths.
-    vectors = ("finite_doubles", "finite_floats")
-    floats = {key: actual.pop(key) for key in vectors}
-    for key in vectors:
-        expected.pop(key)
+    assert actual.pop("dep", 0) == 0
+    expected.pop("non_finite", None)
     assert actual == expected
-    encode = lambda folder, value: encode_message(tmp_path / folder, STRUCTURED_SCHEMA, value, root_type="t.Message")
-    assert encode("read-back", floats) == encode("boundaries", {key: value[key] for key in vectors})
