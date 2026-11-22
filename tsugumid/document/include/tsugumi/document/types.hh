@@ -76,15 +76,6 @@ std::string render_closure(const Type& t, const std::string& prefix,
 auto card_catalog(const std::vector<PortType>& ports, bool inputs)
     -> std::string;
 
-// A union field of a root table, named as render_closure(t, prefix) names it.
-struct UnionField {
-  std::string field;  // e.g. "value"
-  std::string type;   // fully qualified union name
-  std::vector<std::string>
-      members;  // member names in declaration order (no NONE)
-};
-std::vector<UnionField> root_unions(const Type& t, const std::string& prefix);
-
 // Builtin message types.
 TypeRef empty_type();
 
