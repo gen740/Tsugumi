@@ -557,9 +557,9 @@ def test_rolled_back_remote_journal_leaves_no_gap(running_job, project):
     for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
         journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal, **scope)
         saved = text(journal.text)
-        entries = [json.loads(line) for line in saved.splitlines()]
         assert rolled_back not in saved
-        assert any(entry["event"] == "failed" for entry in entries)
+        assert any(line.partition(" · ")[2].startswith("failed: ")
+                   for line in saved.splitlines())
         assert journal.sizeBytes == journal.nextOffset == len(saved.encode())
 
 
