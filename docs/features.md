@@ -87,7 +87,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 - An output port can feed several inputs. Each input port accepts one wire. Use a Merge Card to bring several arrivals to one downstream input.
 - An output port's type is declared in `_outputs.fbs`. Each connected input inherits the type of its upstream output. The SDK checks the types a Card uses.
-- A Merge with one distinct type passes each arrival through unchanged. With several FlatBuffer types, it emits a union with one member per distinct type. The Canvas displays the member type names, for example `Temperature | Reading`.
+- A Merge with one distinct type passes each arrival through unchanged. With several FlatBuffer types, it emits a union with one member per distinct type. The Canvas displays the member type names, for example `Temperature | Reading`. Merge accepts either Path inputs or FlatBuffer inputs.
 - Values flow between Cards as FlatBuffers bytes. Every Card receives and returns them through the fixed [Card ABI](CardABI.md); how a language SDK maps them to its own values is that SDK's business.
 
 ### Execution semantics (scheduler)

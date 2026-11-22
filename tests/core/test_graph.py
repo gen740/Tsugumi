@@ -72,6 +72,24 @@ def test_merge_reports_distinct_member_names_on_inherited_ports(core_factory, pr
         assert [text(name) for name in port.mergeMemberTypes] == ["Number", "Flag"]
 
 
+def test_merge_passes_through_path_and_rejects_a_mixed_path_union(core_factory, project):
+    path_schema = 'attribute "tsugumi"; table Outputs { out:string (tsugumi:"path"); } root_type Outputs;'
+    merge = {"type": "merge", "inputs": [{"name": n} for n in ("a", "b")]}
+    _, resolved = inspect_graph(core_factory, project, {
+        "path": code(outputs=path_schema), "number": code(),
+        "relay": merge, "mixed": merge, "sink": code(["in"]),
+    }, [conn("path", "out", "relay", "a"), conn("path", "out", "relay", "b"),
+        conn("relay", "out", "sink", "in"), conn("path", "out", "mixed", "a"),
+        conn("number", "out", "mixed", "b")])
+
+    outgoing, = resolved["relay"].outputs
+    incoming, = resolved["sink"].inputs
+    assert outgoing.kind == incoming.kind == 1  # Path
+    assert outgoing.rootType is None and incoming.rootType is None
+    assert not codes(resolved["relay"]) and not codes(resolved["sink"])
+    assert codes(resolved["mixed"]) == {"invalid_type"}
+
+
 @pytest.mark.parametrize("schema", [
     "namespace t; table Value { value:int; }",
     'attribute "tsugumi"; table File { path:string; } table Outputs { file:File (tsugumi:"path"); } root_type Outputs;',
