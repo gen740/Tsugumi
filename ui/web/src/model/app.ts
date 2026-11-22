@@ -77,7 +77,7 @@ export class AppModel extends Observable {
 
   get setupNeeded(): boolean {
     const s = this.status?.setup
-    return !!s && !(s.tsugumid.ok && s.worker.ok && s.sdk.ok)
+    return !!s && !(s.tsugumid.ok && s.worker.ok)
   }
 
   /** The open session for a project folder, opening the project if needed. */

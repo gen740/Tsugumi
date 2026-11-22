@@ -4,7 +4,7 @@ import { L } from '../src/i18n'
 import { renderToStaticMarkup } from 'react-dom/server.browser'
 import { act, create } from 'react-test-renderer'
 import { D, R, cardPath } from '../src/wire/rpc'
-import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, sameDisplay, valueDifference } from '../src/model/runComparison'
+import { batchMembers, comparedConditions, comparedParams, comparedValues, inBatch, loadRunComparison, memberName, pairMembers, runScope, valueDifference } from '../src/model/runComparison'
 import { ProjectSession } from '../src/model/session'
 import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, VersionDifference } from '../src/ui/runComparison'
 
@@ -179,22 +179,9 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.ok(html.includes('#3') && html.includes('#1'), 'the two sides identify the compared invocations')
 }
 
-{
-  // The same rule as the Mac app: compare what is shown, kind by kind; module equality includes binary data.
-  const chart = (y: number[]) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'module' as const, name: 'line-chart', json: '{}', blobs: { y: new Uint8Array(new Float64Array(y).buffer) } } })
-  assert.ok(sameDisplay(chart([1, NaN]), chart([1, NaN])))
-  assert.ok(!sameDisplay(chart([1, NaN]), chart([1, 2])))
-  const text = (kind: 'text' | 'markdown', value: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind, text: value } })
-  assert.ok(!sameDisplay(text('text', 'a'), text('markdown', 'a')), 'plain text and Markdown are different displays')
-  const scalar = (value: number, label: string) => ({ runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'scalar' as const, value, label } })
-  assert.ok(sameDisplay(scalar(1, 'n'), scalar(1, 'n')) && !sameDisplay(scalar(1, 'n'), scalar(1, 'm')))
-}
-// Opening a comparison leaves the live viewer alone: the displays the session holds are
-// the same objects afterwards, and the only requests are reads of the two selected runs.
+// Opening a comparison only reads the two selected runs.
 {
   const session = new ProjectSession('/p', 'k', 'p')
-  const live = { runId: 'current', invocation: 1n, revision: 1n, value: { kind: 'text' as const, text: 'live' } }
-  session.displays.set('bands', live)
   const requests: string[] = []
   const unavailable = 'fixture history error'
   let fail = true
@@ -206,7 +193,6 @@ assert.equal(valueDifference(v, undefined), 'unknown')
     throw new Error('unexpected request ' + name)
   } })
   ;(session as unknown as { client: unknown }).client = fake
-  const before = new Map(session.displays)
   const run = (id: string) => Object.assign(new R.RunSummaryT(), { status: Object.assign(new R.RunStatusT(), { runId: id, state: D.RunState.succeeded }), target: cardPath(['start']) })
   let view!: ReturnType<typeof create>
   act(() => { view = create(<RunComparisonView session={session} runs={[run('left'), run('right')]} onClose={() => {}} />) })
@@ -223,9 +209,6 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.equal(row?.right?.record, b)
   assert.deepEqual(new Set(requests), new Set(['latestInvocations:left', 'latestInvocations:right', 'record:left:bands', 'record:right:bands']))
   view.unmount()
-  assert.equal(session.displays.size, before.size)
-  assert.equal(session.displays.get('bands'), live, 'the live viewer keeps its own display object')
-  assert.equal(live.runId, 'current')
 }
 
 // Versions: a run that recorded none, the same version, an empty diff and a diff cut short.

@@ -61,11 +61,23 @@ export interface Transport {
   onClose?: (reason: string) => void
 }
 
+export interface LiveDisplayUpdate {
+  card: string[]
+  runId?: string
+  view: string
+  bytes: Uint8Array<ArrayBuffer>
+}
+
 export interface NotificationEvent {
   subscriptionId: string
   seq: bigint
   type: R.NotificationPayload
-  value: NotificationT['value']
+  value: NotificationT['value'] | LiveDisplayUpdate
+}
+
+interface CardViewChunk {
+  bytes: Uint8Array<ArrayBuffer>
+  total: bigint
 }
 
 export const uuid = (): string =>
@@ -116,6 +128,19 @@ export class RPCClient {
       const bb = new ByteBuffer(frame)
       const message = Message.getRootAsMessage(bb)
       const raw = message.payload(new R.Notification()) as R.Notification
+      if (raw.valueType() === R.NotificationPayload.DisplayUpdated) {
+        const update = raw.value(new R.DisplayUpdated()) as R.DisplayUpdated
+        const display = update.display()!
+        const card = display.card()!
+        const value: LiveDisplayUpdate = {
+          card: Array.from({ length: card.segmentsLength() }, (_, i) => s(card.segments(i))),
+          runId: display.runId() ?? undefined,
+          view: s(display.view()),
+          bytes: display.bytesArray()?.slice() ?? new Uint8Array(),
+        }
+        this.onNotification?.({ subscriptionId: s(raw.subscriptionId()), seq: raw.seq() ?? 0n, type: raw.valueType(), value })
+        return
+      }
       const note = raw.unpack()
       this.onNotification?.({ subscriptionId: s(note.subscriptionId), seq: note.seq ?? 0n, type: note.valueType, value: note.value })
     } catch (error) {
@@ -124,13 +149,19 @@ export class RPCClient {
     }
   }
 
-  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<ReplyT> {
+  private async dispatch(frame: Uint8Array, timeoutMs: number): Promise<{
+    valueType: R.ReplyPayload; value: ReplyT['value'] | CardViewChunk
+  }> {
     if (this._closed) throw disconnected()
     const bytes = await this.transport.call(frame, timeoutMs)
     // The native/Wasm library has already verified the entire FlatBuffer and ID.
     const message = Message.getRootAsMessage(new ByteBuffer(bytes))
     const wire = message.payload(new Reply()) as Reply
     const type = wire.valueType()
+    if (type === R.ReplyPayload.CardViewContent) {
+      const content = wire.value(new R.CardViewContent()) as R.CardViewContent
+      return { valueType: type, value: { bytes: content.bytesArray()?.slice() ?? new Uint8Array(), total: content.total() } }
+    }
     if (type === R.ReplyPayload.LogSlice) {
       const slice = wire.value(new R.LogSlice()) as R.LogSlice
       return new ReplyT(type, new R.LogSliceT(
@@ -272,6 +303,24 @@ export class RPCClient {
     }
     const out = concat(parts)
     return out
+  }
+  async readCardView(card: string[], name: string, signal: AbortSignal): Promise<string> {
+    const decoder = new TextDecoder()
+    const parts: string[] = []
+    let offset = 0n
+    let total: bigint | undefined
+    do {
+      signal.throwIfAborted()
+      const request = new R.CardViewReadRequestT(cardPath(card), name, offset)
+      const part = await this.call<CardViewChunk>(RequestPayload.CardViewReadRequest, request)
+      signal.throwIfAborted()
+      total ??= part.total
+      offset += BigInt(part.bytes.byteLength)
+      if (part.total !== total || offset > total || (offset < total && !part.bytes.byteLength))
+        throw new RPCError('protocol', L('ビューの内容を最後まで読み込めませんでした。'))
+      parts.push(decoder.decode(part.bytes, { stream: offset < total }))
+    } while (offset < total)
+    return parts.join('')
   }
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {
     return this.call<R.AckT>(

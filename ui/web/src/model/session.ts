@@ -5,7 +5,7 @@ import { readViewState, writeViewState } from '../../shared/clientViewState'
 import { layoutHost, H, sceneRequest } from '../wire/hostLayout'
 import { VersionCommentT } from '../../shared/gen/tsugumi/rpc/version-comment'
 import { RevisionEdit } from '../ui/revisionEdit'
-import { ModuleBlobs } from './moduleSources'
+import { LiveViews } from './liveViews'
 // One open project: shared by every view showing it. Owns the RPC
 // connection, the confirmed document (from tsugumid), the local draft with
 // undo/redo, run progress, displays and logs. Every edit is saved at once:
@@ -16,7 +16,7 @@ import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { D, R, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
+import { D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
@@ -201,52 +201,6 @@ export type SyncState =
   | { kind: 'offline' }
   /** Card changes wait until the run ends. */
 
-export type DisplayValue =
-  | { kind: 'unavailable' }
-  | { kind: 'text'; text: string }
-  /** Markdown with TeX math (the SDK's Markdown display). */
-  | { kind: 'markdown'; text: string }
-  | { kind: 'scalar'; value: number; label: string }
-  | { kind: 'table'; columns: string[]; rows: string[][] }
-  | { kind: 'image'; mediaType: string; data: Uint8Array; alt: string }
-  | { kind: 'points'; x: number[]; y: number[]; z: number[]; colors: number[] }
-  | { kind: 'module'; name: string; json: string; blobs: ModuleBlobs }
-
-export interface DisplaySnapshot {
-  runId: string
-  invocation: bigint
-  revision: bigint
-  value: DisplayValue
-}
-
-export interface DisplayModule {
-  name: string
-  config: string
-  blobs: ModuleBlobs
-}
-
-export function displayModule(value: DisplayValue): DisplayModule | undefined {
-  const builtin = (name: string, config: object, blobs: ModuleBlobs = {}): DisplayModule =>
-    ({ name: `tsugumi:${name}`, config: JSON.stringify(config), blobs })
-  switch (value.kind) {
-    case 'unavailable': return undefined
-    case 'text': case 'markdown': return builtin(value.kind, { text: value.text })
-    case 'scalar': return builtin('scalar', { value: value.value, label: value.label })
-    case 'table': return builtin('table', { columns: value.columns, rows: value.rows })
-    case 'image': return builtin('image', { mediaType: value.mediaType, alt: value.alt }, { image: value.data })
-    case 'points': return builtin('points', {}, {
-      x: new Uint8Array(Float32Array.from(value.x).buffer),
-      y: new Uint8Array(Float32Array.from(value.y).buffer),
-      z: new Uint8Array(Float32Array.from(value.z).buffer),
-      colors: new Uint8Array(Uint32Array.from(value.colors).buffer),
-    })
-    case 'module': {
-      const sdkDefault = /-tsugumi-view-(line-chart|plotly|vega-lite)$/.exec(value.name)?.[1]
-      return { name: sdkDefault ? `tsugumi:${sdkDefault}` : value.name, config: value.json, blobs: value.blobs }
-    }
-  }
-}
-
 export type EnvironmentState = EnvPublicState | { state: 'reconnecting' }
 
 /** Undo consists solely of the host's guarded inverse edits. */
@@ -381,8 +335,7 @@ export class ProjectSession extends Observable {
       this.stopRunId = undefined
   }
   cardStates = new Map<CardKey, CardRunState>()
-  displays = new Map<CardKey, DisplaySnapshot>()
-  private displayViewers = new Map<CardKey, number>()
+  readonly liveViews = new LiveViews()
   lastFinished = 0
   remoteHistoryRevision = 0
   recordingRevision = 0
@@ -401,8 +354,6 @@ export class ProjectSession extends Observable {
   /** How many notifications the UI has taken in, and in how many batches. */
   notificationCount = 0
   notificationBatches = 0
-  private inbox: Notification[] = []
-  private inboxScheduled = false
   private offEvents: () => void
   private offHost: () => void
 
@@ -562,6 +513,7 @@ export class ProjectSession extends Observable {
         if (this.client !== c) return
         this.documentRevisions.disconnect(new RPCError('disconnected', L('接続していません')))
         this.connected = false
+        this.liveViews.reset()
         this.changed()
         this.reconnect()
       }
@@ -574,6 +526,7 @@ export class ProjectSession extends Observable {
     } catch (e) {
       if (epoch !== this.connectionEpoch || this.closed) return
       this.connected = false
+      this.liveViews.reset()
       this.connectionFailed = e instanceof Unreached
       this.connectionMessage = errorText(e instanceof Unreached ? e.cause : e)
       if (this.environment.state === 'starting' || this.environment.state === 'reconnecting') this.environment = { state: 'ready' }
@@ -610,6 +563,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     old?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     void (async () => {
       // The host Start request joins a restart and answers only when ready or
@@ -630,6 +584,7 @@ export class ProjectSession extends Observable {
       this.client = undefined
       old?.close()
       this.connected = false
+      this.liveViews.reset()
       this.environment = { state: 'starting', message: L('tsugumid の応答を待っています') }
       this.changed()
       try {
@@ -659,6 +614,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
   }
 
   async stopEnvironment() {
@@ -668,6 +624,7 @@ export class ProjectSession extends Observable {
     this.client = undefined
     c?.close()
     this.connected = false
+    this.liveViews.reset()
     this.changed()
     try { this.environment = await this.environmentHost.stop(this.dir) }
     catch (error) { this.connectionMessage = errorText(error) }
@@ -678,24 +635,29 @@ export class ProjectSession extends Observable {
     this.offEvents()
     this.offHost()
     this.client?.close()
+    this.liveViews.reset()
   }
 
   /** Notifications are taken in as they arrive and applied in batches at most
    *  once per frame (or four times a second with no frames): a run with thousands of short invocations causes one
    *  view update per batch, not per event. */
   private listen(c: RPCClient) {
+    let inbox: Notification[] = []
     c.onNotification = (e) => {
-      this.inbox.push(e)
-      if (this.inboxScheduled) return
-      this.inboxScheduled = true
+      if (this.client !== c) return
+      inbox.push(e)
+      if (inbox.length > 1) return
       const apply = () => {
         cancelAnimationFrame(frame)
         clearTimeout(timer)
-        this.inboxScheduled = false
-        const batch = this.inbox
-        this.inbox = []
-        if (batch.length) this.notificationBatches++
-        for (const ev of batch) this.handle(ev)
+        const batch = inbox
+        inbox = []
+        if (this.client !== c) return
+        this.notificationBatches++
+        for (const ev of batch) {
+          if (this.client !== c) break
+          this.handle(ev)
+        }
         this.changed()
       }
       const frame = requestAnimationFrame(apply)
@@ -758,6 +720,23 @@ export class ProjectSession extends Observable {
       case R.NotificationPayload.DocPatched: {
         const d = (e.value as R.DocPatchedT).delta
         if (d) this.applyDelta(d)
+        break
+      }
+      case R.NotificationPayload.CardViewsUpdated: {
+        const { card, views } = e.value as R.CardViewsUpdatedT
+        this.liveViews.get(key(segs(card)))?.declare(views.map(v => ({ name: s(v.name), type: s(v.type), blob: s(v.blob) })))
+        break
+      }
+      case R.NotificationPayload.DisplayUpdated: {
+        const { card, view, bytes } = e.value as LiveDisplayUpdate
+        this.liveViews.get(key(card))?.data(view, bytes)
+        break
+      }
+      case R.NotificationPayload.DisplayRunStateChanged: {
+        const { card, runId, state } = e.value as R.DisplayRunStateChangedT
+        const view = this.liveViews.get(key(segs(card)))
+        if (state === D.DisplayRunState.started) view?.run(s(runId), 'started')
+        if (state === D.DisplayRunState.ended) view?.run(s(runId), 'ended')
         break
       }
       case R.NotificationPayload.RunEvent:
@@ -831,10 +810,11 @@ export class ProjectSession extends Observable {
         nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), valid: r.valid })) })
       all.push(...d)
     }
+    for (const [card, views] of this.liveViews) {
+      if (this.resolution.has(card) && !r.has(card)) views.clear()
+    }
     this.resolution = r
     this.diagnostics = all
-    // A result belongs to a Card of the current document.
-    for (const k of [...this.displays.keys()]) if (!r.has(k)) this.displays.delete(k)
   }
 
   private applyDelta(d: R.DocumentDeltaT) {
@@ -1143,23 +1123,12 @@ export class ProjectSession extends Observable {
 
   /** Subscribe only while at least one live viewer for a Card is open. */
   observeDisplay(card: CardKey): () => void {
-    const count = this.displayViewers.get(card) ?? 0
-    this.displayViewers.set(card, count + 1)
-    if (!count) void this.refreshVisibleDisplays()
-    return () => {
-      const remaining = (this.displayViewers.get(card) ?? 1) - 1
-      if (remaining) this.displayViewers.set(card, remaining)
-      else {
-        this.displayViewers.delete(card)
-        this.displays.delete(card)
-        void this.refreshVisibleDisplays()
-      }
-    }
+    return this.liveViews.observe(card, () => { void this.refreshVisibleDisplays() })
   }
 
   private async refreshVisibleDisplays() {
     if (!this.client || !this.subscription) return
-    const cards = [...this.displayViewers.keys()].sort().map(path)
+    const cards = [...this.liveViews.keys()].sort().map(path)
     await this.client.setVisible(this.subscription, cards, cards.length > 0).catch(() => {})
   }
 
@@ -1711,7 +1680,7 @@ export class ProjectSession extends Observable {
 
   /** A new Card must not display the result or run state of a previous owner of its ID. */
   private forgetResult(k: CardKey) {
-    this.displays.delete(k)
+    this.liveViews.get(k)?.clear()
     this.cardStates.delete(k)
     this.changed()
   }

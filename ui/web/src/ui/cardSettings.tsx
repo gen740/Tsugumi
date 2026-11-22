@@ -1082,7 +1082,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
         <Section title={L('記録と成果物')}>
           {([
             ['recordLogs', L('標準出力と標準エラーを記録')],
-            ['recordDisplays', L('記録指定のある表示を記録')],
             ['recordIO', L('入出力の値を記録')],
             ['retainArtifact', L('出力ファイルと成果物を保持')],
           ] as const).map(([key, label]) => {

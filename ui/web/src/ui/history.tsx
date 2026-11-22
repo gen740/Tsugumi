@@ -1,6 +1,5 @@
-// Run history, artifacts and the enlarged output display of one Card.
+// Run history and artifacts.
 import { useEffect, useMemo, useState } from 'react'
-import { app } from '../model/app'
 import { artifactHTML } from '../model/artifactHTML'
 import { useObserve } from '../model/observable'
 import { CardKey, cardState, errorText, formatBytes, formatDuration, formatMillis, path, ProjectSession, remoteExecutionLabel, runState } from '../model/session'
@@ -10,7 +9,6 @@ import { Button, Confirm, download, Empty, Form, HSplit, MenuButton, Row, Sectio
 import { RunComparisonView } from './runComparison'
 import { useBatchHistoryRevision } from './batchInvocations'
 import { ArtifactHTMLPreview } from './artifactHTMLPreview'
-import { DisplayView } from './moduleViewer'
 import { Icon } from './icons'
 import type { CardEditorModel } from './cardSettings'
 import { L } from '../i18n'
@@ -447,24 +445,6 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
         </HSplit>
       </div>
       {error && <div className="caption pad6 selectable" style={{ color: 'var(--red)' }}>{error}</div>}
-    </div>
-  )
-}
-
-/** A Card's output display enlarged in its own window. */
-export function VisualizationWindow({ session, cardKey }: { session: ProjectSession; cardKey: CardKey }) {
-  useObserve(session)
-  useEffect(() => session.observeDisplay(cardKey), [session, cardKey])
-  const d = session.displays.get(cardKey)
-  return (
-    <div className="col fill pad16 gap8">
-      <div className="row gap8 center">
-        <span className="title2">{session.displayName(cardKey)}</span>
-        {d && <span className="secondary">{L('呼び出し #{0}', String(d.invocation))}</span>}
-        <span className="spacer" />
-        <Button onClick={() => app.chat(session).addReference({ kind: 'display', card: cardKey })}>{L('チャットに参照を追加')}</Button>
-      </div>
-      <div className="flex1 min0 col"><DisplayView display={d} emptyNote={session.noResultNote(cardKey)} /></div>
     </div>
   )
 }

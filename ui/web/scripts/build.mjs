@@ -1,6 +1,6 @@
 // Bundles the browser UI into dist/public (hostd serves it) with esbuild.
 import * as esbuild from 'esbuild'
-import { buildDisplayModules } from './build-display-modules.mjs'
+import { installViewer } from './install-viewer.mjs'
 import { preparePlayer } from '../../../docs/site/player/build.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
@@ -20,9 +20,7 @@ fs.cpSync(path.join(root, 'third-party'), path.join(out, 'licenses'), { recursiv
 for (const component of ['flatbuffers', 'emscripten']) {
   fs.cpSync(path.join(root, '../../third-party', component), path.join(out, 'licenses', component), { recursive: true })
 }
-// The module viewer (ui/shared/modules) and the plot libraries the page sends it,
-// served from /modules/. The viewer is sandboxed and loads nothing itself, so
-// its script goes inline.
+// The trusted bridge is a self-contained page shared with WKWebView.
 const viewer = path.join(root, '..', 'shared', 'modules')
 // The demo player's data (ui/demoPlayer.tsx, Home's thumbnails): each demo and the
 // images it names, without what only builds that data.
@@ -42,7 +40,7 @@ const copy = () => {
   }
 }
 copy()
-await buildDisplayModules(viewer, path.join(root, 'node_modules'), path.join(out, 'public', 'modules'))
+installViewer(viewer, path.join(out, 'public', 'modules'))
 
 const client = {
   entryPoints: { app: path.join(root, 'src', 'main.tsx') },
