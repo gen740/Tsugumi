@@ -110,7 +110,7 @@ case "$suite" in
     fi
     ;;
   kit)
-    run nix build --no-link ".#checks.$system.card-kit"
+    run nix build --no-link ".#checks.$system.pinned-kit"
     ;;
   demos)
     # TODO(ABI 9): every demo module skips until the demos are ported

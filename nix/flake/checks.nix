@@ -26,7 +26,11 @@
     {
       checks = {
         card-abi = abi;
-        card-kit = pkgs.linkFarm "tsugumi-card-kit-checks" (
+        # The pinned pair, kept apart from the core's own checks: the kit
+        # revision in flake.lock passes its own checks (which the kit owns)
+        # and shares this core's Card ABI. No core check depends on a
+        # particular kit product.
+        pinned-kit = pkgs.linkFarm "tsugumi-pinned-kit-checks" (
           inputs.tsugumi-kit.checks.${system} // { card-abi = abi; }
         );
         web-typecheck = web.override { typecheckOnly = true; };

@@ -228,7 +228,8 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
         "default.nix": """{ pkgs, inputs, params }: {
           run = throw "run must stay lazy";
-          views = inputs.tsugumi.cppSdk.views ++ [
+          views = [
+            { name = "scene"; type = "dawn"; blob = pkgs.writeText "scene.wasm" "opaque"; }
             { name = "notes"; type = "html"; blob = ./notes.html; }
           ];
         }""",
@@ -240,9 +241,9 @@ def test_declared_views_are_available_without_a_run_build(core_factory, project)
         lambda note: note.valueType == NotificationPayload.CardViewsUpdated
         and note.value.card.segments == [b"work"] and bool(note.value.views)
     ).value
-    names = [text(view.name) for view in update.views]
-    assert "text" in names and names[-1] == "notes"
-    assert Path(text(update.views[-1].blob)).read_text() == "<p>Available before a run</p>"
+    assert [(text(view.name), text(view.type)) for view in update.views] == [("scene", "dawn"), ("notes", "html")]
+    assert Path(text(update.views[0].blob)).read_text() == "opaque"
+    assert Path(text(update.views[1].blob)).read_text() == "<p>Available before a run</p>"
 
 
 def test_a_failed_view_evaluation_is_relayed_apart_from_an_empty_list(core_factory, project):
