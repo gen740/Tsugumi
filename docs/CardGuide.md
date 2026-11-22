@@ -184,7 +184,7 @@ A Card is `(input) -> output`. One call receives the values on its input ports a
 
 Any SDK that implements the [Card ABI](CardABI.md) can take the place of these: the core knows no language, only a built `lib/main.so` that exports `tsugumi_main`.
 
-The SDK generates the Card's types from `_inputs.fbs` (the connected outputs), `_outputs.fbs` (the Card's output schema), and `_params.fbs` (its parameters). Read the generated source (for example `card.hh` or `card.py` in the build result) to see the exact names.
+The core prepares the Card's port schemas and passes them to `default.nix` as `schemas`: `_inputs.fbs` from the connected outputs, `_outputs.fbs` from the Card's own schema and `_params.fbs` from its parameters. The SDK generates the Card's types from these files and places the generated API under `share/tsugumi/api/` of the build result. Press **Build SDK** in the Card editor's source view (the Agent uses its Card API tool) to read the exact names.
 
 - An input declaration contains its name. Connect one wire to give it the upstream output’s type. An unconnected input is absent. The Card’s SDK reports `input_missing` with the port name when the Card requires an absent input.
 - Parameters are one `parameters.Params` message. A scalar parameter without a value is absent rather than zero.

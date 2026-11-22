@@ -73,7 +73,7 @@ def test_build_log_preserves_output_and_flushes_before_notifications(core_factor
         "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   probe = pkgs.runCommand "tsugumi-build-log-@id@" {} ''
     printf 'before invalid bytes\n' >&2
@@ -182,7 +182,7 @@ def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, opti
         "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   probe = pkgs.runCommand "tsugumi-build-cores-@id@" {} ''
     printf '%s\n' "$NIX_BUILD_CORES" > "$out"
@@ -285,7 +285,7 @@ def blocked_builder(name, port):
         # Fixed-output derivations can reach loopback in the Nix sandbox.
         # The fixture checks the connection lifetime across PID namespaces.
         "_nix": r'''
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   probe = pkgs.runCommand "tsugumi-build-stop-@id@" {
     outputHashMode = "flat";

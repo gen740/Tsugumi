@@ -247,11 +247,11 @@ def wait_for_release():
 
 
 def python_program(source):
-    return 'inputs.tsugumi.pythonSdk.pythonCard { src = pkgs.writeTextDir "main.py" ' + nix_string(source) + '; }'
+    return 'inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir "main.py" ' + nix_string(source) + '; }'
 
 
 def entry(run, extra=""):
-    return "{ pkgs, inputs, params }: { run = " + run + "; " + extra + " }"
+    return "{ pkgs, params, inputs, schemas }: { run = " + run + "; " + extra + " }"
 
 
 @pytest.fixture

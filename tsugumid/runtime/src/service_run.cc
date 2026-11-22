@@ -1,8 +1,10 @@
-// Run, SDK, history, value, artifact, declared view file and log handlers.
+// Run, Card API, history, value, artifact, declared view file and log handlers.
 #include <sys/stat.h>
 
 #include <algorithm>
+#include <mutex>
 #include <set>
+#include <stop_token>
 
 #include "nix.hh"
 #include "scheduler.hh"
@@ -11,6 +13,8 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/util/system.hh"
+#include "tsugumi/util/text.hh"
 #include "version_record.hh"
 
 namespace tsugumi {
@@ -42,25 +46,59 @@ uint64_t content_limit(std::optional<uint32_t> limit_arg) {
   return limit;
 }
 
-std::string sdk_result(FBB& b, const SDKJob& job,
-                       flatbuffers::Offset<R::CardSDKPrepareResult>* out) {
-  std::vector<flatbuffers::Offset<R::SDKFile>> files;
-  if (job.state == SDKJob::State::Ready)
-    for (const auto& [p, h, s] : job.files)
-      files.push_back(
-          R::CreateSDKFile(b, b.CreateString(p), b.CreateString(h), s));
-  *out = R::CreateCardSDKPrepareResult(b, b.CreateString(job.op_id), job.rev,
-                                       job.state == SDKJob::State::Ready
-                                           ? D::SDKState::ready
-                                           : D::SDKState::pending,
-                                       b.CreateVector(files));
-  return {};
-}
-
 auto require_run_id(const flatbuffers::String& s, const char* what) -> void {
   if (!crypto::is_run_id(s.string_view()))
     throw Failed(FailureKind::invalid_request,
                  std::string(what) + " must be a positive project run number");
+}
+
+constexpr size_t kCardApiEntryLimit = 2000;
+constexpr uint64_t kCardApiByteLimit = 8u << 20;
+constexpr std::string_view kCardApiDirectory = "share/tsugumi/api";
+
+auto card_api_files(const CardBuildPlan& plan, const std::string& package,
+                    size_t& entries_left, uint64_t& bytes_left, FBB& b)
+    -> std::vector<flatbuffers::Offset<R::CardApiFile>> {
+  // Only paths in the realised plan's store closure are eligible. Walk from
+  // the store so links in the package or above the API directory are rejected.
+  if (std::ranges::find(plan.common.environment.paths, package) ==
+      plan.common.environment.paths.end())
+    throw Failed(FailureKind::nix_failed,
+                 "run output is outside the build closure");
+  const auto store = stdfs::path(plan.common.derivation.output).parent_path();
+  auto base = stdfs::path(package).lexically_relative(store);
+  if (base.empty() || base.has_parent_path())
+    throw Failed(FailureKind::nix_failed,
+                 "run output is outside the Nix store");
+  for (const auto& component : stdfs::path(kCardApiDirectory)) {
+    base /= component;
+    std::error_code ec;
+    const auto status = stdfs::symlink_status(store / base, ec);
+    if (status.type() == stdfs::file_type::not_found) return {};
+    if (ec)
+      throw fs::Error("cannot inspect " + (store / base).string() + ": " +
+                      ec.message());
+    if (!stdfs::is_directory(status)) return {};
+  }
+  const auto listing = fs::list_beneath(store, base, entries_left);
+  entries_left -= listing.files.size() + listing.directories.size() +
+                  listing.links.size() + listing.special.size();
+  std::vector<flatbuffers::Offset<R::CardApiFile>> files;
+  for (const auto& path : listing.files) {
+    if (path.size() > bytes_left)
+      throw Failed(FailureKind::resource_limit,
+                   "share/tsugumi/api/ exceeds 8 MiB");
+    bytes_left -= path.size();
+    std::string content;
+    bytes_left -=
+        fs::stream_beneath(store, base / path, bytes_left,
+                           [&](std::string_view chunk) { content += chunk; });
+    files.push_back(R::CreateCardApiFile(
+        b, b.CreateString(path),
+        b.CreateVector(reinterpret_cast<const uint8_t*>(content.data()),
+                       content.size())));
+  }
+  return files;
 }
 
 }  // namespace
@@ -122,63 +160,90 @@ void Service::run(RequestIn& req) {
   }
 }
 
-void Service::sdk_prepare(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardSDKPrepareRequest();
-  std::string op_id = r->op_id()->str();
-  std::string digest = request_digest(project_request(req));
-  if (replay_or_join(req, op_id, "sdk", digest)) return;
-  try {
-    auto doc = store_->current();
-    check_at_rev(r->at_rev(), *doc);
-    auto card = wire::card_arg(r->card());
-    const auto* node = doc->resolution->find(card);
-    if (!node)
-      throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
-                   {{"card", path_key(card)}});
-    if (node->kind != CardType::Code && node->kind != CardType::Input)
-      throw Failed(FailureKind::invalid_request,
-                   "SDKs are generated for code and input Cards only");
-    auto job = nix_->prepare_sdk(op_id, *node, doc->rev);
-    FBB b;
-    flatbuffers::Offset<R::CardSDKPrepareResult> res;
-    sdk_result(b, job, &res);
-    auto rc = R::CreateOperationReceipt(b, b.CreateString(op_id),
-                                        R::ReceiptValue::CardSDKPrepareResult,
-                                        res.Union());
-    b.Finish(rc);
-    std::string receipt(reinterpret_cast<const char*>(b.GetBufferPointer()),
-                        b.GetSize());
-    history_->write_sync([&](sql::Db& db) {
-      History::put_receipt(db, op_id, "sdk", digest, receipt);
-    });
-    reply(req, receipt_reply(req.request_id, receipt, false));
-    finish_op(op_id, receipt);
-  } catch (const Failed& f) {
-    store_failure_receipt(op_id, "sdk", digest, f.failure);
-    throw;
-  } catch (const std::exception& e) {
-    // Any other error ends the operation too (retryable under the same id).
-    auto f = FailureData::make(FailureKind::internal_error, e.what());
-    store_failure_receipt(op_id, "sdk", digest, f);
-    throw Failed(f);
-  }
-}
-
 // ---------------------------------------------------------------------------
 // Read pool
 
-void Service::sdk_status(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardSDKStatusRequest();
-  if (!r->op_id() || !crypto::is_operation_id(r->op_id()->str()))
-    throw Failed(FailureKind::invalid_request, "invalid op_id");
-  auto job = nix_->sdk_job(r->op_id()->str());
-  if (!job) throw Failed(FailureKind::not_found, "unknown SDK job");
-  if (job->state == SDKJob::State::Failed) throw Failed(*job->failure);
+void Service::card_api(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_CardApiRequest();
+  auto doc = store_->current();
+  check_at_rev(r->at_rev(), *doc);
+  auto card = wire::card_arg(r->card());
+  const auto* node = doc->resolution->find(card);
+  if (!node)
+    throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
+                 {{"card", path_key(card)}});
+  if (node->kind != CardType::Code)
+    throw Failed(FailureKind::invalid_request,
+                 "only a Code Card has a builder and its API",
+                 {{"card", path_key(card)}});
+  // Use the normal build with the local store and the Card's target system.
+  const SharedStoreDerivationTransport transport;
+  BuildRequest build;
+  build.node = node;
+  build.doc = doc;
+  build.target = {WorkerKind::native, node->settings.system.empty()
+                                          ? native_system()
+                                          : node->settings.system};
+  build.transport = &transport;
+  build.timeout_seconds = node->settings.build_timeout_seconds;
+  std::stop_source stop;
+  std::stop_callback disconnected(req.connection_stop,
+                                  [&] { stop.request_stop(); });
+  std::stop_callback shutdown(card_views_shutdown_.get_token(),
+                              [&] { stop.request_stop(); });
+  build.cancel = stop.get_token();
+  // The end of the build output, for a failure.
+  constexpr size_t kLogLimit = 256u << 10;
+  std::string log;
+  std::mutex log_mu;
+  build.log = [&](proc::LineChunk chunk) {
+    std::lock_guard lock(log_mu);
+    for (const auto& line : chunk.lines) {
+      log += line;
+      if (!line.ends_with('\n')) log += '\n';
+    }
+    if (log.size() > kLogLimit) log.erase(0, log.size() - kLogLimit);
+  };
   FBB b;
-  flatbuffers::Offset<R::CardSDKPrepareResult> res;
-  sdk_result(b, *job, &res);
-  reply(req, wire::reply(b, req.request_id,
-                         R::ReplyPayload::CardSDKPrepareResult, res.Union()));
+  std::vector<flatbuffers::Offset<R::CardApiImplementation>> implementations;
+  flatbuffers::Offset<D::Failure> failure;
+  try {
+    const auto plan = nix_->build(build);
+    size_t entries_left = kCardApiEntryLimit;
+    uint64_t bytes_left = kCardApiByteLimit;
+    for (size_t i = 0; i < plan.implementations.size(); ++i) {
+      const auto& package = plan.implementations[i];
+      const auto files =
+          card_api_files(plan, package, entries_left, bytes_left, b);
+      const auto label = i < plan.implementation_labels.size()
+                             ? plan.implementation_labels[i]
+                             : std::string();
+      implementations.push_back(R::CreateCardApiImplementation(
+          b, static_cast<uint32_t>(i + 1),
+          label.empty() ? 0 : b.CreateString(label), b.CreateString(package),
+          b.CreateVector(files)));
+    }
+  } catch (const Failed& f) {
+    if (stop.stop_requested()) throw;
+    implementations.clear();
+    b.Clear();
+    failure = wire::failure(b, f.failure);
+  } catch (const fs::Error& e) {
+    implementations.clear();
+    b.Clear();
+    failure =
+        wire::failure(b, FailureData::make(FailureKind::nix_failed, e.what()));
+  }
+  std::string build_log;
+  {
+    std::lock_guard lock(log_mu);
+    build_log = text::replace_invalid_utf8(log);
+  }
+  auto res = R::CreateCardApiResult(
+      b, doc->rev, b.CreateVector(implementations), failure,
+      failure.IsNull() ? 0 : b.CreateString(build_log));
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardApiResult,
+                         res.Union()));
 }
 
 void Service::run_plan(RequestIn& req) {

@@ -68,7 +68,7 @@ func batchExecutionUsesRecordedWireCountsAndSelectsExactInvocations(count: Int) 
     "product": ["runs": implementations, "views": [] as [Any]], "executionList": true,
   ] as [String: Any])
   try mock.write(to: card.appendingPathComponent("mock-build.json"))
-  try Data("{ pkgs, inputs, params }: { }".utf8).write(to: card.appendingPathComponent("default.nix"))
+  try Data("{ pkgs, inputs, params, ... }: { }".utf8).write(to: card.appendingPathComponent("default.nix"))
   let worker = try scriptedWorker(in: directory)
 
   let daemon = try SyncTests.Daemon(project: directory, mockedBuilds: true, worker: worker)

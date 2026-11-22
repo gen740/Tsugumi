@@ -125,35 +125,6 @@ NixRunner::NixRunner(Service& svc, stdfs::path eval_dir)
     }
   }
   if (ec) nix_dir_ = svc_.options().nix_dir;
-  // SDK jobs left pending by a previous process were interrupted.
-  auto dir = svc_.store().state_dir() / "sdk";
-  if (stdfs::is_directory(dir, ec)) {
-    for (const auto& e : stdfs::directory_iterator(dir, ec)) {
-      auto text = fs::read_file(e.path() / "job.json");
-      if (!text) continue;
-      schema::SdkJobJson j;
-      if (schema::decode(*text, j)) continue;
-      SDKJob job;
-      job.op_id = e.path().filename().string();
-      job.rev = *j.rev;
-      job.card = *j.card;
-      if (*j.state == "ready") {
-        job.state = SDKJob::State::Ready;
-        for (const auto& f : *j.files)
-          job.files.emplace_back(*f.path, *f.hash, *f.size);
-      } else {
-        job.state = SDKJob::State::Failed;
-        std::string bytes;
-        if (crypto::base64_decode(*j.failure_b64, bytes))
-          job.failure = FailureData::from_bytes(bytes);
-        if (*j.state == "pending" || !job.failure)
-          job.failure =
-              FailureData::make(FailureKind::interrupted,
-                                "SDK preparation was interrupted by a restart");
-      }
-      sdk_jobs_[job.op_id] = std::move(job);
-    }
-  }
 }
 
 auto NixRunner::prepared(const std::string& card, const std::string& key,
@@ -207,11 +178,7 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
   return res;
 }
 
-NixRunner::~NixRunner() {
-  for (auto& t : sdk_threads_)
-    if (t.joinable()) t.join();
-  evaluator_.reset();
-}
+NixRunner::~NixRunner() { evaluator_.reset(); }
 
 FlakeInfo NixRunner::resolve_flake(const std::string& ref) {
   static const std::regex page(
@@ -328,60 +295,6 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
     pf.emplace_back(p.name, param_fbs_type(p.type));
   files["_params.fbs"] = types::params_schema(pf);
   files["_outputs.fbs"] = types::card_catalog(node.outputs, false);
-  // The ports in plain form for SDK code generation (typed Card::Inputs /
-  // Card::Output): name, root type, kind, required.
-  {
-    auto json_quote = [](const std::string& v) {
-      std::string q = "\"";
-      for (char c : v) {
-        if (c == '"' || c == '\\') q += '\\';
-        if (static_cast<unsigned char>(c) < 0x20) {
-          q += ' ';
-          continue;
-        }
-        q += c;
-      }
-      return q + "\"";
-    };
-    auto kind_name = [](PortKind k) {
-      return k == PortKind::Path ? "path" : "flatbuffer";
-    };
-    auto list = [&](const std::vector<types::PortType>& ports,
-                    const std::string& side) {
-      std::string out = "[";
-      bool first = true;
-      for (const auto& p : ports) {
-        if (!p.type) continue;
-        std::string scratch;
-        std::string root =
-            types::render_closure(*p.type, side + "." + p.name, scratch);
-        std::string unions = "[";
-        for (const auto& u : types::root_unions(*p.type, side + "." + p.name)) {
-          unions += std::string(unions.size() > 1 ? "," : "") +
-                    "{\"field\":" + json_quote(u.field) +
-                    ",\"type\":" + json_quote(u.type) + ",\"members\":[";
-          for (size_t i = 0; i < u.members.size(); ++i)
-            unions += (i ? "," : "") + json_quote(u.members[i]);
-          unions += "]}";
-        }
-        out += std::string(first ? "" : ",") +
-               "{\"name\":" + json_quote(p.name) +
-               ",\"type\":" + json_quote(root) + ",\"kind\":\"" +
-               kind_name(p.kind) +
-               "\",\"required\":" + (p.required ? "true" : "false") +
-               ",\"unions\":" + unions + "]}";
-        first = false;
-      }
-      return out + "]";
-    };
-    std::string params = "[";
-    for (size_t i = 0; i < node.settings.params.size(); ++i)
-      params += std::string(i ? "," : "") +
-                "{\"name\":" + json_quote(node.settings.params[i].name) + "}";
-    files["_contract.json"] = "{\"inputs\":" + list(node.inputs, "inputs") +
-                              ",\"outputs\":" + list(node.outputs, "outputs") +
-                              ",\"params\":" + params + "]}\n";
-  }
   return files;
 }
 
@@ -481,50 +394,25 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     }
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
-  // The sources a Card names, evaluated apart from it; nothing is fetched for a
-  // Card that names none.
+  // The port schemas, the Nix-visible params and the project's declared
+  // nixSources. A source is evaluated only when the Card's evaluation forces
+  // it; the declarations are what the project's permissions approved.
   auto with_sources = [&](const Node& n) {
     std::map<std::string, std::string> generated;
     for (auto& [name, content] : generate(n))
-      generated.emplace("contract/" + name, std::move(content));
+      generated.emplace("schemas/" + name, std::move(content));
     generated["params-nix.json"] = params_json(n, true);
     std::string sources = "[";
-    auto nix =
-        req.doc->sources.count(n.def_dir + "default.nix")
-            ? svc_.store().read_source(*req.doc, n.def_dir + "default.nix")
-            : std::string();
     for (const auto& s : n.nix_sources) {
-      if (nix.find("sources") == std::string::npos ||
-          nix.find(s.name) == std::string::npos)
-        continue;
-      if (prepared_)
-        throw Failed(FailureKind::unsupported,
-                     "Card " + path_key(n.path) + " uses nixSources " + s.name +
-                         ", which prepared builds do not carry yet");
-      NixCall lookup;
-      lookup.system = req.target.system;
-      lookup.source_overrides = s.overrides;
-      lookup.cancel = req.cancel;
-      if (req.timeout_seconds)
-        lookup.deadline = std::chrono::steady_clock::now() +
-                          std::chrono::seconds(*req.timeout_seconds);
-      lookup.log = req.log;
-      if (req.on_phase) req.on_phase(Phase::evaluate);
-      try {
-        auto info = evaluator().flake(lookup, s.ref);
-        sources +=
-            std::string(sources.size() > 1 ? "," : "") + "{\"name\":\"" +
-            s.name + "\",\"type\":\"" + s.type + "\",\"value\":" + info.json +
-            "}";  // a name and a type are checked when the project is read
-      } catch (const NixInterrupted& e) {
-        throw Failed(
-            e.timed_out ? FailureKind::timeout : FailureKind::cancelled,
-            e.what());
-      } catch (const std::runtime_error& e) {
-        throw Failed(FailureKind::nix_failed,
-                     "nixSources " + s.name + " for system " +
-                         req.target.system + ": " + e.what());
-      }
+      auto name = schema::string_value(s.name);
+      auto type = schema::string_value(s.type);
+      auto ref = schema::string_value(s.ref);
+      auto overrides = schema::string_value(s.overrides);
+      if (sources.size() > 1) sources += ",";
+      sources += schema::object_text({{"name", &name},
+                                      {"type", &type},
+                                      {"ref", &ref},
+                                      {"overrides", &overrides}});
     }
     generated["sources.json"] = sources + "]";
     return generated;
@@ -740,97 +628,6 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   return plan;
 }
 
-SDKJob NixRunner::prepare_sdk(const std::string& op_id, const Node& node,
-                              uint64_t rev) {
-  SDKJob job;
-  job.op_id = op_id;
-  job.card = node.path;
-  job.rev = rev;
-  auto dir = svc_.store().state_dir() / "sdk" / op_id;
-  auto write_job = [dir](const SDKJob& j) {
-    schema::SdkJobJson o;
-    *o.card = j.card;
-    *o.rev = j.rev;
-    *o.state = j.state == SDKJob::State::Ready    ? "ready"
-               : j.state == SDKJob::State::Failed ? "failed"
-                                                  : "pending";
-    for (const auto& [p, h, s] : j.files) {
-      schema::SdkFileJson f;
-      *f.path = p;
-      *f.hash = h;
-      *f.size = s;
-      o.files->push_back(std::move(f));
-    }
-    *o.failure_b64 = j.failure ? crypto::base64(j.failure->to_bytes()) : "";
-    fs::write_atomic(dir / "job.json", schema::encode(o), 0600);
-  };
-  write_job(job);
-  {
-    std::lock_guard<std::mutex> l(sdk_mu_);
-    sdk_jobs_[op_id] = job;
-  }
-  Node copy = node;
-  sdk_threads_.emplace_back([this, copy, job, dir, write_job]() mutable {
-    try {
-      auto files = generate(copy);
-      files["params.json"] = params_json(copy, false);
-      files["params-nix.json"] = params_json(copy, true);
-      for (const auto& [name, content] : files) {
-        fs::write_atomic(dir / "files" / name, content, 0444);
-        job.files.emplace_back(".sdk/" + job.op_id + "/" + name,
-                               crypto::sha256_hex(content), content.size());
-      }
-      job.state = SDKJob::State::Ready;
-    } catch (const Failed& f) {
-      job.state = SDKJob::State::Failed;
-      job.failure = f.failure;
-    } catch (const std::exception& e) {
-      job.state = SDKJob::State::Failed;
-      job.failure = FailureData::make(FailureKind::internal_error, e.what());
-    }
-    try {
-      write_job(job);
-    } catch (...) {
-    }
-    std::lock_guard<std::mutex> l(sdk_mu_);
-    sdk_jobs_[job.op_id] = job;
-  });
-  return job;
-}
-
-std::optional<SDKJob> NixRunner::sdk_job(const std::string& op_id) {
-  std::lock_guard<std::mutex> l(sdk_mu_);
-  auto it = sdk_jobs_.find(op_id);
-  if (it == sdk_jobs_.end()) return std::nullopt;
-  return it->second;
-}
-
-bool NixRunner::sdk_jobs_active() {
-  std::lock_guard<std::mutex> l(sdk_mu_);
-  for (const auto& [_, j] : sdk_jobs_)
-    if (j.state == SDKJob::State::Pending) return true;
-  return false;
-}
-
-std::optional<std::string> NixRunner::sdk_file(const std::string& path,
-                                               std::optional<uint64_t> rev) {
-  if (!path.starts_with(".sdk/")) return std::nullopt;
-  auto rest = path.substr(5);
-  auto slash = rest.find('/');
-  if (slash == std::string::npos) return std::nullopt;
-  auto job = sdk_job(rest.substr(0, slash));
-  if (!job || job->state != SDKJob::State::Ready) return std::nullopt;
-  bool listed = false;
-  for (const auto& [p, _, __] : job->files) listed |= p == path;
-  if (!listed) return std::nullopt;
-  if (rev && *rev != job->rev)
-    throw Failed(FailureKind::revision_conflict,
-                 "the SDK was prepared for revision " +
-                     std::to_string(job->rev) + "; prepare it again");
-  return fs::read_file(svc_.store().state_dir() / "sdk" / job->op_id / "files" /
-                       rest.substr(slash + 1));
-}
-
 CacheClearOutcome NixRunner::clear_cache() {
   CacheClearOutcome out;
   auto state = svc_.store().state_dir();
@@ -856,7 +653,6 @@ CacheClearOutcome NixRunner::clear_cache() {
     if (n) out.deleted.push_back("build-roots");
   }
   remove(state / "cache", "build-cache");
-  remove(state / "sdk", "sdk");
   std::error_code ec;
   if (stdfs::is_directory(state / "runs", ec)) {
     // A folder going away meanwhile (a run's files deleted) ends the listing,
@@ -873,10 +669,6 @@ CacheClearOutcome NixRunner::clear_cache() {
   }
   out.retained.push_back("history");
   out.retained.push_back("document");
-  {
-    std::lock_guard<std::mutex> l(sdk_mu_);
-    sdk_jobs_.clear();
-  }
   return out;
 }
 

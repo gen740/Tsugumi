@@ -21,15 +21,44 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 - The core is `tsugumid`, `workerd`, `hostd`, `protocol` and the UIs. None of them knows a programming language.
 - A language SDK is a swappable part, chosen per Card. Users can write their own.
 - tsugumi-kit ships eight default SDKs: C++, Python, Go, Rust, C#, Julia, R and Ruby. Tsugumi pins one kit revision in its `flake.lock`.
-- A Card selects its language SDK in its `default.nix`, from the kit that the core injects as `inputs.tsugumi`, not in `_card.json`. The core binds each builder to the Card's generated contract.
+- A Card selects its language SDK in `default.nix` from the kit the core passes as `inputs.tsugumi`. The core passes the kit unchanged, and the Card gives its builder the port schemas. [The builder interface](#the-builder-interface)
 - The contract between the core and a language SDK is the common [Card ABI](CardABI.md).
 - The worker comes from the core, including the build of a worker for a foreign system or a remote host. Across versions, the promise is the Card ABI.
 - Bash-bodied Cards, `preRun` and `postRun` are abolished. If they return, it will be as an extension of a language SDK, not in the core.
 - The Card's process gets no implicit `/bin/sh` and no implicit `PATH`. A Card declares the programs it runs to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone ([The sandbox contract](SandboxContract.md#the-worker-builds-what-the-card-sees)).
 
+## The builder interface
+
+The core calls a Card's `default.nix` with four arguments.
+
+```nix
+{ pkgs, params, inputs, schemas }:
+let sdk = inputs.tsugumi.cppSdk; in
+{
+  run = sdk.cppCard { inherit schemas; src = ./src; };
+  views = sdk.views;
+}
+```
+
+- `pkgs`: the project's nixpkgs for the Card's target system.
+- `params`: the Card's parameters marked `nix: true`, as Nix values. The others reach the Card only at run time.
+- `inputs`:
+  - `inputs.<port>`: the `exports` of the one Code Card that always produces that input ([Sharing Nix exports](features.md#sharing-nix-exports-through-connections));
+  - `inputs.tsugumi`: the pinned kit, `import <kit> { inherit pkgs; }`, passed through unchanged;
+  - `inputs.sources.<name>`: the packages of a flake the project declares in `nixSources` ([External Nix sources](features.md#external-nix-sources-inputssources)). The core evaluates a declared flake only when the Card's evaluation reads it.
+- `schemas`: a store directory with `_inputs.fbs`, `_outputs.fbs` and `_params.fbs`, made from the Card's current definition and wiring. Each file has one root table (`Inputs`, `Outputs`, `Params`) with the ports or parameters as fields, in declaration order. Only connected inputs appear, with their upstream output's type, and none is `(required)`. A Path port is `string (tsugumi: "path")`.
+
+The schemas are all the core tells a builder about the Card. No UI information reaches the builder.
+
+### The generated API (`share/tsugumi/api/`)
+
+Every language SDK's builder places, next to `lib/main.so` in the run output, the generated API that the Card's code is written against, under `share/tsugumi/api/`: the generated sources (for example C++ `card.hh`, Python stubs, Go or Rust sources) and a `README.md` listing the Card's typed inputs, outputs and parameters. They are built from the same `schemas`. This is an obligation of each SDK, checked in tsugumi-kit.
+
+The Card API request uses the normal local Nix build with the Card's saved definition, current wiring, and configured system. It returns relative paths and raw bytes for regular files under each implementation's `share/tsugumi/api/`, or the build failure and the end of its log. One reply can cover up to 2,000 directory entries and 8 MiB of paths and file bytes. The build output lives in the Nix store. The Agent reads the files through `tools` with family `sdk` and action `api`. In both Card editors, **Build SDK** opens the same files in the read-only **SDK** section. [CardApi](Protocol.md#cardapi)
+
 ## What the core evaluates
 
-The core evaluates a Card's `default.nix` directly. It may define only these attributes:
+The result of a Card's `default.nix` may define only these attributes:
 
 - `run`: a derivation containing `lib/main.so`, or a list of `{ label; run; }`;
 - `views`: the Card's [views](#views);
@@ -41,7 +70,7 @@ A language SDK's Nix builder only returns the derivation. There is no manifest. 
 
 There is no language SDK metadata. The interface between the core and a language SDK is only:
 
-1. **a Nix builder** that returns a derivation containing `lib/main.so`;
+1. **a Nix builder** that takes the Card's `schemas` and returns a derivation containing `lib/main.so` and `share/tsugumi/api/`;
 2. **[Card ABI 9](CardABI.md).**
 
 What a language SDK might otherwise have described lives elsewhere:
@@ -50,7 +79,7 @@ What a language SDK might otherwise have described lives elsewhere:
 - hostd formats JSON and Nix, chosen by file extension. Formatting Card source is the Agent's job, or the Card's `default.nix` can expose a formatter.
 - `InputTypes` describes connected ports. A FlatBuffer port has a resolved schema. A Path port carries a file or directory and is declared as `string (tsugumi: "path")` in the port catalog. [Host presentation services](HostPresentation.md)
 - The guide is ordinary documentation of the language SDK, in tsugumi-kit.
-- The generated entry (for example `card.hh`) is the description of the types.
+- The generated API under `share/tsugumi/api/` (for example `card.hh`) is the description of the types.
 
 ### Port schemas
 
@@ -82,12 +111,12 @@ When a Merge produces a union, each distinct FlatBuffer type has one member. Its
 A Card declares its views at the top level of its `default.nix`, next to `run` and `exports`:
 
 ```nix
-{ inputs, ... }:
+{ inputs, schemas, ... }:
 let
   sdk = inputs.tsugumi.cppSdk;
 in
 {
-  run = sdk.cppCard { src = ./src; };
+  run = sdk.cppCard { inherit schemas; src = ./src; };
   views = sdk.views ++ [
     { name = "notes"; type = "html"; blob = ./notes.html; }
   ];

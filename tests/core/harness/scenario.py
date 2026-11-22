@@ -54,7 +54,7 @@ class Project:
             files["_outputs.fbs"] = outputs
         if plan is not None:
             # This source is interpreted only by the test build adapter.
-            files["default.nix"] = "{ pkgs, inputs, params }: { }"
+            files["default.nix"] = "{ pkgs, inputs, params, ... }: { }"
             files["mock-build.json"] = json.dumps(plan)
         self.cards[name] = (definition, files)
         return self

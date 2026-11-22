@@ -20,10 +20,11 @@ TEST(DefinitionEvaluationKey, SeparatesAllExplicitEvaluatorArguments) {
   original.pin_hash = "sha256-pin";
   original.system = "aarch64-darwin";
   // The actual runner supplies content-addressed paths here. A change to
-  // sources/locks, contract/Nix params, or upstream definitions/flake products
-  // changes its corresponding path before consulting the evaluation cache.
+  // sources/locks, port schemas/Nix params, or upstream definitions/flake
+  // products changes its corresponding path before consulting the evaluation
+  // cache.
   original.args =
-      "{ sdk = /sdk; card = /defs/digest; gen = /gen/digest; "
+      "{ nixDir = /nix; card = /defs/digest; gen = /gen/digest; "
       "upstream = /up/digest; }";
   const auto key = original.evaluation_key();
   for (const auto& component : {"pin-url", "pin-hash", "system", "args"}) {
@@ -37,7 +38,8 @@ TEST(DefinitionEvaluationKey, SeparatesAllExplicitEvaluatorArguments) {
       changed.system = "aarch64-linux";
     else
       changed.args =
-          "{ sdk = /sdk; card = /defs/new; gen = /gen/new; upstream = /up/new; "
+          "{ nixDir = /nix; card = /defs/new; gen = /gen/new; upstream = "
+          "/up/new; "
           "remote = true; }";
     EXPECT_NE(key, changed.evaluation_key()) << name;
   }
@@ -54,15 +56,15 @@ class DefinitionEvaluation : public ::testing::Test {
   auto SetUp() -> void override {
     root = std::filesystem::canonical(std::filesystem::temp_directory_path()) /
            ("evaluation-" + crypto::uuid4());
-    std::filesystem::create_directories(root / "sdk");
-    fs::write_atomic(root / "sdk" / "value", "first");
+    std::filesystem::create_directories(root / "source");
+    fs::write_atomic(root / "source" / "value", "first");
     const auto project = parse_project_json(initial_project_json("evaluation"));
     const auto pin = project.pkgs_path->value();
     const auto split = pin.find('#');
     call.pin_url = pin.substr(0, split);
     call.pin_hash = pin.substr(split + 1);
     call.system = native_system();
-    call.args = "{ root = /. + \"" + root.string() + "/sdk\"; }";
+    call.args = "{ root = /. + \"" + root.string() + "/source\"; }";
     call.root_dir = root / "roots";
     call.deadline =
         std::chrono::steady_clock::now() + std::chrono::seconds(120);
@@ -70,7 +72,8 @@ class DefinitionEvaluation : public ::testing::Test {
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
-        "pkgs: args: { executionList = false; implementationCount = 1; "
+        "pkgs: readSource: args: { executionList = false; implementationCount "
+        "= 1; "
         "implementationLabels = builtins.toJSON [ \"\" ]; "
         "plan = pkgs.writeText \"evaluation-test\" (" +
             body + "); }",
@@ -119,12 +122,13 @@ TEST_F(DefinitionEvaluation, CancellationRemovesAnEvaluationBehindABusyOne) {
 
 TEST_F(DefinitionEvaluation,
        UnchangedReadsHitAndSdkContentsInvalidateCachedImports) {
-  fs::write_atomic(root / "sdk" / "default.nix", "builtins.readFile ./value");
+  fs::write_atomic(root / "source" / "default.nix",
+                   "builtins.readFile ./value");
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "value", "second");
+  fs::write_atomic(root / "source" / "value", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);
@@ -138,24 +142,24 @@ TEST_F(DefinitionEvaluation, DirectoryMembershipAndNegativeLookupsAreInputs) {
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "optional", "added");
+  fs::write_atomic(root / "source" / "optional", "added");
   EXPECT_FALSE(eval->reuse(call, first));
   auto added = eval->realise_native(call, eval->evaluate(call));
   EXPECT_NE(first.derivation.path, added.derivation.path);
-  std::filesystem::remove(root / "sdk" / "optional");
+  std::filesystem::remove(root / "source" / "optional");
   EXPECT_FALSE(eval->reuse(call, added));
   EXPECT_EQ(first.derivation.path, eval->evaluate(call).derivation.path);
 }
 
-TEST_F(DefinitionEvaluation, CopiedSdkTreeInvalidatesSourceToStoreCache) {
-  fs::write_atomic(root / "sdk" / "views" / "line-chart.js", "first view");
-  // Interpolation copies the tree into the store, as the SDK's derivation
+TEST_F(DefinitionEvaluation, CopiedSourceTreeInvalidatesSourceToStoreCache) {
+  fs::write_atomic(root / "source" / "views" / "line-chart.js", "first view");
+  // Interpolation copies the tree into the store, as a builder's derivation
   // inputs do. builtins.toString alone would only pass a local path string.
   auto eval = evaluator(R"("${args.root}")");
   auto first = eval->realise_native(call, eval->evaluate(call));
   ASSERT_NE(first.evaluation_epoch, 0u);
   EXPECT_TRUE(eval->reuse(call, first));
-  fs::write_atomic(root / "sdk" / "views" / "line-chart.js", "second view");
+  fs::write_atomic(root / "source" / "views" / "line-chart.js", "second view");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->evaluate(call);
   EXPECT_NE(first.derivation.path, second.derivation.path);
@@ -206,7 +210,7 @@ TEST_F(DefinitionEvaluation,
   EXPECT_EQ(body.size(), body.find("first") + 5);
   EXPECT_TRUE(std::ranges::all_of(body.substr(0, body.size() - 5),
                                   [](char c) { return c >= '0' && c <= '9'; }));
-  fs::write_atomic(root / "sdk" / "value", "second");
+  fs::write_atomic(root / "source" / "value", "second");
   EXPECT_FALSE(eval->reuse(call, first));
   auto second = eval->realise_native(call, eval->evaluate(call));
   EXPECT_EQ(fs::read_file(second.derivation.output).value(),

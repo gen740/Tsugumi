@@ -90,7 +90,7 @@ Processing is split into small Cards so that people can understand the decisions
 
 In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
 
-Tsugumi separates `params.json`, used at run time, from `params-nix.json`, passed to Nix, and keeps run-time-only parameters out of the build inputs. `_meta.json` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
+Tsugumi passes Nix only the parameters marked `nix: true` (`params` of `default.nix`) and keeps run-time-only parameters out of the build inputs; the others reach the Card as its params buffer when it runs. `_meta.json` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 

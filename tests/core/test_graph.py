@@ -14,7 +14,7 @@ def code(inputs=(), *, outputs=NUMBER, body='{ run = "true"; }'):
     return {
         "type": "code", "sandbox": {"filesystem": False},
         "inputs": [{"name": name} for name in inputs],
-        "_outputs": outputs, "_nix": "{ pkgs, inputs, params }: " + body,
+        "_outputs": outputs, "_nix": "{ pkgs, params, inputs, schemas }: " + body,
     }
 
 
@@ -217,7 +217,7 @@ def test_nix_reference_inventory_depends_on_wires_not_source_text(core_factory, 
         client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test", changes=[
             change("PutSource", path="definitions/result/default.nix",
                    baseHash=next(text(s.hash) for s in snap.sources if text(s.path) == "definitions/result/default.nix"),
-                   bytes=list(('{ pkgs, inputs, params }: ' + body).encode()))])
+                   bytes=list(('{ pkgs, inputs, params, ... }: ' + body).encode()))])
         snap = client.call("ProjectInspectRequest")
         result = next(r for r in snap.resolution if [text(s) for s in r.card.segments] == ["result"])
         assert not codes(result)

@@ -1497,8 +1497,25 @@ private struct ContextCategory: View {
   }
 }
 
+/// What the last "build SDK" returned: the files of share/tsugumi/api/ by
+/// their shown name, or the build failure and its log. Held only while the
+/// editor shows the sources.
+private struct SdkBuild {
+  struct File: Identifiable {
+    let id: String
+    let name: String
+    let text: String
+  }
+
+  var building = false
+  var files: [File]?
+  var failure: String?
+  var log: String?
+}
+
 /// File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
-/// `default.nix`, with formatting, errors in place and the generated inputs.
+/// `default.nix`, with formatting, errors in place and the Card's generated
+/// API (the "SDK" section: what the builder placed under share/tsugumi/api/).
 /// The open files, the shown one and the expanded folders live on the model,
 /// so switching categories or applying keeps them.
 private struct SourceCategory: View {
@@ -1509,10 +1526,10 @@ private struct SourceCategory: View {
   @State private var formatting = false
   @State private var formatMessage: String?
   @State private var formatMarkers: [EditorMarker] = []
-  @State private var generated: [String: String] = [:]
-  @State private var generatedError: String?
+  @State private var sdk = SdkBuild()
 
-  static let generatedPrefix = "generated:"
+  static let sdkPrefix = "sdk:"
+  static let sdkLog = "sdk:log"
 
   private var prefix: String { model.session.definitionDir(model.cardKey) ?? "" }
 
@@ -1524,14 +1541,7 @@ private struct SourceCategory: View {
           VStack(alignment: .leading, spacing: 0) {
             FileTreeRows(nodes: FileNode.tree(files.map { String($0.dropFirst(prefix.count)) }, base: prefix), depth: 0,
                          model: model, open: open, contextMenu: menu)
-            if model.kind == .code {
-              Text("生成").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                .padding(.leading, 10).padding(.top, 12).padding(.bottom, 2)
-              ForEach(["_inputs.fbs", "_params.fbs"], id: \.self) { name in
-                FileRow(name: name, icon: "lock.doc", depth: 0, folder: nil,
-                        selected: model.shownFile == Self.generatedPrefix + name, readOnly: true) { open(Self.generatedPrefix + name) }
-              }
-            }
+            if model.kind == .code { sdkSection }
           }
           .padding(.vertical, 4)
         }
@@ -1539,9 +1549,9 @@ private struct SourceCategory: View {
         HStack {
           Button { showNew = true; newName = "src/" } label: { Image(systemName: "plus") }.help("ファイルを作成")
           Button {
-            if let s = model.shownFile, !s.hasPrefix(Self.generatedPrefix) { model.removeFile(s); model.closeFile(s) }
+            if let s = model.shownFile, !s.hasPrefix(Self.sdkPrefix) { model.removeFile(s); model.closeFile(s) }
           } label: { Image(systemName: "minus") }
-            .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.generatedPrefix)).help("表示中のファイルを削除")
+            .disabled(model.shownFile == nil || model.shownFile!.hasPrefix(Self.sdkPrefix)).help("表示中のファイルを削除")
           Spacer()
         }
         .buttonStyle(.borderless).padding(6)
@@ -1586,6 +1596,67 @@ private struct SourceCategory: View {
 
   private func open(_ path: String) { model.openFile(path) }
 
+  /// The "SDK" section: builds the saved definition with the current wiring
+  /// (the Card API request the Agent uses) and lists share/tsugumi/api/.
+  @ViewBuilder private var sdkSection: some View {
+    HStack {
+      Text("SDK").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+      Spacer()
+      Button(sdk.building ? String(localized: "ビルドしています…") : String(localized: "SDK をビルド")) { Task { await buildSdk() } }
+        .controlSize(.small).disabled(sdk.building || model.session.rpc == nil)
+        .help("保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します")
+    }
+    .padding(.leading, 10).padding(.trailing, 6).padding(.top, 12).padding(.bottom, 2)
+    if let failure = sdk.failure {
+      Text("ビルドできませんでした: \(failure)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
+        .padding(.horizontal, 10).padding(.vertical, 2)
+      if let log = sdk.log, !log.isEmpty {
+        FileRow(name: String(localized: "ビルドログ"), icon: "doc.text", depth: 0, folder: nil,
+                selected: model.shownFile == Self.sdkLog, readOnly: true) { open(Self.sdkLog) }
+      }
+    }
+    if let files = sdk.files {
+      if files.isEmpty {
+        Text("ビルドで生成された SDK ファイルはありません").font(.caption).foregroundStyle(.secondary)
+          .padding(.horizontal, 10).padding(.vertical, 2)
+      }
+      ForEach(files) { file in
+        FileRow(name: file.name, icon: "lock.doc", depth: 0, folder: nil,
+                selected: model.shownFile == file.id, readOnly: true) { open(file.id) }
+          .help(file.name)
+      }
+    }
+  }
+
+  private func buildSdk() async {
+    guard let rpc = model.session.rpc, !sdk.building else { return }
+    sdk = SdkBuild(building: true)
+    do {
+      let result = try await rpc.cardApi(card: path(model.cardKey), atRev: model.session.rev)
+      let implementations = result.implementations.compactMap { $0 }
+      if let failure = result.failure {
+        sdk = SdkBuild(failure: failure.diagnostic ?? "\(failure.kind)", log: result.log)
+      } else {
+        let files = implementations.enumerated().flatMap { position, implementation in
+          let label = implementation.label ?? ""
+          let base = implementations.count > 1 ? (label.isEmpty ? "#\(position + 1)" : label) + "/" : ""
+          return implementation.files.compactMap { $0 }.map { file in
+            SdkBuild.File(id: Self.sdkPrefix + "\(position)/" + file.path,
+                          name: base + file.path, text: String(decoding: file.content, as: UTF8.self))
+          }
+        }
+        sdk = SdkBuild(files: files)
+      }
+    } catch {
+      sdk = SdkBuild(failure: "\(error)")
+    }
+  }
+
+  private func sdkName(_ f: String) -> String {
+    if f == Self.sdkLog { return String(localized: "ビルドログ") }
+    return sdk.files?.first(where: { $0.id == f })?.name ?? (f as NSString).lastPathComponent
+  }
+
   @ViewBuilder private func menu(_ node: FileNode) -> some View {
     if node.children == nil {
       Button("開く") { open(node.path) }
@@ -1604,7 +1675,7 @@ private struct SourceCategory: View {
         ForEach(model.openFiles, id: \.self) { f in
           let shown = model.shownFile == f
           HStack(spacing: 5) {
-            Image(systemName: f.hasPrefix(Self.generatedPrefix) ? "lock.doc" : FileNode.icon(f)).font(.caption)
+            Image(systemName: f.hasPrefix(Self.sdkPrefix) ? "lock.doc" : FileNode.icon(f)).font(.caption)
             Text(displayName(f)).font(.caption).lineLimit(1)
             if model.isEdited(f) { Circle().fill(Color.orange).frame(width: 6, height: 6).help("未適用の変更") }
             Button { model.closeFile(f) } label: { Image(systemName: "xmark").font(.system(size: 8, weight: .bold)) }
@@ -1624,12 +1695,12 @@ private struct SourceCategory: View {
   }
 
   private func displayName(_ f: String) -> String {
-    f.hasPrefix(Self.generatedPrefix) ? String(f.dropFirst(Self.generatedPrefix.count)) : (f as NSString).lastPathComponent
+    ((f.hasPrefix(Self.sdkPrefix) ? sdkName(f) : f) as NSString).lastPathComponent
   }
 
   /// Header: the file's name and where it is (definition › folders).
   private func header(_ path: String, generatedFile: Bool) -> some View {
-    let rel = generatedFile ? String(path.dropFirst(Self.generatedPrefix.count)) : String(path.dropFirst(prefix.count))
+    let rel = generatedFile ? sdkName(path) : String(path.dropFirst(prefix.count))
     let parts = rel.split(separator: "/").map(String.init)
     return HStack(spacing: 6) {
       Image(systemName: generatedFile ? "lock.doc" : FileNode.icon(path)).foregroundStyle(.secondary)
@@ -1642,7 +1713,7 @@ private struct SourceCategory: View {
         }
       }
       .font(.caption).foregroundStyle(.secondary).lineLimit(1)
-      if generatedFile { ReadOnlyMark(why: String(localized: "接続から生成されるファイルです（手で編集しません）")) }
+      if generatedFile { ReadOnlyMark(why: String(localized: "Card のビルドが生成したファイルです（手で編集しません）")) }
       if model.created.contains(path) { Text("新規").font(.caption2).foregroundStyle(.orange) }
       else if model.isEdited(path) { Text("未適用").font(.caption2).foregroundStyle(.orange) }
       Spacer()
@@ -1661,14 +1732,14 @@ private struct SourceCategory: View {
 
   @ViewBuilder private func editorPane(files: [String]) -> some View {
     VStack(spacing: 0) {
-      if let selected = model.shownFile, selected.hasPrefix(Self.generatedPrefix) {
-        let name = String(selected.dropFirst(Self.generatedPrefix.count))
+      if let selected = model.shownFile, selected.hasPrefix(Self.sdkPrefix) {
         header(selected, generatedFile: true)
-        if let e = generatedError {
-          Text(e).font(.callout).foregroundStyle(.red).padding()
+        if let text = selected == Self.sdkLog ? sdk.log : sdk.files?.first(where: { $0.id == selected })?.text {
+          CodeEditor(text: .constant(text), language: selected == Self.sdkLog ? "" : (selected as NSString).pathExtension,
+                     editable: false, documentID: selected)
+        } else {
+          ContentUnavailableView("SDK をビルドすると表示されます", systemImage: "doc.text")
         }
-        CodeEditor(text: .constant(generated[name] ?? ""), language: "fbs", editable: false, documentID: selected)
-          .task(id: selected) { await loadGenerated() }
       } else if let selected = model.shownFile, model.files.contains(selected) {
         let markers = coreMarkers(for: selected) + formatMarkers
         let loaded = model.loadedText(selected) != nil
@@ -1717,21 +1788,6 @@ private struct SourceCategory: View {
   private func coreMarkers(for file: String) -> [EditorMarker] {
     let diags = model.session.resolution[model.cardKey]?.diagnostics ?? []
     return diags.filter { $0.path == file }.map { EditorMarker(offset: $0.offset ?? 0, message: $0.message) }
-  }
-
-  private func loadGenerated() async {
-    guard let rpc = model.session.rpc else { return }
-    do {
-      let files = try await rpc.generatedContracts(card: path(model.cardKey), atRev: model.session.rev)
-      for f in files {
-        let name = (f.path as NSString).lastPathComponent
-        guard name.hasSuffix(".fbs") else { continue }
-        generated[name] = String(decoding: try await rpc.readFile(path: f.path, atRev: model.session.rev), as: UTF8.self)
-      }
-      generatedError = nil
-    } catch {
-      generatedError = String(localized: "生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ") + "\(error)"
-    }
   }
 
   private func canFormat(_ path: String) -> Bool {

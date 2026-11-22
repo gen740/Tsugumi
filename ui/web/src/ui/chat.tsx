@@ -581,7 +581,7 @@ export function toolStep(name: string, args: string, display = (k: CardKey) => k
   const [running, done] =
     n === 'project_reload' ? [L('プロジェクトを再読込しています'), L('プロジェクトを再読込')]
     : n === 'project_shell' ? [L('シェルコマンドを実行しています'), L('シェルコマンドを実行')]
-    : n === 'card_s_d_k_prepare' ? [L('Card SDK を準備しています'), L('Card SDK を準備')]
+    : n === 'card_api' ? [L('SDK をビルドしています'), L('SDK をビルド')]
     : n === 'layout_arrange' || n === 'layout_untangle' ? [L('配置を整えています'), L('配置を整理')]
     : n === 'project_cache_clear' ? [L('ビルドキャッシュを削除しています'), L('ビルドキャッシュを削除')]
     : n === 'version_find' ? [L('過去の試行を探しています'), L('過去の試行を探しました')]

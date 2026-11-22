@@ -1425,7 +1425,7 @@ function fileTree(rel: string[], base: string): FileNode[] {
   ]
 }
 
-const READ_ONLY_WHY = L('接続から生成されるファイルです（手で編集しません）')
+const READ_ONLY_WHY = L('Card のビルドが生成したファイルです（手で編集しません）')
 
 /** A short "RO" mark for files that are not edited here; hover tells why. */
 export function ReadOnlyMark({ why }: { why: string }) {
@@ -1448,10 +1448,17 @@ function FileRow({ name, icon, depth, folder, selected, edited, readOnly, onClic
   )
 }
 
-const GENERATED = 'generated:'
+const SDK = 'sdk:'
+const SDK_LOG = SDK + 'log'
+
+/** What the last "build SDK" returned: the files of share/tsugumi/api/ by
+ *  their shown name, or the build failure and its log. Held only while the
+ *  editor is open. */
+type SdkState = { building: boolean, files?: { id: string, name: string, text: string }[], failure?: string, log?: string }
 
 /** File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
- *  `default.nix`, with formatting, errors in place and the generated inputs.
+ *  `default.nix`, with formatting, errors in place and the Card's generated
+ *  API (the "SDK" section: what the builder placed under share/tsugumi/api/).
  *  The open files, the shown one and the expanded folders live on the model,
  *  so switching categories or applying keeps them. */
 function SourceCategory({ model }: { model: CardEditorModel }) {
@@ -1464,8 +1471,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   const [formatting, setFormatting] = useState(false)
   const [formatMessage, setFormatMessage] = useState<string>()
   const [formatMarkers, setFormatMarkers] = useState<EditorMarker[]>([])
-  const [generated, setGenerated] = useState<Record<string, string>>({})
-  const [generatedError, setGeneratedError] = useState<string>()
+  const [sdk, setSdk] = useState<SdkState>({ building: false })
   const shown = model.shownFile
 
   useEffect(() => {
@@ -1480,38 +1486,37 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   useEffect(() => {
     setFormatMarkers([])
     setFormatMessage(undefined)
-    if (shown && !shown.startsWith(GENERATED) && model.files.includes(shown)) void model.text(shown).catch(() => {})
+    if (shown && !shown.startsWith(SDK) && model.files.includes(shown)) void model.text(shown).catch(() => {})
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, model.generation])
 
-  useEffect(() => {
-    if (!shown?.startsWith(GENERATED)) return
+  // The same Card API request the Agent uses: the saved definition built with
+  // the current wiring.
+  const buildSdk = async () => {
     const rpc = session.rpc
-    if (!rpc) return
-    let alive = true
-    void (async () => {
-      try {
-        const rev = session.rev
-        const list = await rpc.generatedContracts(path(model.cardKey), rev)
-        const out: Record<string, string> = {}
-        for (const f of list) {
-          const p = s(f.path)
-          const name = p.split('/').pop() ?? p
-          if (!name.endsWith('.fbs')) continue
-          out[name] = new TextDecoder().decode(await rpc.readFile(p, rev))
-        }
-        if (!alive) return
-        setGenerated((g) => ({ ...g, ...out }))
-        setGeneratedError(undefined)
-      } catch (e) {
-        if (alive) setGeneratedError(L('生成できませんでした（保存されていない変更や未解決の型があると生成できません）: ') + errorText(e))
+    if (!rpc || sdk.building) return
+    setSdk({ building: true })
+    try {
+      const r = await rpc.cardApi(path(model.cardKey), session.rev)
+      if (r.failure) {
+        setSdk({ building: false, failure: s(r.failure.diagnostic) || D.FailureKind[r.failure.kind], log: sOpt(r.log) })
+        return
       }
-    })()
-    return () => {
-      alive = false
+      const decoder = new TextDecoder()
+      const several = r.implementations.length > 1
+      const files = r.implementations.flatMap((impl, position) => {
+        const base = several ? (sOpt(impl.label) || `#${position + 1}`) + '/' : ''
+        return impl.files.map((file) => ({
+          id: SDK + position + '/' + s(file.path),
+          name: base + s(file.path),
+          text: decoder.decode(new Uint8Array(file.content)),
+        }))
+      })
+      setSdk({ building: false, files })
+    } catch (e) {
+      setSdk({ building: false, failure: errorText(e) })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [shown, session.rev])
+  }
 
   const canFormat = (p: string) => /[^/]\.(json|nix)$/.test(p)
 
@@ -1558,10 +1563,11 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     ]
   })
 
-  const displayName = (f: string) => (f.startsWith(GENERATED) ? f.slice(GENERATED.length) : f.split('/').pop() ?? f)
+  const sdkName = (f: string) => f === SDK_LOG ? L('ビルドログ') : sdk.files?.find((file) => file.id === f)?.name ?? f.split('/').pop() ?? f
+  const displayName = (f: string) => (f.startsWith(SDK) ? sdkName(f) : f).split('/').pop() ?? f
 
   const header = (p: string, generatedFile: boolean) => {
-    const rel = generatedFile ? p.slice(GENERATED.length) : p.slice(prefix.length)
+    const rel = generatedFile ? sdkName(p) : p.slice(prefix.length)
     const parts = rel.split('/')
     return (
       <div className="src-head">
@@ -1585,13 +1591,16 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
   }
 
   let pane: ReactNode
-  if (shown?.startsWith(GENERATED)) {
-    const name = shown.slice(GENERATED.length)
+  if (shown?.startsWith(SDK)) {
+    const text = shown === SDK_LOG ? sdk.log : sdk.files?.find((file) => file.id === shown)?.text
     pane = (
       <>
         {header(shown, true)}
-        {generatedError && <div className="callout pad12 selectable" style={{ color: 'var(--red)' }}>{generatedError}</div>}
-        <CodeEditor text={generated[name] ?? ''} language="fbs" editable={false} documentId={shown} className="src-editor" />
+        {text !== undefined ? (
+          <CodeEditor text={text} language={shown === SDK_LOG ? undefined : shown.split('.').pop()} editable={false} documentId={shown} className="src-editor" />
+        ) : (
+          <Empty title={L('SDK をビルドすると表示されます')} icon="doc.text" />
+        )}
       </>
     )
   } else if (shown && model.files.includes(shown)) {
@@ -1631,7 +1640,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
 
   const editor = (
     <div key="editor" className="src-pane" onKeyDown={(e) => {
-      if (e.nativeEvent.isComposing || !shown || shown.startsWith(GENERATED) || !canFormat(shown)) return
+      if (e.nativeEvent.isComposing || !shown || shown.startsWith(SDK) || !canFormat(shown)) return
       if (prefs.action(e.nativeEvent, false) === 'formatSource') {
         e.preventDefault()
         e.stopPropagation()
@@ -1642,7 +1651,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
         <div className="src-tabs" role="tablist">
           {model.openFiles.map((f) => (
             <div key={f} role="tab" aria-selected={shown === f} className={`src-tab${shown === f ? ' shown' : ''}`} title={f} onClick={() => model.openFile(f)}>
-              <Icon name={f.startsWith(GENERATED) ? 'lock.doc' : fileIcon(f)} size={11} />
+              <Icon name={f.startsWith(SDK) ? 'lock.doc' : fileIcon(f)} size={11} />
               <span className="caption ellipsis">{displayName(f)}</span>
               {model.isEdited(f) && <span className="edited-dot" title={L('未適用の変更')} />}
               <button type="button" className="src-tab-close" title={L('タブを閉じる（内容は保持されます）')} aria-label={L('タブを閉じる')}
@@ -1666,17 +1675,34 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                 {tree(fileTree(files.map((f) => f.slice(prefix.length)), prefix), 0)}
                 {model.kind === 'code' && (
                   <>
-                    <div className="src-section caption">{L('生成')}</div>
-                    {['_inputs.fbs', '_params.fbs'].map((n) => (
-                      <FileRow key={n} name={n} icon="lock.doc" depth={0} selected={shown === GENERATED + n} readOnly onClick={() => model.openFile(GENERATED + n)} />
+                    <div className="src-section caption row center gap4">
+                      <span className="spacer">{L('SDK')}</span>
+                      <Button small disabled={sdk.building || !session.rpc} onClick={() => void buildSdk()}
+                        help={L('保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します')}>
+                        {sdk.building ? L('ビルドしています…') : L('SDK をビルド')}
+                      </Button>
+                    </div>
+                    {sdk.failure !== undefined && (
+                      <>
+                        <div className="caption selectable pad6 wrap-pre" style={{ color: 'var(--red)' }}>{L('ビルドできませんでした: {0}', sdk.failure)}</div>
+                        {sdk.log && (
+                          <FileRow name={L('ビルドログ')} icon="doc.text" depth={0} selected={shown === SDK_LOG} readOnly onClick={() => model.openFile(SDK_LOG)} />
+                        )}
+                      </>
+                    )}
+                    {sdk.files?.length === 0 && (
+                      <div className="caption pad6">{L('ビルドで生成された SDK ファイルはありません')}</div>
+                    )}
+                    {sdk.files?.map((file) => (
+                      <FileRow key={file.id} name={file.name} icon="lock.doc" depth={0} selected={shown === file.id} readOnly help={file.name} onClick={() => model.openFile(file.id)} />
                     ))}
                   </>
                 )}
               </div>
               <div className="row gap4 pad6 border-top">
                 <Button kind="borderless" iconOnly icon="plus" help={L('ファイルを作成')} onClick={() => setShowNew(true)} />
-                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(GENERATED)}
-                  onClick={() => { if (shown && !shown.startsWith(GENERATED)) { model.removeFile(shown); model.closeFile(shown) } }} />
+                <Button kind="borderless" iconOnly icon="minus" help={L('表示中のファイルを削除')} disabled={!shown || shown.startsWith(SDK)}
+                  onClick={() => { if (shown && !shown.startsWith(SDK)) { model.removeFile(shown); model.closeFile(shown) } }} />
               </div>
             </div>,
             editor,

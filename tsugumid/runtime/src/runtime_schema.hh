@@ -157,20 +157,6 @@ struct NixpkgsPin {
   t::String<"narHash"> nar_hash;
 };
 
-struct SdkFileJson {
-  t::String<"path"> path;
-  t::String<"hash"> hash;
-  t::Uint64<"size"> size;
-};
-
-struct SdkJobJson {
-  t::Array<"card", v::String> card;
-  t::Uint64<"rev"> rev;
-  t::String<"state"> state;  // pending | ready | failed
-  t::Array<"files", Obj<SdkFileJson>> files;
-  t::String<"failure"> failure_b64;  // Failure FlatBuffer, empty when none
-};
-
 // ---- .tsugumi-history.json (a demo's versions,
 // tsugumid/runtime/src/versions.cc) ------------
 

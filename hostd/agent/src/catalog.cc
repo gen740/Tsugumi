@@ -84,8 +84,7 @@ auto Docs(
 auto OwnOperationId(const reflection::Object& object) -> bool {
   const auto name = object.name()->str();
   return object.fields()->LookupByKey("op_id") &&
-         !name.ends_with(".OperationGetRequest") &&
-         !name.ends_with(".CardSDKStatusRequest");
+         !name.ends_with(".OperationGetRequest");
 }
 
 auto ObjectSchema(const reflection::Object& object, int depth, bool top)

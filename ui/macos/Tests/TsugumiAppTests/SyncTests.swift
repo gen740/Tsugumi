@@ -65,7 +65,7 @@ import TsugumiTestSupport
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""
-      { pkgs, inputs, params }:
+      { pkgs, inputs, params, ... }:
       {
         run = ''
           test -r "$JSON_IN" || exit 1
