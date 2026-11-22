@@ -100,6 +100,8 @@ Only hostd talks to the signed Mac helper, over the owner-only Unix socket using
 
 ## 4. Card (worker) ⇄ tsugumid
 
+The contract this section implements is [The sandbox contract](SandboxContract.md).
+
 Linux workers use bubblewrap to apply the Card's requested isolation. File visibility is limited to the realized Nix closure, worker files, the active inputs and enabled grants. Separate PID and IPC namespaces and a mapped uid of 65534 with capabilities dropped are enabled by default. Linux's network grant controls sharing the network namespace. With filesystem isolation disabled, files and pathname-based Unix sockets may also be reachable.
 
 The shared VM hides the project's control folder and state behind mounts even when filesystem isolation is disabled. Worker teardown always ends the worker's process group. The worker reports settings it can provide. Remote workers require filesystem and PID isolation.
