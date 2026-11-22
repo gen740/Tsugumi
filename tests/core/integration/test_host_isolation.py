@@ -1,8 +1,8 @@
 """A sandboxed Card on a host tsugumid -- bubblewrap on Linux (CI), Seatbelt
 on a Mac (the Web UI) -- reaches nothing on this host: no loopback port, no
 file outside its own areas, no write outside its output. These run without
-the shared VM, so CI checks the isolation; the VM's own (test_cards_container.py,
-test_workers.py) needs TSUGUMI_TEST_CONTAINER=1.
+the shared VM, so CI checks the isolation; the VM's own (test_cards_shared_vm.py,
+test_workers.py) needs TSUGUMI_TEST_SHARED_VM=1.
 
 Writes are judged by what happened on the host. Seatbelt refuses them, while
 under bubblewrap the Card's root is a private tmpfs: the same path is an empty
@@ -56,3 +56,81 @@ def test_a_sandboxed_card_reaches_no_port_and_no_file_of_this_host(core_factory,
         assert not escape.exists(), log
         assert secret.read_text() == "of this host", log
         assert "tampered" not in project_file.read_text(), log
+
+
+def test_linux_switches_and_named_grants(core_factory, tmp_path):
+    import os
+    import sys
+    import pytest
+
+    if sys.platform != "linux":
+        pytest.skip("Linux namespaces")
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    (shared / "data").write_text("readable")
+    writable = tmp_path / "write-grant"
+    writable.mkdir()
+    outside = tmp_path / "outside"
+    outside.write_text("outside")
+    original_pid = os.readlink("/proc/self/ns/pid")
+    original_ipc = os.readlink("/proc/self/ns/ipc")
+    scripts = {
+        "disabled": bash(
+            f'test "$UID" = {os.getuid()} && '
+            f'test "$(readlink /proc/self/ns/pid)" = "{original_pid}" && '
+            f'test "$(readlink /proc/self/ns/ipc)" = "{original_ipc}" && '
+            f'test -f "{outside}" && '
+            """printf '{"out":{"value":"open"}}' > "$TSUGUMI_OUTPUT" """,
+            outputs=TXT, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False}),
+        "enabled": bash(
+            'test "$UID" = 65534 && '
+            f'test "$(readlink /proc/self/ns/pid)" != "{original_pid}" && '
+            f'test "$(readlink /proc/self/ns/ipc)" != "{original_ipc}" && '
+            f'test ! -f "{outside}" && '
+            'test "$(cat "$TSUGUMI_GRANT_SAMPLE_DATA/data")" = readable && '
+            'if echo modified >> "$TSUGUMI_GRANT_SAMPLE_DATA/data"; then exit 1; fi; '
+            'echo staged > "$TSUGUMI_GRANT_RESULT/data"; '
+            """printf '{"out":{"value":"isolated"}}' > "$TSUGUMI_OUTPUT" """,
+            outputs=TXT, grants={"hostPaths": [
+                {"name": "sample-data", "path": str(shared)},
+                {"name": "result", "path": str(writable), "write": True},
+            ]}),
+    }
+    root = tmp_path / "p"
+    write(root, scripts, [card(name, name) for name in scripts], [])
+    client = core_factory(project_root=root).connect()
+    for name in scripts:
+        run_id, status = run_and_wait(client, name)
+        assert status.state == RunState.succeeded, log_of(client, run_id, name, 2)
+    assert (shared / "data").read_text() == "readable"
+    assert (writable / "data").read_text() == "staged\n"
+
+
+def test_linux_wayland_socket_is_visible_only_when_granted(core_factory, tmp_path, monkeypatch):
+    import os
+    import sys
+    import tempfile
+    from pathlib import Path
+
+    import pytest
+
+    if sys.platform != "linux":
+        pytest.skip("native Linux GUI grant")
+    with tempfile.TemporaryDirectory(dir=os.environ.get("TSUGUMI_SOCKET_DIR")) as directory:
+        endpoint = str(Path(directory) / "w")
+        with socket.socket(socket.AF_UNIX) as compositor:
+            compositor.bind(endpoint)
+            monkeypatch.setenv("WAYLAND_DISPLAY", endpoint)
+            output = """printf '{"out":{"value":"done"}}' > "$TSUGUMI_OUTPUT" """
+            definitions = {
+                "granted": bash('test -S "$WAYLAND_DISPLAY" && ' + output, outputs=TXT, grants={"gui": True}),
+                "closed": bash(f'test -z "${{WAYLAND_DISPLAY-}}" && test ! -S "{endpoint}" && ' + output, outputs=TXT),
+            }
+            root = tmp_path / "p"
+            write(root, definitions, [card(name, name) for name in definitions], [])
+            client = core_factory(project_root=root).connect()
+            local = client.call("ProjectInspectRequest").executionServices[0]
+            assert local.sandbox.gui
+            for name in definitions:
+                run_id, status = run_and_wait(client, name)
+                assert status.state == RunState.succeeded, log_of(client, run_id, name, 2)

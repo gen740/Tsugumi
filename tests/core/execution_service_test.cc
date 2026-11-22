@@ -40,7 +40,7 @@ TEST(NativeExecution, OutputCopyFailureKeepsTheResidentWorker) {
   LocalExecutionService execution(service, root / "workers");
   Node node;
   node.path = {"card"};
-  node.settings.sandbox = false;
+  node.settings.sandbox.filesystem = false;
   node.settings.reuse_worker = true;
   std::string error;
   const auto type =

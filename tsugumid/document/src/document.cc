@@ -120,7 +120,7 @@ auto Document::check_document_size() const -> void {
         "resource_limit",
         "document JSON has " + std::to_string(json_bytes) +
             " bytes; limit is 8388608 bytes (8 MiB). Keep data in an attached "
-            "folder and read it through hostFolders (/host/<name>).");
+            "folder and read it through a grants.hostPaths entry.");
 }
 
 bool Document::is_source_area(const std::string& rel) {
@@ -311,9 +311,9 @@ schema::CardDefinition parse_card_json(const std::string& id,
             {{"path", rel}});
   const auto type = parse_card_type(*type_name);
   if (!type)
-    invalid(rel + ": unknown type \"" + *type_name + "\" (" + kCardTypeList +
-                ")",
-            {{"path", rel}});
+    invalid(
+        rel + ": unknown type \"" + *type_name + "\" (" + kCardTypeList + ")",
+        {{"path", rel}});
   const auto* external = schema::get(card.external);
   if ((*type == CardType::Subgraph) != (external != nullptr))
     invalid(rel + (external ? ": \"external\" needs \"type\": \"subgraph\""

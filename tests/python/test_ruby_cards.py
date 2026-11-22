@@ -13,7 +13,7 @@ from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
-IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
+IN_VM = os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1"
 RUBY_NIX = '{ pkgs, inputs, params }: { run = inputs.tsugumi.rubyCard { src = ./src; }; }'
 EMPTY = 'namespace test; table Outputs {} root_type Outputs;'
 NUMBERS = '''attribute "tsugumi";

@@ -340,7 +340,7 @@ TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
   Grant(conversation);
   const auto before = Read(directory.path / "project/definitions/a/_card.json");
   const std::string args =
-      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"network"}],"old_value":{"present":false},"new_value":{"present":true,"value":true}}]})";
+      R"({"edits":[{"file_path":"definitions/a/_card.json","selector":[{"field":"grants"}],"old_value":{"present":false},"new_value":{"present":true,"value":{"network":true}}}]})";
   EXPECT_EQ(Tool(conversation, "project_edit", args, "without-write").Code(),
             "grant_required");
   EXPECT_EQ(Read(directory.path / "project/definitions/a/_card.json"), before);

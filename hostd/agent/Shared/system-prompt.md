@@ -28,7 +28,7 @@ the person's decision.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- What a Card may do beyond computing (network, sandbox, hostFolders, executionService, and nixSources in
+- What a Card may do beyond computing (sandbox, grants, executionService, and nixSources in
   tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own

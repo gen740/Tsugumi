@@ -21,7 +21,7 @@ def write_project(root, cards, connections):
         for definition in root.glob("definitions/*/_card.json"):
             body = json.loads(definition.read_text())
             if body.get("type") == "code":
-                body["sandbox"] = True
+                body["sandbox"] = {"filesystem": True}
                 definition.write_text(json.dumps(body))
 
 NIX = '''{ pkgs, inputs, params }:
@@ -155,7 +155,7 @@ public sealed class Card : ICard {}
 
 
 def open_environment(root, name):
-    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
+    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1" else Daemon(root).start()
     c = env.client()
     if isinstance(env, Daemon): c.hello()
     return env, c
@@ -295,7 +295,7 @@ def check_failed_run(env, c, mode):
 def test_production_creation_scaffold(tmp_path):
     root = tmp_path / "scaffold"
     write_project(root, {"hello": scaffold_card("csharp")}, [("start", "out", "hello", "in")])
-    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_CONTAINER") == "1" else Daemon(root).start()
+    env = real_environment(root) if os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1" else Daemon(root).start()
     c = env.client()
     try:
         if isinstance(env, Daemon): c.hello()

@@ -4,7 +4,7 @@ each display kind reaches the Card's record. Their interpreters live in the
 ABI worker; exceptions fail the Card. A Card keeps no interpreter state unless
 its settings say `reuseWorker: true`: by default every invocation starts a new
 interpreter. Linux CI runs them under bubblewrap, as in the shared VM.
-TSUGUMI_TEST_CONTAINER=1 also exercises the app's VM on macOS."""
+TSUGUMI_TEST_SHARED_VM=1 also exercises the app's VM on macOS."""
 
 from __future__ import annotations
 
@@ -32,7 +32,7 @@ table Report { value:string; }
 table Outputs { report:Report (required, tsugumi: "file"); }
 root_type Outputs;
 """
-IN_VM = os.environ.get("TSUGUMI_TEST_CONTAINER") == "1"
+IN_VM = os.environ.get("TSUGUMI_TEST_SHARED_VM") == "1"
 NO_OUTPUTS = '''namespace t;
 table Outputs { }
 root_type Outputs;
@@ -58,7 +58,7 @@ def write_project(root, cards: dict, connections: list):
         d = root / "definitions" / id_
         settings = c["card"].copy()
         if not IN_VM and sys.platform != "linux":
-            settings["sandbox"] = False
+            settings["sandbox"] = {"filesystem": False}
         put(d / "_card.json", json.dumps(settings))
         put(d / "default.nix", c["nix"])
         put(d / "_outputs.fbs", c.get("outputs", NO_OUTPUTS))
@@ -394,10 +394,9 @@ def test_a_card_keeps_no_interpreter_state_by_default(project, language):
 
 
 @pytest.mark.parametrize("language", ["r", "julia"])
-def test_reuse_worker_carries_globals_options_and_the_random_position(project, language):
-    # What carries with reuseWorker: true is pinned here so that a change is
-    # deliberate. The worker resets the environment and the working directory
-    # for every call, so those two never carry.
+def test_reuse_worker_carries_interpreter_and_process_state(project, language):
+    # The same process serves both calls. Changes made by the Card to its
+    # environment and current directory persist with its interpreter state.
     root, connect = project
     nix, name, source = CARRIED[language]
     write_project(root, {"probe": {"card": {"type": "code", "reuseWorker": True},
@@ -411,7 +410,7 @@ def test_reuse_worker_carries_globals_options_and_the_random_position(project, l
         assert reused(c, run_id, "probe") == (n == 2)
     first, second = (dict(item.split("=", 1) for item in shown.split(" ")) for shown in seen)
     assert (first["calls"], first["options"], first["env"], first["moved"]) == ("1", "0", "", "false"), seen
-    assert (second["calls"], second["options"], second["env"], second["moved"]) == ("2", "1", "", "false"), seen
+    assert (second["calls"], second["options"], second["env"], second["moved"]) == ("2", "1", "set", "true"), seen
     assert first["random"] != second["random"], seen
 
 

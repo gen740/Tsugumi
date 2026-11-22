@@ -159,8 +159,12 @@ static int prepare(void) {
   const char* old_tmp = getenv("TMPDIR");
   char* saved_tmp = old_tmp ? strdup(old_tmp) : NULL;
   if (old_tmp && !saved_tmp) return 1;
-  const char* home = getenv("HOME");
-  if (home) setenv("TMPDIR", home, 1);
+  const char* home = getenv("TSUGUMI_WORK_DIR");
+  if (!home) home = getenv("HOME");
+  if (!home || setenv("TMPDIR", home, 1) != 0) {
+    free(saved_tmp);
+    return 1;
+  }
   int initialized = Rf_initEmbeddedR(6, argv);
   if (saved_tmp)
     setenv("TMPDIR", saved_tmp, 1);

@@ -303,7 +303,7 @@ include bounded stdout/stderr and paths to the full output.
 
 `project_copy` copies attached, Card or conversation scratch files into Card source
 paths and returns their sizes and hashes. Data can also stay attached: a Card's
-`hostFolders` permission makes it available at `/host/<name>` during execution.
+Add the folder under `grants.hostPaths` and read the path from the named `TSUGUMI_GRANT_<NAME>` variable during execution.
 
 The SDK `resolve_source` action resolves a flake for `nixSources`. To customize its
 packages, `nixSources[].overrides` accepts JSON maps such as

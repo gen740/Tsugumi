@@ -248,7 +248,7 @@ def test_transfer_permission_widening_still_requires_explicit_approval(project, 
     original = (project / path).read_bytes()
     source = tmp_path / "widened.json"
     body = json.loads(original)
-    body["network"] = True
+    body["grants"] = {"network": True}
     source.write_text(json.dumps(body))
     client = core_factory().connect()
     item = transfer(source, path, baseHash=hashlib.sha256(original).hexdigest())
@@ -259,7 +259,7 @@ def test_transfer_permission_widening_still_requires_explicit_approval(project, 
     assert not list((project / ".tsugumi/document-files").iterdir())
     result = save(client, [item], approvedPermissions=["network inner/src"])
     assert result.rev == 1
-    assert json.loads((project / path).read_bytes())["network"] is True
+    assert json.loads((project / path).read_bytes())["grants"]["network"] is True
 
 
 def test_store_manifest_limit_rejects_the_save(project, core_factory):

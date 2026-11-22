@@ -35,7 +35,7 @@ constexpr uint64_t kWorkerLimit = workerd::kMaxWorkerFrameBytes;
 // How long a built invocation waits for its Card secrets from the core.
 constexpr auto kSecretWait = std::chrono::minutes(5);
 
-using Secrets = std::vector<std::pair<std::string, std::string>>;
+using Secrets = std::shared_ptr<WorkerSecrets>;
 
 // Reads the job's Card secrets from the listener's pipe once the environment
 // is built and nothing but the Card's process remains to start. The values
@@ -45,6 +45,7 @@ auto receive_secrets(const stdfs::path& directory,
   const auto marker = directory / workerd::kSecretsWanted;
   fs::write_atomic(marker, "", 0600);
   std::string frame;
+  frame.reserve(workerd::kMaxFrame + 4);
   bool closed = false;
   const auto deadline = std::chrono::steady_clock::now() + kSecretWait;
   while (!closed && frame.size() <= workerd::kMaxFrame + 4) {
@@ -60,8 +61,10 @@ auto receive_secrets(const stdfs::path& directory,
     if (n < 0 && errno == EINTR) continue;
     if (n <= 0)
       closed = true;
-    else
+    else {
       frame.append(buffer, static_cast<size_t>(n));
+      workerd::wipe_secret({buffer, static_cast<size_t>(n)});
+    }
   }
   ::close(workerd::kSecretChannelFd);
   std::error_code ec;
@@ -76,7 +79,7 @@ auto receive_secrets(const stdfs::path& directory,
                  "the Card's secrets did not arrive within 5 minutes. Run the "
                  "Card again");
   }
-  Secrets secrets;
+  auto secrets = std::make_shared<WorkerSecrets>();
   try {
     if (!closed || frame.size() < 4 ||
         workerd::frame_length(std::string_view(frame).substr(0, 4)) !=
@@ -86,21 +89,22 @@ auto receive_secrets(const stdfs::path& directory,
     auto* reply = message->payload.AsReply();
     auto* body = reply ? reply->body.AsCardSecrets() : nullptr;
     if (!body) throw std::runtime_error("unexpected message");
-    for (auto& secret : body->secrets)
-      secrets.emplace_back(std::move(secret->name), std::move(secret->value));
+    secrets->values.reserve(body->secrets.size());
+    for (auto& secret : body->secrets) {
+      secrets->values.emplace_back(std::move(secret->name), secret->value);
+      workerd::clear_secret(secret->value);
+    }
   } catch (const std::exception&) {
     workerd::clear_secret(frame);
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets arrived incomplete. Run the Card again");
   }
   workerd::clear_secret(frame);
   std::vector<std::string> wanted = job.secrets, given;
-  for (const auto& secret : secrets) given.push_back(secret.first);
+  for (const auto& secret : secrets->values) given.push_back(secret.first);
   std::ranges::sort(wanted);
   std::ranges::sort(given);
   if (wanted != given) {
-    for (auto& secret : secrets) workerd::clear_secret(secret.second);
     throw Failed(FailureKind::worker_failed,
                  "the Card's secrets do not match the names it declares");
   }
@@ -158,11 +162,11 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto run_worker(const W::WorkerCall& call,
+auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::InvocationJson& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
-                const stdfs::path& store, const WorkerStoreResult& env,
-                const WorkerProc::LogSink& log,
+                const stdfs::path& store, const stdfs::path& group,
+                const WorkerStoreResult& env, const WorkerProc::LogSink& log,
                 const WorkerProc::DisplaySink& display,
                 const fs::TransferProgress& progress, Secrets secrets)
     -> workerd::InvocationResult {
@@ -186,6 +190,10 @@ auto run_worker(const W::WorkerCall& call,
   WorkerSpawn spawn;
   spawn.worker_binary = *worker_binary;
   spawn.bash = *shell;
+  spawn.path = *path;
+  spawn.secrets = std::move(secrets);
+  spawn.closure = env.closure;
+  spawn.cgroup = group;
   spawn.store_path = (store / "nix/store").string();
   spawn.scratch = (directory / "scratch").string();
   spawn.program.package = *run->package;
@@ -196,9 +204,13 @@ auto run_worker(const W::WorkerCall& call,
   spawn.program.pre_run = manifest.pre_run->value_or("");
   spawn.program.post_run = manifest.post_run->value_or("");
   spawn.program.views = manifest.views->value_or("");
-  spawn.network = *invocation.network;
-  spawn.uid = 65534;
-  spawn.gid = 65534;
+  spawn.sandbox = {job.filesystem,
+                   job.pid,
+                   job.ipc,
+                   job.identity,
+                   {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
+  spawn.network = job.network;
+  if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
   spawn.ro_paths = {input.string()};
   CardPath card;
   for (const auto* name : *call.card()->segments()) card.push_back(name->str());
@@ -229,6 +241,7 @@ auto run_worker(const W::WorkerCall& call,
                        type(port->schema_bfbs(), port->root_type())});
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
+  spawn.secrets.reset();
   workerd::Invocation request;
   request.run_id = call.run_id()->str();
   request.card = card;
@@ -238,22 +251,13 @@ auto run_worker(const W::WorkerCall& call,
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  request.path = *path;
-  request.worker_binary = spawn.worker_binary;
-  for (const auto* v : *call.environment())
-    if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
-      request.environment.emplace_back(v->name()->str(), v->value()->str());
-  // Each Card secret is an environment variable of the same name in the
-  // Card's process only; this process drops its copy once the call is sent.
-  for (auto& secret : secrets) request.environment.push_back(std::move(secret));
-  request.on_call_sent = [&environment = request.environment] {
-    for (auto& variable : environment) workerd::clear_secret(variable.second);
-    environment.clear();
-  };
+  if (spawn.program.bash || job.r_params_environment)
+    for (const auto* v : *call.environment())
+      if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
+        request.params.json = v->value()->str();
   request.output_directory = directory / "result/files/out";
   request.input_directory = input;
   request.delivery = workerd::OutputDelivery::transferred_files;
-  request.stop_before_outputs = true;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
@@ -262,7 +266,8 @@ auto run_worker(const W::WorkerCall& call,
   request.display = display;
   return workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {
-        pool.release(spawn.card, "", std::move(worker), keep, reason);
+        pool.release(spawn.card, lease.generation, std::move(worker), keep,
+                     reason);
       },
       lease, false, request);
 }
@@ -271,7 +276,7 @@ auto run_worker(const W::WorkerCall& call,
 
 namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
-            const stdfs::path& store) -> void {
+            const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&
@@ -311,14 +316,28 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
     const auto source = blob(*file.sha256);
     stdfs::create_directories(path.parent_path());
     uint64_t done = 0;
-    progress(*file.path, 0, *file.size);
-    fs::copy_beneath(blobs, *file.sha256, path, [&](std::string_view chunk) {
-      done += chunk.size();
+    if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
+      done = *size;
       progress(*file.path, done, *file.size);
-    });
+    } else {
+      progress(*file.path, 0, *file.size);
+      fs::copy_beneath(blobs, source.filename(), path,
+                       [&](std::string_view chunk) {
+                         done += chunk.size();
+                         progress(*file.path, done, *file.size);
+                       });
+    }
+    if (done != *file.size)
+      throw std::runtime_error("remote invocation input size does not match");
   }
   const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
+  flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
+                                 frame.size());
+  if (!W::VerifyWorkerMessageBuffer(verifier))
+    throw std::runtime_error("invalid remote invocation call");
   const auto* call = W::GetWorkerMessage(frame.data())->value_as_WorkerCall();
+  if (!call)
+    throw std::runtime_error("remote invocation does not contain a Card call");
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
@@ -347,10 +366,11 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
         WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
-    auto secrets = job->secrets.empty() ? Secrets{}
-                                        : receive_secrets(directory, *job);
+    auto secrets =
+        job->secrets.empty() ? Secrets{} : receive_secrets(directory, *job);
     outcome = run_worker(
-        *call, invocation, input, directory, store, environment, log,
+        *call, *job, invocation, input, directory, store, group, environment,
+        log,
         [&](const DisplayData& data) {
           display = wire::standalone_display(data);
         },

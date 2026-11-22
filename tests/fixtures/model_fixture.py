@@ -455,7 +455,7 @@ def decide_permission(messages, card, start):
     value = res.get("value", {}) if isinstance(res, dict) else {}
     if name == "project_inspect":
         d = next(x for x in value["definitions"] if x["id"] == card)
-        body = dict(json.loads(d["card_json"]), network=True)
+        body = dict(json.loads(d["card_json"]), grants={"network": True})
         return ("tool", "project_save", {"base_rev": str(value["rev"]), "changes": [
             {"value_type": "PutDefinition", "value": {"id": card, "card_json": json.dumps(body), "keep_meta": True}}]})
     if name == "project_save":

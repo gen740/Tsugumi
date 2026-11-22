@@ -97,6 +97,20 @@ table ExecutionResources {
   memory_bytes:uint64 = null (id: 1);
 }
 
+enum IsolationGuarantee:ubyte { unavailable, partial, enforced }
+
+table SandboxCapabilities {
+  filesystem:IsolationGuarantee;
+  pid:IsolationGuarantee;
+  ipc:IsolationGuarantee;
+  identity:IsolationGuarantee;
+  network:IsolationGuarantee;
+  gui:bool;
+  host_paths:bool;
+  requires_filesystem:bool;
+  requires_pid:bool;
+}
+
 /// An execution service registered with this project's host.
 table ExecutionService {
   /// Logical ID used by Card settings, independent of the host's name.
@@ -111,6 +125,7 @@ table ExecutionService {
   /// The daemon's concurrent job capacity across its projects, when known.
   max_jobs:uint32 = null (id: 6);
   grade:uint64 (id: 7);
+  sandbox:SandboxCapabilities (id: 8);
 }
 
 table ProjectSnapshot {

@@ -1,4 +1,4 @@
-"""Workers in the real environment (TSUGUMI_TEST_CONTAINER=1, the shared VM):
+"""Workers in the real environment (TSUGUMI_TEST_SHARED_VM=1, the shared VM):
 a resident worker serves later runs (onRunStart starts each run), a Card
 with File inputs keeps its worker, inputs stay read-only while the call's
 output folder is staged inside the worker, reuseWorker = false gets a fresh
@@ -15,14 +15,14 @@ from harness.observations import decode_scalar, read_output
 from conftest import real_environment
 from projects import card, conn
 from projects import put, run_and_wait, write
-from test_cards_container import NUM, bash, load, log
+from test_cards_shared_vm import NUM, bash, load, log
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
-pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_CONTAINER") != "1",
-                                reason="needs the shared VM (TSUGUMI_TEST_CONTAINER=1)")
+pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
+                                reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
 
 CPP_NIX = """{ pkgs, inputs, params }:
 let
@@ -137,7 +137,7 @@ def test_resident_worker_serves_later_runs(env):
                    "count": {"type": "code", "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("count", "count")], [])
     put(env.project / "definitions" / "count" / "src" / "card.cc", COUNT)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     first, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, first, "count", 2)
@@ -155,14 +155,14 @@ def test_file_inputs_keep_the_worker_and_stay_read_only(env):
     # The bash run writes its File output in the worker staging area.
     # No directory descriptor from outside the sandbox is passed in.
     make = bash('test -d "$TSUGUMI_OUTPUT_DIR" && test ! -e /proc/self/fd/900 && '
-                'echo "line $TSUGUMI_INVOCATION-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
+                'echo "line $RANDOM-$RANDOM" > "$TSUGUMI_OUTPUT_DIR/a.txt" && '
                 'printf \'{"doc":{"value":"%s"}}\' "$TSUGUMI_OUTPUT_DIR/a.txt" > "$TSUGUMI_OUTPUT"', outputs=DOC)
     c = load(env, {"trigger": {"type": "trigger"}, "make": make,
                    "read": {"type": "code", "inputs": [{"name": "doc"}], "reuseWorker": True, "_outputs": NUM, "_nix": CPP_NIX}},
              [card("start", "trigger"), card("make", "make"), card("read", "read")],
              [conn("make", "doc", "read", "doc")])
     put(env.project / "definitions" / "read" / "src" / "card.cc", READ)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     first, st = run_and_wait(c, "start")
     detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
@@ -192,7 +192,7 @@ root_type Outputs;
              [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("fresh", "fresh")],
              [conn("seed", "out", "loop", "init"), conn("loop", "out", "fresh", "x"), conn("fresh", "again", "loop", "again")])
     put(env.project / "definitions" / "fresh" / "src" / "card.cc", FRESH)
-    from test_cards_container import reload
+    from test_cards_shared_vm import reload
     reload(c)
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "fresh", 2)
@@ -253,8 +253,8 @@ def test_network_is_off_unless_the_card_allows_it(env):
 printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_OUTPUT"
 """
     cards = {"trigger": {"type": "trigger"}}
-    for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": False},
-                           "open": {"network": True}, "open_unsandboxed": {"network": True, "sandbox": False}}.items():
+    for name, settings in {"closed": {}, "closed_unsandboxed": {"sandbox": {"filesystem": False}},
+                           "open": {"grants": {"network": True}}, "open_unsandboxed": {"grants": {"network": True}, "sandbox": {"filesystem": False}}}.items():
         cards[name] = bash(body, inputs=["go"], outputs=outputs, recordIO=True,
                            pre=REACH + '; export PRE_REACH="$reachable"', **settings)
     names = [n for n in cards if n != "trigger"]
@@ -270,18 +270,19 @@ printf '{"out":{"before":%s,"body":%s}}' "$PRE_REACH" "$reachable" > "$TSUGUMI_O
 
 
 def test_mac_folders_are_read_only_unless_written(env, tmp_path):
-    """Experimental host folders: a folder of the Mac named by a Card is
-    shared with its project only, at /host/<name> in the worker, read-only
-    unless the Card writes there."""
+    """A Card receives each granted Mac folder through its environment.
+    A grant is read-only by default and allows writes only if requested."""
     shared = tmp_path / "mac-folder"
     shared.mkdir()
     (shared / "hello.txt").write_text("from the Mac")
-    read = bash('cat /host/data/hello.txt; if echo x > /host/data/new.txt 2>/dev/null; then echo wrote; else echo read-only; fi; '
+    read = bash('cat "$TSUGUMI_GRANT_DATA/hello.txt"; '
+                'if echo x > "$TSUGUMI_GRANT_DATA/new.txt" 2>/dev/null; then echo wrote; else echo read-only; fi; '
                 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
-                hostFolders=[{"path": str(shared), "name": "data"}])
-    write_ = bash('echo made > /host/out/made.txt && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
-                  hostFolders=[{"path": str(shared), "name": "out", "write": True}])
-    other = bash('ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
+                grants={"hostPaths": [{"path": str(shared), "name": "data"}]})
+    write_ = bash('echo made > "$TSUGUMI_GRANT_OUT/made.txt" && echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"],
+                  grants={"hostPaths": [{"path": str(shared), "name": "out", "write": True}]})
+    other = bash('test -z "${TSUGUMI_GRANT_DATA-}${TSUGUMI_GRANT_OUT-}" || exit 1; '
+                 'ls /host 2>&1 || true; echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["go"])
     load(env, {"trigger": {"type": "trigger"}, "read": read, "write": write_, "other": other},
          [card("start", "trigger"), card("read", "read"), card("write", "write"),
           card("other", "other")], [conn("start", "out", n, "go") for n in ("read", "write", "other")])
@@ -290,6 +291,7 @@ def test_mac_folders_are_read_only_unless_written(env, tmp_path):
     env.start()
     c = env.client()
     run_id, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded
     out = number(c, run_id, "read")
     assert "from the Mac" in out and "read-only" in out, out
     number(c, run_id, "write")

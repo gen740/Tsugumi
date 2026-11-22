@@ -43,15 +43,14 @@ session.executionServices = [
 ]
 session.updateCard(card, (def) => {
   def.set('executionService', 'worker')
-  def.set('executionResources', parse('{"cpuMillis":1000,"memoryBytes":1073741824}'))
-  def.set('sandbox', false)
+  def.set('sandbox', parse('{"filesystem":false,"limits":{"cpu":1,"memoryMiB":1024}}'))
 })
 await session.save()
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(remote, /<option value="worker" selected="">worker/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
-assert.match(remote, /<input(?=[^>]*name="cpuMillis")(?=[^>]*value="1000")[^>]*>/)
-assert.match(remote, /<input(?=[^>]*name="memoryBytes")(?=[^>]*value="1073741824")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="cpu")(?=[^>]*value="1")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="1024")[^>]*>/)
 
 session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')
 const missingService = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)

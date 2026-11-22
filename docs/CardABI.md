@@ -47,7 +47,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 **Today.**
 
 - File and Directory outputs are written beneath `run.output_directory` (`$TSUGUMI_OUTPUT_DIR` in Bash), and the Card returns their paths ([Building results](CardGuide.md#building-results)).
-- The core copies them from the worker's output staging folder after a successful call ([Security §4](security.md#sandbox-true-the-default)).
+- The core copies them from the worker's output staging folder after a successful call ([Security §4](security.md#4-card-worker--tsugumid)).
 
 ## Collecting the result
 

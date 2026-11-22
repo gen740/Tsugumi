@@ -1,6 +1,7 @@
 #include "tsugumi/document/graph.hh"
 
 #include <algorithm>
+#include <cmath>
 #include <deque>
 #include <limits>
 #include <map>
@@ -31,10 +32,10 @@ auto Resolution::endpoint(const CardPath& card, const std::string& port,
 
 namespace {
 constexpr std::pair<CardType, const char*> kCardTypes[] = {
-    {CardType::Code, "code"},       {CardType::Draft, "draft"},
-    {CardType::Trigger, "trigger"}, {CardType::Input, "input"},
-    {CardType::Branch, "branch"},   {CardType::Fork, "fork"},
-    {CardType::Merge, "merge"},     {CardType::Collect, "collect"},
+    {CardType::Code, "code"},         {CardType::Draft, "draft"},
+    {CardType::Trigger, "trigger"},   {CardType::Input, "input"},
+    {CardType::Branch, "branch"},     {CardType::Fork, "fork"},
+    {CardType::Merge, "merge"},       {CardType::Collect, "collect"},
     {CardType::Subgraph, "subgraph"},
 };
 }  // namespace
@@ -368,9 +369,43 @@ class Builder {
             s.build_timeout_seconds);
     boolean(d.record_io, s.record_io);
     boolean(d.retain_artifact, s.retain_artifact);
-    boolean(d.sandbox, s.sandbox);
+    if (const auto* sandbox = schema::get(d.sandbox)) {
+      boolean(sandbox->filesystem, s.sandbox.filesystem);
+      boolean(sandbox->pid, s.sandbox.pid);
+      boolean(sandbox->ipc, s.sandbox.ipc);
+      boolean(sandbox->identity, s.sandbox.identity);
+      if (const auto* limits = schema::get(sandbox->limits)) {
+        if (const auto* v = schema::get(limits->cpu);
+            v && !schema::is_null(*v)) {
+          schema::Number cpu;
+          if (schema::decode(*v, cpu) || !std::isfinite(*cpu) || *cpu <= 0 ||
+              *cpu > 256)
+            n.diags.push_back(
+                diag(n.path, "invalid_setting",
+                     "sandbox.limits.cpu must be in (0, 256] or null"));
+          else
+            s.sandbox.limits.cpu_millis =
+                static_cast<uint32_t>(std::ceil(*cpu * 1000));
+        }
+        if (const auto* v = schema::get(limits->memory_mib);
+            v && !schema::is_null(*v)) {
+          schema::v::Uint64 mib;
+          if (schema::decode(*v, mib) || *mib == 0 ||
+              *mib > (uint64_t{1} << 20))
+            n.diags.push_back(diag(n.path, "invalid_setting",
+                                   "sandbox.limits.memoryMiB must be a "
+                                   "positive integer up to 1048576 or null"));
+          else
+            s.sandbox.limits.memory_bytes = *mib << 20;
+        }
+      }
+    }
     boolean(d.reuse_worker, s.reuse_worker);
-    boolean(d.network, s.network);
+    const auto* grants = schema::get(d.grants);
+    if (grants) {
+      boolean(grants->network, s.grants.network);
+      boolean(grants->gui, s.grants.gui);
+    }
     if (const auto* v = schema::get(d.execution_service)) {
       if (n.kind != CardType::Code)
         n.diags.push_back(
@@ -398,12 +433,6 @@ class Builder {
     }
     const bool remote = s.execution_service != kLocalExecutionService &&
                         s.execution_service != "auto";
-    const auto* host_folders = schema::get(d.host_folders);
-    if (remote && (!s.sandbox || s.reuse_worker ||
-                   (host_folders && !host_folders->empty())))
-      n.diags.push_back(diag(n.path, "invalid_setting",
-                             "external execution requires sandbox, no worker "
-                             "reuse or host folders"));
     if (const auto* secrets = schema::get(d.secrets)) {
       std::set<std::string> names;
       for (const auto& name : *secrets) {
@@ -421,26 +450,6 @@ class Builder {
         }
         s.secrets.push_back(name);
       }
-      if (!s.secrets.empty() && s.reuse_worker)
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "a Card with secrets cannot reuse its worker "
-                               "(reuseWorker)"));
-    }
-    if (const auto* resources = schema::get(d.execution_resources)) {
-      const auto* cpu = schema::get(resources->cpu_millis);
-      const auto* memory = schema::get(resources->memory_bytes);
-      if (s.execution_service == kLocalExecutionService)
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "executionResources requires an external execution service"));
-      else if (!cpu || *cpu == 0 || *cpu > 256'000 || !memory || *memory == 0 ||
-               *memory > (uint64_t{1} << 40))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "executionResources requires 1–256000 cpuMillis "
-                               "and up to 1 TiB of memoryBytes"));
-      else
-        s.execution_resources =
-            ExecutionResources{static_cast<uint32_t>(*cpu), *memory};
     }
     if (const auto* v = schema::get(d.system)) {
       if (!remote && *v == native_system())
@@ -453,27 +462,35 @@ class Builder {
             "system must be the native system, x86_64-linux or aarch64-linux"));
     }
     if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
-    if (const auto* folders = schema::get(d.host_folders)) {
+    const auto* folders = grants ? schema::get(grants->host_paths) : nullptr;
+    if (folders) {
       std::set<std::string> names;
       for (const auto& f : *folders) {
         const auto* path = schema::get(f.path);
         const auto* name = schema::get(f.name);
         if (!path || path->empty() || path->front() != '/' || !name ||
             !valid_id(*name)) {
-          n.diags.push_back(
-              diag(n.path, "invalid_setting",
-                   "hostFolders entries need an absolute path and a name"));
+          n.diags.push_back(diag(
+              n.path, "invalid_setting",
+              "grants.hostPaths entries need an absolute path and a name"));
           continue;
         }
-        if (!names.insert(*name).second) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "duplicate host folder name " + *name));
+        if (!names.insert(grant_environment(*name)).second) {
+          n.diags.push_back(
+              diag(n.path, "invalid_setting",
+                   "duplicate host path grant variable for " + *name));
           continue;
         }
         const auto* w = schema::get(f.write);
-        s.host_folders.push_back({*path, *name, w && *w});
+        s.grants.host_paths.push_back({*path, *name, w && *w});
       }
     }
+    if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
+                   s.grants.gui || !s.grants.host_paths.empty()))
+      n.diags.push_back(
+          diag(n.path, "invalid_setting",
+               "external execution requires filesystem and PID isolation "
+               "and does not support reuseWorker, GUI or host path grants"));
     read_params(n, def);
   }
 
@@ -628,10 +645,11 @@ class Builder {
     std::vector<NixSourceRef> sources;
     if (project.nix_sources->has_value())
       for (const auto& s : project.nix_sources->value()) {
-        sources.push_back({s.name->value(), s.type->value(), s.ref->value(),
-                           schema::get(s.overrides)
-                               ? schema::canonical_text(*schema::get(s.overrides))
-                               : "{}"});
+        sources.push_back(
+            {s.name->value(), s.type->value(), s.ref->value(),
+             schema::get(s.overrides)
+                 ? schema::canonical_text(*schema::get(s.overrides))
+                 : "{}"});
       }
     for (const auto& card : project.canvas->value().cards->value()) {
       Node n;
@@ -900,8 +918,8 @@ class Builder {
           !wires.emplace(src->first, src->second, dst->first, dst->second)
                .second) {
         dn.diags.push_back(diag(dn.path, "duplicate_wire",
-                               wire + ": " + src->second + " -> " +
-                                   dst->second + " repeats a connection"));
+                                wire + ": " + src->second + " -> " +
+                                    dst->second + " repeats a connection"));
         continue;
       }
       res_->edges.push_back({src->first, src->second, dst->first, dst->second});

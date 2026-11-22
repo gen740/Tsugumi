@@ -5,7 +5,9 @@
       "name": "start"
     }
   ],
-  "network": true,
+  "grants": {
+    "network": true
+  },
   "params": [
     {
       "name": "urls",

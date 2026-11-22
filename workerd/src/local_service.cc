@@ -10,7 +10,7 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
   WorkerPool pool(scratch);
   struct Held {
     std::string card;
-    std::string key;
+    uint64_t generation;
     std::unique_ptr<WorkerProc> worker;
   };
   std::map<uint64_t, Held> held;
@@ -26,17 +26,34 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
         case L::Action::Acquire: {
           if (!request.spawn)
             throw std::runtime_error("missing worker spawn specification");
-          const auto& source = *request.spawn;
+          auto& source = *request.spawn;
           WorkerSpawn spawn;
           spawn.worker_binary = source.worker_binary;
           spawn.bash = source.bash;
+          spawn.path = source.path;
+          spawn.closure = source.closure;
+          spawn.shared_vm = source.shared_vm;
+          if (!source.secrets.empty()) {
+            spawn.secrets = std::make_shared<WorkerSecrets>();
+            spawn.secrets->values.reserve(source.secrets.size());
+            for (auto& entry : source.secrets)
+              spawn.secrets->values.emplace_back(std::move(entry->name),
+                                                 entry->value);
+            clear_spawn_secrets(*packet.message);
+          }
           spawn.store_path = source.store_path;
           if (!source.package.empty()) spawn.program.package = source.package;
           if (source.has_script) spawn.program.bash = source.script;
           spawn.program.pre_run = source.pre_run;
           spawn.program.post_run = source.post_run;
           spawn.program.views = source.views;
-          spawn.sandbox = source.sandbox;
+          spawn.sandbox = {
+              source.filesystem,
+              source.pid,
+              source.ipc,
+              source.identity,
+              {static_cast<uint32_t>(source.cpu_millis), source.memory_bytes}};
+          spawn.gui = source.gui;
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
           spawn.hidden_paths = source.hidden_paths;
@@ -44,23 +61,34 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           if (source.uid) spawn.uid = *source.uid;
           if (source.gid) spawn.gid = *source.gid;
           for (const auto& bind : source.binds)
-            spawn.binds.push_back({bind->source, bind->target, bind->write});
+            spawn.binds.push_back(
+                {bind->source, bind->target, bind->write, bind->name});
           auto lease =
               pool.acquire(request.card, request.key, spawn, request.reuse);
           reply.lease = ++sequence;
           reply.reused = lease.reused;
+          reply.read_only_inputs = lease.worker->read_only_inputs();
           reply.replaced = lease.replaced;
           reply.scratch = std::filesystem::path(lease.worker->work_dir())
                               .parent_path()
                               .string();
           reply.call_id = lease.worker->call_id();
-          descriptors = lease.worker->hand_over();
-          held.emplace(reply.lease, Held{request.card, request.key,
-                                         std::move(lease.worker)});
+          try {
+            descriptors = lease.worker->hand_over();
+            held.emplace(reply.lease, Held{request.card, lease.generation,
+                                           std::move(lease.worker)});
+          } catch (...) {
+            pool.release(request.card, lease.generation,
+                         std::move(lease.worker), false);
+            throw;
+          }
           break;
         }
+        case L::Action::Invalidate:
+          pool.invalidate(request.card, request.reason);
+          break;
         case L::Action::Clear:
-          pool.clear(false);
+          pool.clear();
           break;
         case L::Action::Release:
         case L::Action::ClearScratch:
@@ -76,8 +104,8 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           else {
             worker->set_call_id(request.call_id);
             if (request.keep) worker->resume_logs();
-            pool.release(it->second.card, it->second.key, std::move(worker),
-                         request.keep, request.reason);
+            pool.release(it->second.card, it->second.generation,
+                         std::move(worker), request.keep, request.reason);
             held.erase(it);
           }
           break;
