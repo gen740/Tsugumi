@@ -183,25 +183,18 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
 
 def test_singleton_run_list_and_vector_value_have_different_execution_shapes(core_factory, project, tmp_path):
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
-    from harness.native_card import native_card
+    from harness.native_card import STATIC_RESULT_ENTRY, native_card
     from harness.values import encode_message
     from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
-    entry = """
-int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
-  if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
-  *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-  return 0;
-}
-"""
-    vector_run = native_card(tmp_path / "vector", entry, [
+    vector_run = native_card(tmp_path / "vector", STATIC_RESULT_ENTRY, [
         ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", vector,
                                                     {"items": [1, 2, 3]}, root_type="Vector")),
     ])
-    work_run = native_card(tmp_path / "work", entry, [
+    work_run = native_card(tmp_path / "work", STATIC_RESULT_ENTRY, [
         ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", NUMBER,
                                                     {"value": 42}, root_type="Number")),
     ])
