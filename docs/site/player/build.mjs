@@ -85,10 +85,10 @@ function readCard(root, id, ports, wires) {
   const resolved = kind === 'draft' ? undefined : ports?.[id]
   if (kind !== 'draft' && !resolved) throw new Error(`no resolved ports for ${id}: run harvest.py --ports`)
   const inputs = resolved
-    ? resolved.inputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('inputs', p.name) }))
+    ? resolved.inputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, note: note('inputs', p.name) }))
     : []
   const outputs = resolved
-    ? resolved.outputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, optional: p.optional || undefined, note: note('outputs', p.name) }))
+    ? resolved.outputs.map((p) => ({ name: p.name, typeName: p.rootType || undefined, note: note('outputs', p.name) }))
     : []
   const summary = kind === 'draft' ? meta.content || description : description
   const details = [description, kind === 'draft' ? meta.content : undefined].filter(Boolean)

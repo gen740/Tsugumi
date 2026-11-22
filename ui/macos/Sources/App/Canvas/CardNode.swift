@@ -44,20 +44,20 @@ extension ProjectSession {
     if draft || definitionKind(def) == .invalid { return ([], []) }
     if kind(k) == .collect {
       let r = resolution[k]
-      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.rootType, note: note("inputs", "in"))],
-              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.rootType, note: note("outputs", "out"))])
+      return ([PortData(name: "in", typeName: r?.inputs.first { $0.name == "in" }?.typeName, note: note("inputs", "in"))],
+              [PortData(name: "out", typeName: r?.outputs.first { $0.name == "out" }?.typeName, note: note("outputs", "out"))])
     }
     if definition == nil, !draft, let r = resolution[k] {
-      return (r.inputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("inputs", $0.name)) },
-              r.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) })
+      return (r.inputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("inputs", $0.name)) },
+              r.outputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("outputs", $0.name)) })
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     let ins = (def?["inputs"]?.array ?? []).compactMap { i -> PortData? in
       guard let n = i["name"]?.string else { return nil }
-      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.rootType,
-                      optional: i["optional"]?.bool ?? false, note: note("inputs", n))
+      return PortData(name: n, typeName: resolution[k]?.inputs.first { $0.name == n }?.typeName,
+                      note: note("inputs", n))
     }
-    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.rootType, optional: $0.optional, note: note("outputs", $0.name)) } ?? []
+    let outs = resolution[k]?.outputs.map { PortData(name: $0.name, typeName: $0.typeName, note: note("outputs", $0.name)) } ?? []
     return (ins, outs)
   }
 
@@ -103,7 +103,7 @@ extension ProjectSession {
   }
 
   /// Whether a Card does not run because it needs a Draft's output: a
-  /// required input fed only by Drafts or Cards waiting on one (the core
+  /// connected input fed by a Draft or a Card waiting on one (the core
   /// leaves the same Cards out of a run).
   func waitsOnDraft(_ k: CardKey) -> Bool {
     let scope = Array(path(k).dropLast())
@@ -121,14 +121,14 @@ extension ProjectSession {
       changed = false
       for id in ids where !waits.contains(id) {
         let k = key(scope + [id])
-        for p in resolution[k]?.inputs ?? [] where !p.optional {
-          let from = conns.filter { $0["to"]?["card"]?.string == id && $0["to"]?["port"]?.string == p.name }
-            .compactMap { $0["from"]?["card"]?.string }
-          if !from.isEmpty && from.allSatisfy(waits.contains) {
-            waits.insert(id)
-            changed = true
-            break
-          }
+        let sources = conns.filter { $0["to"]?["card"]?.string == id }
+          .compactMap { $0["from"]?["card"]?.string }
+        let blocked = kind(k) == .merge
+          ? !sources.isEmpty && sources.allSatisfy(waits.contains)
+          : sources.contains(where: waits.contains)
+        if blocked {
+          waits.insert(id)
+          changed = true
         }
       }
     }

@@ -15,7 +15,7 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, ProjectSession,
+  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
@@ -582,7 +582,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           const d = pathToScreen(nixCurve(scene.cardRect(ref.source), scene.cardRect(ref.target)), cam)
           const active = activeNix.includes(ref)
           return <g key={ref.id}>
-            <path d={d} fill="none" stroke={ref.valid ? 'var(--purple)' : 'var(--orange)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
+            <path d={d} fill="none" stroke={'var(--purple)'} strokeWidth={active ? 3 : 1.5} strokeDasharray="7 4"
               opacity={tab.hoveredNixCard && !active ? 0.2 : 0.9} markerEnd={`url(#nix-arrow-${tab.id})`} />
             <path d={d} fill="none" stroke="transparent" strokeWidth={14} style={{ pointerEvents: 'stroke', cursor: 'pointer' }}
               role="button" tabIndex={0} aria-label={`${ref.source} → ${ref.target}: ${ref.expression}`}
@@ -977,8 +977,7 @@ function hoverContent(session: ProjectSession, scope: string[], t: HoverTarget):
   const out = session.resolution.get(fk)?.outputs.find((p) => p.name === fp)
   const inp = session.resolution.get(tk)?.inputs.find((p) => p.name === tp)
   const lines = [`${session.displayName(fk)}.${fp}  →  ${session.displayName(tk)}.${tp}`]
-  lines.push(L('型: ') + (out?.rootType ?? inp?.rootType ?? L('未解決')))
-  if (session.kind(tk) !== 'draft') lines.push(inp?.optional ? L('受け側の入力: 省略可') : L('受け側の入力: 必須'))
+  lines.push(L('型: ') + (portTypeName(out) ?? portTypeName(inp) ?? L('未解決')))
   let status = L('この Run ではまだ値が通っていません')
   const st = session.cardStates.get(fk)
   const id = session.currentRunId

@@ -151,7 +151,7 @@ auto accept_outputs(std::vector<RawOutput> raw,
     outputs.push_back(std::move(value));
   }
   for (const auto& port : ports)
-    if (!port.optional && !seen.contains(port.name))
+    if (port.required && !seen.contains(port.name))
       throw Failed(FailureKind::output_invalid,
                    "required output " + port.name + " is missing",
                    {{"port", port.name}});

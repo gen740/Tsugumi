@@ -368,7 +368,7 @@ std::map<std::string, std::string> NixRunner::generate(const Node& node) {
                "{\"name\":" + json_quote(p.name) +
                ",\"type\":" + json_quote(root) + ",\"kind\":\"" +
                kind_name(p.kind) +
-               "\",\"required\":" + (p.optional ? "false" : "true") +
+               "\",\"required\":" + (p.required ? "true" : "false") +
                ",\"unions\":" + unions + "]}";
         first = false;
       }

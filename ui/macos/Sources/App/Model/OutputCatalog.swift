@@ -3,7 +3,7 @@ import Foundation
 /// Output ports read from an `_outputs.fbs` text that is being edited, for
 /// the Card preview. The core remains the authority (it resolves the types
 /// on apply); this only reads the port catalog's shape: the root table's
-/// fields, their message types and `required`.
+/// fields and their types.
 enum OutputCatalog {
   enum Result: Equatable {
     case ports([PortData])
@@ -56,8 +56,8 @@ enum OutputCatalog {
       let type = typeAndAttrs.split(separator: "(").first.map { $0.trimmingCharacters(in: .whitespaces) } ?? typeAndAttrs
       guard !type.isEmpty else { return .error(String(localized: "型がありません: \(parts[0])")) }
       let attrs = typeAndAttrs.contains("(") ? String(typeAndAttrs.drop { $0 != "(" }) : ""
-      let required = attrs.range(of: #"\brequired\b"#, options: .regularExpression) != nil
-      ports.append(PortData(name: parts[0], typeName: type, optional: !required))
+      let path = type == "string" && attrs.range(of: #"\btsugumi\s*:\s*"path""#, options: .regularExpression) != nil
+      ports.append(PortData(name: parts[0], typeName: path ? "Path" : type))
     }
     return .ports(ports)
   }

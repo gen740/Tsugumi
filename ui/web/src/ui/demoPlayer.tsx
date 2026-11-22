@@ -360,7 +360,6 @@ function Ports({ title, ports }: { title: string; ports: PortData[] }) {
           <li key={p.name}>
             <span className="mono">{p.name}</span>
             {p.typeName && <span className="mono secondary"> : {p.typeName}</span>}
-            {p.optional && <span className="secondary">{L('（省略可）')}</span>}
             {p.note && <div className="secondary caption">{p.note}</div>}
           </li>
         ))}

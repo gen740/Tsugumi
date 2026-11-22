@@ -59,7 +59,6 @@ Off<D::Port> port(FBB& b, const types::PortType& p) {
   D::PortBuilder pb(b);
   pb.add_name(name);
   pb.add_kind(p.kind);
-  pb.add_optional(p.optional);
   pb.add_execution_shape(p.execution_shape);
   if (p.type) {
     pb.add_schema_bfbs(bfbs);

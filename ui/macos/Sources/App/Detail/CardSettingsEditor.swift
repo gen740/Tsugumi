@@ -657,13 +657,6 @@ private struct GeneralCategory: View {
       }
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
         Section("実行") {
-          if model.kind == .code {
-            Picker("trigger", selection: string("trigger", fallback: "allInputs")) {
-              Text("すべての入力が揃ったとき").tag("allInputs")
-              Text("入力が届くたび").tag("eachInput")
-            }
-            .help("allInputs: 必須の入力がすべて届いたら 1 回動きます。eachInput: 値が 1 つ届くたびに動きます。")
-          }
           numberField("maxRuns", label: "最大発火回数", fallback: "1")
             .help("実行リスト内の呼び出しはまとめて 1 回の発火として数えます。")
           timeoutField("timeoutSeconds", label: "実行の期限（秒）")
@@ -1084,13 +1077,13 @@ private struct PortsCategory: View {
               TextField("用途", text: note("inputs", name), prompt: Text("用途（何を受け取るか）"))
                 .textFieldStyle(.roundedBorder).labelsHidden()
                 .help("このポートの用途（_meta.json の説明）。Agent とほかの人への説明です。")
-              Text(r?.inputs.first { $0.name == name }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
+              Text(r?.inputs.first { $0.name == name }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
               Button { editInputs { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             }
           }
           Button("入力を追加") { editInputs { $0.append(.object([("name", .string("in\($0.count + 1)"))])) } }
         } else {
-          ForEach(r?.inputs ?? [], id: \.name) { p in LabeledContent(p.name, value: p.rootType ?? String(localized: "未解決")) }
+          ForEach(r?.inputs ?? [], id: \.name) { p in LabeledContent(p.name, value: p.typeName ?? String(localized: "未解決")) }
           if (r?.inputs ?? []).isEmpty { Text("入力はありません").foregroundStyle(.secondary) }
         }
       } header: { Text("入力ポート") } footer: {
@@ -1183,7 +1176,7 @@ private struct ForkOutputsSection: View {
             .help("出力ポートの名前")
           TextField("用途", text: portNote(model, "outputs", names[i]), prompt: Text("用途（何を出すか）"))
             .textFieldStyle(.roundedBorder).labelsHidden()
-          Text(r?.outputs.first { $0.name == names[i] }?.rootType ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
+          Text(r?.outputs.first { $0.name == names[i] }?.typeName ?? String(localized: "未解決")).font(.caption).foregroundStyle(.secondary)
           Button { edit { $0.remove(at: i) } } label: { Image(systemName: "minus.circle") }.buttonStyle(.borderless)
             .disabled(names.count <= 1)
             .help("出力を削除")
@@ -1227,8 +1220,7 @@ private struct OutputPortsSection: View {
             .textFieldStyle(.roundedBorder).labelsHidden()
           let selection = p.kind == .path ? "string" : p.rootType ?? ""
           if model.outputsPath == nil {
-            Text((p.kind == .path ? "Path" : p.rootType ?? String(localized: "未解決")) +
-                 (p.optional ? String(localized: "（省略可）") : ""))
+            Text(p.typeName ?? String(localized: "未解決"))
               .font(.caption).foregroundStyle(.secondary)
           } else {
             Picker("型", selection: Binding(get: { selection }, set: {

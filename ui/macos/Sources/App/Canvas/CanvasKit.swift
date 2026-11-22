@@ -173,7 +173,6 @@ struct StageProgress: Equatable {
 struct PortData: Hashable {
   var name: String
   var typeName: String?
-  var optional = false
   var note: String?
 }
 
@@ -1382,7 +1381,6 @@ struct CardNodeView: View {
     }
     if data.kind == .fork && output { s += String(localized: "（value をそのまま送る）") }
     if let t = p.typeName { s += " : \(t)" }
-    s += p.optional ? String(localized: "（省略可）") : String(localized: "（必須）")
     if let n = p.note, !n.isEmpty { s += "\n" + n }
     return s
   }

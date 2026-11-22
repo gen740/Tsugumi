@@ -36,12 +36,11 @@ table Definition {
   meta_json:string (id: 2);
 }
 
-/// A static Card reference in default.nix. Target paths are absolute in the
-/// project, including references that fail validation. No Nix evaluation.
+/// An authorized Nix input derived from the project wiring. The target path
+/// is absolute in the project.
 table CardNixReference {
   target:Tsugumi.Data.CardPath (id: 0, required);
   name:string (id: 1, required);
-  valid:bool (id: 2);
 }
 
 table ResolvedCard {

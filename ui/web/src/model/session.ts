@@ -51,9 +51,14 @@ const diag = (d: D.DiagnosticT): Diagnostic => ({
 export interface PortInfo {
   name: string
   kind: D.PortKind
-  optional: boolean
   rootType?: string
+  mergeMemberTypes?: string[]
   executionShape?: D.ExecutionShape
+}
+
+export function portTypeName(port?: PortInfo): string | undefined {
+  if (port?.mergeMemberTypes?.length) return port.mergeMemberTypes.join(' | ')
+  return port?.kind === D.PortKind.Path ? 'Path' : port?.rootType
 }
 
 export interface ResolvedCard {
@@ -61,7 +66,7 @@ export interface ResolvedCard {
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
-  nixReferences: { target: string[]; name: string; valid: boolean }[]
+  nixReferences: { target: string[]; name: string }[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -801,13 +806,14 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), kind: x.kind, optional: !!x.optional, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), kind: x.kind, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name), valid: r.valid })) })
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })) })
       all.push(...d)
     }
     for (const [card, views] of this.liveViews) {
@@ -2181,24 +2187,24 @@ export class ProjectSession extends Observable {
     const note = (list: string, name: string) => str(get((arr(get(m, list)) ?? []).find((x) => str(get(x, 'name')) === name), 'description'))
     const r = this.resolution.get(k)
     if (definitionKind(def) === 'collect') return {
-      inputs: [{ name: 'in', typeName: r?.inputs.find((p) => p.name === 'in')?.rootType, note: note('inputs', 'in') }],
-      outputs: [{ name: 'out', typeName: r?.outputs.find((p) => p.name === 'out')?.rootType, note: note('outputs', 'out') }],
+      inputs: [{ name: 'in', typeName: portTypeName(r?.inputs.find((p) => p.name === 'in')), note: note('inputs', 'in') }],
+      outputs: [{ name: 'out', typeName: portTypeName(r?.outputs.find((p) => p.name === 'out')), note: note('outputs', 'out') }],
     }
     const kind = definitionKind(def)
     const draft = kind === 'draft'
     if (draft || kind === 'invalid') return { inputs: [], outputs: [] }
     if (definition === undefined && r && !draft) {
       return {
-        inputs: r.inputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('inputs', p.name) })),
-        outputs: r.outputs.map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) })),
+        inputs: r.inputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('inputs', p.name) })),
+        outputs: r.outputs.map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) })),
       }
     }
     // Not resolved yet (unsaved) or a working copy: declared ports.
     const ins = (arr(get(def, 'inputs')) ?? []).flatMap((i) => {
       const n = str(get(i, 'name'))
-      return n ? [{ name: n, typeName: r?.inputs.find((p) => p.name === n)?.rootType, optional: bool(get(i, 'optional')) ?? false, note: note('inputs', n) }] : []
+      return n ? [{ name: n, typeName: portTypeName(r?.inputs.find((p) => p.name === n)), note: note('inputs', n) }] : []
     })
-    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: p.rootType, optional: p.optional, note: note('outputs', p.name) }))
+    const outs: PortData[] = (r?.outputs ?? []).map((p) => ({ name: p.name, typeName: portTypeName(p), note: note('outputs', p.name) }))
     return { inputs: ins, outputs: outs }
   }
 
@@ -2242,14 +2248,14 @@ export class ProjectSession extends Observable {
       changed = false
       for (const id of ids) {
         if (waits.has(id)) continue
-        for (const p of this.resolution.get(key([...scope, id]))?.inputs ?? []) {
-          if (p.optional) continue
-          const from = conns.filter((c) => str(get(c, 'to', 'card')) === id && str(get(c, 'to', 'port')) === p.name).map((c) => str(get(c, 'from', 'card')) ?? '')
-          if (from.length && from.every((f) => waits.has(f))) {
-            waits.add(id)
-            changed = true
-            break
-          }
+        const sources = conns.filter((c) => str(get(c, 'to', 'card')) === id)
+          .map((c) => str(get(c, 'from', 'card')) ?? '')
+        const blocked = this.kind(key([...scope, id])) === 'merge'
+          ? sources.length > 0 && sources.every((f) => waits.has(f))
+          : sources.some((f) => waits.has(f))
+        if (blocked) {
+          waits.add(id)
+          changed = true
         }
       }
     }

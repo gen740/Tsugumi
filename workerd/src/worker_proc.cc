@@ -1061,7 +1061,7 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   std::vector<flatbuffers::Offset<W::WorkerPort>> outs;
   for (const auto& p : outputs)
     outs.push_back(
-        W::CreateWorkerPort(b, b.CreateString(p.name), p.kind, !p.optional));
+        W::CreateWorkerPort(b, b.CreateString(p.name), p.kind, p.required));
   auto outsv = b.CreateVector(outs);
   W::WorkerCallBuilder cb(b);
   cb.add_inputs(insv);

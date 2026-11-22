@@ -38,7 +38,7 @@ As in the [README's example](../README.md#what-we-want-to-ask-of-ai-should-be-si
 
 - A **Draft** is a Card with only a name and "what it does", not yet implemented. Press `E` to place one and write it; wire it directly to other Cards without declaring ports.
 - The diagram of Drafts is the specification: press "Generate Cards" at the top right to have the Agent implement it.
-- After implementation, output types decide the input types downstream, and a mismatched wire shows up as a diagnostic before anything runs.
+- After implementation, each connected input inherits its upstream output type, and a second wire to an input shows a diagnostic pointing to the Merge Card.
 - Connect an output to each input that needs its value. Each wire shows where the value goes.
 
 Intentions are written in words and relationships as wires, so people and AI point at the same place as they design, implement and check.
@@ -64,7 +64,7 @@ Analysis software can require complex environments. Tsugumi uses Nix to pin each
 
 - Each Card's environment (its language toolchain and libraries) is built by Nix from that Card's `default.nix`. The definition stays with the project's version, so the same environment can be built on another machine.
 - A heavy computation (a long simulation, say) can be a Nix build with its seed and conditions written in. While the definition and the dependencies do not change, its output is reused from the Nix store, so the later analysis or plotting can be tried any number of times.
-- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (an `eachInput` Card) or state kept by a resident worker (only a Card that sets `reuseWorker: true` has one; by default every invocation starts fresh), the Card has to decide that condition: make the seed a parameter, reset kept state from what arrives on its inputs, and so on.
+- The same environment does not by itself guarantee the same result. If a result depends on random numbers, external data, arrival order (a Merge Card) or state kept by a resident worker (only a Card that sets `reuseWorker: true` has one; by default every invocation starts fresh), the Card has to decide that condition: make the seed a parameter, reset kept state from what arrives on its inputs, and so on.
 
 ## What is recorded, and where
 

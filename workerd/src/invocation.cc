@@ -238,7 +238,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
     outputs.push_back(
-        {port->name()->str(), port->kind(), !port->required(), nullptr});
+        {port->name()->str(), port->kind(), port->required(), nullptr});
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
   spawn.secrets.reset();

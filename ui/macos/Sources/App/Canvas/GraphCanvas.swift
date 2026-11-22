@@ -482,7 +482,7 @@ struct GraphCanvas: View {
       for link in links {
         let a = cardRect(link.source), b = cardRect(link.target)
         let selected = active.contains { $0.reference.id == link.reference.id }
-        let color = (link.reference.valid ? Color.purple : Color.orange)
+        let color = Color.purple
           .opacity(tab.hoveredNixCard != nil && !selected ? 0.2 : 0.9)
         context.stroke(nixCurve(a, b).applying(transform), with: .color(color),
                        style: StrokeStyle(lineWidth: selected ? 3 : 1.5, dash: [7, 4]))
@@ -637,7 +637,7 @@ struct GraphCanvas: View {
       list.enumerated().map { i, e in
         let px = bar.minX + bar.width * CGFloat(i + 1) / CGFloat(list.count + 1)
         let inner = e.1["card"]?.string.flatMap { c in e.1["port"]?.string.map { (key(tab.scope + [c]), $0) } }
-        let t = (output ? resolved?.outputs : resolved?.inputs)?.first { $0.name == e.0 }?.rootType
+        let t = (output ? resolved?.outputs : resolved?.inputs)?.first { $0.name == e.0 }?.typeName
         return BoundaryPort(name: e.0, point: CGPoint(x: px, y: output ? bar.minY : bar.maxY), inner: inner, type: t)
       }
     }
@@ -1081,8 +1081,7 @@ struct GraphCanvas: View {
       let inp = session.resolution[tk]?.inputs.first { $0.name == tp }
       var lines = ["\(session.displayName(fk)).\(fp)  →  \(session.displayName(tk)).\(tp)"]
       if debug.showKeys { lines.append("connection #\(i): \(fk).\(fp) → \(tk).\(tp)") }
-      lines.append(String(localized: "型: ") + (out?.rootType ?? inp?.rootType ?? String(localized: "未解決")))
-      lines.append((inp?.optional ?? false) ? String(localized: "受け側の入力: 省略可") : String(localized: "受け側の入力: 必須"))
+      lines.append(String(localized: "型: ") + (out?.typeName ?? inp?.typeName ?? String(localized: "未解決")))
       var status = String(localized: "この Run ではまだ値が通っていません")
       let batch = session.executionWire(fk, fp)
       if batch.executionList {

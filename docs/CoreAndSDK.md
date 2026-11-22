@@ -52,6 +52,14 @@ What a language SDK might otherwise have described lives elsewhere:
 - The guide is ordinary documentation of the language SDK, in tsugumi-kit.
 - The generated entry (for example `card.hh`) is the description of the types.
 
+### Port schemas
+
+The generated `_inputs.fbs` and `_outputs.fbs` contain one root catalog per side. Fields follow port declaration order, with consecutive field IDs. Each FlatBuffer port includes the schema declarations its root table needs. A Path port is a `string (tsugumi: "path")`.
+
+The input catalog includes connected inputs and inherits their types from the upstream outputs. Its fields are nullable. The Card expresses input requirements in its SDK's language, and the SDK reports `input_missing` with the port name when a required value is absent. The output catalog carries the declared outputs and their `required` attributes.
+
+When a Merge produces a union, each distinct FlatBuffer type has one member. Its box holds the original bytes in a `[ubyte]` field with `nested_flatbuffer` naming that type. The SDK decodes those bytes and exposes the member as its original type. The member names sent to the Canvas through RPC are presentation data.
+
 ## Templates
 
 - Templates are independent of the language SDKs, and of the core and the UI.

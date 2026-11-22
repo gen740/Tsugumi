@@ -82,7 +82,6 @@ export function mergeStageStatus(parts: StageStatus[], ended: boolean): StageSta
 export interface PortData {
   name: string
   typeName?: string
-  optional?: boolean
   note?: string
 }
 

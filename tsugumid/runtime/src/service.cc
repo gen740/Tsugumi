@@ -2627,7 +2627,7 @@ void Service::input_types(RequestIn& req) {
                : flatbuffers::Offset<D::CardPath>(),
         source ? b.CreateString(port)
                : flatbuffers::Offset<flatbuffers::String>(),
-        type ? wire::port(b, *type) : flatbuffers::Offset<D::Port>()));
+        type ? wire::resolved_port(b, *type) : flatbuffers::Offset<D::Port>()));
   };
   try {
     const std::optional<std::string> output =

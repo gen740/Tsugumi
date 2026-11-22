@@ -38,6 +38,7 @@ sys.path.insert(0, str(ROOT / "tests" / "python"))
 from conftest import Daemon  # noqa: E402
 from projects import start_run, wait_run  # noqa: E402
 from tsugumi_client import RpcFailure, path, text  # noqa: E402
+from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.CardState import CardState  # noqa: E402
 from Tsugumi.Data.Phase import Phase  # noqa: E402
 from Tsugumi.Data.RunState import RunState  # noqa: E402
@@ -175,7 +176,11 @@ def resolved_ports() -> dict:
             try:
                 c = daemon.client()
                 c.hello()
-                port = lambda p: {"name": text(p.name), "rootType": text(p.rootType) if p.rootType else "", "optional": bool(p.optional)}  # noqa: E731
+
+                def port(p):
+                    members = [text(name) for name in p.mergeMemberTypes or []]
+                    type_name = "Path" if p.kind == PortKind.Path else " | ".join(members) or text(p.rootType or b"")
+                    return {"name": text(p.name), "rootType": type_name}
                 out[demo] = {"/".join(text(s) for s in r.card.segments): {"inputs": [port(p) for p in r.inputs], "outputs": [port(p) for p in r.outputs]}
                              for r in c.call("ProjectInspectRequest").resolution}
             finally:

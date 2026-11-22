@@ -242,15 +242,6 @@ def test_nix_connected_exports(env):
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
-    # An unknown destination port is reported before any build.
-    bad = a.copy()
-    bad["_nix"] = '''{ pkgs, inputs, params }:
-{ run = "${inputs.b.greet "a"}"; }
-'''
-    c = load(env, {**defs, "a": bad}, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
-    snap = c.call("ProjectInspectRequest")
-    codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
-    assert "nix_reference_unknown" in codes
 
 
 def test_stages_and_cache(env):

@@ -15,10 +15,10 @@ const { WorkflowTab } = await import('../src/model/workspace')
 const { activeNixLinks, nixLinks, nixReferences } = await import('../src/model/nixReferences')
 const { NixReferenceControls, NixReferenceList } = await import('../src/ui/nixReferences')
 
-type Ref = { target: string[]; name: string; valid?: boolean }
+type Ref = { target: string[]; name: string }
 const resolved = (id: string, refs: Ref[] = []) => ({
   card: { segments: id.split('/') }, inputs: [], outputs: [], diagnostics: [],
-  nixReferences: refs.map(r => ({ target: { segments: r.target }, name: r.name, valid: r.valid ?? true })),
+  nixReferences: refs.map(r => ({ target: { segments: r.target }, name: r.name })),
 }) as unknown as R.ResolvedCardT
 
 const session = new ProjectSession('/p', 'k', 'p')
@@ -30,30 +30,30 @@ const delta = (resolution: R.ResolvedCardT[]) => {
 }
 const cards = ['source', 'analysis', 'report', 'other']
 const all = (refs: Record<string, Ref[]>) => cards.map(c => resolved(c, refs[c]))
-const shown = () => new Map(nixReferences(session).map(r => [r.target, [r.source, r.valid]]))
+const shown = () => new Map(nixReferences(session).map(r => [r.target, r.source]))
 
-// A saved default.nix arrives as the resolution of a document delta: the
+// Wiring changes arrive as the resolution of a document delta: the
 // overlay is what that resolution says, with nothing kept from before.
 inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }))
 assert.deepEqual(shown(), new Map())
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
-assert.deepEqual(shown(), new Map([['source', ['analysis', true]]]))
+assert.deepEqual(shown(), new Map([['source', 'analysis']]))
 delta(all({
   analysis: [{ target: ['source'], name: 'source' }],
-  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing', valid: false }],
+  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing' }],
 }))
 assert.deepEqual(shown(), new Map([
-  ['source', ['analysis', true]],
-  ['analysis', ['report', true]],
-  ['missing', ['report', false]],
+  ['source', 'analysis'],
+  ['analysis', 'report'],
+  ['missing', 'report'],
 ]))
 delta(all({ report: [{ target: ['analysis'], name: 'analysis' }] }))
-assert.deepEqual(shown(), new Map([['analysis', ['report', true]]]), 'a removed reference leaves with the delta that removed it')
+assert.deepEqual(shown(), new Map([['analysis', 'report']]), 'a removed reference leaves with the delta that removed it')
 
 // What the canvas draws, and the three interactions on it.
 delta(all({
   analysis: [{ target: ['source'], name: 'source' }],
-  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing', valid: false }],
+  report: [{ target: ['analysis'], name: 'analysis' }, { target: ['missing'], name: 'missing' }],
 }))
 const tab = new WorkflowTab([])
 const visible = new Set(cards)
@@ -118,8 +118,8 @@ const notice = empty.root.findAllByType('span').find(span => typeof span.props.t
 assert.ok(notice, 'an empty overlay has an explanation')
 assert.ok(String(notice.props.children).includes(String(nixReferences(session).length)))
 empty.unmount()
-const inside = nixLinks([{ id: 'x', source: 'child/sink', target: 'child/inner/deep', expression: '', valid: true },
-  { id: 'y', source: 'sink', target: 'child/inner', expression: '', valid: true }], nested.scope, new Set(['child/sink', 'child/inner']))
+const inside = nixLinks([{ id: 'x', source: 'child/sink', target: 'child/inner/deep', expression: '' },
+  { id: 'y', source: 'sink', target: 'child/inner', expression: '' }], nested.scope, new Set(['child/sink', 'child/inner']))
 assert.deepEqual(ends(inside), new Set(['child/sink>child/inner']))
 
 console.log('Nix reference overlay: passed')
