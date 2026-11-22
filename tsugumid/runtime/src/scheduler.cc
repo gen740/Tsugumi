@@ -765,7 +765,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (auto& t : pool_) t.join();
     worker_cv_.notify_all();
     for (auto& t : workers_) t.join();
-    // Workers stay in the project's pool (resident across runs).
+    // The environment owns residents until its run series ends.
     finalize();
   }
 
@@ -1996,7 +1996,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     const auto inv = s.invocation;
     int64_t last_transfer = 0;
     auto result = w.execution->execute(
-        {node, *w.implementation, in, sources, s, invocation_dir(node, inv),
+        {node,
+         *w.implementation,
+         in,
+         sources,
+         s,
+         invocation_dir(node, inv),
          w.cancellation->stop,
          [&] {
            return explicit_cancel_.load() || w.cancellation->failed.load();
@@ -2688,6 +2693,12 @@ void Scheduler::document_changed(const Document& before,
                                  const Document& after) {
   if (!before.resolution || !after.resolution) return;
   if (before.resolution == after.resolution) return;
+  for (const auto& n : before.resolution->nodes) {
+    if (!n.settings.reuse_worker) continue;
+    const auto* next = after.resolution->find(n.path);
+    if (!next || card_content(before, n) != card_content(after, *next))
+      svc_.invalidate_resident(path_key(n.path));
+  }
   std::lock_guard<std::mutex> l(mu_);
   for (const auto& n : before.resolution->nodes) {
     if (after.resolution->find(n.path)) continue;

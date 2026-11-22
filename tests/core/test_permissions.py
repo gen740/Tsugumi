@@ -29,7 +29,8 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     d = core_factory(project_root=root)
     c = d.connect()
     body = card_json(c, "src")
-    wide = dict(body, network=True, sandbox=False, hostFolders=[{"path": "/data", "name": "data"}])
+    wide = dict(body, sandbox={"filesystem": False},
+                grants={"network": True, "hostPaths": [{"path": "/data", "name": "data"}]})
     for origin in ("agent", "ui", "external"):
         with pytest.raises(RpcFailure) as rejected:
             save(c, [put("src", wide)], origin=origin, check=True)
@@ -43,16 +44,16 @@ def test_checked_save_widening_permissions_needs_approval(tmp_path, core_factory
     except RpcFailure as e:
         assert e.kind == "approval_required"
     save(c, [put("src", wide)], approved=asked, origin="external", check=True)
-    assert card_json(c, "src")["network"] is True
+    assert card_json(c, "src")["grants"]["network"] is True
     # Making the folder writable is another widening; narrowing is not.
-    writable = dict(wide, hostFolders=[{"path": "/data", "name": "data", "write": True}])
+    writable = dict(wide, grants={**wide["grants"], "hostPaths": [{"path": "/data", "name": "data", "write": True}]})
     try:
         save(c, [put("src", writable)])
         raise AssertionError("write access without approval")
     except RpcFailure as e:
         assert permissions(e) == ["host_folder_write src /data"]
     save(c, [put("src", body)])
-    assert "network" not in card_json(c, "src")
+    assert "grants" not in card_json(c, "src")
     # With the same token and origin, explicit comparison off permits widening.
     save(c, [put("src", wide)], origin="external", check=False)
 
@@ -71,11 +72,12 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     before = client.call("ProjectInspectRequest")
     path = root / rel
     body = json.loads(path.read_text())
-    wide = dict(body, executionService="ssh-test", network=True, sandbox=False,
-                hostFolders=[{"path": "/data", "name": "data", "write": True}],
-                executionResources={"cpuMillis": 1000, "memoryBytes": 1 << 30})
+    wide = dict(body, executionService="ssh-test",
+                sandbox={"filesystem": False, "pid": False, "limits": {"cpu": 1, "memoryMiB": 1024}},
+                grants={"network": True, "gui": True,
+                        "hostPaths": [{"path": "/data", "name": "data", "write": True}]})
     expected = {f"execution_service {cid} ssh-test", f"network {cid}",
-                f"sandbox_off {cid}", f"host_folder_write {cid} /data"}
+                f"sandbox_off {cid}", f"sandbox_options {cid}", f"gui {cid}", f"host_folder_write {cid} /data"}
     path.write_text(json.dumps(wide))
 
     def reload(approved=(), *, check=True, origin="external"):
@@ -98,7 +100,10 @@ def test_reload_checks_every_permission_widening(tmp_path, core_factory):
     # Returning to local narrows the target; auto would allow other workers too.
     path.write_text(json.dumps(body))
     before = client.call("ProjectInspectRequest")
-    reload()
+    with pytest.raises(RpcFailure) as unbounded:
+        reload()
+    assert permissions(unbounded.value) == [f"sandbox_options {cid}"]
+    reload([f"sandbox_options {cid}"])
 
     before = client.call("ProjectInspectRequest")
     base_hash = next(text(source.hash) for source in before.sources if text(source.path) == rel)

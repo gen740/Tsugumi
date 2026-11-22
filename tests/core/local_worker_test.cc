@@ -79,6 +79,7 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
                                   {},
                                   0,
                                   1,
+                                  false,
                                   [] {},
                                   [](bool) {},
                                   [&] {
@@ -90,6 +91,23 @@ TEST(LocalWorker, ExceptionalBorrowerExitReturnsTheLeaseAfterClosingChannels) {
     EXPECT_FALSE(returned);
   }
   EXPECT_TRUE(returned);
+}
+
+TEST(LocalWorker, AnInvalidatedLeaseCannotReturnItsResident) {
+  const auto scratch = std::filesystem::temp_directory_path() /
+                       ("tsugumi-resident-" + crypto::uuid4());
+  WorkerPool pool(scratch);
+  WorkerSpawn spawn;
+  spawn.worker_binary = TSUGUMI_WORKER_BINARY;
+  spawn.sandbox.filesystem = false;
+  auto first = pool.acquire("card|1", "version", spawn, true);
+  EXPECT_THROW(pool.acquire("card|1", "version", spawn, true), Failed);
+  pool.invalidate("card", "definition changed");
+  pool.release("card|1", first.generation, std::move(first.worker), true);
+  auto next = pool.acquire("card|1", "version", spawn, true);
+  EXPECT_FALSE(next.reused);
+  EXPECT_EQ(next.replaced, "definition changed");
+  pool.release("card|1", next.generation, std::move(next.worker), false);
 }
 
 TEST(LocalWorker, CoreConnectionCloseEndsAnUnusedPool) {

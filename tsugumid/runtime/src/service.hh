@@ -119,13 +119,15 @@ class Service : public RequestSink {
       -> Value;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
+  auto invalidate_resident(const std::string& card) -> void;
   auto prepare_execution(const Node& node,
                          const std::filesystem::path& directory,
                          BuildRequest& build)
       -> std::unique_ptr<PreparedExecution>;
   // The remote backend uses the same core lifetime as local execution.
   auto remote_execution() -> RemoteExecutionService&;
-  auto remote_targets(std::stop_token stop = {}) const -> std::vector<RemoteTarget>;
+  auto remote_targets(std::stop_token stop = {}) const
+      -> std::vector<RemoteTarget>;
   // The values of a Card's declared secrets for one invocation, from hostd.
   // Throws Failed (before anything of the Card runs) when one is missing.
   auto card_secrets(const Node& node, std::stop_token stop = {}) const
@@ -152,15 +154,14 @@ class Service : public RequestSink {
     std::string receipt;
     size_t notification_bytes = 0;
   };
-  auto prepare_save_reply(
-      Store::Staged& staged, const Document& base,
-      const flatbuffers::Vector<uint8_t>* operation_data = nullptr)
-      -> PreparedSaveReply;
-  void complete_save(RequestIn& req, const std::string& op_id,
-                     const std::string& kind, const std::string& digest,
-                     const Document& base, Store::Staged& staged,
-                     const PreparedSaveReply& response,
-                     const std::function<void()>& check_cancelled = [] {});
+  auto prepare_save_reply(Store::Staged& staged, const Document& base,
+                          const flatbuffers::Vector<uint8_t>* operation_data =
+                              nullptr) -> PreparedSaveReply;
+  void complete_save(
+      RequestIn& req, const std::string& op_id, const std::string& kind,
+      const std::string& digest, const Document& base, Store::Staged& staged,
+      const PreparedSaveReply& response,
+      const std::function<void()>& check_cancelled = [] {});
   auto version_operation(RequestIn& req,
                          const std::function<std::string()>& operation) -> void;
   void cache_clear(RequestIn& req);

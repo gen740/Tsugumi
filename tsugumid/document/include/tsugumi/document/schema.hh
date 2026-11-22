@@ -98,9 +98,23 @@ struct HostFolder {
   Opt<"write", v::Bool> write;  // default false: read-only
 };
 
-struct ExecutionResourcesJson {
-  Opt<"cpuMillis", v::Uint64> cpu_millis;
-  Opt<"memoryBytes", v::Uint64> memory_bytes;
+struct SandboxLimits {
+  Opt<"cpu", Json> cpu;
+  Opt<"memoryMiB", Json> memory_mib;
+};
+
+struct Sandbox {
+  Opt<"filesystem", v::Bool> filesystem;
+  Opt<"pid", v::Bool> pid;
+  Opt<"ipc", v::Bool> ipc;
+  Opt<"identity", v::Bool> identity;
+  Opt<"limits", Obj<SandboxLimits>> limits;
+};
+
+struct Grants {
+  Opt<"network", v::Bool> network;
+  Opt<"gui", v::Bool> gui;
+  Opt<"hostPaths", v::Array<Obj<HostFolder>>> host_paths;
 };
 
 struct WorkerConditionJson {
@@ -131,14 +145,13 @@ struct CardDefinition {
   Opt<"recordIO", v::Bool> record_io;
   Opt<"retainArtifact", v::Bool> retain_artifact;
   Opt<"artifactOutput", v::String> artifact_output;
-  Opt<"sandbox", v::Bool> sandbox;
+  Opt<"sandbox", Obj<Sandbox>> sandbox;
+  Opt<"grants", Obj<Grants>> grants;
   Opt<"reuseWorker", v::Bool>
       reuse_worker;  // Keep worker state across invocations and runs. Default
                      // false.
-  Opt<"network", v::Bool> network;  // Experimental, default false
   Opt<"executionService", v::String> execution_service;
   Opt<"workerCondition", Obj<WorkerConditionJson>> worker_condition;
-  Opt<"executionResources", Obj<ExecutionResourcesJson>> execution_resources;
   // The Nix system the Card is built for and runs as: "x86_64-linux" or
   // "aarch64-linux". Default: this machine's. Another one runs emulated.
   Opt<"system", v::String> system;
@@ -147,7 +160,6 @@ struct CardDefinition {
   // "live" (each revision of a running Card replaces the last one in place).
   // Carried opaquely; only clients interpret it.
   Opt<"displayMode", Json> display_mode;
-  Opt<"hostFolders", v::Array<Obj<HostFolder>>> host_folders;  // Experimental
   // Names of the Card secrets the Card's process receives as environment
   // variables of the same name. Values live only in hostd's secret store.
   Opt<"secrets", v::Array<v::String>> secrets;

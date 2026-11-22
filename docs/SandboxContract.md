@@ -1,8 +1,7 @@
 # The sandbox contract
 
-**Status:** decided by the owner on 2026-11-13 and 2026-11-21; not implemented yet.
-Each section states what is decided and what the code does today. Points that are not decided yet are listed under [Open](#open).
-How the current implementation isolates a Card is in [Security §4](security.md#4-card-worker--tsugumid).
+**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21.
+The implementation notes record the behavior before P1 at `24fc2d2c`. [Security §4](security.md#4-card-worker--tsugumid) describes the current implementation. [Open](#open) lists the remaining decision.
 
 ## The worker builds what the Card sees
 
@@ -16,7 +15,7 @@ How the current implementation isolates a Card is in [Security §4](security.md#
 - So that nothing about identity is left for the Card to see, the identity wrapping of displays moves from the worker to `tsugumid`, and `WorkerCall` drops `run_id`, `invocation` and the Card's identity ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
 - The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
 
-**Today.**
+**Before P1.**
 
 - `WorkerCall` carries `run_id`, the Card and the invocation (`protocol/worker.fbs`).
 - The working directory and the environment are set again on each call ([Worker state](CardGuide.md#worker-state)).
@@ -37,7 +36,7 @@ How the current implementation isolates a Card is in [Security §4](security.md#
   - a call that is already running finishes on the old version and records the version it used.
 - A failed attempt is recorded even though its outputs are discarded.
 
-**Today.** A resident worker lives until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call discards it ([Worker state](CardGuide.md#worker-state)).
+**Before P1.** A resident worker lives until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call discards it ([Worker state](CardGuide.md#worker-state)).
 
 ## Directories
 
@@ -52,10 +51,10 @@ Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote 
 
 File and Directory outputs are created under the working directory ([Card ABI 9](CardABI.md#file-and-directory-outputs)).
 
-**Today.**
+**Before P1.**
 
 - `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories.
-- The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [Security §4](security.md#sandbox-true-the-default)).
+- The invocation's input, output, work and temporary slots are emptied after each call (`WorkerProc::clear_scratch`; [pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 - bubblewrap mounts an in-memory tmpfs at `/tmp`, separate from `TMPDIR` (`workerd/src/worker_proc.cc`).
 
 ## File and Directory inputs
@@ -74,7 +73,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - always on native macOS.
 - With `reuseWorker`, the inputs are in a read-only bound directory, and the worker swaps its contents for each invocation.
 
-**Today.** The core copies the invocation's File and Directory inputs into a fixed, read-only staging area local to the worker ([Security §4](security.md#sandbox-true-the-default)).
+**Before P1.** The core copies the invocation's File and Directory inputs into a fixed, read-only staging area local to the worker ([pre-P1 isolation](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-true-the-default)).
 
 ## Grants
 
@@ -88,7 +87,7 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
 - The TLS CA is confined to the Card. It defaults to Nix's `cacert` and never comes from the launcher's environment.
 - **I/O that the Card starts through a grant is an explicitly permitted side effect.** For example, a Card can download from the network or write into a read-write host path. "Run data travel only on `tsugumid`'s channel" ([The core and the language SDKs](CoreAndSDK.md#philosophy-constraints-that-still-hold)) covers Tsugumi's own transport, not what a Card does through its grants.
 
-**Today.**
+**Before P1.**
 
 - `network` and `hostFolders` are set in `_card.json`. A host folder is mounted at `/host/<name>`, read-only by default ([Outside access](features.md#outside-access-experimental)).
 - There is no GUI grant.
@@ -122,15 +121,15 @@ File and Directory outputs are created under the working directory ([Card ABI 9]
   - in the VM, hostd's tokens are hidden from the Card;
   - the Card's processes are killed as a process group.
 
-**Today.**
+**Before P1.**
 
-- `sandbox` (on by default) is a single Card setting, and `sandbox: false` is a separate mode ([`sandbox: false`](security.md#sandbox-false)).
+- `sandbox` (on by default) is a single Card setting, and `sandbox: false` is a separate mode ([`sandbox: false` before P1](https://github.com/gen740/Tsugumi/blob/24fc2d2c93d607e1aa608cceec444f6b7e92affb/docs/security.md#sandbox-false)).
 - An Agent's save that turns the sandbox off, allows the network or adds a host folder waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
 - Seatbelt on native macOS honours `filesystem` and `network` only partly, and has none of `pid`, `ipc` or `limits`.
 - Local Linux workers have no CPU or memory limits, only a deadline.
 - Remote Cards require filesystem isolation, and host-folder grants are not available on them ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
 
-## What each kind of worker does today
+## What each kind of worker did before P1
 
 These are facts about the code at origin/main 24fc2d2c, for comparison with the contract.
 
@@ -152,7 +151,7 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 
 `MPLCONFIGDIR` moves to the Python SDK.
 
-**Today.**
+**Before P1.**
 
 - The worker sets the identity variables, `TSUGUMI_PARAMS_JSON` and `HOME` for each call (`workerd/src/worker_execution.cc`).
 - `MPLCONFIGDIR` is set by `workerd/src/worker_proc.cc`.
@@ -161,7 +160,7 @@ These are facts about the code at origin/main 24fc2d2c, for comparison with the 
 
 **Decided.** Card secrets ([#226](https://github.com/gen740/Tsugumi/issues/226)) are injected into the environment of the process once, when it starts. A change of a value recreates the worker.
 
-**Today.**
+**Before P1.**
 
 - Each invocation receives the values in its call and sets them in the Card's process ([Card secrets](security.md#card-secrets), [remote](RemoteExecution.md#card-secrets)).
 - A Card with secrets cannot keep a resident worker.

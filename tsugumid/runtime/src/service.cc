@@ -348,6 +348,14 @@ auto Service::keep_file_value(
                "file value is outside the run's folders: " + *source);
 }
 
+auto Service::invalidate_resident(const std::string& card) -> void {
+  {
+    std::lock_guard lock(worker_selection_mutex_);
+    resident_targets_.erase(card);
+  }
+  execution_service_->invalidate(card, "the Card definition changed");
+}
+
 auto Service::execution_service(const std::string& id) -> ExecutionService& {
   // Any other id names a registered execution daemon; its backend checks that
   // the service is available when an invocation is prepared.
@@ -375,6 +383,69 @@ class SelectedExecution final : public PreparedExecution {
 };
 }  // namespace
 
+namespace {
+auto unsupported_local_option(const Settings& settings,
+                              const RemoteTarget& target) -> std::string {
+#ifdef __linux__
+  if (settings.sandbox.filesystem && !target.namespace_isolation)
+    return "sandbox.filesystem requires a Linux worker with bubblewrap";
+#endif
+  if (settings.sandbox.limits.limited() && !target.resource_limits)
+    return "sandbox.limits requires a delegated cgroup v2 subtree";
+  if (settings.grants.gui && !target.gui)
+    return "grants.gui requires a native Linux worker with an available GUI "
+           "socket";
+  return {};
+}
+
+auto effective_local_options(const Settings& settings,
+                             const RemoteTarget& target) -> std::string {
+  std::vector<std::string_view> notes;
+  if (!settings.sandbox.filesystem) {
+    notes.push_back(
+        "host paths and GUI endpoints can be visible with filesystem isolation "
+        "off");
+#ifndef __APPLE__
+    if (!settings.grants.network)
+      notes.push_back(
+          "network isolation does not hide filesystem Unix sockets");
+#endif
+  }
+#ifdef __APPLE__
+  (void)target;
+  if (settings.sandbox.filesystem)
+    notes.push_back("Seatbelt filesystem isolation is partial");
+  if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
+  if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
+  if (settings.sandbox.identity)
+    notes.push_back("identity isolation unavailable");
+  if (settings.grants.network && settings.sandbox.filesystem)
+    notes.push_back("Seatbelt still restricts access to the local host");
+#else
+  if (!target.namespace_isolation) {
+    if (!settings.grants.network)
+      notes.push_back("network isolation unavailable");
+    if (settings.sandbox.pid) notes.push_back("PID isolation unavailable");
+    if (settings.sandbox.ipc) notes.push_back("IPC isolation unavailable");
+    if (settings.sandbox.identity)
+      notes.push_back("identity namespace unavailable");
+  }
+#endif
+  std::string message;
+  for (const auto note : notes) {
+    if (!message.empty()) message += ", ";
+    message += note;
+  }
+  return message;
+}
+
+auto supports_remote_options(const Settings& settings) -> bool {
+  return settings.sandbox.filesystem && settings.sandbox.pid &&
+         !settings.reuse_worker && !settings.grants.gui &&
+         settings.grants.host_paths.empty();
+}
+}  // namespace
+
 auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
                                 BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
@@ -397,7 +468,13 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
       candidates.push_back(
           {target.id, target.grade,
            target.available &&
-               (!capacity || worker_slots_[target.id] < capacity)});
+               (!capacity || worker_slots_[target.id] < capacity),
+           target.id == kLocalExecutionService
+               ? unsupported_local_option(node.settings, target).empty()
+               : (supports_remote_options(node.settings) &&
+                  (node.settings.execution_service != "auto" ||
+                   !node.settings.sandbox.limits.limited() ||
+                   target.resource_limits))});
     }
     const auto resident = resident_targets_.find(card);
     const auto resident_id =
@@ -407,8 +484,9 @@ auto Service::prepare_execution(const Node& node, const stdfs::path& directory,
           select_worker(candidates, node.settings.worker_condition.get(),
                         node.settings.execution_service, resident_id);
       if (!choice.matches)
-        throw Failed(FailureKind::invalid_request,
-                     "no registered worker satisfies workerCondition");
+        throw Failed(FailureKind::unsupported,
+                     "no registered worker supports the Card's settings and "
+                     "workerCondition");
       if (!choice.index) break;
       const auto target = targets[*choice.index];
       if (target.id != "local") {
@@ -469,7 +547,8 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     -> std::vector<std::pair<std::string, std::string>> {
   const auto& names = node.settings.secrets;
   if (names.empty()) return {};
-  std::vector<std::pair<std::string, std::string>> values;
+  WorkerSecrets supplied;
+  auto& values = supplied.values;
   try {
     values = remote_jobs_.card_secrets(names, stop);
   } catch (const std::exception& error) {
@@ -478,7 +557,9 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
                      std::string(error.what()) +
                      "): open the project from the Tsugumi app or Web UI");
   }
-  std::vector<std::pair<std::string, std::string>> ordered;
+  WorkerSecrets result;
+  auto& ordered = result.values;
+  ordered.reserve(names.size());
   std::string missing;
   for (const auto& name : names) {
     const auto found = std::ranges::find_if(
@@ -486,17 +567,26 @@ auto Service::card_secrets(const Node& node, std::stop_token stop) const
     if (found == values.end() || found->second.empty())
       missing += (missing.empty() ? "" : ", ") + name;
     else
-      ordered.push_back(std::move(*found));
+      ordered.push_back(*found);
   }
   if (!missing.empty())
     throw Failed(FailureKind::not_found,
                  "Card secret not set: " + missing +
                      ". Set it in Settings > Card secrets, then run again",
                  {{"secrets", missing}});
-  return ordered;
+  return std::move(result.values);
 }
 
-auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTarget> {
+auto Service::remote_targets(std::stop_token stop) const
+    -> std::vector<RemoteTarget> {
+  const auto fill_local = [this](RemoteTarget& local) {
+    local.available = true;
+    local.native_system = native_system();
+    local.systems = NixRunner::execution_systems();
+    local.resource_limits = worker_limits_available();
+    local.namespace_isolation = worker_has_bwrap();
+    local.gui = opts_.gcroots_dir.empty() && worker_gui_available();
+  };
   try {
     auto targets = remote_jobs_.catalog(stop);
     auto local =
@@ -507,16 +597,12 @@ auto Service::remote_targets(std::stop_token stop) const -> std::vector<RemoteTa
       targets.insert(targets.begin(), std::move(target));
       local = targets.begin();
     }
-    local->available = true;
-    local->native_system = native_system();
-    local->systems = NixRunner::execution_systems();
+    fill_local(*local);
     return targets;
   } catch (const std::exception&) {
     RemoteTarget local;
     local.id = kLocalExecutionService;
-    local.available = true;
-    local.native_system = native_system();
-    local.systems = NixRunner::execution_systems();
+    fill_local(local);
     return {std::move(local)};
   }
 }
@@ -538,22 +624,49 @@ auto Service::execution_diagnostic(const Node& node,
                      ? "execution service " + target.id + " is not available"
                      : target.unavailable_reason);
   };
+  const auto local_diagnostic =
+      [&](const RemoteTarget& target) -> std::optional<Diag> {
+    if (auto message = unsupported_local_option(settings, target);
+        !message.empty())
+      return error(std::move(message));
+    if (auto message = effective_local_options(settings, target);
+        !message.empty())
+      return Diag{false,
+                  "sandbox_effective_settings",
+                  std::move(message),
+                  node.path,
+                  {},
+                  {}};
+    return std::nullopt;
+  };
   if (settings.execution_service == "auto") {
     const RemoteTarget* blocked = nullptr;
+    const RemoteTarget* local = nullptr;
+    bool other = false;
     for (const auto& target : targets) {
       if (settings.worker_condition &&
           !settings.worker_condition->matches(target.grade))
         continue;
-      if (target.available) return std::nullopt;
+      if (target.id == kLocalExecutionService) {
+        local = &target;
+        continue;
+      }
+      if (!supports_remote_options(settings) ||
+          (settings.sandbox.limits.limited() && !target.resource_limits))
+        continue;
+      if (target.available) other = true;
       if (!blocked) blocked = &target;
     }
+    if (other) return std::nullopt;
+    if (local && local->available) return local_diagnostic(*local);
     if (blocked) return unavailable(*blocked);
-    return Diag{true,
-                "invalid_setting",
-                "no registered worker satisfies workerCondition",
-                node.path,
-                {},
-                {}};
+    return Diag{
+        true,
+        "invalid_setting",
+        "no registered worker supports the Card settings and workerCondition",
+        node.path,
+        {},
+        {}};
   }
   const auto target =
       std::ranges::find(targets, settings.execution_service, &RemoteTarget::id);
@@ -563,6 +676,7 @@ auto Service::execution_diagnostic(const Node& node,
     return error("execution service " + settings.execution_service +
                  " is not available");
   if (!target->available) return unavailable(*target);
+  if (target->id == kLocalExecutionService) return local_diagnostic(*target);
   // Cached capabilities describe the last observation, not a reason to refuse
   // a run. RemoteExecutionService probes the worker before choosing a system
   // or checking resources.
@@ -753,21 +867,25 @@ void Service::dispatch(RequestIn req) {
                              "Project core was started without RPC tracing"));
       const auto* debug = request->value_as_CoreTraceRequest();
       if (req.websocket) {
-        const auto* path = std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
+        const auto* path =
+            std::getenv("TSUGUMI_EXECUTION_BROKER_CAPABILITY_FILE");
         const auto capability = path ? fs::read_file(path) : std::nullopt;
         if (!capability || capability->empty() || !debug->capability() ||
-            !crypto::equal_secret(debug->capability()->string_view(), *capability))
-          return fail(req, FailureData::make(FailureKind::permission_denied,
-                                            "RPC capture requires local host access"));
+            !crypto::equal_secret(debug->capability()->string_view(),
+                                  *capability))
+          return fail(
+              req, FailureData::make(FailureKind::permission_denied,
+                                     "RPC capture requires local host access"));
       }
       if (trace_owner_ && trace_owner_ != req.conn)
-        return fail(req, FailureData::make(FailureKind::busy,
-                                          "Another host connection owns RPC tracing"));
+        return fail(
+            req, FailureData::make(FailureKind::busy,
+                                   "Another host connection owns RPC tracing"));
       T::SnapshotT snapshot;
       if (auto mode = debug->mode()) {
         if (*mode > static_cast<uint8_t>(T::Mode::MAX))
           return fail(req, FailureData::make(FailureKind::invalid_request,
-                                            "Unknown RPC trace mode"));
+                                             "Unknown RPC trace mode"));
         trace_owner_ = req.conn;
         trace::SetMode(static_cast<trace::Mode>(*mode));
         snapshot.mode = static_cast<T::Mode>(*mode);
@@ -794,8 +912,8 @@ void Service::dispatch(RequestIn req) {
       }
       FBB b;
       auto value = T::Snapshot::Pack(b, &snapshot);
-      reply(req, wire::reply(b, req.request_id,
-                             R::ReplyPayload::TraceSnapshot, value.Union()));
+      reply(req, wire::reply(b, req.request_id, R::ReplyPayload::TraceSnapshot,
+                             value.Union()));
       return;
     }
     case P::ProjectActivityRequest: {
@@ -1148,8 +1266,8 @@ std::optional<Service::ViewRecord> Service::load_view(
 
 auto Service::busy() -> bool {
   return !mutation_lane_->idle() || !read_pool_->idle() ||
-         !cancel_lane_->idle() ||
-         !shell_lane_->idle() || scheduler_->active_status().has_value();
+         !cancel_lane_->idle() || !shell_lane_->idle() ||
+         scheduler_->active_status().has_value();
 }
 
 RunStatusData Service::current_run_status() {
@@ -1180,16 +1298,34 @@ flatbuffers::Offset<R::ProjectSnapshot> Service::snapshot(
   auto pj = b.CreateString(doc.project_json);
   auto lj = b.CreateString(doc.layout_json);
   std::vector<flatbuffers::Offset<R::ExecutionService>> services;
-  for (const auto& target : targets)
+  for (const auto& target : targets) {
+    const bool remote = target.id != kLocalExecutionService;
+    using Guarantee = R::IsolationGuarantee;
+    const auto namespaces = remote || target.namespace_isolation
+                                ? Guarantee::enforced
+                                : Guarantee::unavailable;
+    auto filesystem = namespaces;
+    auto network = namespaces;
+    bool host_paths = !remote && target.namespace_isolation;
+#ifdef __APPLE__
+    if (!remote) {
+      network = filesystem = Guarantee::partial;
+      host_paths = true;
+    }
+#endif
+    const auto sandbox = R::CreateSandboxCapabilities(
+        b, filesystem, namespaces, namespaces, namespaces, network, target.gui,
+        host_paths, remote, remote);
     services.push_back(R::CreateExecutionService(
         b, b.CreateString(target.id), b.CreateString(target.native_system),
         b.CreateVectorOfStrings(target.systems),
-        target.id == "local" ? R::ExecutionServiceKind::local
-                             : R::ExecutionServiceKind::remote_daemon,
+        remote ? R::ExecutionServiceKind::remote_daemon
+               : R::ExecutionServiceKind::local,
         target.available, target.resource_limits,
         target.max_jobs ? flatbuffers::Optional(target.max_jobs)
                         : flatbuffers::nullopt,
-        target.grade));
+        target.grade, sandbox));
+  }
   auto execution_services = b.CreateVector(services);
   flatbuffers::Offset<flatbuffers::String> view;
   flatbuffers::Offset<flatbuffers::String> vid;
@@ -1569,7 +1705,8 @@ void Service::save(RequestIn& req) {
                      "until it ends",
                      {{"run_id", *active->run_id}});
     }
-    const auto response = prepare_save_reply(staged, *base, r->operation_data());
+    const auto response =
+        prepare_save_reply(staged, *base, r->operation_data());
     complete_save(req, op_id, "save", digest, *base, staged, response,
                   check_cancelled);
   } catch (const Failed& f) {
@@ -1593,9 +1730,9 @@ void Service::complete_save(RequestIn& req, const std::string& op_id,
                             const Document& base, Store::Staged& staged,
                             const PreparedSaveReply& response,
                             const std::function<void()>& check_cancelled) {
-  store_->commit(staged, kind, digest,
-                 [&](const Delta*) { return response.receipt; },
-                 check_cancelled);
+  store_->commit(
+      staged, kind, digest, [&](const Delta*) { return response.receipt; },
+      check_cancelled);
   if (staged.delta.doc) scheduler_->document_changed(base, *staged.delta.doc);
   reply(req, receipt_reply(req.request_id, response.receipt, false));
   if (staged.delta.doc)
@@ -1764,7 +1901,8 @@ auto pack_comments(FBB& b, const std::vector<comments::Change>& changes) {
         b, b.CreateString(c.card), b.CreateString(c.text),
         b.CreateString(c.change),
         c.resolution.empty() ? 0 : b.CreateString(c.resolution),
-        c.by.empty() ? 0 : b.CreateString(c.by), b.CreateVectorOfStrings(c.cards)));
+        c.by.empty() ? 0 : b.CreateString(c.by),
+        b.CreateVectorOfStrings(c.cards)));
   return b.CreateVector(entries);
 }
 }  // namespace
@@ -1802,8 +1940,8 @@ void Service::version_graph(RequestIn& req) {
   auto vg = R::CreateVersionGraph(b, g.enabled, b.CreateString(g.head),
                                   b.CreateString(g.branch), g.dirty,
                                   b.CreateVector(commits));
-  auto bytes = wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph,
-                           vg.Union());
+  auto bytes =
+      wire::reply(b, req.request_id, R::ReplyPayload::VersionGraph, vg.Union());
   check_frame(bytes.size(), "the version graph");
   reply(req, std::move(bytes));
 }
@@ -1843,8 +1981,8 @@ void Service::version_diff(RequestIn& req) {
   const auto diff = versions_->diff(
       r->commit()->str(), r->from_commit() ? r->from_commit()->str() : "");
   FBB b;
-  const auto value = R::CreateVersionDiff(b, b.CreateString(diff.text),
-                                         diff.truncated);
+  const auto value =
+      R::CreateVersionDiff(b, b.CreateString(diff.text), diff.truncated);
   reply(req, wire::reply(b, req.request_id, R::ReplyPayload::VersionDiff,
                          value.Union()));
 }
@@ -1876,6 +2014,10 @@ void Service::cache_clear(RequestIn& req) {
           "cache cannot be cleared while external job results are pending");
     execution_service_
         ->clear();  // resident workers hold the builds being removed
+    {
+      std::lock_guard lock(worker_selection_mutex_);
+      resident_targets_.clear();
+    }
     auto result = nix_->clear_cache();
     const auto roots = opts_.gcroots_dir.empty()
                            ? store_->state_dir() / "cache" / "gcroots"
@@ -2251,8 +2393,8 @@ void Service::operation_get(RequestIn& req) {
     pending = pending_ops_.count(op_id) > 0;
   }
   if (shell_receipt && pending) bytes.reset();
-  reply(req, operation_reply(req.request_id, bytes ? &*bytes : nullptr,
-                             pending));
+  reply(req,
+        operation_reply(req.request_id, bytes ? &*bytes : nullptr, pending));
 }
 
 namespace {

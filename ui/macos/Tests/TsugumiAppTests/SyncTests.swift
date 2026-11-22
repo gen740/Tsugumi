@@ -127,7 +127,7 @@ import TsugumiTestSupport
     s.endpointOverride = d.endpoint
     try await Self.connected(s)
     var definition = try #require(s.cardDefinition("a"))
-    definition["network"] = .bool(true)
+    definition["grants"] = .object([("network", .bool(true))])
     try definition.serialized().write(to: dir.appendingPathComponent("definitions/a/_card.json"), atomically: true, encoding: .utf8)
     let base = s.rev
     await s.reloadExternal()
@@ -139,7 +139,7 @@ import TsugumiTestSupport
     await s.answerReloadApproval(true, selected: ["network a"])
     #expect(s.saveError == nil && s.reloadApproval == nil)
     try await waitForModel { !(s.rev == base) }
-    #expect(s.cardDefinition("a")?["network"]?.bool == true)
+    #expect(s.cardDefinition("a")?["grants"]?["network"]?.bool == true)
 
     let a = try await s.addCard(template: .draft, in: [], at: .zero)
     let b = try await s.addCard(template: .draft, in: [], at: CGPoint(x: 300, y: 0), name: "same name")

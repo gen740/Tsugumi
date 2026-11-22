@@ -102,7 +102,7 @@ TEST_F(AgentProjectFixture, ReadsTheConfirmedExternalDefinitionUntilReload) {
   const auto conversation = Conversation("read-confirmed-document");
   Grant(conversation);
   ASSERT_TRUE(Inspect(conversation).Code().empty());
-  Write(definition, R"({"type":"draft","network":true})");
+  Write(definition, R"({"type":"draft","grants":{"network":true}})");
   ASSERT_TRUE(Inspect(conversation).Code().empty());
   const auto reply =
       Tool(conversation, "project_file_read",
@@ -336,7 +336,7 @@ TEST_F(AgentProjectFixture,
                         "externals/storage/definitions/child/src/main.py")},
                    {"put", json::Quote("changed\n")},
                    {"expected_hash", json::Quote(hash)}}),
-               R"({"file_path":"definitions/writer/_card.json","selector":[{"field":"network"}],"old_value":{"present":false},"new_value":{"present":true,"value":true}})"})}})));
+               R"({"file_path":"definitions/writer/_card.json","selector":[{"field":"grants"}],"old_value":{"present":false},"new_value":{"present":true,"value":{"network":true}}})"})}})));
   model.Queue(AnthropicText("Finished."));
   auto delegated = std::async(std::launch::async, [&] {
     return Delegate(

@@ -4,13 +4,16 @@
 #include <unistd.h>
 
 #include <chrono>
+#include <mutex>
 
 #include "history.hh"
 #include "run_scratch.hh"
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
 namespace tsugumi {
@@ -41,17 +44,36 @@ LocalExecutionService::LocalExecutionService(
                    ? service.options().worker_binary.parent_path() /
                          "tsugumi-workerd"
                    : service.options().workerd_binary,
-               service.run_scratch() / "workers") {}
+               service.run_scratch() / "workers"),
+      secrets_salt_(crypto::uuid4()) {}
 
-auto LocalExecutionService::clear() -> void { workers_.clear(); }
+auto LocalExecutionService::clear() -> void {
+  workers_.clear();
+  std::lock_guard lock(secrets_mutex_);
+  secret_versions_.clear();
+}
+
+auto LocalExecutionService::invalidate(const std::string& card,
+                                       const std::string& reason) -> void {
+  try {
+    workers_.invalidate(card, reason);
+  } catch (const Failed& error) {
+    log::warn("cannot retire Card worker " + card + ": " + error.what());
+  }
+}
 
 auto LocalExecutionService::prepare(const Node& node,
                                     const std::filesystem::path& /*directory*/,
                                     BuildRequest& build)
     -> std::unique_ptr<PreparedExecution> {
-  if (node.settings.execution_resources)
+  if (node.settings.sandbox.limits.limited() && !worker_limits_available())
     throw Failed(FailureKind::unsupported,
-                 "local worker cannot enforce executionResources");
+                 "sandbox.limits requires a delegated cgroup v2 subtree");
+  if (node.settings.grants.gui &&
+      (!service_.options().gcroots_dir.empty() || !worker_gui_available()))
+    throw Failed(FailureKind::unsupported,
+                 "grants.gui requires a native Linux worker with an available "
+                 "GUI socket");
   static const SharedStoreDerivationTransport transport;
   build.target = {WorkerKind::native, node.settings.system.empty()
                                           ? native_system()
@@ -67,12 +89,50 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   const CardBuild& build = request.build;
   InvocationSummaryData& s = request.summary;
 
-  // Card secrets come from hostd for this invocation only and stay in memory:
-  // the worker sets them in the Card's process environment. A missing one
-  // fails here, before anything of the Card can run.
-  auto secrets = service_.card_secrets(node, request.stop);
+  // Only a salted digest participates in residency. The values are sent
+  // through the local launch channel when the process is first started.
+  const auto card_key = path_key(node.path);
+  auto secrets = std::make_shared<WorkerSecrets>();
+  try {
+    secrets->values = service_.card_secrets(node, request.stop);
+  } catch (const Failed& error) {
+    if (error.failure.kind == FailureKind::not_found)
+      invalidate(card_key, "a Card secret is no longer available");
+    throw;
+  }
+  std::string secret_version;
+  if (node.settings.reuse_worker && !secrets->values.empty()) {
+    crypto::Sha256 digest;
+    digest.update(secrets_salt_);
+    for (const auto& [name, value] : secrets->values) {
+      const uint64_t name_size = name.size();
+      digest.update(&name_size, sizeof name_size);
+      digest.update(name);
+      const uint64_t size = value.size();
+      digest.update(&size, sizeof size);
+      digest.update(value);
+    }
+    secret_version = digest.finish_hex();
+  }
+  {
+    bool changed = false;
+    {
+      std::lock_guard lock(secrets_mutex_);
+      if (auto prior = secret_versions_.find(card_key);
+          prior != secret_versions_.end()) {
+        changed = prior->second != secret_version;
+        if (secret_version.empty())
+          secret_versions_.erase(prior);
+        else
+          prior->second = secret_version;
+      } else if (!secret_version.empty()) {
+        secret_versions_.emplace(card_key, secret_version);
+      }
+    }
+    if (changed) invalidate(card_key, "a Card secret changed");
+  }
   s.secrets.clear();
-  for (const auto& secret : secrets) s.secrets.push_back(secret.first);
+  for (const auto& secret : secrets->values) s.secrets.push_back(secret.first);
 
   s.build_cached = build.cached;
   s.emulator = build.emulator;
@@ -93,7 +153,9 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Cards run as nobody: switched to by root (container), or mapped in
   // bubblewrap's user namespace when tsugumid is not root (shared VM).
   std::optional<uid_t> uid;
-  if (::geteuid() == 0 || !std::string(TSUGUMI_BWRAP).empty()) uid = kCardUid;
+  if (node.settings.sandbox.identity &&
+      (::geteuid() == 0 || worker_has_bwrap()))
+    uid = kCardUid;
   WorkerSpawn sp;
   // A package of another system is loaded by the worker its build made for
   // that system, which the kernel runs under the emulator.
@@ -103,9 +165,28 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // The shell and PATH are the definition's (the manifest's), so they are in
   // the recorded environment and do not change with this build of the core.
   sp.bash = build.shell;
+  sp.path = build.path;
+  if (!secrets->values.empty()) sp.secrets = std::move(secrets);
   sp.program = {build.package, build.bash, build.pre_run, build.post_run,
                 build.views};
   sp.sandbox = node.settings.sandbox;
+  sp.shared_vm = !service_.options().gcroots_dir.empty();
+  sp.closure = build.environment.paths;
+#ifdef __linux__
+  if (sp.sandbox.filesystem && sp.worker_binary.starts_with("/nix/store/")) {
+    const auto end =
+        sp.worker_binary.find('/', std::string_view("/nix/store/").size());
+    const auto root = sp.worker_binary.substr(0, end);
+    if (std::ranges::find(sp.closure, root) == sp.closure.end()) {
+      std::lock_guard lock(closure_mutex_);
+      auto found = worker_closures_.find(root);
+      if (found == worker_closures_.end())
+        found = worker_closures_.emplace(root, NixStore::closure(root)).first;
+      sp.closure.insert(sp.closure.end(), found->second.begin(),
+                        found->second.end());
+    }
+  }
+#endif
   sp.uid = uid;
   sp.gid = uid;
   // Project data roots are used by the core to stage inputs, never mounted.
@@ -119,24 +200,24 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     if (e == "/run/rosetta/rosetta" && std::filesystem::is_socket(socket))
       sp.ro_paths.push_back(socket);
   }
-  if (!service_.options().control_dir.empty())
+  if (sp.shared_vm && !service_.options().control_dir.empty())
     sp.hidden_paths.push_back(service_.options().control_dir.string());
-  sp.hidden_paths.push_back(state_dir.string());
-  sp.network = node.settings.network;
-  const std::string card_key = path_key(node.path);
+  if (sp.shared_vm) sp.hidden_paths.push_back(state_dir.string());
+  sp.network = node.settings.grants.network;
+  sp.gui = node.settings.grants.gui;
   sp.card = card_key;
-  for (const auto& f : node.settings.host_folders) {
+  for (const auto& f : node.settings.grants.host_paths) {
     std::string source = f.path;
     if (const auto& root = service_.options().host_folders; !root.empty())
       source = (root / crypto::sha256_hex(f.path).substr(0, 16)).string();
     std::error_code ec;
-    if (!std::filesystem::is_directory(source, ec))
+    const auto status = std::filesystem::status(source, ec);
+    if (!std::filesystem::is_directory(status) &&
+        (sp.shared_vm || !std::filesystem::is_regular_file(status)))
       throw Failed(FailureKind::not_found,
-                   "the folder " + f.path + " (/host/" + f.name +
-                       ") is not available here: it is missing on this Mac, or "
-                       "the project must be opened again to share it",
+                   "host path grant " + f.name + " is not available: " + f.path,
                    {{"path", f.path}});
-    sp.binds.push_back({source, "/host/" + f.name, f.write});
+    sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
   // The resident worker of this Card, if it runs the same build under the same
@@ -144,15 +225,20 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   std::string key =
       build.package.value_or("") + "|" + build.bash.value_or("") + "|" +
       build.pre_run + "|" + build.post_run + "|" + build.views + "|" +
-      (sp.sandbox ? "s" : "u") + "|" + (uid ? std::to_string(*uid) : "-") +
-      "|" + (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" +
-      build.key + "|" + std::to_string(build.implementation_index);
+      std::to_string(sp.sandbox.filesystem) + std::to_string(sp.sandbox.pid) +
+      std::to_string(sp.sandbox.ipc) + std::to_string(sp.sandbox.identity) +
+      "|" + std::to_string(sp.sandbox.limits.cpu_millis) + "|" +
+      std::to_string(sp.sandbox.limits.memory_bytes) + "|" +
+      std::to_string(sp.gui) + "|" + (uid ? std::to_string(*uid) : "-") + "|" +
+      (sp.network ? "n" : "-") + "|" + sp.worker_binary + "|" + build.key +
+      "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
   const bool reuse = node.settings.reuse_worker;
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
+  sp.secrets.reset();
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -167,19 +253,14 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.outputs = node.outputs;
   invocation.prepare_params = [&] {
     const auto ptype = NixRunner::params_type(node);
-    return workerd::InvocationParameters{ptype->bfbs, ptype->root_type,
-                                         NixRunner::params_buffer(node),
-                                         NixRunner::params_json(node, false)};
+    return workerd::InvocationParameters{
+        ptype->bfbs, ptype->root_type, NixRunner::params_buffer(node),
+        build.bash || node.settings.language == "r"
+            ? std::optional(NixRunner::params_json(node, false))
+            : std::nullopt};
   };
-  invocation.path = build.path;
-  invocation.environment = std::move(secrets);
-  invocation.on_call_sent = [&environment = invocation.environment] {
-    for (auto& variable : environment) workerd::clear_secret(variable.second);
-    environment.clear();
-  };
-  invocation.worker_binary = sp.worker_binary;
   invocation.output_directory = request.directory / "out";
-  if (::geteuid() == 0 && worker_uid_on_host())
+  if (uid && ::geteuid() == 0 && worker_uid_on_host())
     invocation.output_owner = std::make_pair(kCardUid, kCardUid);
   invocation.cancel = &request.cancel;
   if (node.settings.timeout_seconds)
@@ -190,10 +271,10 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
   };
-  // Input storage belongs to the project; only the copied values cross the
-  // worker boundary. A fixed read-only mount preserves resident reuse.
+  // The mount stays fixed while each invocation replaces its entries.
   invocation.stage_inputs = [&](WorkerProc& worker) {
     auto inputs = request.inputs;
+    const auto roots = service_.file_roots();
     for (size_t i = 0; i < inputs.size(); ++i) {
       if (request.cancel.load())
         throw Failed(FailureKind::cancelled, "staging inputs cancelled");
@@ -201,10 +282,13 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       const auto destination =
           std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
       std::filesystem::create_directories(destination);
-      inputs[i] = service_.keep_file_value(
-          inputs[i], destination, request.cancel,
-          [&](std::string_view name, uint64_t done, uint64_t total) {
-            if (request.transfer) request.transfer("copy", name, done, total);
+      inputs[i] = workerd::stage_input(
+          inputs[i], roots, destination, worker.read_only_inputs(),
+          request.cancel,
+          [&](const std::filesystem::path& name, uint64_t done,
+              uint64_t total) {
+            if (request.transfer)
+              request.transfer("copy", name.generic_string(), done, total);
           });
     }
     return inputs;

@@ -490,7 +490,7 @@ decided but not implemented yet.
 
 Cards start a fresh worker for each invocation by default. Set `reuseWorker: true` to retain state across invocations and runs, and use the [run-start hook](#presentation-and-hooks) to reset per-run state. Resident workers have no count, idle-time or memory eviction limit, including workers used for monitoring. They live until the project's environment stops or the Card's definition or execution conditions change. A failed, cancelled or timed-out call always discards its resident worker in every language; the next invocation starts fresh and logs the reason, as it does after a crash or definition change. Each invocation records whether its worker already held state (`worker_reused`). Ordinary fresh workers prepared for speed remain limited to 32, ten minutes idle and 2 GiB each.
 
-Standby preparation starts only the worker executable. The SDK compiles interpreter startup code once per language version and links it into each Card's `lib/main.so` with the Card's source or assembly paths. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A reused worker retains the loaded code. The working directory and environment are set again on each call; `preRun`'s exports and `cd` reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Source-loading environment changes, including removals, survive reuse; later calls cannot reconfigure libraries already loaded. Configure native libraries at the top of `main.py`, before importing them:
+Standby preparation starts only the worker executable. The SDK compiles interpreter startup code once per language version and links it into each Card's `lib/main.so` with the Card's source or assembly paths. The worker opens package libraries and initializes interpreters inside the first invocation, after `preRun`, with that invocation's identity, logs, deadline and cancellation. A reused worker retains the loaded code. The worker sets the working directory, `HOME`, temporary directory and environment at launch. `preRun`'s exports and `cd` still reach source loading on the first call and the entry point on every call, including Python's `os.environ`. Changes to the process environment survive reuse, while per-call hook overrides are scoped to their invocation. Configure native libraries at the top of `main.py`, before importing them:
 
 ```python
 import os
@@ -498,7 +498,7 @@ os.environ["OMP_NUM_THREADS"] = "1"
 import numpy as np
 ```
 
-Top-level settings last for the worker; environment changes made inside an entry point or hook last for that call. `HOME`, `XDG_CONFIG_HOME` and `XDG_CACHE_HOME` are writable worker directories for library caches.
+The Card can keep files in `HOME` for the life of its worker. Temporary files are cleared between calls. Linux workers map disk scratch at `/tmp` when possible. Cards can use `TMPDIR` on every platform.
 
 The shell steps are `preRun → run → postRun`. `preRun` and `postRun` receive no Card inputs. Their shell and the tools on `PATH` (Bash, coreutils, findutils, grep, sed, gawk, tar, gzip and jq; the same `PATH` is what a code Card's subprocesses see) are built from the Card's own nixpkgs: local and remote runs use the same ones, an update of the app does not change them, and they are part of the environment recorded for the invocation. Name any other tool by its package (`${pkgs.ripgrep}/bin/rg`). `postRun` also runs after a failed earlier step, with `TSUGUMI_FAILED=1` and the produced port names in `TSUGUMI_OUTPUTS`; it cannot clear the failure. Cancellation or a deadline prevents further steps, including `postRun`, from starting. File/Directory results are written under the invocation's output directory, then returned as path messages; see [Building results](#building-results).
 
@@ -926,13 +926,17 @@ The next Card reads it as a path: `inputs.input("events", EventsFile).Value().de
 
 A Code Card has `"type": "code"`. Set `language` to `python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia` or `ruby`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": 600}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they are part of `inputs.params` at runtime. A parameter with `nix: true` is also a build-time value in `default.nix`.
 
-With `sandbox: true`, network access is disabled unless `_card.json` explicitly sets `network: true` (Experimental). With the sandbox off, network restrictions depend on the execution environment. TLS uses `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
+Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
-Omit `executionService` for local execution, or select a host-registered service ID. `executionResources: {"cpuMillis": 1000, "memoryBytes": 4294967296}` caps CPU and memory when the service advertises limits, including its build. Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state and run hooks follow the [worker state rules](#worker-state).
+Use `executionService` to select a registered service. The default is `auto`. In `sandbox`, `filesystem`, `pid`, `ipc` and `identity` default to true. Use `sandbox.limits.cpu` for a limit in cores (fractions are allowed) and `sandbox.limits.memoryMiB` for a memory limit in MiB. Omit either value or use `null` for an unlimited resource. A Linux worker with delegated cgroup v2 applies these limits to the Card's process.
+
+Set `grants.network` or `grants.gui` to enable that access on a supported worker. Add named paths with `grants.hostPaths` entries containing `name`, an absolute `path` and an optional `write` flag. The Card reads the worker-visible path from `TSUGUMI_GRANT_<NAME>`, using uppercase letters and underscores in place of other separators. For example, `sample-data` becomes `TSUGUMI_GRANT_SAMPLE_DATA`.
+
+Connection details and credentials belong to the host; see [Remote execution](RemoteExecution.md). Worker state and run hooks follow the [worker state rules](#worker-state).
 
 ### Card secrets
 
-A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value in the project's **Settings > Card secrets** in the Mac app or the Web UI; this host's hostd keeps it for that project only and never shows it again. At each invocation the Card's process receives it as an environment variable of the same name, the same way in every language:
+A Card that needs a credential declares only its names: `"secrets": ["database_password"]`. A name is `[a-z][a-z0-9_]{0,63}`. Set the value in the project's **Settings > Card secrets** in the Mac app or the Web UI; this host's hostd keeps it for that project only and never shows it again. At launch the Card's process receives it as an environment variable of the same name, the same way in every language:
 
 ```python
 import os
@@ -943,7 +947,7 @@ password = os.environ["database_password"]
 PGPASSWORD="$database_password" psql -h db.example -U reader catalog -c 'select 1'
 ```
 
-The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. A Card with secrets cannot use `reuseWorker`. On a [remote worker](RemoteExecution.md#card-secrets) it receives them the same way.
+The value is not in the project, its parameters, its Nix build or the run history; the history records only that `database_password` was provided. A Card whose secret is not set fails before it runs and names the missing one. When a secret changes, the next run starts a fresh worker. A [remote worker](RemoteExecution.md#card-secrets) receives secrets at launch too.
 
 What the Card does with the value is its author's responsibility: child processes inherit the environment, and a value the Card prints, logs or writes to an output is recorded like any other. Pass it on only where it is needed (above, only `psql` receives it, in its environment rather than its command line), and never write it to a report or an output. See [Card secrets](security.md#card-secrets).
 

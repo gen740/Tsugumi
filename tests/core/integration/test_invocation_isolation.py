@@ -57,7 +57,8 @@ assert os.environ.pop("MPLBACKEND", None) is not None
 libc = ctypes.CDLL(None)
 libc.getenv.argtypes = [ctypes.c_char_p]
 libc.getenv.restype = ctypes.c_char_p
-print("source run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
+assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
+print("source started", flush=True)
 def main(inputs, report):
     assert "MPLBACKEND" not in os.environ
     assert libc.getenv(b"MPLBACKEND") is None
@@ -68,9 +69,9 @@ def main(inputs, report):
     c = core_factory(project_root=tmp_path / "p").connect()
     first, shown = shown_by_probe(c)
     assert shown == "loaded"
-    assert "source run=" + first in log(c, first, "show")
+    assert "source started" in log(c, first, "show")
     second, shown = shown_by_probe(c)
-    assert shown == "loaded" and "source run=" not in log(c, second, "show")
+    assert shown == "loaded" and "source started" not in log(c, second, "show")
     reused, = c.call("RunInvocationsRequest", runId=second, card=path("show")).records
     assert reused.workerReused
 
@@ -81,7 +82,8 @@ def test_python_source_loading_is_killed_at_the_invocation_deadline(core_factory
     from Tsugumi.Data.FailureKind import FailureKind
     source = '''
 import os, time
-print("source run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
+assert not any(name in os.environ for name in ("TSUGUMI_RUN_ID", "TSUGUMI_CARD", "TSUGUMI_INVOCATION"))
+print("source started", flush=True)
 time.sleep(60)
 def main(inputs, report):
     raise AssertionError("main must not run")
@@ -94,12 +96,12 @@ def main(inputs, report):
     assert st.state == RunState.failed
     invocation, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert invocation.failure.kind == FailureKind.timeout
-    assert "source run=" + run_id in log(c, run_id, "show")
+    assert "source started" in log(c, run_id, "show")
 
 
 def test_reused_worker_clears_previous_input_and_output_slots(core_factory, tmp_path):
     """Only the first call has first.txt and first-output; neither survives in the reused worker's fixed slots."""
-    make = bash('n="${TSUGUMI_WORK_DIR%/*}/home/count"; i=0; test ! -f "$n" || read -r i < "$n"; '
+    make = bash('n="$HOME/count"; i=0; test ! -f "$n" || read -r i < "$n"; '
                 'i=$((i+1)); echo "$i" > "$n"; '
                 'if test "$i" = 1; then name=first.txt; else name=second.txt; fi; '
                 'echo "$name" > "$TSUGUMI_OUTPUT_DIR/$name"; '
@@ -262,3 +264,45 @@ int tsugumi_main(const tsugumi_call* c) {
             assert (snapshot / "data").read_text() == "safe"
             assert all(not p.is_symlink() for p in snapshot.rglob("*"))
     assert victim.read_text() == "private-host-content-that-the-card-cannot-read"
+
+
+def test_resident_work_is_persistent_and_temp_is_per_call(core_factory, tmp_path, monkeypatch):
+    import os
+    import sys
+
+    bundles = [os.environ.get("NIX_SSL_CERT_FILE", ""), "/etc/ssl/certs/ca-bundle.crt",
+               "/etc/ssl/certs/ca-certificates.crt", "/etc/ssl/cert.pem"]
+    bundle = next((Path(name) for name in bundles if name and Path(name).is_file()), None)
+    if bundle is None:
+        pytest.skip("needs a readable CA bundle for the launcher sentinel")
+    sentinel = tmp_path / "launcher-ca-sentinel"
+    sentinel.symlink_to(bundle)
+    monkeypatch.setenv("SSL_CERT_FILE", str(sentinel))
+    monkeypatch.setenv("NIX_SSL_CERT_FILE", str(sentinel))
+    tmp_check = ('echo marker > /tmp/card-marker; test -f "$TMPDIR/card-marker"; '
+                 if sys.platform == "linux" else 'echo marker > "$TMPDIR/card-marker"; ')
+    definition = bash(
+        'set -eu; test "$PWD" = "$HOME"; test "$HOME" = "$TSUGUMI_WORK_DIR"; '
+        'test "$TMPDIR" = "$TSUGUMI_TMP_DIR"; test ! -e "$TMPDIR/card-marker"; '
+        'test -r "$SSL_CERT_FILE"; test "${SSL_CERT_FILE##*/}" != launcher-ca-sentinel; '
+        'test "$NIX_SSL_CERT_FILE" = "$SSL_CERT_FILE"; '
+        'test -z "${TSUGUMI_RUN_ID-}${TSUGUMI_CARD-}${TSUGUMI_INVOCATION-}"; '
+        + tmp_check +
+        'if test -f "$HOME/count"; then read -r n < "$HOME/count"; else n=0; fi; '
+        'n=$((n+1)); echo "$n" > "$HOME/count"; '
+        """printf '{"out":{"value":%s}}' "$n" > "$TSUGUMI_OUTPUT"; """
+        """printf '{"text":"%s|%s|%s|%s"}' "$n" "$HOME" "$TMPDIR" "$TSUGUMI_OUTPUT_DIR" > "$TSUGUMI_REPORT" """,
+        reuseWorker=True)
+    root = tmp_path / "p"
+    write(root, {"work": definition}, [card("work", "work")], [])
+    client = core_factory(project_root=root).connect()
+    seen_paths = None
+    for count in ("1", "2"):
+        run_id, status = run_and_wait(client, "work")
+        assert status.state == RunState.succeeded, log(client, run_id, "work", 2)
+        record = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
+        value, *paths = text(record.display.value.text).split("|")
+        assert value == count
+        if seen_paths is not None:
+            assert paths == seen_paths
+        seen_paths = paths

@@ -1,6 +1,6 @@
 """End-to-end checks of the bundled demos against the expected results.
 
-Run in the shared VM with TSUGUMI_TEST_CONTAINER=1 (the reference
+Run in the shared VM with TSUGUMI_TEST_SHARED_VM=1 (the reference
 configuration); without it a host tsugumid is used.
 """
 

@@ -44,13 +44,6 @@ struct Invocation {
   std::span<const Value> inputs;
   std::vector<types::PortType> outputs;
   InvocationParameters params;
-  std::string path;
-  std::string worker_binary;
-  // Card secrets included: the worker sets these in the Card's process.
-  std::vector<std::pair<std::string, std::string>> environment;
-  // Runs once the call reached the worker, so the caller can drop the Card
-  // secrets it put in `environment` before the Card's process ends.
-  std::function<void()> on_call_sent;
   std::filesystem::path output_directory;
   std::optional<std::pair<uid_t, gid_t>> output_owner;
   OutputDelivery delivery = OutputDelivery::local_paths;
@@ -60,9 +53,6 @@ struct Invocation {
   const std::atomic<bool>* cancel = nullptr;
   std::optional<uint64_t> timeout_ms;
   std::chrono::milliseconds deadline_grace{0};
-  // Remote workers used to stop before output inspection, with the supervisor
-  // enforcing the whole-job deadline/cancel outside this call.
-  bool stop_before_outputs = false;
   WorkerProc::LogSink log;
   WorkerProc::DisplaySink display;
   std::function<std::vector<Value>(WorkerProc&)> stage_inputs;
@@ -83,6 +73,12 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
                         bool validation_rejected,
                         const std::optional<FailureData>& failure)
     -> WorkerDisposition;
+
+auto stage_input(const Value& value,
+                 std::span<const std::filesystem::path> roots,
+                 const std::filesystem::path& directory, bool read_only,
+                 const std::atomic<bool>& cancel,
+                 const fs::TransferProgress& progress) -> Value;
 
 // Admit bytes from a worker process before interpreting them as port values.
 auto accept_outputs(std::vector<std::pair<std::string, std::string>> raw,

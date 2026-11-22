@@ -8,18 +8,23 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
+#include <algorithm>
 #include <cerrno>
 #include <cstring>
 #include <fstream>
+#include <set>
 #include <stdexcept>
 #include <system_error>
 #ifdef __APPLE__
 #include <libproc.h>
+#else
+#include <sys/vfs.h>
 #endif
 
 #include "tsugumi/protocol/trace_codec.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
+#include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/process.hh"
@@ -30,6 +35,9 @@
 
 #ifndef TSUGUMI_BWRAP
 #define TSUGUMI_BWRAP ""
+#endif
+#ifndef TSUGUMI_CACERT
+#define TSUGUMI_CACERT ""
 #endif
 
 namespace tsugumi {
@@ -53,6 +61,10 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
       rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
   std::string buf(prefix.data(), prefix.size());
   buf += frame;
+  struct Wipe {
+    std::string& data;
+    ~Wipe() { workerd::clear_secret(data); }
+  } wipe{buf};
   size_t offset = 0;
   while (offset < buf.size()) {
     if (cancel && cancel->load())
@@ -89,8 +101,11 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
 // only to the worker's own folder (scripts excepted) and to the output
 // staging folder of the current call (copied to the run afterwards). Paths
 // are matched after symlink resolution (/tmp -> /private/tmp).
-std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
-                             const std::string& scripts) {
+auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
+                      const std::string& scripts) -> std::string {
+  if (!sp.sandbox.filesystem)
+    return sp.network ? std::string{}
+                      : "(version 1)\n(allow default)\n(deny network*)\n";
   auto real = [](const std::string& p) {
     std::error_code ec;
     auto c = std::filesystem::weakly_canonical(p, ec);
@@ -110,6 +125,8 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
       " (subpath \"/System\") (subpath \"/bin\") (subpath \"/usr/bin\") "
       "(subpath \"/private/etc\")"
       " (subpath \"/private/var/db/timezone\") (subpath \"/dev\")";
+  if (std::string_view(TSUGUMI_CACERT).size())
+    read += " (literal " + quote(TSUGUMI_CACERT) + ")";
   read += " (literal " + quote(sp.worker_binary) + ") (subpath " +
           quote(scratch) + ")";
   if (!sp.bash.empty()) read += " (literal " + quote(sp.bash) + ")";
@@ -118,6 +135,15 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
       quote(scratch) + ")";
   for (const auto& p : sp.ro_paths) {
     read += " (subpath " + quote(p) + ")";
+  }
+  std::string read_only_grants;
+  for (const auto& bind : sp.binds) {
+    const auto rule = " (subpath " + quote(bind.source) + ")";
+    read += rule;
+    if (bind.write)
+      write += rule;
+    else
+      read_only_grants += rule;
   }
   return "(version 1)\n(deny default)\n"
          "(allow process-fork)\n(allow process-exec)\n(allow signal (target "
@@ -128,8 +154,9 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
          read + ")\n(allow file-write* " + write +
          ")\n"
          "(deny file-write* (subpath " +
-         quote(scripts) + ") (subpath " + quote(scratch + "/inputs") +
-         "))\n"
+         quote(scripts) + ") (subpath " + quote(scratch + "/inputs") + ")" +
+         read_only_grants +
+         ")\n"
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
@@ -149,28 +176,116 @@ std::string seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch,
                        "(path-literal \"/private/var/run/mDNSResponder\")))\n"
                      : "");
 }
+#else
+auto delegated_root() -> std::filesystem::path {
+  const auto* root = ::getenv("TSUGUMI_CARD_CGROUP_ROOT");
+  return root ? std::filesystem::path(root) : std::filesystem::path{};
+}
+
+auto cgroup_write(const std::filesystem::path& path, const std::string& value)
+    -> void {
+  std::ofstream file(path);
+  file << value;
+  file.close();
+  if (!file)
+    throw Failed(FailureKind::unsupported,
+                 "cannot configure delegated Card cgroup " + path.string());
+}
+
+struct GuiSocket {
+  std::string variable;
+  std::string value;
+  std::string source;
+};
+auto gui_socket() -> std::optional<GuiSocket> {
+  namespace fs = std::filesystem;
+  if (const auto* display = ::getenv("WAYLAND_DISPLAY"); display && *display) {
+    fs::path socket = display;
+    if (!socket.is_absolute()) {
+      const auto* root = ::getenv("XDG_RUNTIME_DIR");
+      if (root && fs::path(root).is_absolute() && socket == socket.filename())
+        socket = fs::path(root) / socket;
+    }
+    std::error_code error;
+    if (socket.is_absolute() && fs::is_socket(socket, error))
+      return GuiSocket{"WAYLAND_DISPLAY", socket.string(), socket.string()};
+  }
+  if (const auto* display = ::getenv("DISPLAY"); display && display[0] == ':') {
+    std::string number = display + 1;
+    number.erase(number.find('.') == std::string::npos ? number.size()
+                                                       : number.find('.'));
+    std::error_code error;
+    if (!number.empty() &&
+        number.find_first_not_of("0123456789") == std::string::npos &&
+        fs::is_socket("/tmp/.X11-unix/X" + number, error))
+      return GuiSocket{"DISPLAY", display, "/tmp/.X11-unix"};
+  }
+  return std::nullopt;
+}
 #endif
 
 }  // namespace
 
-bool worker_uid_on_host() {
-#ifdef __APPLE__
-  return true;
+WorkerSecrets::~WorkerSecrets() {
+  for (auto& [name, value] : values) workerd::clear_secret(value);
+}
+
+auto worker_has_bwrap() -> bool {
+#ifdef __linux__
+  return *TSUGUMI_BWRAP && ::access(TSUGUMI_BWRAP, X_OK) == 0;
 #else
-  std::string bwrap = TSUGUMI_BWRAP;
-  return bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0;
+  return false;
 #endif
 }
 
+auto worker_limits_available() -> bool {
+#ifdef __linux__
+  const auto root = delegated_root();
+  struct statfs kind{};
+  if (!worker_has_bwrap() || !root.is_absolute() ||
+      ::statfs(root.c_str(), &kind) != 0 || kind.f_type != 0x63677270 ||
+      ::access(root.c_str(), W_OK | X_OK) != 0 ||
+      ::access((root / "cgroup.procs").c_str(), W_OK) != 0)
+    return false;
+  const auto enabled = fs::read_file(root / "cgroup.subtree_control");
+  return enabled && enabled->find("cpu") != std::string::npos &&
+         enabled->find("memory") != std::string::npos;
+#else
+  return false;
+#endif
+}
+
+auto worker_gui_available() -> bool {
+#ifdef __linux__
+  return worker_has_bwrap() && gui_socket().has_value();
+#else
+  return false;
+#endif
+}
+
+auto remove_card_cgroup(const std::filesystem::path& path) -> void {
+#ifdef __linux__
+  if (path.empty()) return;
+  std::error_code error;
+  if (!std::filesystem::exists(path, error)) return;
+  try {
+    cgroup_write(path / "cgroup.kill", "1");
+  } catch (const Failed&) {
+  }
+  for (int i = 0; i < 50; ++i) {
+    if (::rmdir(path.c_str()) == 0 || errno == ENOENT) return;
+    if (errno != EBUSY) break;
+    ::usleep(10000);
+  }
+  log::warn("could not remove Card cgroup " + path.string());
+#else
+  (void)path;
+#endif
+}
+
+bool worker_uid_on_host() { return !worker_has_bwrap(); }
+
 WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
-  int data[2];
-  int control[2];
-  int out[2];
-  int err[2];
-  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 ||
-      ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 || ::pipe(out) != 0 ||
-      ::pipe(err) != 0)
-    throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   // The worker's own folder; the step scripts are written once per worker.
   auto scripts = std::filesystem::path(scratch_) / "scripts";
 #ifdef __APPLE__
@@ -178,7 +293,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   // directory with exactly the Card's identity and sandbox, then open it with
   // O_NOFOLLOW. Even a surviving child swapping in a hard link cannot enlist
   // the core's broader authority to chmod a protected host inode.
-  recover_permissions_ = [sp, scripts](int parent, const char* name) {
+  const auto profile = seatbelt_profile(sp, scratch_, scripts.string());
+  recover_permissions_ = [profile, uid = sp.uid, gid = sp.gid](
+                             int parent, const char* name) {
     std::filesystem::path target(name);
     if (parent != AT_FDCWD) {
       char path[PATH_MAX];
@@ -189,13 +306,12 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     }
     proc::Spec repair;
     repair.cwd = "/";
-    if (sp.sandbox)
-      repair.argv = {"/usr/bin/sandbox-exec", "-p",
-                     seatbelt_profile(sp, sp.scratch, scripts.string())};
+    if (!profile.empty())
+      repair.argv = {"/usr/bin/sandbox-exec", "-p", profile};
     repair.argv.insert(repair.argv.end(),
                        {"/bin/chmod", "-h", "u+rwx", target.string()});
-    repair.uid = sp.uid;
-    repair.gid = sp.gid;
+    repair.uid = uid;
+    repair.gid = gid;
     const auto result = proc::run(repair, nullptr, std::nullopt, {});
     if (!proc::exited_ok(result.status))
       throw std::system_error(
@@ -203,16 +319,13 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
           "cannot restore staging directory permissions: " + target.string());
   };
 #endif
-  for (const char* d : {"work", "tmp", "out", "scripts", "home", "inputs"})
+  for (const char* d : {"work", "tmp", "out", "scripts", "inputs"})
     std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
-    for (const char* d : {"work", "tmp", "out", "home"}) {
+    for (const char* d : {"work", "tmp", "out"}) {
       const auto path = scratch_ + "/" + d;
       if (::chown(path.c_str(), *sp.uid, sp.gid.value_or(*sp.uid)) != 0) {
         const int error = errno;
-        for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1],
-                       err[0], err[1]})
-          ::close(fd);
         throw Failed(FailureKind::worker_failed,
                      "chown " + path + ": " + std::strerror(error));
       }
@@ -239,128 +352,218 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   args.push_back(sp.bash);
 
   proc::Spec spec;
-  auto own = [&](std::vector<std::string>& argv) {
-    for (const auto& p : sp.ro_paths)
-      argv.insert(argv.end(), {"--ro-bind", p, p});
-    argv.insert(argv.end(),
-                {"--bind", scratch_, scratch_, "--ro-bind", scripts.string(),
-                 scripts.string(), "--ro-bind", inputs_dir(), inputs_dir()});
-    for (const auto& b : sp.binds)
-      argv.insert(argv.end(),
-                  {b.write ? "--bind" : "--ro-bind", b.source, b.target});
-    if (sp.network && sp.sandbox)
-      // Name resolution and the CA bundle of the environment (a sandbox
-      // starts without /etc; unsandboxed, the real one is there).
-      for (const char* f :
-           {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf", "/etc/ssl"})
-        argv.insert(argv.end(), {"--ro-bind-try", f, f});
-  };
-  if (!sp.binds.empty() && std::string(TSUGUMI_BWRAP).empty())
-    throw Failed(FailureKind::unsupported,
-                 "folders of the Mac need the shared VM (bubblewrap)");
-  if (sp.sandbox) {
+  std::string certificate = TSUGUMI_CACERT;
+  std::string temporary = tmp_dir();
+  std::vector<std::string> gui_env;
 #ifdef __APPLE__
+  if (sp.gui || sp.sandbox.limits.limited())
+    throw Failed(FailureKind::unsupported,
+                 "native macOS does not support GUI grants or sandbox limits");
+  if (!profile.empty()) {
     if (::access("/usr/bin/sandbox-exec", X_OK) != 0)
-      throw Failed(FailureKind::permission_denied,
-                   "sandbox: true needs /usr/bin/sandbox-exec, which this host "
-                   "does not provide; refusing to run unsandboxed");
-    spec.argv = {"/usr/bin/sandbox-exec", "-p",
-                 seatbelt_profile(sp, scratch_, scripts.string()),
-                 sp.worker_binary};
-    spec.uid = sp.uid;
-    spec.gid = sp.gid;
+      throw Failed(FailureKind::permission_denied, "Seatbelt is unavailable");
+    spec.argv = {"/usr/bin/sandbox-exec", "-p", profile};
+  }
+  spec.argv.push_back(sp.worker_binary);
+  spec.uid = sp.uid;
+  spec.gid = sp.gid;
 #else
-    std::string bwrap = TSUGUMI_BWRAP;
-    if (bwrap.empty() || ::access(bwrap.c_str(), X_OK) != 0)
-      throw Failed(FailureKind::permission_denied,
-                   "sandbox: true needs bubblewrap, which this environment "
-                   "does not provide; refusing to run unsandboxed");
-    spec.argv = {bwrap,           "--unshare-all", "--die-with-parent",
-                 "--new-session", "--cap-drop",    "ALL",
-                 "--ro-bind",     sp.store_path,   "/nix/store",
-                 "--proc",        "/proc",         "--dev",
-                 "/dev",          "--tmpfs",       "/tmp"};
-    // A development build's worker lives outside /nix/store: that one file is
-    // shown read-only, as the Seatbelt profile allows it (the image's is in the
-    // store).
-    if (!sp.worker_binary.starts_with("/nix/store/"))
-      spec.argv.insert(spec.argv.end(),
-                       {"--ro-bind", sp.worker_binary, sp.worker_binary});
-    // popen and system(3) run /bin/sh by that name (R needs it to start).
-    if (!sp.bash.empty())
-      spec.argv.insert(spec.argv.end(), {"--symlink", sp.bash, "/bin/sh"});
-    if (sp.network) spec.argv.push_back("--share-net");
-    if (sp.uid) {
-      spec.argv.insert(spec.argv.end(),
-                       {"--uid", std::to_string(*sp.uid), "--gid",
-                        std::to_string(sp.gid.value_or(*sp.uid))});
+  const bool bwrap = worker_has_bwrap();
+  const bool filesystem = sp.sandbox.filesystem;
+  if (!bwrap && (filesystem || !sp.hidden_paths.empty() || sp.gui ||
+                 sp.sandbox.limits.limited()))
+    throw Failed(FailureKind::unsupported,
+                 "the requested Card isolation requires bubblewrap");
+  if (bwrap) {
+    auto& argv = spec.argv;
+    argv = {TSUGUMI_BWRAP, "--unshare-user", "--die-with-parent"};
+    if (sp.sandbox.pid)
+      argv.insert(argv.end(), {"--unshare-pid", "--new-session"});
+    if (sp.sandbox.ipc) argv.push_back("--unshare-ipc");
+    if (!sp.network) argv.push_back("--unshare-net");
+    if (sp.sandbox.identity) {
+      argv.insert(argv.end(),
+                  {"--uid", "65534", "--gid", "65534", "--cap-drop", "ALL"});
     }
-    own(spec.argv);
-    spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
-#endif
-  } else if (std::string bwrap = TSUGUMI_BWRAP;
-             !bwrap.empty() && ::access(bwrap.c_str(), X_OK) == 0) {
-    // sandbox: false lifts the file access limits only. The worker still gets
-    // its own PID namespace, so every descendant ends with it, and its own
-    // network namespace (no network) unless the Card allows the network.
-    spec.argv = {bwrap,
-                 "--unshare-user",
-                 "--unshare-pid",
-                 "--unshare-ipc",
-                 "--die-with-parent",
-                 "--new-session",
-                 "--dev-bind",
-                 "/",
-                 "/",
-                 "--proc",
-                 "/proc"};
-    if (!sp.network) spec.argv.push_back("--unshare-net");
-    if (sp.uid)
-      spec.argv.insert(spec.argv.end(),
-                       {"--uid", std::to_string(*sp.uid), "--gid",
-                        std::to_string(sp.gid.value_or(*sp.uid))});
-    // Shared folders (virtiofs) show every file as owned by whoever looks, so
-    // file modes cannot keep the token from the Card: the folders are hidden.
-    for (const auto& p : sp.hidden_paths)
-      spec.argv.insert(spec.argv.end(), {"--tmpfs", p});
-    own(spec.argv);
-    spec.argv.insert(spec.argv.end(), {"--", sp.worker_binary});
+    if (filesystem) {
+      argv.insert(argv.end(), {"--dir", "/nix/store", "--dev", "/dev"});
+      for (const auto& item : std::set(sp.closure.begin(), sp.closure.end())) {
+        const std::filesystem::path member(item);
+        if (member.parent_path() != "/nix/store" || member.filename() == "." ||
+            member.filename() == "..")
+          throw Failed(FailureKind::worker_failed,
+                       "invalid realized closure path");
+        const auto source =
+            (std::filesystem::path(sp.store_path) / member.filename()).string();
+        argv.insert(argv.end(), {"--ro-bind", source, item});
+      }
+      if (!sp.worker_binary.starts_with("/nix/store/"))
+        argv.insert(argv.end(),
+                    {"--ro-bind", sp.worker_binary, sp.worker_binary});
+      if (!sp.bash.empty())
+        argv.insert(argv.end(), {"--symlink", sp.bash, "/bin/sh"});
+    } else {
+      argv.insert(argv.end(), {"--dev-bind", "/", "/"});
+      for (const auto& path : sp.hidden_paths)
+        argv.insert(argv.end(), {"--tmpfs", path});
+      if (!delegated_root().empty())
+        argv.insert(argv.end(), {"--tmpfs", "/sys/fs/cgroup"});
+    }
+    if (sp.sandbox.pid)
+      argv.insert(argv.end(), {"--proc", "/proc"});
+    else if (!sp.hidden_paths.empty() && !filesystem)
+      // Keep the project mount namespace inaccessible through /proc/PID/root.
+      argv.insert(argv.end(), {"--tmpfs", "/proc"});
+    if (sp.sandbox.ipc && !filesystem) {
+      if (::access("/dev/shm", F_OK) == 0)
+        argv.insert(argv.end(), {"--tmpfs", "/dev/shm"});
+      if (::access("/dev/mqueue", F_OK) == 0)
+        argv.insert(argv.end(), {"--tmpfs", "/dev/mqueue"});
+    } else if (sp.sandbox.ipc) {
+      argv.insert(argv.end(), {"--tmpfs", "/dev/shm"});
+    }
+    const auto gui = sp.gui && !sp.shared_vm ? gui_socket() : std::nullopt;
+    // Paths under the original /tmp must remain visible after mounting scratch.
+    const auto under_tmp = [](const std::string& path) {
+      return path == "/tmp" || path.starts_with("/tmp/");
+    };
+    const bool preserve_tmp =
+        !filesystem &&
+        (std::ranges::any_of(
+             sp.binds,
+             [&](const auto& grant) { return under_tmp(grant.source); }) ||
+         (gui && gui->variable == "WAYLAND_DISPLAY" && under_tmp(gui->source)));
+    if (!preserve_tmp && !under_tmp(scratch_) && !under_tmp(sp.worker_binary) &&
+        !std::ranges::any_of(sp.ro_paths, under_tmp)) {
+      argv.insert(argv.end(), {"--bind", tmp_dir(), "/tmp"});
+      temporary = "/tmp";
+    }
+    for (const auto& path : sp.ro_paths)
+      argv.insert(argv.end(), {"--ro-bind", path, path});
+    if (filesystem || !sp.hidden_paths.empty())
+      argv.insert(argv.end(), {"--bind", scratch_, scratch_, "--ro-bind",
+                               scripts.string(), scripts.string()});
+    if (filesystem) {
+      argv.insert(argv.end(), {"--ro-bind", inputs_dir(), inputs_dir()});
+      read_only_inputs_ =
+          sp.sandbox.ipc &&
+          std::ranges::none_of(sp.binds, &WorkerSpawn::Bind::write);
+      for (const auto& bind : sp.binds)
+        argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
+                                 bind.source, bind.target});
+      if (sp.network)
+        for (const char* path :
+             {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"})
+          argv.insert(argv.end(), {"--ro-bind-try", path, path});
+      if (!certificate.empty()) {
+        argv.insert(argv.end(),
+                    {"--ro-bind", certificate, "/tsugumi-ca-bundle.crt"});
+        certificate = "/tsugumi-ca-bundle.crt";
+      }
+    }
+    if (sp.gui) {
+      const auto& socket = gui;
+      if (!socket)
+        throw Failed(FailureKind::unsupported,
+                     "grants.gui needs a native Linux GUI socket");
+      auto value = socket->value;
+      if (socket->variable == "WAYLAND_DISPLAY" && filesystem) {
+        value = "/run/tsugumi-wayland";
+        argv.insert(argv.end(), {"--bind", socket->source, value});
+      }
+      if (socket->variable == "DISPLAY" &&
+          (filesystem || temporary == "/tmp")) {
+        argv.insert(argv.end(), {"--bind", socket->source, socket->source});
+        x11_mounted_ = temporary == "/tmp";
+      }
+      if (filesystem)
+        argv.insert(argv.end(), {"--dev-bind-try", "/dev/dri", "/dev/dri"});
+      gui_env.push_back(socket->variable + "=" + value);
+    }
+    argv.insert(argv.end(), {"--chdir", work_dir(), "--", sp.worker_binary});
   } else {
-    // Development hosts without bubblewrap (never the VM): paths as they are.
     spec.argv = {sp.worker_binary};
     spec.uid = sp.uid;
     spec.gid = sp.gid;
   }
+  if (sp.sandbox.limits.limited()) {
+    auto group = sp.cgroup;
+    if (group.empty()) {
+      if (!worker_limits_available())
+        throw Failed(FailureKind::unsupported,
+                     "sandbox.limits requires a delegated cgroup v2 subtree");
+      group = delegated_root() / ("tsugumi-card-" + crypto::uuid4());
+    }
+    if (!std::filesystem::create_directory(group))
+      throw Failed(FailureKind::unsupported,
+                   "cannot create a private Card cgroup");
+    try {
+      const auto& limits = sp.sandbox.limits;
+      if (limits.cpu_millis)
+        cgroup_write(group / "cpu.max",
+                     std::to_string(limits.cpu_millis * 1000ull) + " 1000000");
+      if (limits.memory_bytes)
+        cgroup_write(group / "memory.max", std::to_string(limits.memory_bytes));
+      spec.cgroup_procs = (group / "cgroup.procs").string();
+    } catch (...) {
+      remove_card_cgroup(group);
+      throw;
+    }
+    cgroup_ = std::move(group);
+  }
+#endif
   spec.argv.insert(spec.argv.end(), args.begin(), args.end());
-  // A home of the worker's own (for its life): libraries that keep settings
-  // or caches there (astropy, matplotlib, ...) work during runtime preparation
-  // and during invocations.
-  std::string home = scratch_ + "/home";
-  spec.env = {"PATH=/var/empty",
+  spec.env = {"PATH=" + sp.path,
               "LANG=C.UTF-8",
-              "HOME=" + home,
-              "XDG_CONFIG_HOME=" + home + "/.config",
-              "XDG_CACHE_HOME=" + home + "/.cache",
-              "MPLCONFIGDIR=" + home + "/.matplotlib"};
+              "HOME=" + work_dir(),
+              "XDG_CONFIG_HOME=" + work_dir() + "/.config",
+              "XDG_CACHE_HOME=" + work_dir() + "/.cache",
+              "TMPDIR=" + temporary,
+              "TSUGUMI_WORK_DIR=" + work_dir(),
+              "TSUGUMI_TMP_DIR=" + temporary,
+              "TSUGUMI_OUTPUT_DIR=" + out_dir(),
+              "TSUGUMI_WORKER=" + sp.worker_binary};
+  for (const auto& bind : sp.binds) {
+    auto path = bind.source;
+#ifdef __linux__
+    if (sp.sandbox.filesystem) path = bind.target;
+#endif
+    spec.env.push_back(grant_environment(bind.name) + "=" + path);
+  }
+  spec.env.insert(spec.env.end(), gui_env.begin(), gui_env.end());
   if (trace::LaunchEnabled())
     spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-  if (sp.network)
-    for (const char* v : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-      if (const char* x = std::getenv(v))
-        spec.env.push_back(std::string(v) + "=" + x);
+  if (!certificate.empty()) {
+    spec.env.push_back("SSL_CERT_FILE=" + certificate);
+    spec.env.push_back("NIX_SSL_CERT_FILE=" + certificate);
+  }
   // Not where tsugumid runs, which the sandbox does not let it read (getcwd
   // fails): libraries ask for the current directory while they are imported.
   spec.cwd = work_dir();
+  int data[2]{-1, -1}, control[2]{-1, -1}, out[2]{-1, -1}, err[2]{-1, -1};
+  const auto close_channels = [&] {
+    for (const int fd : {data[0], data[1], control[0], control[1], out[0],
+                         out[1], err[0], err[1]})
+      if (fd >= 0) ::close(fd);
+  };
+  if (::socketpair(AF_UNIX, SOCK_STREAM, 0, data) != 0 ||
+      ::socketpair(AF_UNIX, SOCK_STREAM, 0, control) != 0 || ::pipe(out) != 0 ||
+      ::pipe(err) != 0) {
+    close_channels();
+    remove_card_cgroup(cgroup_);
+    throw Failed(FailureKind::worker_failed, "cannot create worker channels");
+  }
   spec.fds = {{3, data[1]}, {4, control[1]}};
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];
   try {
     pid_ = proc::spawn(spec);
   } catch (const std::exception& e) {
-    for (int fd : {data[0], data[1], control[0], control[1], out[0], out[1],
-                   err[0], err[1]})
-      ::close(fd);
-    throw Failed(FailureKind::worker_failed, e.what());
+    close_channels();
+    remove_card_cgroup(cgroup_);
+    throw Failed(sp.sandbox.limits.limited() ? FailureKind::unsupported
+                                             : FailureKind::worker_failed,
+                 e.what());
   }
   ::close(data[1]);
   ::close(control[1]);
@@ -382,7 +585,39 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   ::setsockopt(control_fd_, SOL_SOCKET, SO_NOSIGPIPE, &one, sizeof one);
 #endif
   alive_ = true;
-  resume_logs();
+  try {
+    if (sp.secrets) {
+      flatbuffers::FlatBufferBuilder builder;
+      std::vector<flatbuffers::Offset<W::EnvVar>> environment;
+      for (const auto& [name, value] : sp.secrets->values)
+        environment.push_back(W::CreateEnvVar(
+            builder, builder.CreateString(name), builder.CreateString(value)));
+      const auto start =
+          W::CreateWorkerStart(builder, builder.CreateVector(environment));
+      W::FinishWorkerMessageBuffer(
+          builder,
+          W::CreateWorkerMessage(builder, flatbuffers::nullopt,
+                                 W::WorkerPayload::WorkerStart, start.Union()));
+      struct Wipe {
+        flatbuffers::FlatBufferBuilder& builder;
+        std::string frame;
+        ~Wipe() {
+          workerd::wipe_secret(
+              {reinterpret_cast<char*>(builder.GetBufferPointer()),
+               builder.GetSize()});
+          workerd::clear_secret(frame);
+        }
+      } wipe{builder,
+             {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+              builder.GetSize()}};
+      send_frame(trace_link_, data_fd_, wipe.frame, nullptr,
+                 std::chrono::steady_clock::now() + std::chrono::seconds(10));
+    }
+    resume_logs();
+  } catch (...) {
+    terminate(true);
+    throw;
+  }
 }
 
 WorkerProc::WorkerProc(Borrowed borrowed)
@@ -392,6 +627,7 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       err_fd_(borrowed.descriptors[3]),
       alive_(true),
       scratch_(std::move(borrowed.scratch)),
+      read_only_inputs_(borrowed.read_only_inputs),
       call_id_(borrowed.call_id),
       borrowed_(true),
       lease_id_(borrowed.lease),
@@ -494,7 +730,9 @@ void WorkerProc::clear_scratch() {
     return;
   }
   try {
-    for (const auto& d : {work_dir(), tmp_dir(), out_dir(), inputs_dir()})
+    fs::clear_staging(tmp_dir(), recover_permissions_,
+                      x11_mounted_ ? ".X11-unix" : "");
+    for (const auto& d : {out_dir(), inputs_dir()})
       fs::clear_staging(d, recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,
@@ -543,7 +781,7 @@ void WorkerProc::terminate(bool force) {
     return;
   }
   if (pid_ > 0) {
-    if (force) proc::kill_group(pid_, SIGKILL);
+    if (force) proc::kill_group(pid_, SIGTERM);
     close_fd(data_fd_);
     close_fd(control_fd_);
     // Give a cooperative worker a moment to exit after its data socket closed.
@@ -552,6 +790,8 @@ void WorkerProc::terminate(bool force) {
     proc::wait(pid_);
     pid_ = -1;
   }
+  remove_card_cgroup(cgroup_);
+  cgroup_.clear();
   stop_log_reader();
   read_logs(true);
   close_fd(out_fd_);
@@ -590,20 +830,18 @@ void WorkerProc::send(int fd, const std::string& frame) {
 WorkerOutcome WorkerProc::call(
     std::string frame, uint64_t call_id, const std::atomic<bool>* cancel,
     std::optional<std::chrono::steady_clock::time_point> deadline,
-    const DisplaySink& display, const std::function<void()>& sent) {
+    const DisplaySink& display) {
   WorkerOutcome outcome;
   try {
     send_frame(trace_link_, data_fd_, frame, cancel, deadline);
   } catch (const Failed& error) {
     workerd::clear_secret(frame);
-    if (sent) sent();
     // A partially sent call cannot be resumed or reused.
     terminate();
     outcome.failure = error.failure;
     return outcome;
   }
   workerd::clear_secret(frame);
-  if (sent) sent();
   std::string rbuf;
   bool cancel_sent = false;
   std::optional<std::chrono::steady_clock::time_point> kill_at;

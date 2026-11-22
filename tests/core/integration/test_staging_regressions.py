@@ -39,9 +39,9 @@ def test_dense_file_larger_than_32_mib_reaches_downstream(core_factory, tmp_path
 
 def test_mode_zero_scratch_does_not_fail_a_successful_call(core_factory, tmp_path):
     """A mode-000 nested directory is cleared without turning a successful result into a cleanup failure."""
-    definition = bash('mkdir -p "$TSUGUMI_WORK_DIR/private/nested"; '
-                      'echo private > "$TSUGUMI_WORK_DIR/private/nested/data"; '
-                      'chmod 000 "$TSUGUMI_WORK_DIR/private/nested" "$TSUGUMI_WORK_DIR/private"; '
+    definition = bash('mkdir -p "$TSUGUMI_TMP_DIR/private/nested"; '
+                      'echo private > "$TSUGUMI_TMP_DIR/private/nested/data"; '
+                      'chmod 000 "$TSUGUMI_TMP_DIR/private/nested" "$TSUGUMI_TMP_DIR/private"; '
                       'printf \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
                       reuseWorker=True, recordIO=True)
     write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])

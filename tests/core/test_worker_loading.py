@@ -20,6 +20,7 @@ from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerInput import WorkerInputT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
+from Tsugumi.Worker.WorkerStart import WorkerStartT
 from harness.values import encode_message
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -38,7 +39,7 @@ def library(tmp_path, source, name="main"):
 
 
 @contextlib.contextmanager
-def worker(package, *, stderr=None):
+def worker(package, *, stderr=None, startup=None):
     with contextlib.ExitStack() as stack:
         data, child_data = socket.socketpair()
         control, child_control = socket.socketpair()
@@ -50,9 +51,18 @@ def worker(package, *, stderr=None):
                   'os.execv(sys.argv[3],sys.argv[3:])')
         p = subprocess.Popen([sys.executable, "-c", launch, str(child_data.fileno()), str(child_control.fileno()),
                               str(WORKER), "--package", str(package), "--bash", "/bin/bash"],
-                             pass_fds=(child_data.fileno(), child_control.fileno()), stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr is None else stderr)
+                             pass_fds=(child_data.fileno(), child_control.fileno()), cwd=package,
+                             env={**os.environ, "HOME": str(package), "TMPDIR": str(package / "tmp"),
+                                  "TSUGUMI_WORK_DIR": str(package), "TSUGUMI_TMP_DIR": str(package / "tmp"),
+                                  "TSUGUMI_OUTPUT_DIR": str(package / "out")},
+                             stdout=subprocess.PIPE, stderr=subprocess.PIPE if stderr is None else stderr)
         child_data.close()
         child_control.close()
+        if startup:
+            message = WorkerMessageT()
+            message.valueType, message.value = WorkerPayload.WorkerStart, WorkerStartT()
+            message.value.environment = [EnvVarT(name=k, value=v) for k, v in startup.items()]
+            send_message(data, message)
         try:
             yield p, data, control
         finally:
@@ -78,16 +88,14 @@ def send_call(data, tmp_path, call_id=1, deadline=None, inputs=()):
     call.temporaryDirectory = str(tmp_path)
     call.outputDirectory = ""
     call.environment = []
-    environment = {"TSUGUMI_RUN_ID": "recorded-run", "LOAD_MARKER": str(tmp_path / "loaded")}
-    if call_id == 1:
-        environment["ONLY_FIRST_CALL"] = "transient"
-    for key, value in environment.items():
-        var = EnvVarT()
-        var.name, var.value = key, value
-        call.environment.append(var)
+    call.environment = [EnvVarT(name="TSUGUMI_PARAMS_JSON", value=str(call_id))]
     call.deadlineMs = deadline
     msg = WorkerMessageT()
     msg.callId, msg.valueType, msg.value = call_id, WorkerPayload.WorkerCall, call
+    send_message(data, msg)
+
+
+def send_message(data, msg):
     b = flatbuffers.Builder(256)
     b.Finish(msg.Pack(b), file_identifier=b"TSW1")
     frame = bytes(b.Output())
@@ -135,31 +143,41 @@ int tsugumi_main(const tsugumi_call* c) {
 
 
 def test_card_constructors_wait_for_the_invocation(tmp_path):
-    """Card constructors and the load phase see the call environment and run once."""
+    """Constructors and both calls see the startup secrets, cwd and stable directories."""
     library(tmp_path, r'''
 #include <tsugumi/sdk/abi.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
+#include <unistd.h>
 __attribute__((constructor)) static void constructor(void) {
   puts("card constructor"); fflush(stdout);
   const char* marker = getenv("LOAD_MARKER");
-  if (marker) { FILE* f = fopen(marker, "w"); fputs(getenv("TSUGUMI_RUN_ID"), f); fclose(f); }
+  if (marker && getenv("startup_key")) { FILE* f = fopen(marker, "w"); fputs("loaded", f); fclose(f); }
 }
 int tsugumi_main(const tsugumi_call* call) {
   if (call->phase == TSUGUMI_LOAD) {
     puts("card load"); setenv("FROM_SOURCE", "source", 1); return 0;
   }
   if (call->phase != TSUGUMI_RUN) return 0;
-  if (!getenv("FROM_SOURCE") || getenv("FROM_MAIN")) return 1;
-  if (call->invocation == 2 && getenv("ONLY_FIRST_CALL")) return 2;
+  char cwd[4096];
+  if (!getcwd(cwd, sizeof(cwd)) || strcmp(cwd, getenv("HOME")) ||
+      strcmp(cwd, getenv("TSUGUMI_WORK_DIR")) ||
+      strcmp(getenv("TMPDIR"), getenv("TSUGUMI_TMP_DIR")) ||
+      !getenv("TSUGUMI_OUTPUT_DIR") || !getenv("startup_key")) return 1;
+  if (getenv("TSUGUMI_RUN_ID") || getenv("TSUGUMI_CARD") ||
+      getenv("TSUGUMI_INVOCATION") || !getenv("FROM_SOURCE")) return 2;
+  if (atoi(getenv("TSUGUMI_PARAMS_JSON")) != call->invocation) return 3;
+  if ((getenv("FROM_MAIN") != NULL) != (call->invocation == 2)) return 4;
   setenv("FROM_MAIN", "transient", 1);
   return 0;
 }
 ''')
-    with worker(tmp_path) as (p, data, _):
+    startup = {"LOAD_MARKER": str(tmp_path / "loaded"), "startup_key": "test-value"}
+    with worker(tmp_path, startup=startup) as (p, data, _):
         send_call(data, tmp_path)
         assert receive(data).valueType == WorkerPayload.WorkerResult
-        assert (tmp_path / "loaded").read_text() == "recorded-run"
+        assert (tmp_path / "loaded").read_text() == "loaded"
         send_call(data, tmp_path, 2)
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
@@ -174,8 +192,7 @@ def test_runtime_and_card_loading_wait_for_the_invocation(tmp_path):
 #include <stdio.h>
 #include <stdlib.h>
 __attribute__((constructor)) static void constructor(void) {
-  const char* run = getenv("TSUGUMI_RUN_ID");
-  if (run) { puts(run); fflush(stdout); }
+  puts("constructor ready"); fflush(stdout);
 }
 int tsugumi_main(const tsugumi_call* c) {
   if (c->phase == TSUGUMI_PREPARE) { puts("runtime ready"); fflush(stdout); }
@@ -195,7 +212,7 @@ int tsugumi_main(const tsugumi_call* c) {
         assert receive(data).valueType == WorkerPayload.WorkerResult
         data.shutdown(socket.SHUT_WR)
         markers = p.stdout.read().splitlines()
-        assert markers.count(b"recorded-run") == markers.count(b"runtime ready") == 1
+        assert markers.count(b"constructor ready") == markers.count(b"runtime ready") == 1
 
 
 @pytest.mark.parametrize("stop", ["deadline", "cancel"])
@@ -255,7 +272,7 @@ int tsugumi_main(const tsugumi_call* c) {
 
 @pytest.mark.parametrize("source_failure", [False, True])
 def test_embedded_python_import_is_inside_the_invocation(tmp_path, source_failure):
-    """The real Python adapter imports Card code with its run identity and reports import errors to that call."""
+    """The real Python adapter imports Card code in the launch environment and reports import errors to that call."""
     import json
     import sysconfig
     include = Path(sysconfig.get_path("include"))
@@ -267,8 +284,10 @@ def test_embedded_python_import_is_inside_the_invocation(tmp_path, source_failur
     (source / "card").mkdir(parents=True)
     (source / "card/main.py").write_text('''
 import os, tsugumi
-print("import run=" + os.environ["TSUGUMI_RUN_ID"], flush=True)
-tsugumi.Report().text(os.environ["TSUGUMI_RUN_ID"])
+assert os.getcwd() == os.environ["HOME"]
+assert "TSUGUMI_RUN_ID" not in os.environ
+print("source imported", flush=True)
+tsugumi.Report().text("loaded")
 raise RuntimeError("import stopped")
 '''.replace('raise RuntimeError("import stopped")',
             'raise tsugumi.Failure("worker_failed", "import stopped", source="src/notebook.py", line=8, cell="calculation")'
@@ -298,7 +317,7 @@ int tsugumi_main(const tsugumi_call* c) {
         send_call(data, tmp_path)
         shown = receive(data)
         assert shown.callId == 1 and shown.valueType == WorkerPayload.WorkerDisplay
-        assert shown.value.display.value.text == b"recorded-run"
+        assert shown.value.display.value.text == b"loaded"
         failed = receive(data)
         assert failed.callId == 1 and failed.valueType == WorkerPayload.WorkerFailure
         assert failed.value.failure.kind == FailureKind.worker_failed
@@ -309,7 +328,7 @@ int tsugumi_main(const tsugumi_call* c) {
         else:
             assert b"import stopped" in failed.value.failure.diagnostic
         data.shutdown(socket.SHUT_WR)
-        assert b"import run=recorded-run" in p.stdout.read().splitlines()
+        assert b"source imported" in p.stdout.read().splitlines()
 
 
 def test_source_failure_position_survives_the_worker_reply(tmp_path):

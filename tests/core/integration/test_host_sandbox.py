@@ -32,7 +32,7 @@ def log_of(c, run_id: str, card_id: str) -> str:
 def stdout_of_network_card(core_factory, tmp_path, script: str, python: str | None = None) -> str:
     """Run a script as a sandboxed Card allowed the network; what it printed.
     With `python`, that program is $PROBE in the script, $PYTHON its interpreter."""
-    probe = bash(script + '\nprintf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT, network=True)
+    probe = bash(script + '\nprintf \'{"out": {"value": "done"}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT, grants={"network": True})
     if python:
         probe["_nix"] = probe["_nix"].replace(
             "run = ",

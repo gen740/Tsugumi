@@ -40,13 +40,13 @@ def scripted_implementations(directory, scenarios):
 
 
 def producer(graph, name, values):
-    graph.card(name, {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card(name, {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                manifest={"runs": [implementation(value) for value in values]})
 
 
 def consumer(graph, *, implementations=None):
     manifest = {"run": implementation(99)} if implementations is None else {"runs": implementations}
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True, "maxRuns": 1,
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True, "maxRuns": 1,
                         "inputs": [{"name": "left"}, {"name": "right"}]},
                outputs=NUMBER, manifest=manifest)
     graph.connect("left", "out", "work", "left").connect("right", "out", "work", "right")
@@ -140,7 +140,7 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
     diagnostic = "the evaluation selected no implementations"
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
-    graph.card("left", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("left", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                manifest={"runs": []}, plan={"log": diagnostic})
     producer(graph, "right", [1])
     consumer(graph)
@@ -185,9 +185,9 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
-    graph.card("vector", {"type": "code", "language": "bash", "sandbox": False}, outputs=vector,
+    graph.card("vector", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=vector,
                manifest={"run": {"bash": "printf '%s' '{\"out\":{\"items\":[1,2,3]}}' > \"$TSUGUMI_OUTPUT\""}})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True,
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True,
                         "inputs": [{"name": "in"}]}, outputs=NUMBER,
                manifest={"runs": [implementation(42)]})
     graph.connect("vector", "out", "work", "in")
@@ -214,7 +214,7 @@ def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, pr
     producer(graph, "values", [10, 20])
     flag = 'table Flag { value:bool; } table Outputs { out:Flag (required); } root_type Outputs;'
     yes = {"bash": "printf '%s' '{\"out\":{\"value\":true}}' > \"$TSUGUMI_OUTPUT\""}
-    graph.card("flags", {"type": "code", "language": "bash", "sandbox": False}, outputs=flag,
+    graph.card("flags", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=flag,
                manifest={"runs": [yes, yes]})
     graph.card("branch", {"type": "branch"})
     graph.card("selected", {"type": "collect", "recordIO": True})
@@ -289,7 +289,7 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project):
         { printf '%s' '{"out":{"value":"'; head -c 9437184 /dev/zero | tr '\000' x; printf '%s' '"}}'; } > "$TSUGUMI_OUTPUT"
     '''
     schema = 'table Value { value:string; } table Outputs { out:Value; } root_type Outputs;'
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=schema,
+    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=schema,
                                   manifest={"runs": [{"bash": body}] * 4})
     connect_collect(graph)
     graph.save(client)
@@ -314,8 +314,8 @@ def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_fa
         set -- "$dir"
         {emit}
     '''} for number in (1, 2)]
-    graph.card("source", {"type": "code", "language": "bash", "sandbox": False}, outputs=DIRECTORY, manifest={"runs": runs})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "in"}]},
+    graph.card("source", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=DIRECTORY, manifest={"runs": runs})
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "inputs": [{"name": "in"}]},
                outputs=DIRECTORY, manifest={"run": {"bash": f'''
                    test -d "$DIR_IN/empty/inner"
                    cat "$DIR_IN/data.txt"
@@ -324,7 +324,7 @@ def test_collected_directories_and_saved_batch_keep_empty_subdirectories(core_fa
                '''}})
     graph.connect("source", "out", "work", "in")
     connect_collect(graph)
-    graph.card("check", {"type": "code", "language": "bash", "sandbox": False, "inputs": [{"name": "in"}]},
+    graph.card("check", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "inputs": [{"name": "in"}]},
                outputs=NUMBER, manifest={"run": {"bash": '''
                    test "$(find "$DIR_IN" -type d -name inner | wc -l | tr -d ' ')" = 2
                    test "$(find "$DIR_IN" -type f -name data.txt | wc -l | tr -d ' ')" = 2
@@ -357,7 +357,7 @@ def test_failed_batch_keeps_individual_history_and_cancels_its_sibling(core_fact
         [failure.action(), {"op": "failure", "message": "the batch member failed"}],
         [{"op": "hang", "entered": str(hanging.entered)}],
     ]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True},
+    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True},
                                   outputs=NUMBER, manifest={"runs": scripted_implementations(tmp_path, scenarios)})
     connect_collect(graph)
     graph.save(client)
@@ -384,7 +384,7 @@ def test_interrupted_batch_recovers_each_running_members_position(core_factory, 
     client = daemon.connect()
     gates = [Gate(tmp_path, "first"), Gate(tmp_path, "second")]
     implementations = scripted_implementations(tmp_path, [[gate.action()] for gate in gates])
-    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                           manifest={"runs": implementations}).save(client)
     run_id = run(client, maxConcurrency=2)
     try:
@@ -409,7 +409,7 @@ def test_collect_keeps_input_order_when_members_finish_in_reverse(core_factory, 
     gates = [Gate(tmp_path, str(index)) for index in range(3)]
     scenarios = [[gate.action(), {"op": "output", "port": "out", "type": "uint64", "value": index}]
                  for index, gate in enumerate(gates)]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                                   manifest={"runs": scripted_implementations(tmp_path, scenarios)})
     connect_collect(graph)
     graph.save(client)
@@ -431,7 +431,7 @@ def test_eight_worker_cap_and_user_cancel_leave_no_partial_batch(core_factory, p
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     gates = [Gate(tmp_path, str(index)) for index in range(slots + 1)]
     scenarios = [[{"op": "hang", "entered": str(gate.entered)}] for gate in gates]
-    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph = Project(project).card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                                   manifest={"runs": scripted_implementations(tmp_path, scenarios)})
     connect_collect(graph)
     graph.save(client)
@@ -457,7 +457,7 @@ def test_each_input_code_consumes_one_complete_batch_per_arrival(core_factory, p
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "left", [10, 20])
     producer(graph, "right", [30, 40, 50])
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "recordIO": True,
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "recordIO": True,
                         "trigger": "eachInput", "maxRuns": 2,
                         "inputs": [{"name": "left", "optional": True}, {"name": "right", "optional": True}]},
                outputs=NUMBER, manifest={"run": implementation(1)})
@@ -486,7 +486,7 @@ def test_merge_feedback_counts_batch_activations_toward_max_runs(core_factory, p
     graph = Project(project).card("start", {"type": "trigger"})
     producer(graph, "seed", [10, 20])
     graph.card("merge", {"type": "merge", "maxRuns": 2, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "maxRuns": 3, "inputs": [{"name": "in"}]},
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "maxRuns": 3, "inputs": [{"name": "in"}]},
                outputs=NUMBER, manifest={"run": implementation(1)})
     graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
     graph.connect("work", "out", "merge", "feedback").save(client)
@@ -506,10 +506,10 @@ def test_per_run_worker_budget_stops_before_starting_an_over_budget_batch(core_f
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     body, = scripted_implementations(tmp_path, [[{"op": "output", "port": "out", "type": "uint64", "value": 1}]])
     graph = Project(project).card("start", {"type": "trigger"})
-    graph.card("seed", {"type": "code", "language": "bash", "sandbox": False}, outputs=NUMBER,
+    graph.card("seed", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                manifest={"runs": [body] * 256})
     graph.card("merge", {"type": "merge", "maxRuns": 20, "inputs": [{"name": "seed"}, {"name": "feedback"}]})
-    graph.card("work", {"type": "code", "language": "bash", "sandbox": False, "reuseWorker": True, "maxRuns": 20,
+    graph.card("work", {"type": "code", "language": "bash", "sandbox": {"filesystem": False}, "reuseWorker": True, "maxRuns": 20,
                         "inputs": [{"name": "in"}]}, outputs=NUMBER, manifest={"run": body})
     graph.connect("seed", "out", "merge", "seed").connect("merge", "out", "work", "in")
     graph.connect("work", "out", "merge", "feedback").save(client)

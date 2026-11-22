@@ -74,8 +74,8 @@ auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
   crypto::Sha256 prefix;
   std::string buffer(64 << 10, '\0');
   for (uint64_t left = recorded.bytes; left > 0;) {
-    const auto size = static_cast<std::streamsize>(
-        std::min<uint64_t>(left, buffer.size()));
+    const auto size =
+        static_cast<std::streamsize>(std::min<uint64_t>(left, buffer.size()));
     stream.read(buffer.data(), size);
     if (stream.gcount() != size)
       throw std::runtime_error("remote log is shorter than its recorded part");
@@ -142,7 +142,6 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
   remote::InvocationJson invocation;
-  *invocation.network = request.node.settings.network;
   *invocation.implementation_index = request.build.implementation_index;
   auto& files = *invocation.files;
   auto& dirs = *invocation.directories;
@@ -223,6 +222,8 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                  "run cancelled before external submission");
   const auto ptype = NixRunner::params_type(request.node);
   const auto params = NixRunner::params_buffer(request.node);
+  // The remote adapter chooses which realized implementations need this
+  // ABI 8 parameter encoding when it sees the manifest.
   const std::vector<std::pair<std::string, std::string>> env{
       {"TSUGUMI_PARAMS_JSON", NixRunner::params_json(request.node, false)},
   };
@@ -259,10 +260,15 @@ auto stage_remote_invocation(const RemoteJobClient& client,
       throw Failed(FailureKind::timeout, "Nix exceeded buildTimeoutSeconds");
     job.build_timeout_ms = budget - request.build.preparation_ms;
   }
-  if (request.node.settings.execution_resources) {
-    job.cpu_millis = request.node.settings.execution_resources->cpu_millis;
-    job.memory_bytes = request.node.settings.execution_resources->memory_bytes;
-  }
+  const auto& settings = request.node.settings;
+  job.cpu_millis = settings.sandbox.limits.cpu_millis;
+  job.memory_bytes = settings.sandbox.limits.memory_bytes;
+  job.filesystem = settings.sandbox.filesystem;
+  job.pid = settings.sandbox.pid;
+  job.ipc = settings.sandbox.ipc;
+  job.identity = settings.sandbox.identity;
+  job.network = settings.grants.network;
+  job.r_params_environment = settings.language == "r";
   flatbuffers::FlatBufferBuilder b;
   b.Finish(R::JobSpec::Pack(b, &job));
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};

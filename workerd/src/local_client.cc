@@ -20,6 +20,10 @@ LocalWorkers::~LocalWorkers() {
 }
 
 auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
+  struct Wipe {
+    L::MessageT& message;
+    ~Wipe() { clear_spawn_secrets(message); }
+  } wipe{message};
   std::lock_guard guard(mutex_);
   try {
     if (fd_ < 0) {
@@ -40,11 +44,12 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
       spec.argv = {binary_.string(), "--local", "3", scratch_.string()};
       spec.fds = {{3, pair[1]}};
       spec.stderr_fd = STDERR_FILENO;
+      for (const auto* name : {"DISPLAY", "WAYLAND_DISPLAY", "XDG_RUNTIME_DIR",
+                               "TSUGUMI_CARD_CGROUP_ROOT"})
+        if (const auto* value = std::getenv(name))
+          spec.env.push_back(std::string(name) + "=" + value);
       if (trace::LaunchEnabled())
         spec.env.push_back(std::string(trace::kLaunchVariable) + "=1");
-      for (const auto* variable : {"SSL_CERT_FILE", "NIX_SSL_CERT_FILE"})
-        if (const auto* value = std::getenv(variable))
-          spec.env.push_back(std::string(variable) + "=" + value);
       try {
         pid_ = proc::spawn(spec);
       } catch (...) {
@@ -57,6 +62,7 @@ auto LocalWorkers::exchange(L::MessageT message, LocalPacket& reply) -> void {
     }
     trace::Link link;
     send_local(fd_, message, nullptr, &link);
+    clear_spawn_secrets(message);
     if (!receive_local(fd_, reply, &link))
       throw std::runtime_error("local workerd exited");
     if (!reply.message->error.empty())
@@ -93,6 +99,17 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   auto& target = request.spawn = std::make_unique<L::SpawnT>();
   target->worker_binary = spawn.worker_binary;
   target->bash = spawn.bash;
+  target->path = spawn.path;
+  target->closure = spawn.closure;
+  target->shared_vm = spawn.shared_vm;
+  if (spawn.secrets) {
+    for (const auto& [name, value] : spawn.secrets->values) {
+      auto entry = std::make_unique<Tsugumi::Worker::EnvVarT>();
+      entry->name = name;
+      entry->value = value;
+      target->secrets.push_back(std::move(entry));
+    }
+  }
   target->store_path = spawn.store_path;
   target->package = spawn.program.package.value_or("");
   target->script = spawn.program.bash.value_or("");
@@ -100,7 +117,13 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->pre_run = spawn.program.pre_run;
   target->post_run = spawn.program.post_run;
   target->views = spawn.program.views;
-  target->sandbox = spawn.sandbox;
+  target->filesystem = spawn.sandbox.filesystem;
+  target->pid = spawn.sandbox.pid;
+  target->ipc = spawn.sandbox.ipc;
+  target->identity = spawn.sandbox.identity;
+  target->cpu_millis = spawn.sandbox.limits.cpu_millis;
+  target->memory_bytes = spawn.sandbox.limits.memory_bytes;
+  target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
   target->hidden_paths = spawn.hidden_paths;
@@ -111,6 +134,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
     value->source = bind.source;
     value->target = bind.target;
     value->write = bind.write;
+    value->name = bind.name;
     target->binds.push_back(std::move(value));
   }
   LocalPacket reply;
@@ -124,6 +148,7 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       message.scratch,
       message.call_id,
       message.lease,
+      message.read_only_inputs,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },
       [this, id = message.lease](bool force) {
         command(L::Action::Terminate, id, force);
@@ -166,4 +191,18 @@ auto LocalWorkers::clear() -> void {
   }
   command(L::Action::Clear, 0);
 }
+auto LocalWorkers::invalidate(const std::string& card,
+                              const std::string& reason) -> void {
+  {
+    std::lock_guard guard(mutex_);
+    if (fd_ < 0) return;
+  }
+  L::MessageT request;
+  request.action = L::Action::Invalidate;
+  request.card = card;
+  request.reason = reason;
+  LocalPacket reply;
+  exchange(std::move(request), reply);
+}
+
 }  // namespace tsugumi::workerd
