@@ -1,9 +1,11 @@
 # The real core serves its public RPC. Only the external Nix evaluator is
-# replaced: these targets compile its double and do not link tsugumi_nix_eval.
+# replaced: this target supplies both evaluator and store symbols.
 add_executable(tsugumid-mock
   ${_core_main}
   doubles/nix_eval.cc)
-target_include_directories(tsugumid-mock PRIVATE ${_core_headers})
+set_property(TARGET tsugumid-mock PROPERTY TSUGUMI_MOCK_NIX ON)
+target_include_directories(tsugumid-mock PRIVATE ${_core_headers}
+  "$<TARGET_PROPERTY:tsugumi_nix_store,INTERFACE_INCLUDE_DIRECTORIES>")
 target_link_libraries(tsugumid-mock PRIVATE tsugumi_core)
 add_dependencies(tsugumid-mock tsugumid tsugumi-worker tsugumi-workerd tsugumi-rpc)
 

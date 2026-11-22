@@ -3,6 +3,7 @@
 import contextlib
 import os
 from pathlib import Path
+import select
 import shutil
 import socket
 import struct
@@ -286,7 +287,12 @@ def test_stop_callbacks_are_callable_from_card_threads(tmp_path, stop):
         }
     ''')
     with worker(tmp_path) as (p, data, control):
-        send_call(data, tmp_path, deadline=300 if stop == "deadline" else None)
+        send_call(data, tmp_path, deadline=2000 if stop == "deadline" else None)
+        ready, _, _ = select.select([p.stdout, data], [], [], 5)
+        if p.stdout not in ready and data in ready:
+            early = receive(data)
+            pytest.fail(f"worker returned before starting the Card thread: {early.value!r}")
+        assert p.stdout in ready, "Card thread did not start"
         assert p.stdout.readline() == b"thread ready\n"
         if stop == "cancel":
             send_message(control, WorkerMessageT(

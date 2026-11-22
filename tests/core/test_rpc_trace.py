@@ -123,7 +123,7 @@ def test_view_visibility_and_view_reads_stay_out_of_both_traces(project, core_fa
         opened = client.open()
         hidden = []
 
-        def call(name, **fields):
+        def call(name, /, **fields):
             rid = client.send(name, make(name, **fields))
             hidden.append(rid)
             return client.wait_reply(rid)

@@ -48,7 +48,7 @@ The list uses the original history record. Configured cache endpoints, where rec
 
 ## Keep and open artifacts
 
-1. In **Card settings → Ports**, enable **Keep output files and artifacts**. Choose a File or Directory port under **Output to list as an artifact** if you want one listed in **Artifacts**.
+1. In **Card settings → Ports**, enable **Keep output files and artifacts**. Choose a Path port under **Output to list as an artifact** if you want one listed in **Artifacts**.
 2. Run the Card, open **Artifacts** in its settings, and select the saved file from that invocation. For example, open `index.html` from the **R reports** demo or inspect the saved data and metadata of a figure.
 3. Open or export the saved member as needed. An artifact is a retained copy, so rerunning the Card or editing the source leaves the earlier copy available.
 
