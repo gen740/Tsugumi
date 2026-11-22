@@ -8,6 +8,7 @@
 
 #include <algorithm>
 #include <cerrno>
+#include <climits>
 #include <cstdlib>
 #include <cstring>
 
@@ -177,6 +178,70 @@ void remove_file_durable(const stdfs::path& p) {
   if (::unlink(p.c_str()) != 0 && errno != ENOENT)
     throw Error("unlink " + p.string() + ": " + std::strerror(errno));
   fsync_dir(p.parent_path());
+}
+
+namespace {
+auto inside(const std::string& root, const std::string& path) -> bool {
+  return path.size() > root.size() && path.compare(0, root.size(), root) == 0 &&
+         (root.back() == '/' || path[root.size()] == '/');
+}
+
+// Where an open descriptor's file is, symlinks resolved.
+auto descriptor_path(int fd) -> std::optional<std::string> {
+#ifdef F_GETPATH
+  char path[PATH_MAX];
+  if (::fcntl(fd, F_GETPATH, path) != 0) return std::nullopt;
+  return std::string(path);
+#else
+  std::error_code ec;
+  auto path =
+      stdfs::read_symlink("/proc/self/fd/" + std::to_string(fd), ec).string();
+  if (ec || path.empty() || path.front() != '/') return std::nullopt;
+  return path;
+#endif
+}
+}  // namespace
+
+std::optional<ContainedRange> read_range_inside(const stdfs::path& root,
+                                                const stdfs::path& p,
+                                                uint64_t offset,
+                                                uint64_t limit) {
+  std::error_code ec;
+  const auto resolved_root = stdfs::canonical(root, ec).string();
+  if (ec || !p.is_absolute()) return std::nullopt;
+  // O_NONBLOCK: a FIFO in place of the file must not hang the open.
+  int fd = ::open(p.c_str(), O_RDONLY | O_CLOEXEC | O_NOCTTY | O_NONBLOCK);
+  if (fd < 0) {
+    if (errno == ENOENT || errno == ENOTDIR || errno == ELOOP ||
+        errno == EACCES || errno == ENXIO)
+      return std::nullopt;
+    throw Error("open " + p.string() + ": " + std::strerror(errno));
+  }
+  struct Close {
+    int fd;
+    ~Close() { ::close(fd); }
+  } close{fd};
+  struct stat st{};
+  if (::fstat(fd, &st) != 0 || !S_ISREG(st.st_mode)) return std::nullopt;
+  const auto location = descriptor_path(fd);
+  if (!location || !inside(resolved_root, *location)) return std::nullopt;
+  ContainedRange out{.size = static_cast<uint64_t>(st.st_size), .bytes = {}};
+  if (offset > out.size) return out;
+  const auto size = std::min<uint64_t>(limit, out.size - offset);
+  out.bytes.resize(size);
+  size_t got = 0;
+  while (got < size) {
+    ssize_t r = ::pread(fd, out.bytes.data() + got, size - got,
+                        static_cast<off_t>(offset + got));
+    if (r < 0) {
+      if (errno == EINTR) continue;
+      throw Error("read " + p.string() + ": " + std::strerror(errno));
+    }
+    if (r == 0) break;
+    got += static_cast<size_t>(r);
+  }
+  out.bytes.resize(got);
+  return out;
 }
 
 bool resolves_inside(const stdfs::path& root, const stdfs::path& p) {

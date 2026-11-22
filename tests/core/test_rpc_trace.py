@@ -111,7 +111,8 @@ def test_view_visibility_and_view_reads_stay_out_of_both_traces(project, core_fa
     blob.write_bytes(b"<p>" + marker + b"</p>")
     package = tmp_path / "package"
     package.mkdir()
-    core = core_factory(mocked_builds=True, env={"TSUGUMI_RPC_TRACE": "1"})
+    core = core_factory(mocked_builds=True, env={"TSUGUMI_RPC_TRACE": "1",
+                                                  "TSUGUMI_MOCK_STORE": str(blob.parent)})
     project_id = core.ready["project_id"]
     with closing(Host(tmp_path / "host", rpc_trace=True)) as host, core.connect() as client:
         host.call("RegisterProjectRequest", projectId=project_id, endpoint=f"unix:{core.unix}")

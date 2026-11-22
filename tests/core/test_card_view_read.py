@@ -24,6 +24,11 @@ def read_view(client, name, *, limit, index=0):
         offset = page.nextOffset
 
 
+def store_env(tmp_path):
+    """The mocked builds treat this folder as the Nix store."""
+    return {"TSUGUMI_MOCK_STORE": str(tmp_path / "store")}
+
+
 def rejected(client, kind, **fields):
     with pytest.raises(RpcFailure) as failure:
         client.call("CardViewReadRequest", card=path("work"), **{"index": 0, **fields})
@@ -49,7 +54,7 @@ def test_declared_view_is_served_in_pages(project, tmp_path, core_factory):
     other.write_bytes(b"not declared")
     package = tmp_path / "package"
     package.mkdir()
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
     Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
                           plan=mock_plan([str(package)], views=[
                               {"blob": str(blob), "name": "page", "type": "html"}])).save(client)
@@ -90,7 +95,7 @@ def test_repeated_names_are_served_by_the_selected_declaration(project, tmp_path
     blobs[1].write_bytes(b"second declaration")
     package = tmp_path / "package"
     package.mkdir()
-    client = core_factory(mocked_builds=True).connect()
+    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
     Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
                           plan=mock_plan([str(package)], views=[
                               {"blob": str(blob), "name": "page", "type": "html"} for blob in blobs])).save(client)
@@ -103,3 +108,33 @@ def test_repeated_names_are_served_by_the_selected_declaration(project, tmp_path
     for index, blob in enumerate(blobs):
         assert read_view(client, "page", limit=1000, index=index) == (blob.read_bytes(), blob.stat().st_size)
     rejected(client, "not_found", name="page", index=2)
+
+
+def test_a_view_file_is_served_only_from_inside_the_store(project, tmp_path, core_factory):
+    """Links inside the store are followed; a link leading out of it, a folder
+    and a file outside the store are not served."""
+    store = tmp_path / "store"
+    (store / "object").mkdir(parents=True)
+    (store / "object" / "page.html").write_bytes(b"inside")
+    (store / "joined.html").symlink_to(store / "object" / "page.html")
+    outside = tmp_path / "outside.html"
+    outside.write_bytes(b"outside the store")
+    (store / "escape.html").symlink_to(outside)
+    (store / "escape-dir").symlink_to(tmp_path)
+    package = tmp_path / "package"
+    package.mkdir()
+    blobs = [store / "joined.html", store / "escape.html", store / "escape-dir" / "outside.html",
+             store / "object", outside]
+    client = core_factory(mocked_builds=True, env=store_env(tmp_path)).connect()
+    Project(project).card("work", {"type": "code"}, outputs="table Outputs {} root_type Outputs;",
+                          plan=mock_plan([str(package)], views=[
+                              {"blob": str(blob), "name": f"v{index}", "type": "html"}
+                              for index, blob in enumerate(blobs)])).save(client)
+    opened = client.open()
+    client.call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId),
+                cards=[path("work")])
+    client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
+                             and n.value.views, timeout=20)
+    assert read_view(client, "v0", limit=1000, index=0) == (b"inside", 6)
+    for index in range(1, len(blobs)):
+        rejected(client, "not_found", name=f"v{index}", index=index)

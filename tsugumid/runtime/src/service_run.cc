@@ -12,6 +12,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
 
 namespace tsugumi {
@@ -1024,19 +1025,17 @@ void Service::card_view_read(RequestIn& req) {
                  {{"name", name}, {"index", std::to_string(index)}});
   uint64_t offset = r->offset().value_or(0);
   uint64_t limit = content_limit(r->limit_bytes());
-  struct stat st{};
-  if (::stat(blob.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
-    throw Failed(FailureKind::not_found, "the view file is missing",
+  // One descriptor, opened only when the file resolves inside the store.
+  const auto page =
+      fs::read_range_inside(NixStore::store_dir(), blob, offset, limit);
+  if (!page)
+    throw Failed(FailureKind::not_found,
+                 "the view file is missing or outside the Nix store",
                  {{"name", name}});
-  auto total = static_cast<uint64_t>(st.st_size);
-  if (offset > total)
+  if (offset > page->size)
     throw Failed(FailureKind::invalid_range, "offset is past the end");
-  auto slice =
-      fs::read_range(blob, offset, std::min<uint64_t>(limit, total - offset));
-  if (!slice)
-    throw Failed(FailureKind::not_found, "the view file is missing",
-                 {{"name", name}});
-  reply(req, wire::file_page(req.request_id, name, *slice, offset, total, blob));
+  reply(req, wire::file_page(req.request_id, name, page->bytes, offset,
+                             page->size, blob));
 }
 
 void Service::log_range(RequestIn& req) {
