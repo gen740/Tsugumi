@@ -3,11 +3,14 @@ a Card allowed the network resolves names but reaches nothing else on this
 host (tsugumid's ports and sockets, the web server, by any of its addresses)
 and nothing of the user's session (the clipboard, LaunchServices), and it
 writes only its own output folders. It can run only the tools it declared,
-never /bin or /usr/bin."""
+never /bin or /usr/bin. A Python Card works there as anywhere: it can ask for
+its directory while it loads, and its environment is the process's, kept
+across the calls of a reused worker."""
 
 from __future__ import annotations
 
 import ctypes
+import json
 import socket
 import subprocess
 import sys
@@ -17,7 +20,9 @@ from pathlib import Path
 import pytest
 
 from projects import card, conn, run_and_wait, write
-from harness.real_cards import TXT, accept_in_background, python_card, txt_main
+from harness.observations import decode_scalar, read_output
+from harness.real_cards import (ENVIRONMENT_MAIN, TXT, accept_in_background, check_process_environment,
+                                python_card, txt_main)
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -210,3 +215,21 @@ def test_a_sandboxed_card_runs_only_what_it_declared(core_factory, tmp_path):
         assert f"{tool} unreadable" in out and f"{tool} not run" in out, out
     assert "declared: True" in out, out
 
+
+def test_a_reused_worker_keeps_its_process_environment(core_factory, tmp_path):
+    """What the module's top set reaches run through os.environ and the C
+    environment, and what a run changes is still there in the next run of
+    the reused worker: nothing is reset per call."""
+    root = tmp_path / "p"
+    show = python_card(ENVIRONMENT_MAIN, outputs=TXT, inputs=["start"], reuseWorker=True, recordIO=True)
+    write(root, {"start": {"type": "trigger"}, "show": show},
+          [card("start", "start"), card("show", "show")], [conn("start", "out", "show", "start")])
+    c = core_factory(project_root=root).connect()
+    seen = []
+    for _ in range(2):
+        run_id, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded, log_of(c, run_id, "show")
+        seen.append(json.loads(decode_scalar(read_output(c, run_id, card="show"))))
+    reused, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+    assert reused.workerReused
+    check_process_environment(*seen)

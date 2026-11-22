@@ -1,8 +1,8 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
-shared VM):
-backpressure stalls, the shell step contract, deadlines and cancellation,
-worker reuse, isolation, Nix upstream references, stages and caching, and
-the display variants of the Python SDK."""
+shared VM): backpressure stalls, cancellation, isolation, delegated limits,
+Nix upstream references, stages and caching, the process a Card runs in,
+unselected branches and worker crashes. The Cards are small ABI 9 Python
+Cards; what an SDK offers is checked in the kit."""
 
 from __future__ import annotations
 
@@ -15,8 +15,9 @@ import pytest
 
 from conftest import real_environment
 from harness.observations import decode_scalar, read_output
-from harness.real_cards import (CWD_AT_LOAD_MAIN, ENV_MAIN, ENV_PRE_RUN, FLAG, NUM, PYTHON_NIX, TXT, bash, check_python_card_environment, log, python_probe_project, shown_by_probe)
-from projects import card, conn, put, run_and_wait, start_run, wait_for_log, wait_run, write
+from harness.real_cards import (ENVIRONMENT_MAIN, FLAG, NUM, ONE_MAIN, TXT, check_process_environment, log,
+                                python_card, txt_main)
+from projects import card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -27,11 +28,6 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
                                 reason="needs the shared VM (TSUGUMI_TEST_SHARED_VM=1)")
-
-
-
-
-
 
 
 @pytest.fixture(scope="module")
@@ -67,6 +63,9 @@ def load(env, defs, cards, conns):
     return c
 
 
+def shown(c, run_id, name="show"):
+    """The string a Card returned on its Txt output `out`."""
+    return decode_scalar(read_output(c, run_id, card=name))
 
 
 def test_backpressure_stall_ends_the_run(env):
@@ -74,10 +73,9 @@ def test_backpressure_stall_ends_the_run(env):
     condition never arrives: its queue fills, everything stops, the run ends."""
     defs = {
         "trigger": {"type": "trigger"},
-        "seed": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"'),
+        "seed": python_card(ONE_MAIN),
         "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
-        "step": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["x"], maxRuns=1000,
-                     reuseWorker=True),
+        "step": python_card(ONE_MAIN, inputs=["x"], maxRuns=1000, reuseWorker=True),
         "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
         "branch": {"type": "branch"},
     }
@@ -97,46 +95,6 @@ def test_backpressure_stall_ends_the_run(env):
     }.items()
 
 
-def test_shell_step_contract(env):
-    big = "x" * 300_000
-    defs = {
-        "trigger": {"type": "trigger"},
-        "make": bash(f'printf \'{{"out":{{"value":"{big}"}}}}\' > "$TSUGUMI_OUTPUT"', outputs=TXT),
-        "use": bash(
-            # preRun's cd and exports carry over; the input is a JSON file only (no .bin, no INPUT_).
-            'test "$(basename "$PWD")" = sub && test "$FROM_PRE" = yes && test -f "$JSON_IN" && '
-            'test "$(wc -c < "$JSON_IN")" -gt 300000 && test -z "${INPUT_IN+x}" && test -z "${BIN_IN+x}" && '
-            'test -z "$(ls "$TSUGUMI_TMP_DIR" | grep -v -e "^input-in.json$" -e "^pre-env$")" && '
-            'echo \'{"out":{"value":7}}\' > "$TSUGUMI_OUTPUT"',
-            # preRun and postRun never see the Card inputs.
-            inputs=["in"], pre='test -z "${JSON_IN+x}" && mkdir -p sub && cd sub && export FROM_PRE=yes',
-            post='test -z "${JSON_IN+x}" && test "$TSUGUMI_FAILED" = 0 && test "$TSUGUMI_OUTPUTS" = out'),
-        "small": bash('test "$(jq .value "$JSON_IN")" = 7 && echo \'{"out":{"value":8}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"]),
-        "postfail": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', post="exit 3"),
-        "runfail": bash("exit 4", post='test "$TSUGUMI_FAILED" = 1'),
-        "slow": bash("sleep 1.5; echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"", pre="sleep 1.5", timeoutSeconds=2),
-    }
-    c = load(env, defs,
-             [card("start", "trigger"), card("make", "make"), card("use", "use"), card("small", "small"),
-              card("postfail", "postfail"), card("runfail", "runfail"), card("slow", "slow")],
-             [conn("make", "out", "use", "in"), conn("use", "out", "small", "in")])
-    run_id, st = run_and_wait(c, "start")
-    states = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)) for k in
-              ("make", "use", "small", "postfail", "runfail", "slow")}
-    detail = {k: (r.status.state, r.status.failure and text(r.status.failure.diagnostic)) for k, r in states.items()}
-    assert states["make"].status.state == CardState.succeeded, (detail, log(c, run_id, "make", 2)[-800:])
-    assert states["use"].status.state == CardState.succeeded, (detail, log(c, run_id, "use", 2)[-800:])
-    assert states["small"].status.state == CardState.succeeded, log(c, run_id, "small", 2)
-    # A later successful step never clears an earlier failure; post failure fails the Card.
-    assert states["postfail"].status.state == CardState.failed
-    assert states["runfail"].status.state == CardState.failed
-    assert states["runfail"].status.failure.kind == FailureKind.worker_failed
-    # One deadline for all steps: 1.5 s + 1.5 s exceeds 2 s.
-    assert states["slow"].status.state == CardState.failed
-    assert states["slow"].status.failure.kind == FailureKind.timeout
-    assert st.state == RunState.failed
-
-
 def proc_count(env, pattern: str) -> int:
     """Processes in the environment whose command line contains `pattern`
     (NUL separators removed). Bash builtins only: the image has no grep."""
@@ -148,10 +106,23 @@ def proc_count(env, pattern: str) -> int:
     return int(out[-1] if out else "0")
 
 
+# Children, one of them in a session of its own, and then the Card waits.
+HANG_MAIN = """import subprocess, time
+
+def run(input):
+    subprocess.Popen(["sleep", "3141"], start_new_session=True)
+    subprocess.Popen(["sleep", "2718"])
+    subprocess.Popen(["sleep", "2719"])
+    print("descendants-ready", flush=True)
+    while True:
+        time.sleep(60)
+"""
+
+
 @pytest.mark.parametrize("sandbox", [True, False])
 def test_cancel_ends_every_descendant(env, sandbox):
     defs = {"trigger": {"type": "trigger"},
-            "hang": bash("(sleep 3141 &) ; sleep 2718 & sleep 2719 & echo descendants-ready; wait", sandbox={"filesystem": sandbox})}
+            "hang": python_card(HANG_MAIN, tools="[ pkgs.coreutils ]", sandbox={"filesystem": sandbox})}
     c = load(env, defs, [card("start", "trigger"), card("hang", "hang")], [])
     run_id = start_run(c, "start")
     try:
@@ -168,28 +139,56 @@ def test_cancel_ends_every_descendant(env, sandbox):
         c.call("RunCancelRequest", runId=run_id)
 
 
+ISOLATION_BODY = """
+    import os, socket
+    found = []
+    def network():
+        try:
+            socket.create_connection(("1.1.1.1", 80), timeout=3).close()
+            return True
+        except OSError:
+            return False
+    CHECKS
+    RESULT = ";".join(found)"""
+
+SANDBOXED = """for name in ("/project/tsugumi.json", "/project/definitions", "/control/server.ready", "/persist"):
+        if os.path.exists(name):
+            found.append(name + " visible")
+    if network():
+        found.append("network reachable")"""
+
+OPEN = """if network():
+        found.append("network reachable")
+    if os.path.exists("/proc/1/root/control/server.ready"):
+        found.append("control visible through proc")
+    try:
+        open("/control/server.ready").read(1)
+        found.append("token readable")
+    except OSError:
+        pass
+    if os.getuid() == 65534:
+        found.append("uid 65534")"""
+
+
 def test_isolation(env):
-    # Bash builtins only: Cards get no coreutils unless their package brings them.
-    probe = ("set +e; fail=0; "
-             # Only the Card's own work folder exists under /project (empty parents).
-             "[ -e /project/tsugumi.json ] && { echo 'project files visible'; fail=1; }; "
-             "[ -e /project/definitions ] && { echo 'definitions visible'; fail=1; }; "
-             "[ -e /control/server.ready ] && { echo 'control visible'; fail=1; }; "
-             "[ -e /persist ] && { echo 'persist visible'; fail=1; }; "
-             "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
-             "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
-    open_fs = ("set +e; fail=0; "
-               "(exec 3<>/dev/tcp/1.1.1.1/80) 2>/dev/null && { echo 'network reachable'; fail=1; }; "
-               "[ ! -e /proc/1/root/control/server.ready ] || { echo 'control visible through proc'; fail=1; }; "
-               "(read -r x < /control/server.ready) 2>/dev/null && { echo 'token readable'; fail=1; }; "
-               "[ \"$UID\" != 65534 ] || { echo \"uid $UID\"; fail=1; }; "
-               "[ $fail = 0 ] && echo '{\"out\":{\"value\":1}}' > \"$TSUGUMI_OUTPUT\"; exit $fail")
-    defs = {"trigger": {"type": "trigger"}, "probe": bash(probe), "open": bash(open_fs, sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False})}
+    probe = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", SANDBOXED)), outputs=TXT, recordIO=True)
+    opened = python_card(txt_main(ISOLATION_BODY.replace("CHECKS", OPEN)), outputs=TXT, recordIO=True,
+                         sandbox={"filesystem": False, "pid": False, "ipc": False, "identity": False})
+    defs = {"trigger": {"type": "trigger"}, "probe": probe, "open": opened}
     c = load(env, defs, [card("start", "trigger"), card("probe", "probe"), card("open", "open")], [])
     run_id, st = run_and_wait(c, "start")
-    detail = {k: (c.call("RunRecordRequest", runId=run_id, card=path(k)).status.state, log(c, run_id, k, 1), log(c, run_id, k, 2)[-600:])
-              for k in ("probe", "open")}
-    assert st.state == RunState.succeeded, detail
+    assert st.state == RunState.succeeded, {k: log(c, run_id, k, 2)[-600:] for k in ("probe", "open")}
+    assert shown(c, run_id, "probe") == "" and shown(c, run_id, "open") == ""
+
+
+OOM_MAIN = """from card import Output
+from outputs.out.t.Num import NumT
+
+def run(input):
+    buffer = bytearray(128 << 20)
+    buffer[::4096] = b"x" * len(buffer[::4096])
+    return Output(out=NumT(value=len(buffer)))
+"""
 
 
 def test_card_limits_are_delegated_and_released(env):
@@ -201,18 +200,13 @@ def test_card_limits_are_delegated_and_released(env):
         'found=1; done; [ "$found" = 1 ] || echo no-card-cgroup'
     )
     limits = {"limits": {"cpu": 0.5, "memoryMiB": 32}}
-    resident = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-                    sandbox=limits, reuseWorker=True)
+    resident = python_card(ONE_MAIN, sandbox=limits, reuseWorker=True)
     connection = load(env, {"limited": resident}, [card("limited", "limited")], [])
     _, status = run_and_wait(connection, "limited")
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
     assert "card-limits 500000 1000000 / 33554432" in env.exec(terminal_probe)
 
-    oom = bash(
-        'buffer=x; for ((i = 0; i < 27; ++i)); do buffer="$buffer$buffer"; done; '
-        'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-        sandbox=limits, reuseWorker=True, timeoutSeconds=60,
-    )
+    oom = python_card(OOM_MAIN, sandbox=limits, reuseWorker=True, timeoutSeconds=60)
     # The old resident must be gone before running the replacement. Keep reuse
     # enabled so no unused standby worker can hide a leaked cgroup.
     connection = load(env, {"limited": oom}, [card("limited", "limited")], [])
@@ -224,29 +218,24 @@ def test_card_limits_are_delegated_and_released(env):
     assert "no-card-cgroup" in env.exec(terminal_probe).splitlines()
 
 
+GREETING_MAIN = """from card import Output
+from outputs.out.t.Num import NumT
+
+def run(input):
+    assert GREETING == "hello b", GREETING
+    return Output(out=NumT(value=2))
+"""
+
+
 def test_nix_connected_exports(env):
-    a = bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"',
-             extra='''  exports = { greet = name: "hello ${name}"; };
-''')
-    b_nix = ('''{ pkgs, inputs, params }:
-{
-  run = ''
-    test "${inputs.x.greet "b"}" = "hello b"
-'''
-             '''    echo '{"out":{"value":2}}' > "$TSUGUMI_OUTPUT"
-  '';
-}
-''')
-    defs = {"trigger": {"type": "trigger"}, "a": a,
-            "b": {"type": "code", "inputs": [{"name": "x"}], "_outputs": NUM, "_nix": b_nix}}
+    a = python_card(ONE_MAIN, extra='exports = { greet = name: "hello ${name}"; }; ')
+    b = python_card(GREETING_MAIN, inputs=["x"], values={"GREETING": 'inputs.x.greet "b"'})
+    defs = {"trigger": {"type": "trigger"}, "a": a, "b": b}
     c = load(env, defs, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     run_id, st = run_and_wait(c, "start")
     assert st.state == RunState.succeeded, log(c, run_id, "b", 2)
     # An unknown destination port is reported before any build.
-    bad = a.copy()
-    bad["_nix"] = '''{ pkgs, inputs, params }:
-{ run = "${inputs.b.greet "a"}"; }
-'''
+    bad = python_card(ONE_MAIN, values={"GREETING": 'inputs.b.greet "a"'})
     c = load(env, {**defs, "a": bad}, [card("start", "trigger"), card("a", "a"), card("b", "b")], [conn("a", "out", "b", "x")])
     snap = c.call("ProjectInspectRequest")
     codes = [text(d.code) for r in snap.resolution for d in r.diagnostics]
@@ -254,7 +243,7 @@ def test_nix_connected_exports(env):
 
 
 def test_stages_and_cache(env):
-    defs = {"trigger": {"type": "trigger"}, "one": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"')}
+    defs = {"trigger": {"type": "trigger"}, "one": python_card(ONE_MAIN)}
     c = load(env, defs, [card("start", "trigger"), card("one", "one")], [])
     c.open()
     def collect_phases():
@@ -283,409 +272,45 @@ def test_stages_and_cache(env):
     assert cached
 
 
-def test_python_card_has_a_home_while_it_loads(env):
-    """Libraries that keep settings under the home folder (astropy,
-    matplotlib) work while the Card's module is loaded, before any call."""
-    main = '''
-import os
+# Libraries that keep settings under the home folder (astropy, matplotlib) or
+# ask for the current directory (torch) do so while the module is imported.
+LOAD_MAIN = """import json, os
 from pathlib import Path
-HOME = Path.home()                  # read when the module is loaded
+from card import Output
+from outputs.out.t.Txt import TxtT
+
+HOME = Path.home()
 (HOME / ".config").mkdir(parents=True, exist_ok=True)
 (HOME / ".config" / "probe").write_text("ok")
+AT_LOAD = os.getcwd()
 
-def main(inputs, report):
-    report.text(f"{HOME} {os.environ.get('XDG_CACHE_HOME', '')}")
-'''
-    defs = {"trigger": {"type": "trigger"},
-            "show": {"type": "code",
-                     "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": '''{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
-{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
-'''}}
-    root = env.project
-    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
-    put(root / "definitions" / "show" / "src" / "main.py", main)
-    reload(c)
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
-    rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
-    shown = text(rec.record.display.value.text)
-    assert shown.split()[0].endswith("/home"), shown
-
-
-
-
-# A library may ask for the current directory while it is imported (torch does).
-
-# The same names through Python and through the C environment, which is what
-# native libraries read (OpenMP when its first parallel region starts).
-
-
-
-
-
-
-
-
-
-def test_python_card_can_ask_for_its_directory_while_it_loads(env):
-    defs, cards, conns, files = python_probe_project(CWD_AT_LOAD_MAIN)
-    write(env.project, defs, cards, conns, files)
-    c = env.client()
-    reload(c)
-    _, shown = shown_by_probe(c)
-    assert shown.endswith("/work"), shown
-
-
-def test_python_card_environment(env):
-    defs, cards, conns, files = python_probe_project(ENV_MAIN, ENV_PRE_RUN)
-    write(env.project, defs, cards, conns, files)
-    c = env.client()
-    reload(c)
-    check_python_card_environment(c)
-
-
-# As the guide says to limit threads, with a library that takes it as it loads.
-THREADS_MAIN = '''
-import os, sys
-FIRST = "numpy" not in sys.modules
-os.environ["OMP_NUM_THREADS"] = "1"
-
-import json
-import numpy as np
-import sklearn.neighbors
-from threadpoolctl import threadpool_info
-
-def main(inputs, report):
-    report.text(json.dumps({"first": FIRST, "threads": [i["num_threads"] for i in threadpool_info()]}))
-'''
-
-THREADS_NIX = PYTHON_NIX.replace("src = ./src;", "src = ./src; packages = ps: [ ps.numpy ps.scikit-learn ps.threadpoolctl ];") % ""
-
-
-def check_threads_limited_at_the_top(c) -> None:
-    _, shown = shown_by_probe(c)
-    seen = json.loads(shown)
-    assert seen["first"], "numpy was loaded before the top of main.py"
-    assert seen["threads"] and set(seen["threads"]) == {1}, seen
-
-
-def test_python_card_limits_threads_at_the_top_of_main(env):
-    defs, cards, conns, files = python_probe_project(THREADS_MAIN)
-    defs["show"]["_nix"] = THREADS_NIX
-    write(env.project, defs, cards, conns, files)
-    c = env.client()
-    reload(c)
-    check_threads_limited_at_the_top(c)
-
-
-def test_python_displays(env):
-    main = '''
-import struct, zlib
-
-def png(w, h):
-    raw = b"".join(b"\\x00" + bytes([200, 40, 40]) * w for _ in range(h))
-    def chunk(t, d):
-        return struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)
-    return b"\\x89PNG\\r\\n\\x1a\\n" + chunk(b"IHDR", struct.pack(">IIBBBBB", w, h, 8, 2, 0, 0, 0)) + \\
-        chunk(b"IDAT", zlib.compress(raw)) + chunk(b"IEND", b"")
-
-def main(inputs, report):
-    report.table(["n", "square"], [[str(i), str(i * i)] for i in range(5)])
-    report.image(png(4, 4), "image/png", "red square")
-    report.points([0, 1, 2], [0, 1, 4], [0, 1, 8], [0xff0000, 0x00ff00, 0x0000ff])
-    report.module("/nix/store/00000000000000000000000000000000-test-view", {"bins": [1, 2, 3]})
-'''
-    defs = {"trigger": {"type": "trigger"},
-            "show": {"type": "code",
-                     "_outputs": "namespace t; table Num { value:ulong; } table Outputs { out:Num; } root_type Outputs;",
-                     "_nix": '''{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
-{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
-'''}}
-    root = env.project
-    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
-    put(root / "definitions" / "show" / "src" / "main.py", main)
-    reload(c)
-    run_id, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
-    rec = c.call("RunRecordRequest", runId=run_id, card=path("show"))
-    assert rec.record.display is not None and rec.record.display.valueType == 7, log(c, run_id, "show", 2)
-    assert text(rec.record.display.value.module) == "/nix/store/00000000000000000000000000000000-test-view"
-
-
-RICH = """
-namespace {ns};
-enum Color : ubyte {{ red = 0, green = 1, blue = 2 }}
-struct Point {{ x:int; y:int; }}
-table Circle {{ r:double; }}
-table Square {{ side:double; }}
-union Shape {{ Circle, Square }}
-table Rich {{
-  id:ulong; neg:long; ratio:double; name:string; values:[ulong];
-  color:Color; point:Point; shape:Shape;
-}}
+def run(input):
+    return Output(out=TxtT(value=json.dumps({"home": str(HOME), "cwd": AT_LOAD})))
 """
 
-PY_MAKE = '''import tsugumi
 
-import os
-import outputs.rich.a.Rich as Rich
-import outputs.rich.a.Point as Point
-import outputs.rich.a.Circle as Circle
-import outputs.rich.a.Shape as Shape
-import outputs.doc.a.Doc as Doc
-
-def main(inputs, report, run):
-    n = 100_000
-    b = tsugumi.builder(1 << 20)
-    name = b.CreateString("名前 ✓")
-    Circle.Start(b); Circle.AddR(b, 1.5); circle = Circle.End(b)
-    Rich.StartValuesVector(b, n)
-    for i in reversed(range(n)):
-        b.PrependUint64(i * 3)
-    values = b.EndVector()
-    Rich.Start(b)
-    Rich.AddId(b, 18446744073709551615)
-    Rich.AddNeg(b, -9223372036854775808)
-    Rich.AddRatio(b, 0.1)
-    Rich.AddName(b, name)
-    Rich.AddValues(b, values)
-    Rich.AddColor(b, 2)
-    Rich.AddPoint(b, Point.CreatePoint(b, -7, 8))
-    Rich.AddShapeType(b, Shape.Shape.Circle)
-    Rich.AddShape(b, circle)
-    rich = tsugumi.message(b, Rich.End(b))
-    path = os.path.join(run.output_directory, "table.csv")
-    with open(path, "w") as f:
-        f.write("a,b\\n" * 1000)
-    b = tsugumi.builder()
-    p = b.CreateString(path)
-    Doc.Start(b); Doc.AddValue(b, p)
-    return {"rich": rich, "doc": tsugumi.message(b, Doc.End(b))}
-'''
-
-CPP_CHECK = '''
-#include <card.hh>
-
-#include <climits>
-#include <fstream>
-#include <string>
-
-auto run(const Card::Inputs& inputs) -> Card::Output {
-  const auto& r = inputs.rich;
-  if (r.id != 18446744073709551615ull) throw tsugumi::Failure("output_invalid", "id");
-  if (r.neg != INT64_MIN) throw tsugumi::Failure("output_invalid", "neg");
-  if (r.values.size() != 100000 || r.values[99999] != 299997) throw tsugumi::Failure("output_invalid", "values");
-  if (r.color != inputs::rich::a::Color::blue) throw tsugumi::Failure("output_invalid", "color");
-  if (!r.point || r.point->x() != -7 || r.point->y() != 8) throw tsugumi::Failure("output_invalid", "point");
-  if (r.shape.type != inputs::rich::a::Shape::Circle || r.shape.AsCircle()->r != 1.5)
-    throw tsugumi::Failure("output_invalid", "shape");
-  if (r.name != "名前 ✓") throw tsugumi::Failure("output_invalid", "name");
-  std::ifstream f(inputs.doc.value);
-  std::string all((std::istreambuf_iterator<char>(f)), {});
-  if (all.size() != 4000) throw tsugumi::Failure("output_invalid", "file size " + std::to_string(all.size()));
-  // Same structure, another namespace: structurally compatible downstream.
-  Card::Output out;
-  auto& c = out.checked.emplace();
-  c.id = r.id;
-  c.neg = r.neg;
-  c.ratio = r.ratio;
-  c.name = r.name;
-  c.values = r.values;
-  c.color = outputs::checked::b::Color::blue;
-  c.point = std::make_unique<outputs::checked::b::Point>(-7, 8);
-  outputs::checked::b::CircleT circle;
-  circle.r = 1.5;
-  c.shape.Set(std::move(circle));
-  return out;
-}
-'''
+def test_python_card_has_a_home_and_a_directory_while_it_loads(env):
+    defs = {"trigger": {"type": "trigger"}, "show": python_card(LOAD_MAIN, outputs=TXT, recordIO=True)}
+    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
+    run_id, st = run_and_wait(c, "start")
+    assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
+    seen = json.loads(shown(c, run_id))
+    # The working directory is HOME, for the life of the process.
+    assert seen["home"] == seen["cwd"], seen
 
 
-def test_values_cross_python_cpp_and_shell(env):
-    py_nix = '''{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
-{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
-'''
-    cpp_nix = '''{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; }; in
-{ run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; }; }
-'''
-    a_out = RICH.format(ns="a") + '''table Doc { value:string; }
-table Outputs { rich:Rich (required); doc:Doc (required, tsugumi: "file"); }
-root_type Outputs;
-attribute "tsugumi";
-'''
-    b_out = RICH.format(ns="b") + '''table Outputs { checked:Rich (required); }
-root_type Outputs;
-'''
-    bad = '''
-def main(inputs):
-    return {"rich": b"not a flatbuffer"}
-'''
-    missing = '''
-def main(inputs):
-    pass
-'''
-    shell = bash('test "$(wc -c < "$JSON_IN")" -gt 500000 && read -r -n 300 head < "$JSON_IN" && '
-                 'case "$(cat "$JSON_IN")" in *18446744073709551615*) ;; *) exit 9;; esac && '
-                 'echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])
+def test_python_card_environment_lives_with_its_process(env):
     defs = {"trigger": {"type": "trigger"},
-            "make": {"type": "code", "_outputs": a_out, "_nix": py_nix},
-            "check": {"type": "code", "inputs": [{"name": "rich"}, {"name": "doc"}], "_outputs": b_out, "_nix": cpp_nix},
-            "shell": shell,
-            "bad": {"type": "code", "_outputs": a_out.replace("doc:Doc (required,", "doc:Doc ("), "_nix": py_nix},
-            "missing": {"type": "code", "_outputs": a_out, "_nix": py_nix},
-            "after": bash('echo \'{"out":{"value":1}}\' > "$TSUGUMI_OUTPUT"', inputs=["in"])}
-    root = env.project
-    c = load(env, defs,
-             [card("start", "trigger"), card("make", "make"), card("check", "check"), card("shell", "shell"),
-              card("bad", "bad"), card("missing", "missing"), card("after_bad", "after"), card("after_missing", "after")],
-             [conn("make", "rich", "check", "rich"), conn("make", "doc", "check", "doc"), conn("check", "checked", "shell", "in"),
-              conn("bad", "rich", "after_bad", "in"), conn("missing", "rich", "after_missing", "in")])
-    put(root / "definitions" / "make" / "src" / "main.py", PY_MAKE)
-    put(root / "definitions" / "check" / "src" / "card.cc", CPP_CHECK)
-    put(root / "definitions" / "bad" / "src" / "main.py", bad)
-    put(root / "definitions" / "missing" / "src" / "main.py", missing)
-    reload(c)
-    run_id, st = run_and_wait(c, "start")
-    rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in
-           ("make", "check", "shell", "bad", "missing", "after_bad", "after_missing")}
-    detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
-    assert rec["make"].state == CardState.succeeded, (detail, log(c, run_id, "make", 2)[-800:])
-    assert rec["check"].state == CardState.succeeded, (detail, log(c, run_id, "check", 2)[-800:])
-    assert rec["shell"].state == CardState.succeeded, (detail, log(c, run_id, "shell", 2)[-800:])
-    # Invalid output never flows on; a missing required output fails the Card.
-    assert rec["bad"].state == CardState.failed and rec["bad"].failure.kind == FailureKind.output_invalid, detail
-    assert rec["missing"].state == CardState.failed and rec["missing"].failure.kind == FailureKind.output_invalid, detail
-    assert rec["after_bad"].state == CardState.blocked and rec["after_missing"].state == CardState.blocked, detail
-
-
-SDK_CALC = '''
-#include <card.hh>
-
-#include <dlfcn.h>
-
-#include <cstdlib>
-#include <fstream>
-#include <string>
-
-static int calls = 0;  // reuseWorker: one worker serves every invocation
-
-static std::string runtime_path() {
-  Dl_info info{};
-  if (!dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info) || !info.dli_fname)
-    throw tsugumi::Failure("worker_failed", "fixture could not locate the runtime");
-  return info.dli_fname;
-}
-
-auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
-  ++calls;
-  // preRun ran for this invocation (postRun removes the file again).
-  if (!std::ifstream("pre.txt")) throw tsugumi::Failure("output_invalid", "preRun did not run before call " + std::to_string(calls));
-  const char* pre = std::getenv("PRE_VALUE");
-  if (!pre || std::string(pre) != "5") throw tsugumi::Failure("output_invalid", "PRE_VALUE not carried over");
-  uint64_t n = 0;
-  if (const auto* v = inputs.x.value.Asinit()) n = v->value;
-  else if (const auto* v = inputs.x.value.Asagain()) n = v->value;
-  report.text("n = " + std::to_string(n));
-  Card::Output out;
-  out.runtime.emplace().value = runtime_path();
-  if (n > 0) {
-    out.again.emplace().value = n - 1;
-    return out;
-  }
-  std::string file = std::string(".") + "/calls.txt";
-  std::ofstream(file) << calls;
-  out.calls.emplace().value = calls;
-  out.report.emplace().value = file;
-  return out;
-}
-'''
-
-SDK_OTHER = '''
-#include <card.hh>
-
-#include <dlfcn.h>
-
-auto run(const Card::Inputs& inputs, tsugumi::Report& report) -> Card::Output {
-  Dl_info info{};
-  if (!dladdr(reinterpret_cast<void*>(&tsugumi::card::invoke), &info) || !info.dli_fname)
-    throw tsugumi::Failure("worker_failed", "fixture could not locate the runtime");
-  Card::Output out;
-  out.out.emplace().value = inputs.in.value + inputs.params.step.value();
-  out.runtime.emplace().value = info.dli_fname;
-  report.text("out = " + std::to_string(out.out->value));
-  return out;
-}
-'''
-
-
-def test_cpp_sdk_card_api(env):
-    '''`#include <card.hh>` / run(const Card::Inputs& inputs) -> Card::Output: named
-    inputs (a merge union), optional and File
-    outputs, params, Report, `run` as a package, preRun
-    and postRun around every invocation of a reused worker, and one shared
-    runtime library for two SDKs with different contracts.'''
-    seed = bash('echo \'{"out":{"value":2}}\' > "$TSUGUMI_OUTPUT"')
-    calc_out = ('''namespace t; table Num { value:ulong; } table Doc { value:string; }
-'''
-                '''table Outputs { again:Num; calls:Num; report:Doc (tsugumi: "file"); runtime:Doc; }
-'''
-                '''root_type Outputs;
-attribute "tsugumi";
-''')
-    other_out = '''namespace t; table Num { value:ulong; } table Runtime { value:string; }
-table Outputs { out:Num (required); runtime:Runtime; } root_type Outputs;
-'''
-    calc_nix = """{ pkgs, inputs, params }:
-let
-  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
-in
-{
-  run = inputs.tsugumi.cppCard { inherit sdk; src = ./src; };
-  preRun = "echo pre > pre.txt && export PRE_VALUE=5";
-  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
-}
-"""
-    other_nix = calc_nix.replace(
-        '''  preRun = "echo pre > pre.txt && export PRE_VALUE=5";
-''', "").replace(
-        '''  postRun = "test \\"$TSUGUMI_FAILED\\" = 0 && rm pre.txt";
-''', "")
-    defs = {"trigger": {"type": "trigger"}, "seed": seed,
-            "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 10},
-            "calc": {"type": "code", "inputs": [{"name": "x"}], "maxRuns": 10, "reuseWorker": True, "recordIO": True,
-                     "_outputs": calc_out, "_nix": calc_nix},
-            "other": {"type": "code", "inputs": [{"name": "in"}], "reuseWorker": False, "recordIO": True,
-                      "params": [{"name": "step", "type": "uint64", "data": 10}],
-                      "_outputs": other_out, "_nix": other_nix}}
-    root = env.project
-    c = load(env, defs,
-             [card("start", "trigger"), card("seed", "seed"), card("loop", "loop"), card("calc", "calc"),
-              card("other", "other")],
-             [conn("seed", "out", "loop", "init"), conn("loop", "out", "calc", "x"),
-              conn("calc", "again", "loop", "again"), conn("calc", "calls", "other", "in")])
-    put(root / "definitions" / "calc" / "src" / "card.cc", SDK_CALC)
-    put(root / "definitions" / "other" / "src" / "card.cc", SDK_OTHER)
-    reload(c)
-    run_id, st = run_and_wait(c, "start")
-    rec = {k: c.call("RunRecordRequest", runId=run_id, card=path(k)).status for k in ("calc", "other")}
-    detail = {k: (v.state, v.failure and text(v.failure.diagnostic)) for k, v in rec.items()}
-    assert rec["calc"].state == CardState.succeeded, (detail, log(c, run_id, "calc", 2)[-1200:])
-    assert rec["other"].state == CardState.succeeded, (detail, log(c, run_id, "other", 4)[-1500:])
-    assert st.state == RunState.succeeded
-    # Three invocations (2, 1, 0) on one worker; preRun/postRun around each.
-    invs = c.call("RunInvocationsRequest", runId=run_id, card=path("calc")).records
-    assert len(invs) == 3
-    calc_runtime = decode_scalar(read_output(c, run_id, card="calc", port="runtime"))
-    other_runtime = decode_scalar(read_output(c, run_id, card="other", port="runtime"))
-    assert calc_runtime and calc_runtime == other_runtime
-    # calls = 3 from the reused worker, plus the param step 10.
-    shown = c.call("RunRecordRequest", runId=run_id, card=path("other")).record.display
-    assert shown is not None and shown.valueType == 1 and text(shown.value.text) == "out = 13"
+            "show": python_card(ENVIRONMENT_MAIN, outputs=TXT, reuseWorker=True, recordIO=True)}
+    c = load(env, defs, [card("start", "trigger"), card("show", "show")], [])
+    seen = []
+    for _ in range(2):
+        run_id, st = run_and_wait(c, "start")
+        assert st.state == RunState.succeeded, log(c, run_id, "show", 2)
+        seen.append(json.loads(shown(c, run_id)))
+    reused, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
+    assert reused.workerReused
+    check_process_environment(*seen)
 
 
 def test_unselected_branch_is_not_evaluated(env):
@@ -714,36 +339,21 @@ def test_unselected_branch_is_not_evaluated(env):
     assert c.call("RunRecordRequest", runId=run_id, card=path("never")).status.state == CardState.skipped
 
 
-def test_worker_crash_then_edit_and_rerun(env):
-    crash = {"type": "code", "_outputs": NUM,
-             "_nix": '''{ pkgs, inputs, params }:
-let sdk = inputs.tsugumi.sdk { languages = [ "python" ]; }; in
-{ run = inputs.tsugumi.pythonCard { inherit sdk; src = ./src; }; }
-'''}
-    defs = {"trigger": {"type": "trigger"}, "crash": crash}
-    root = env.project
-    c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
-    put(root / "definitions" / "crash" / "src" / "main.py", '''import os, signal
+CRASH_MAIN = """import os, signal
 
-def main(inputs):
+def run(input):
     os.kill(os.getpid(), signal.SIGKILL)
-''')
-    reload(c)
+"""
+
+
+def test_worker_crash_then_edit_and_rerun(env):
+    defs = {"trigger": {"type": "trigger"}, "crash": python_card(CRASH_MAIN)}
+    c = load(env, defs, [card("start", "trigger"), card("crash", "crash")], [])
     run_id, st = run_and_wait(c, "start")
     rec = c.call("RunRecordRequest", runId=run_id, card=path("crash")).status
     assert st.state == RunState.failed and rec.state == CardState.failed
     assert rec.failure.kind == FailureKind.worker_failed
     # After the crash the environment keeps working: fix the source and run again.
-    put(root / "definitions" / "crash" / "src" / "main.py",
-        '''import tsugumi
-import outputs.out.t.Num as Num
-
-def main(inputs):
-    b = tsugumi.builder()
-    Num.Start(b)
-    Num.AddValue(b, 1)
-    return {'out': tsugumi.message(b, Num.End(b))}
-''')
-    reload(c)
+    c = load(env, {**defs, "crash": python_card(ONE_MAIN)}, [card("start", "trigger"), card("crash", "crash")], [])
     _, st2 = run_and_wait(c, "start")
     assert st2.state == RunState.succeeded, st2.failure and text(st2.failure.diagnostic)
