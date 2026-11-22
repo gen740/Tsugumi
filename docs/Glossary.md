@@ -15,7 +15,6 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
 | **Port** | A Card's input or output. Output types are written in `_outputs.fbs`; input types are derived from the connected outputs |
-| **`allInputs` / `eachInput`** | How inputs are awaited. `allInputs` waits for all required inputs; `eachInput` consumes arrivals independently ([Execution semantics](features.md#execution-semantics-scheduler)) |
 | **`maxRuns`** | The most times a Card can be triggered in one Run. A trigger can start multiple invocations when it uses a run list or receives a batch |
 
 ## Running and recording
@@ -29,7 +28,7 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Implementation label** | The name of one implementation: a run list entry's `label`, or a value sweep's `name=value`. Shown in the history and used to pair members when comparing runs |
 | **Stage** | A step within an invocation: SDK preparation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
 | **`skipped`** | Downstream of a branch that was not taken. Not a failure |
-| **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card, or missing required inputs. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |
+| **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |
 | **`interrupted`** | A local or remote run left unfinished when its submitting `tsugumid` ended; recorded as `failed` with failure kind `interrupted`, with no result rescue or automatic rerun |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
 | **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |

@@ -75,7 +75,7 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 | Code Card (`code`) | Builds its processing in `default.nix` with a language SDK into `lib/main.so` (C++, Python, Go, Rust, C#, Julia, R, Ruby or an SDK of your own) |
 | trigger | Where a Workflow's run starts (output port `out`) |
 | input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
-| branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (declared inputs to `out`, a union named by input port with root `tsugumi.merge.Merged`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
+| branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (an arrival on any connected input goes to `out`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
 | fork | Splits a value by name: `value` goes out unchanged on every output declared in `outputs` (default `a` and `b`), each time it arrives. Its log says where it went (`fork -> a, b`). Every output always runs downstream, so a Fork never makes a path conditional |
 | Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
@@ -85,18 +85,19 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 ### Typed ports
 
-- An output port can carry several wires. Each connected input receives the same emitted value. A Fork does the same as a named step on the Canvas, with one output per destination.
-- An output port's type is declared in a FlatBuffers schema (`_outputs.fbs`), and the type of each downstream input port is derived automatically from upstream. Structural compatibility is checked when wiring, and a merge builds a union type automatically.
+- An output port can feed several inputs. Each input port accepts one wire. Use a Merge Card to bring several arrivals to one downstream input.
+- An output port's type is declared in `_outputs.fbs`. Each connected input inherits the type of its upstream output. The SDK checks the types a Card uses.
+- A Merge with one distinct type passes each arrival through unchanged. With several FlatBuffer types, it emits a union with one member per distinct type. The Canvas displays the member type names, for example `Temperature | Reading`.
 - Values flow between Cards as FlatBuffers bytes. Every Card receives and returns them through the fixed [Card ABI](CardABI.md); how a language SDK maps them to its own values is that SDK's business.
 
 ### Execution semantics (scheduler)
 
-- A Code Card can wait for an arrival on all required inputs (`allInputs`) or trigger on each arrival (`eachInput`). An arrival is a single value or a batch of values. The setting is `trigger`, with the values `allInputs` or `eachInput`. A Merge consumes one arrival at a time.
+- A Card runs when every connected input has arrived. An unconnected input is absent from the call. An arrival is a single value or a batch of values. A Merge consumes one arrival at a time.
 - Bounded queues with backpressure, cancellation and an optional per-invocation deadline (`timeoutSeconds`; none by default for local runs). Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
 - Downstream of an unselected scalar Branch output is `skipped`. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
 - A run lives only while the `tsugumid` process that started it lives. Local and remote invocations left unfinished end as `failed` with failure kind `interrupted`; startup never imports old remote results or reruns Cards. Within one core life, remote reconnection resumes the same job. Regular status and log exchanges detect disconnection; there is no heartbeat or silence expiry ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
 - Partial runs exist only for debugging: AI-written code rarely works on its first attempt. Running one Card or from a Card downstream with saved inputs is not a result of the Workflow. Such a run is marked **Partial run** (Japanese: **部分実行**). Values computed from it carry their provenance downstream, including into later runs that consume them as saved inputs; those runs also show **Uses a partial run's result** (**部分実行の結果を使用**). Running the whole Workflow replaces these values and clears the marks. Explicit **Record I/O** and **Retain artifact** settings still apply, and kept results carry the run's marks. There is no selection of an earlier run as the input source.
-- Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Files). When "Run from Here Downstream" reaches a merge, a Card that waits for all its inputs fills only the ports that receive nothing this time with saved inputs (an `eachInput` Card runs with only the values that arrived).
+- Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Paths). A partial run uses saved inputs for connected ports outside the run. A downstream Merge consumes the values that arrive during that run.
 
 ### Run lists and Collect
 
@@ -134,10 +135,8 @@ in
 
 - Set `exports` in the upstream Code Card's `default.nix`. If a downstream Code Card receives its output on the `data` port, that Card can use the exported attributes through `inputs.data`. The same exports are available to each implementation in a run list.
 - The name after `inputs.` is the downstream input port name. The port must resolve to one Code Card that always runs first. `tsugumi` and `sources` are reserved for the SDK and configured sources.
-- Collect, Fork, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A wire with several possible producers still carries its data, but a Nix reference to that input is ambiguous.
-- Static diagnostics describe directly written references and flag unknown or ambiguous ports. Nix also checks references reached through an alias during evaluation.
-
-- The [Canvas overlay](Usage.md#canvas-tools) draws the static references from this resolution. Nested targets meet their visible container and the list preserves the full paths. An invalid reference remains visible with its diagnostic. Saving a source refreshes the resolution.
+- Collect, Fork, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A Merge with several possible producers carries data, and its downstream port has no Nix export binding.
+- The core supplies the Nix export bindings derived from the project graph. Nix reports missing attributes during evaluation. The [Canvas overlay](Usage.md#canvas-tools) shows the bindings, with nested targets drawn at their visible container and full paths in the list.
 
 ### External Nix sources (`inputs.sources`)
 

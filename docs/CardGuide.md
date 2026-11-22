@@ -186,7 +186,7 @@ Any SDK that implements the [Card ABI](CardABI.md) can take the place of these: 
 
 The core prepares the Card's contract from its ports: `_inputs.fbs` from the connected outputs, `_outputs.fbs` from the Card's own schema, `_params.fbs` from its parameters and `_contract.json` listing the ports. The SDK generates the Card's types from these files. Read the generated source (for example `card.hh` or `card.py` in the build result) to see the exact names.
 
-- An input port's value is a FlatBuffers message of the type its producer declared. An optional input can be absent.
+- An input declaration contains its name. Connect one wire to give it the upstream output’s type. An unconnected input is absent. The Card’s SDK reports `input_missing` with the port name when the Card requires an absent input.
 - Parameters are one `parameters.Params` message. A scalar parameter without a value is absent rather than zero.
 - The Card returns one value per output port it produces. A required port that is missing fails the call with `output_invalid`, and so does a value that does not match its port's type. Optional ports can be left out.
 - Numeric messages keep IEEE NaN, positive and negative infinity and signed zero.
@@ -417,13 +417,13 @@ The other types are built-in Cards with no code:
 | Type | Ports | Use |
 | --- | --- | --- |
 | `trigger` | out `out` | Where a whole run starts |
-| `input` | in `start` (optional), outs from `_outputs.fbs` | Hands on values or a project file (below) |
+| `input` | in `start`, outs from `_outputs.fbs` | Hands on values or a project file (below) |
 | `branch` | ins `value`, `condition` (a table with `value:bool`), outs `a` (true), `b` (false) | Sends to one side |
 | `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
-| `merge` | ins as declared in `inputs`, out `out` (a union of them) | Joins paths of a loop |
+| `merge` | ins as declared in `inputs`, out `out` | Emits each arrival unchanged when every connected input has the same type. Mixed FlatBuffer inputs produce one union member per distinct type |
 | `collect` | in `in`, out `out` (derived from the input) | Sends a batch as one typed vector or Directory |
 
-A Code Card can declare an input port and let the connection supply its type, for example to log any value it receives. Such a Card can print the value to stdout, which goes to its log, and send it to a `text` view.
+Use one wire per input port. Route several paths into separate inputs of a Merge Card, then connect its output to the destination. Such a Card can print the value to stdout, which goes to its log, and send it to a `text` view.
 
 ### An input Card with fixed values
 
