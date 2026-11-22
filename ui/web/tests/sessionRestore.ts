@@ -78,11 +78,16 @@ const invocation = (id: string, state: D.CardState, n = 1n) =>
   try {
   const { s, inner } = session()
   const client: { onNotification?: (e: unknown) => void } = {}
+  Object.assign(s, { client })
   inner.listen(client)
   client.onNotification?.({ subscriptionId: 'stale', seq: 1n })
   assert.equal(s.notificationCount, 0, 'batched, not at once')
   mock.timers.tick(250)
   assert.equal(s.notificationCount, 1, 'applied though no frame came')
+  client.onNotification?.({ subscriptionId: 'stale', seq: 2n })
+  Object.assign(s, { client: undefined })
+  mock.timers.tick(250)
+  assert.equal(s.notificationCount, 1, 'a closed connection cannot repopulate the session')
   } finally { mock.timers.reset() }
 }
 

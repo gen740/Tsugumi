@@ -15,7 +15,7 @@ export class RouteError extends Error {
 
 interface Home {
   home: string; documents: string; repo?: string; hostFolders: boolean; vm: boolean; nix: boolean
-  tsugumid?: { path: string; ok: boolean }; worker?: { path: string; ok: boolean }; sdk?: { path: string; ok: boolean }
+  tsugumid?: { path: string; ok: boolean }; worker?: { path: string; ok: boolean }
 }
 
 type Listener = (event: unknown) => void
@@ -36,7 +36,7 @@ export function pageRoutes(broadcast: Listener) {
         const now = await home()
         const ok = { path: '', ok: true }
         return {
-          setup: { tsugumid: now.tsugumid ?? ok, worker: now.worker ?? ok, sdk: now.sdk ?? ok, nix: { ok: now.nix }, repo: now.repo ?? '' },
+          setup: { tsugumid: now.tsugumid ?? ok, worker: now.worker ?? ok, nix: { ok: now.nix }, repo: now.repo ?? '' },
           demos: await hostRequest('HostDemoListRequest', { language: language() }),
           recents: await hostRequest('HostRecentListRequest'), home: now.home, launchProject: null,
           ...await hostRequest('HostProjectDefaultsRequest'),

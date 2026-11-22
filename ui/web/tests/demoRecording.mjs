@@ -15,7 +15,6 @@ try {
   fs.cpSync(source, root, { recursive: true })
   const build = () => buildDemo({ id: 'collatz' }, root, ports, {}, recording)
   assert.equal(build().run?.id, recording.run.id)
-  assert.ok(Object.keys(build().outputs).length)
 
   const document = path.join(root, 'tsugumi.json')
   const original = read(document)
@@ -32,7 +31,6 @@ try {
   fs.writeFileSync(document, JSON.stringify(edited))
   let preview = build()
   assert.equal(preview.run, undefined, 'the same Cards wired to different ports do not replay the run')
-  assert.deepEqual(preview.outputs, {})
 
   fs.writeFileSync(document, JSON.stringify(original))
   const child = path.join(root, 'externals', 'collatz-cpp', 'tsugumi.json')
@@ -41,7 +39,6 @@ try {
   fs.writeFileSync(child, JSON.stringify(inner))
   preview = build()
   assert.equal(preview.run, undefined, 'a changed child Workflow boundary invalidates the recording')
-  assert.deepEqual(preview.outputs, {})
 } finally {
   fs.rmSync(root, { recursive: true, force: true })
 }

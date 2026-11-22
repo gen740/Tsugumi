@@ -321,8 +321,6 @@ body.resizing-h, body.resizing-h * { cursor: col-resize !important; }
 .output-head { display: flex; align-items: center; gap: 6px; color: var(--secondary); font-size: 11px; }
 .output-head b { color: var(--label); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .resize-handle { position: absolute; right: 0; bottom: 0; width: 16px; height: 16px; display: flex; align-items: center; justify-content: center; color: var(--secondary); cursor: nwse-resize; }
-.display-text { flex: 1; overflow: auto; font-size: 11px; white-space: pre-wrap; min-height: 0; }
-.display-text.large { font-size: 13px; }
 .display-scalar { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; }
 .scalar { font-size: 26px; }
 .scalar-large { font-size: 64px; }

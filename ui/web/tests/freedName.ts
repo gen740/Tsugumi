@@ -20,7 +20,10 @@ const session = (cards: string[]) => {
   return s
 }
 const rememberResult = (s: Session, k: string) => {
-  s.displays.set(k, { runId: 'r', invocation: 1n, revision: 1n, value: { kind: 'text', text: 'old' } })
+  s.liveViews.observe(k, () => {})
+  const views = s.liveViews.get(k)!
+  views.declare([{ name: 'chart', type: 'html', blob: '/nix/store/chart' }])
+  views.data('chart', Uint8Array.of(42))
   s.cardStates.set(k, { state: 2, invocation: 1n, stages: [], cached: false, workerReused: false, sent: new Set(), sentInRun: new Set() })
 }
 // What the core says is in the document after a save.
@@ -28,7 +31,7 @@ const resolved = (s: Session, cards: string[]) =>
   (s as unknown as { applyResolution(r: unknown[], d: unknown[]): void }).applyResolution(
     cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
-  assert.equal(s.displays.has(k), false, 'no result of the Card that had the name')
+  assert.equal(!!s.liveViews.get(k)?.views.size, false, 'no result of the Card that had the name')
   assert.equal(s.cardStates.has(k), false, 'no run state of the Card that had the name')
 }
 
@@ -39,8 +42,8 @@ const clean = (s: Session, k: string) => {
   rememberResult(s, 'b')
   rememberResult(s, 'other')
   resolved(s, ['other'])
-  assert.equal(s.displays.has('b'), false)
-  assert.equal(s.displays.has('other'), true, 'the other Cards keep theirs')
+  assert.equal(!!s.liveViews.get('b')?.views.size, false)
+  assert.equal(!!s.liveViews.get('other')?.views.size, true, 'the other Cards keep theirs')
 }
 
 {
@@ -76,7 +79,7 @@ const clean = (s: Session, k: string) => {
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
-  assert.equal(s.displays.has('a'), true)
+  assert.equal(!!s.liveViews.get('a')?.views.size, true)
 }
 
 {

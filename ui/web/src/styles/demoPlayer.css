@@ -34,8 +34,6 @@
 .tp-root .cv-param-row { pointer-events: none; }
 .tp-root .cv-wires { z-index: 0; }
 .tp-root .cv-card, .tp-root .tp-note { z-index: 1; }
-.tp-root .display-image { image-rendering: auto; }
-.tp-root .display-table td, .tp-root .display-table th { padding: 0; }
 @media (prefers-reduced-motion: reduce) {
   .tp-root .cv-wire-moving { animation: none; }
 }
@@ -55,9 +53,6 @@
 .tp-md math { font-size: 1.05em; }
 .tp-md th, .tp-md td { padding: 1px 8px 1px 0 !important; text-align: left; }
 
-.tp-plot { width: 100%; height: 100%; display: block; }
-.tp-plot text { fill: var(--secondary); font: 10px var(--font); }
-.tp-plot .tp-plot-title { fill: var(--label); font-size: 11px; font-weight: 600; }
 
 .tp-say { min-height: 2.8em; padding: 2px 4px; font-size: 15px; line-height: 1.55; color: var(--label); }
 
@@ -66,8 +61,6 @@
 .tp-panel-head { display: flex; align-items: center; gap: 6px; margin-bottom: 4px; font-size: 14px; }
 .tp-permission { color: var(--orange); }
 .tp-ports li { margin: 2px 0; overflow-wrap: anywhere; }
-.tp-panel-output { display: flex; flex-direction: column; min-height: 120px; max-height: 300px; overflow: auto; padding: 6px; border-radius: 6px; background: var(--text-bg); }
-.tp-panel-output .display-image { max-height: 280px; }
 .tp-file { margin: 4px 0; }
 .tp-file > summary { cursor: pointer; padding: 2px 0; font-size: 12px; overflow-wrap: anywhere; }
 .tp-source { max-height: 340px; overflow: auto !important; padding: 8px !important; border-radius: 6px !important; background: var(--text-bg) !important; font-size: 11px; line-height: 1.45 !important; white-space: pre; tab-size: 2; }
@@ -76,3 +69,6 @@
 .tp-cards-list button:focus { position: static; width: auto; height: auto; margin: 2px; padding: 2px 8px; clip-path: none; border: 1px solid var(--accent); border-radius: 5px; background: var(--control-bg); }
 .tp-small .tp-md math { visibility: hidden; }
 .tp-root strong { color: inherit; }
+
+.tp-illustration { margin: 0; }
+.tp-illustration img { display: block; max-width: 100%; max-height: 280px; object-fit: contain; }
