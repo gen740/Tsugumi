@@ -18,6 +18,12 @@
     inputs.nixpkgs-lib.follows = "nixpkgs";
   };
 
+  inputs.tsugumi-kit = {
+    url = "github:gen740/tsugumi-kit/0b6c12b7eaa993147b323bfc93ab871ec3debd83";
+    inputs.nixpkgs.follows = "nixpkgs";
+    inputs.flake-parts.follows = "flake-parts";
+  };
+
   outputs =
     inputs:
     inputs.flake-parts.lib.mkFlake { inherit inputs; } {

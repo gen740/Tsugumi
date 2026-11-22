@@ -70,8 +70,8 @@ auto RunHost(int argc, char** argv) -> int {
         options.environment.tsugumid = next();
       else if (arg == "--worker")
         options.environment.worker = next();
-      else if (arg == "--sdk-dir")
-        options.environment.sdk = next();
+      else if (arg == "--nix-dir")
+        options.environment.nix_dir = next();
       else if (arg == "--environment-dir")
         options.environment.directory = next();
       else if (arg == "--socket-dir")
@@ -151,8 +151,8 @@ auto RunHost(int argc, char** argv) -> int {
       options.environment.tsugumid = binary_dir / "tsugumid";
     if (options.environment.worker.empty())
       options.environment.worker = binary_dir / "tsugumi-worker";
-    if (options.environment.sdk.empty())
-      options.environment.sdk = binary_dir.parent_path() / "share/tsugumi/sdk";
+    if (options.environment.nix_dir.empty())
+      options.environment.nix_dir = binary_dir.parent_path() / "share/tsugumi/nix";
     if (options.environment.directory.empty())
       options.environment.directory = options.state_dir / "environments";
     options.environment.socket_directory = broker_dir / "env";

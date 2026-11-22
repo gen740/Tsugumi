@@ -30,8 +30,8 @@ fi
 echo "built $(jq -s length "$out/cards.jsonl") Cards in $(($(date +%s) - started)) s"
 
 stage closure
-mapfile -t manifests < <(jq -r '.manifest' "$out/cards.jsonl")
-if [ ${#manifests[@]} -gt 0 ]; then nix-store -qR "${manifests[@]}"; fi | sort -u > "$work/all-paths"
+mapfile -t plans < <(jq -r '.plan' "$out/cards.jsonl")
+if [ ${#plans[@]} -gt 0 ]; then nix-store -qR "${plans[@]}"; fi | sort -u > "$work/all-paths"
 sort -u "$RUN_STORE_PATHS" > "$work/base-paths"
 comm -23 "$work/all-paths" "$work/base-paths" > "$work/payload-paths"
 echo "payload: $(wc -l < "$work/payload-paths") store paths beyond the runner image"

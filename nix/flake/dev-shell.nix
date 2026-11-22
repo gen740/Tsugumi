@@ -22,7 +22,6 @@
               gtest
               emscripten
               git
-              # Use the SDK's Ruby for interpreter adapter tests on macOS too.
               ruby
               (python3.withPackages (ps: [
                 ps.flatbuffers
@@ -32,7 +31,6 @@
                 ps.plotly
                 ps.altair
               ]))
-              # Card shell steps use jq (the package gives them the same tools).
               jq
               clang-tools
               nixfmt

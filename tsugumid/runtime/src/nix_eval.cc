@@ -715,10 +715,11 @@ struct EvaluationState {
     for (const auto& label : labels)
       r.implementation_labels.push_back(label.get<std::string>());
     check_implementation_labels(r.implementation_labels, count);
-    auto& manifest = attr("manifest");
-    state->forceValue(manifest, nix::noPos);
-    auto drv = nix::getDerivation(*state, manifest, false);
-    if (!drv) throw std::runtime_error("the Card manifest is not a derivation");
+    auto& plan = attr("plan");
+    state->forceValue(plan, nix::noPos);
+    auto drv = nix::getDerivation(*state, plan, false);
+    if (!drv)
+      throw std::runtime_error("the Card build plan is not a derivation");
     auto out = drv->queryOutPath();
     auto drv_path = drv->requireDrvPath();
     r.derivation = {store->printStorePath(drv_path), store->printStorePath(out),
@@ -817,7 +818,7 @@ struct EvaluationState {
     std::ifstream f(r.derivation.output, std::ios::binary);
     std::stringstream ss;
     ss << f.rdbuf();
-    r.manifest = ss.str();
+    r.plan_json = ss.str();
     return r;
   }
 
