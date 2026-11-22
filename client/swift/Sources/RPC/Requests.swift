@@ -168,10 +168,11 @@ public extension RPCClient {
     return out
   }
 
-  /// One page of the file a Card declared as the view `name`.
-  func readCardView(card: [String], name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
+  /// One page of the file of entry `index` of a Card's views list, which must be named `name`.
+  func readCardView(card: [String], index: Int, name: String, offset: UInt64) async throws -> Tsugumi_RPC_FileContentT {
     let r = Tsugumi_RPC_CardViewReadRequestT()
     r.card = cardPath(card)
+    r.index = UInt32(index)
     r.name = name
     r.offset = offset
     r.limitBytes = 1 << 20

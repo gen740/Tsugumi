@@ -1004,17 +1004,24 @@ void Service::card_view_read(RequestIn& req) {
   const auto* r = project_request(req)->value_as_CardViewReadRequest();
   auto card = wire::card_arg(r->card());
   std::string name = r->name()->str();
+  if (!r->index())
+    throw Failed(FailureKind::invalid_request, "index is required");
+  const auto index = *r->index();
   std::string blob;
   {
+    // The declaration the UI selected, never one chosen by name: names may
+    // repeat. A name that differs means the list changed since it was sent.
     std::lock_guard<std::mutex> l(view_files_mu_);
     if (auto found = view_files_.find(path_key(card));
-        found != view_files_.end())
-      for (const auto& v : found->second)
-        if (v.name == name) blob = v.blob;
+        found != view_files_.end() && index < found->second.size() &&
+        found->second[index].name == name)
+      blob = found->second[index].blob;
   }
   if (blob.empty())
-    throw Failed(FailureKind::not_found, "the Card declares no view " + name,
-                 {{"name", name}});
+    throw Failed(FailureKind::not_found,
+                 "the Card declares no view " + name + " at index " +
+                     std::to_string(index),
+                 {{"name", name}, {"index", std::to_string(index)}});
   uint64_t offset = r->offset().value_or(0);
   uint64_t limit = content_limit(r->limit_bytes());
   struct stat st{};

@@ -71,14 +71,21 @@ struct CardViewOutbox {
     return received[card, default: []].subtracting(declared.map(\.name)).sorted()
   }
 
+  /// Names more than one declaration has. Data sent to such a name reaches no view.
+  func ambiguous(_ card: CardKey) -> [String] {
+    let names = declarations[card, default: []].map(\.name)
+    return Set(names.filter { name in names.filter { $0 == name }.count > 1 }).sorted()
+  }
+
   /// The full list for a Card; an empty list clears what it declared before.
   func declare(_ card: CardKey, _ views: [CardViewDeclaration]) {
     if declarations[card] != views { declarations[card] = views }
   }
 
   func receive(_ card: CardKey, view: String, bytes: Data) {
-    latest[card, default: [:]][view] = bytes
     if received[card]?.contains(view) != true { received[card, default: []].insert(view) }
+    guard declarations[card]?.filter({ $0.name == view }).count ?? 0 <= 1 else { return }
+    latest[card, default: [:]][view] = bytes
     for host in hosts.values where host.card == card && host.view == view { host.deliver(.data(bytes)) }
   }
 
@@ -129,13 +136,14 @@ struct CardViewFilePage {
 struct CardViewFiles {
   static let limit = 32 * 1024 * 1024
 
-  /// `CardViewReadRequest{card, name, offset, limit_bytes}` -> `FileContent`.
-  let page: @MainActor (_ card: [String], _ name: String, _ offset: UInt64) async throws -> CardViewFilePage
+  /// `CardViewReadRequest{card, index, name, offset, limit_bytes}` -> `FileContent`.
+  /// `index` is the declaration's place in the views list; `name` guards against a changed list.
+  let page: @MainActor (_ card: [String], _ index: Int, _ name: String, _ offset: UInt64) async throws -> CardViewFilePage
 
-  @MainActor func read(card: [String], name: String) async throws -> Data {
+  @MainActor func read(card: [String], index: Int, name: String) async throws -> Data {
     var data = Data(), offset: UInt64 = 0
     while true {
-      let page = try await page(card, name, offset)
+      let page = try await page(card, index, name, offset)
       guard data.count + page.bytes.count <= Self.limit else {
         throw CardViewFileError.tooLarge
       }
@@ -147,13 +155,13 @@ struct CardViewFiles {
   }
 
   /// Before the session is connected.
-  static let unavailable = CardViewFiles { _, _, _ in throw CardViewFileError.unavailable }
+  static let unavailable = CardViewFiles { _, _, _, _ in throw CardViewFileError.unavailable }
 
   /// Pages served by the connected project core.
   static func rpc(_ client: @escaping @MainActor () -> RPCClient?) -> CardViewFiles {
-    CardViewFiles { card, name, offset in
+    CardViewFiles { card, index, name, offset in
       guard let c = client() else { throw RPCError.disconnected }
-      let page = try await c.readCardView(card: card, name: name, offset: offset)
+      let page = try await c.readCardView(card: card, index: index, name: name, offset: offset)
       return CardViewFilePage(bytes: Data(page.bytes), eof: page.eof == true, nextOffset: page.nextOffset)
     }
   }

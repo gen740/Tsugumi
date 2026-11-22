@@ -295,13 +295,14 @@ export class RPCClient {
     const out = concat(parts)
     return out
   }
-  async readCardView(card: string[], name: string, signal: AbortSignal): Promise<string> {
+  /** The file of entry `index` of the Card's views list; `name` guards against a changed list. */
+  async readCardView(card: string[], index: number, name: string, signal: AbortSignal): Promise<string> {
     const decoder = new TextDecoder()
     const parts: string[] = []
     let offset = 0n
     for (;;) {
       signal.throwIfAborted()
-      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset })
+      const request = Object.assign(new R.CardViewReadRequestT(), { card: cardPath(card), name, offset, index })
       const page = await this.call<R.FileContentT>(RequestPayload.CardViewReadRequest, request)
       signal.throwIfAborted()
       const next = page.nextOffset ?? offset

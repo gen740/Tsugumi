@@ -31,7 +31,7 @@ const resolved = (s: Session, cards: string[]) =>
   (s as unknown as { applyResolution(r: unknown[], d: unknown[]): void }).applyResolution(
     cards.map((id) => ({ card: { segments: [id] }, inputs: [], outputs: [], diagnostics: [], nixReferences: [] })), [])
 const clean = (s: Session, k: string) => {
-  assert.equal(!!s.liveViews.get(k)?.views.size, false, 'no result of the Card that had the name')
+  assert.equal(!!s.liveViews.get(k)?.views.length, false, 'no result of the Card that had the name')
   assert.equal(s.cardStates.has(k), false, 'no run state of the Card that had the name')
 }
 
@@ -42,8 +42,8 @@ const clean = (s: Session, k: string) => {
   rememberResult(s, 'b')
   rememberResult(s, 'other')
   resolved(s, ['other'])
-  assert.equal(!!s.liveViews.get('b')?.views.size, false)
-  assert.equal(!!s.liveViews.get('other')?.views.size, true, 'the other Cards keep theirs')
+  assert.equal(!!s.liveViews.get('b')?.views.length, false)
+  assert.equal(!!s.liveViews.get('other')?.views.length, true, 'the other Cards keep theirs')
 }
 
 {
@@ -79,7 +79,7 @@ const clean = (s: Session, k: string) => {
   const k = await s.addCard('draft', [], { x: 0, y: 0 })
   assert.equal(k, 'draft')
   clean(s, k)
-  assert.equal(!!s.liveViews.get('a')?.views.size, true)
+  assert.equal(!!s.liveViews.get('a')?.views.length, true)
 }
 
 {

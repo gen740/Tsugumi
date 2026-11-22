@@ -130,9 +130,9 @@ def test_view_visibility_and_view_reads_stay_out_of_both_traces(project, core_fa
         call("ViewSetVisibleRequest", subscriptionId=text(opened.subscriptionId), cards=[path("work")])
         client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated
                                  and n.value.views, timeout=20)
-        assert marker in bytes(call("CardViewReadRequest", card=path("work"), name="page").bytes)
+        assert marker in bytes(call("CardViewReadRequest", card=path("work"), name="page", index=0).bytes)
         with pytest.raises(RpcFailure):
-            call("CardViewReadRequest", card=path("work"), name="missing")
+            call("CardViewReadRequest", card=path("work"), name="missing", index=0)
         # A later request is captured, so the recorder was on throughout.
         client.call("ProjectActivityRequest")
 
