@@ -1,6 +1,6 @@
 # The core and the language SDKs
 
-**Status:** decided by the owner on 2026-11-13 and 2026-11-21; not implemented yet.
+**Status** — decided by the owner on 2026-11-13 and 2026-11-21. Implementation is underway.
 Each section states what is decided and what the code does today. Points that are not decided yet are listed under [Open](#open).
 
 The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
@@ -28,11 +28,11 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 
 **Today.**
 
-- `_card.json` names a `language` from a fixed list (`python`, `cpp`, `go`, `rust`, `csharp`, `bash`, `r`, `julia`, `ruby`; [Code Card settings](CardGuide.md#code-card-settings)).
+- Card definitions carry no language metadata. Each Code Card chooses its SDK in `default.nix` ([Code Card settings](CardGuide.md#code-card-settings)).
 - The kernel runs a Bash Card's program directly, and Package Cards load `lib/main.so` ([Another system](features.md#another-system-x86_64-linux)).
 - For another system, a Card's build makes the worker (`worker` in `sdk/nix/default.nix`) from the Card's own nixpkgs ([Another system](features.md#another-system-x86_64-linux)).
 - `preRun → run → postRun` are steps that the worker runs ([Worker state](CardGuide.md#worker-state)).
-- hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)), and `InputTypes` takes a `language` used to render language-specific type definitions ([Protocol](Protocol.md#inputtypes)).
+- The editor can format JSON and Nix through hostd. `InputTypes` returns FlatBuffers schemas for connected ports. [Host presentation services](HostPresentation.md) · [Protocol](Protocol.md#inputtypes)
 - Today's language SDKs live in [sdk/](../sdk/) of this repository, with their Nix builders in [sdk/nix/default.nix](../sdk/nix/default.nix).
 
 ## What the core evaluates
@@ -68,9 +68,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 **Today.**
 
-- hostd renders input types per language with `sdk::DescribeInput` (`hostd/src/input_types.cc`).
-- `FormatLanguage` in `protocol/tsugumi_enums.fbs` lists `cpp`, `python`, `bash`, `nix`, `json` and `fbs`.
-- hostd fixes one formatter per language ([Host presentation services](HostPresentation.md)).
+- hostd returns the resolved FlatBuffers schema through `InputTypes`. It selects JSON or Nix formatting by file extension. [Host presentation services](HostPresentation.md)
 - The guide is in the Agent's prompts and in [CardGuide.md](CardGuide.md).
 
 ## Templates
@@ -102,9 +100,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 **Today.**
 
-- `language` in `_card.json` is a fixed list ([Code Card settings](CardGuide.md#code-card-settings)).
-- [ui/shared/templates](../ui/shared/templates/) holds one scaffold per language.
-- The Card log view has a button that writes a `pythonCard` `default.nix` (`ui/web/src/ui/cardLog.tsx`, `ui/macos/Sources/App/Detail/CardLogViews.swift`).
+- The Mac and Web UIs list both stores under **Add Card → From Template…**. Users can add templates from folders or import them from public HTTPS Git repositories. The Agent can list and copy templates. Adding or importing one requires approval. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
 
 ## Displays in the UI
 
@@ -149,9 +145,9 @@ The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. E
 
 **Today.**
 
-- `ui/shared/modules/viewer.js` calls a module's `initialise`, `update`, `resize` and `dispose`.
-- Displays are drawn on the Canvas in output frames, whose geometry hostd keeps in `layout.json`.
-- The Web UI shows a `displaySummary` line on the Card's face (`ui/web/src/model/session.ts`).
+- Live displays open from the Card menu. Recorded displays open from run history, comparison and chat evidence. The Canvas layout contains Card positions, groups and notes. [Live displays](Usage.md#live-displays)
+- The isolated viewer calls the default `mount(root, data)` export of a JS module and dispatches `tsugumi:data` updates. The existing SDK's Wasm wrapper runs through an adapter in the same viewer. [Card-owned web views](CardGuide.md#card-owned-web-views)
+- The Mac and Web UIs ship built-in JS modules for the fixed display kinds and adapt the ABI 8 wire values in the UI. [The display form](CardABI.md#the-display-form)
 
 ## Order of work
 
@@ -165,7 +161,7 @@ The measurements behind the two kinds were taken on an M3 Max with macOS 27.2. E
 - The default language SDKs ship with the core until the split.
 - The migration to [Card ABI 9](CardABI.md) happens on `main`. C++ moves first; each other language is unavailable until it is ported.
 
-**Today.** None of these steps has started.
+**Today.** Card metadata, host input schemas and template selection are language independent. The runtime and language SDKs still use ABI 8.
 
 ## The default language SDKs
 

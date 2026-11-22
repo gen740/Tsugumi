@@ -205,7 +205,7 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let (start, log, draft) = ("start", "log", "plan")
-  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code","language":"python"}"#), (draft, #"{"type":"draft"}"#)])
+  let s = try offlineSession(dir, cards: [(start, #"{"type":"trigger"}"#), (log, #"{"type":"code"}"#), (draft, #"{"type":"draft"}"#)])
 
   #expect(s.isDraftWire(from: draft, to: log), "from a Draft")
   #expect(s.isDraftWire(from: start, to: draft), "to a Draft")
@@ -217,7 +217,7 @@ import TsugumiTestSupport
   // Once the Card is implemented, endpoint styling becomes solid.
   let implemented = Tsugumi_RPC_DocumentDeltaT()
   implemented.baseRev = 0; implemented.rev = 1; implemented.origin = "agent"
-  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code","language":"python"}"#
+  let definition = Tsugumi_RPC_DefinitionT(); definition.id = draft; definition.cardJson = #"{"type":"code"}"#
   implemented.definitionsUpsert = [definition]
   s.applyDelta(implemented)
   #expect(s.kind(draft) == .code)
@@ -241,11 +241,11 @@ import TsugumiTestSupport
   defer { try? FileManager.default.removeItem(at: dir) }
   try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
   let s = try offlineSession(dir, cards: [
-    ("old", #"{"language":"python","inputs":[{"name":"in"}]}"#),
+    ("old", #"{"inputs":[{"name":"in"}]}"#),
     ("future", #"{"type":"something new","inputs":[{"name":"in"}]}"#),
     ("loose", #"{"type":"code","external":"lib"}"#),
     ("plan", #"{"type":"draft"}"#),
-    ("step", #"{"type":"code","language":"python"}"#),
+    ("step", #"{"type":"code"}"#),
   ])
   #expect(s.kind("old") == .invalid)
   #expect(s.kind("future") == .invalid)

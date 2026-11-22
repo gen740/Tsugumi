@@ -6,7 +6,7 @@ See [Inputs, results and reports](CardGuide.md#inputs-results-and-reports) for t
 
 ## A Card
 
-Set `language` to `csharp` in `_card.json`. `default.nix` selects the generated C# bindings and the pinned .NET SDK:
+`default.nix` selects the generated C# bindings and the pinned .NET SDK.
 
 ```nix
 { pkgs, inputs, params }:

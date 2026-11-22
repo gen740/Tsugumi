@@ -20,7 +20,6 @@ await import("./chatStopped")
 await import("./chatInterrupted")
 await import("./folderAttachments")
 await import("./booleanInput")
-await import("./reports")
 
 await import("./artifactHTML")
 
@@ -68,7 +67,7 @@ await import("./draftDisplays")
 await import("./definitionErrors")
 
 await import("./nixSources")
-await import("./marimoTemplate")
+await import("./cardTemplates")
 
 await import("./sessionRestore")
 await import("./sessionConnect")

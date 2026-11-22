@@ -24,7 +24,6 @@ import {
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
 import { Observable } from './observable'
-import { VisualizationTemplate, visualizationTemplates } from './visualizationTemplates'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
 import { cardPermissions } from './permissions'
@@ -1721,13 +1720,34 @@ export class ProjectSession extends Observable {
     return id
   }
 
-  /** The host assembles the template, sources and placement in one operation. */
+  /** The host saves the definition and placement together. */
   async addCard(t: DefinitionTemplate, scope: string[], at: { x: number; y: number }, name?: string, automaticPlacement = false): Promise<CardKey> {
     const id = await this.newCardId(name ?? templateBaseName(t), scope)
     await this.operate(H.ProjectOperationBody.ProjectCreateCard, new H.ProjectCreateCardT(
-      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, t, name ?? templateBaseName(t), at.x, at.y, automaticPlacement))
+      (this.projectPrefix(scope) ?? '').replace(/\/$/, ''), id, BUILTIN_CARDS[t], name ?? templateBaseName(t), at.x, at.y, automaticPlacement))
     this.forgetResult(key([...scope, id]))
     return key([...scope, id])
+  }
+
+  async copyTemplate(entry: H.TemplateEntryT, scope: string[], at: { x: number; y: number }) {
+    const prefix = this.projectPrefix(scope)
+    if (prefix === undefined) throw new Error('Unknown Card scope')
+    return this.operate(H.ProjectOperationBody.ProjectTemplateCopy,
+      new H.ProjectTemplateCopyT(prefix.replace(/\/$/, ''), entry.store, entry.name, at.x, at.y))
+  }
+
+  async listTemplates(): Promise<H.TemplateEntryT[]> {
+    const result = await hostCall<H.TemplateListT>(H.RequestPayload.TemplateListRequest,
+      new H.TemplateListRequestT(this.projectId), H.ReplyPayload.TemplateList)
+    return result.entries
+  }
+
+  async addTemplate(store: H.TemplateStore, addition: H.TemplateAddT) {
+    if (store === H.TemplateStore.Project)
+      await this.operate(H.ProjectOperationBody.TemplateAdd, addition)
+    else
+      await hostCall(H.RequestPayload.HostTemplateAddRequest,
+        new H.HostTemplateAddRequestT(addition), H.ReplyPayload.Acknowledgement)
   }
 
   async placeExternalCopy(from: string, scope: string[], at: { x: number; y: number }): Promise<CardKey | undefined> {
@@ -2549,24 +2569,28 @@ export function definitionKind(def: J | undefined): CardKind {
   return (kind === 'subgraph') === (get(def, 'external') !== undefined) ? kind : 'invalid'
 }
 
-/** What a new Card starts from: a built-in Card or a scaffold. Every Card
- *  gets a definition folder of its own (definitions/<id>/). */
-export type DefinitionTemplate = VisualizationTemplate | 'python' | 'cpp' | 'go' | 'rust' | 'ruby' | 'csharp' | 'input' | 'input_bool' | 'draft' | 'trigger' | 'branch' | 'fork' | 'merge' | 'collect' | 'marimo' | 'report_rmarkdown' | 'report_quarto'
+const BUILTIN_CARDS = {
+  draft: H.BuiltinCard.Draft,
+  trigger: H.BuiltinCard.Trigger,
+  input: H.BuiltinCard.InputValue,
+  input_bool: H.BuiltinCard.BooleanInput,
+  branch: H.BuiltinCard.Branch,
+  fork: H.BuiltinCard.Fork,
+  merge: H.BuiltinCard.Merge,
+  collect: H.BuiltinCard.Collect,
+}
+export type DefinitionTemplate = keyof typeof BUILTIN_CARDS
 export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
-  { id: 'ruby', label: L('Ruby の処理') },
-  { id: 'rust', label: L('Rust の処理') },
-  { id: 'go', label: L('Go の処理') },
-  { id: 'csharp', label: L('C# の処理') },
-  ...visualizationTemplates,
-  { id: 'marimo', label: L('marimo ノートブック') },
-  { id: 'report_rmarkdown', label: L('R Markdown レポート（HTML）') }, { id: 'report_quarto', label: L('Quarto レポート（HTML）') },
-  { id: 'python', label: L('Python の処理') }, { id: 'cpp', label: L('C++ の処理') }, { id: 'input', label: L('入力値') }, { id: 'input_bool', label: L('真偽値の入力') },
-  { id: 'draft', label: L('Draft（未実装の計画）') }, { id: 'trigger', label: L('開始') },
-  { id: 'branch', label: L('分岐') }, { id: 'fork', label: L('分配') }, { id: 'merge', label: L('合流') }, { id: 'collect', label: L('収集') },
+  { id: 'draft', label: L('Draft') },
+  { id: 'trigger', label: L('トリガー') },
+  { id: 'input', label: L('入力値') },
+  { id: 'input_bool', label: L('真偽値の入力') },
+  { id: 'branch', label: L('分岐') },
+  { id: 'fork', label: L('分配') },
+  { id: 'merge', label: L('合流') },
+  { id: 'collect', label: L('収集') },
 ]
-export const templateIcon = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'chart.xyaxis.line' : t === 'input_bool' ? KIND_ICON.input : KIND_ICON[t.startsWith('report_') || t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' || t === 'marimo' ? 'code' : (t as CardKind)]
-/** The human name used when creating a Card; the core generates its identifier. */
-export const templateBaseName = (t: DefinitionTemplate) => t.startsWith('visualization_') ? 'visualization' : t === 'input_bool' ? 'condition' : (t === 'python' || t === 'cpp' || t === 'go' || t === 'rust' || t === 'ruby' || t === 'csharp' ? 'card' : t)
+export const templateBaseName = (t: DefinitionTemplate) => t === 'input_bool' ? 'condition' : t === 'trigger' ? 'start' : t
 
 export const NOTE_COLORS: { id: string; label: string }[] = [
   { id: 'yellow', label: L('黄') }, { id: 'blue', label: L('青') }, { id: 'green', label: L('緑') }, { id: 'pink', label: L('桃') }, { id: 'gray', label: L('灰') },

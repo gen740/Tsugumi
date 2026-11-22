@@ -470,6 +470,121 @@ enum Shared {
         ],
         "additionalProperties": false
       }
+    },
+    {
+      "name": "template_list",
+      "description": "List available Project and Host templates with their exact names and store identifiers.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {}
+      }
+    },
+    {
+      "name": "template_copy",
+      "description": "Copy a stored template into the workflow with fresh Card IDs and its internal wiring. Choose an exact name and store from template_list.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "store": {
+            "type": "string",
+            "enum": [
+              "project",
+              "host"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "project_path": {
+            "type": "string",
+            "description": "Relative external workflow path. Omit for the root workflow."
+          },
+          "x": {
+            "type": "number"
+          },
+          "y": {
+            "type": "number"
+          }
+        },
+        "required": [
+          "store",
+          "name"
+        ]
+      },
+      "mutating": true
+    },
+    {
+      "name": "template_add",
+      "description": "Request the person’s approval to add a local template folder to the chosen store.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "store": {
+            "type": "string",
+            "enum": [
+              "project",
+              "host"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "path": {
+            "type": "string",
+            "description": "Absolute folder path on the host."
+          }
+        },
+        "required": [
+          "store",
+          "name",
+          "path"
+        ]
+      },
+      "mutating": true,
+      "approval_required": true
+    },
+    {
+      "name": "template_import",
+      "description": "Request the person’s approval to import a template from a public HTTPS Git repository.",
+      "inputSchema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "store": {
+            "type": "string",
+            "enum": [
+              "project",
+              "host"
+            ]
+          },
+          "name": {
+            "type": "string"
+          },
+          "url": {
+            "type": "string"
+          },
+          "ref": {
+            "type": "string",
+            "description": "A branch, tag, or commit."
+          },
+          "subdirectory": {
+            "type": "string",
+            "description": "Repository-relative path to the template folder."
+          }
+        },
+        "required": [
+          "store",
+          "name",
+          "url",
+          "ref",
+          "subdirectory"
+        ]
+      },
+      "mutating": true,
+      "approval_required": true
     }
   ],
   "runWait": {
@@ -515,7 +630,7 @@ enum Shared {
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Keep existing _meta.json text and fill an empty description and context in that edit (context records what the person asked and what the Draft says). How to write Cards and an atomic Draft edit: demo_read reference/cards.md. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Keep existing _meta.json text and fill an empty description and context in that edit (context records what the person asked and what the Draft says). Read demo_read reference/cards.md, the chosen SDK documentation and its generated bindings or headers before writing Card sources. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
   },
   "commentRequest": {
     "text": "The user left comments on these Cards in {where}; do what they ask. By default the Card a comment is on changes, keeping its id and wiring; a comment may ask for new Cards or a split (project_edit for the Cards and connections in one atomic save). A Draft among them is implemented following its comments. Comments with finding=true are observations, not change requests. The save that does what a comment asks also resolves it: project_edit of the Card's _meta.json with that comment's \"resolved\": true and a one-line \"resolution\" in the user's language; Tsugumi records which Cards that save changed. How to write code Cards: demo_read reference/cards.md. Then check them with project_validate, run what changed once and check each result with run_record; a result that is not what its comment asks means the work is not done. A comment you cannot do stays open, with the reason in your reply.\n{list}"
@@ -599,7 +714,8 @@ enum Shared {
       "run_record",
       "log_range",
       "artifact_list",
-      "artifact_read"
+      "artifact_read",
+      "template_list"
     ],
     "showTool": {
       "name": "guide_show",
@@ -933,6 +1049,7 @@ enum Shared {
       "run",
       "run_record",
       "tool_result_read",
+      "template_list",
       "demo_list",
       "demo_read",
       "delegate",
@@ -944,8 +1061,7 @@ enum Shared {
         "format": "project_file_format",
         "attached": "attached_folder_read",
         "shell": "project_shell",
-        "reload": "project_reload",
-        "template": "document_template"
+        "reload": "project_reload"
       },
       "sdk": {
         "prepare": "card_s_d_k_prepare",
@@ -985,6 +1101,11 @@ enum Shared {
         "delete_history": "run_history_delete",
         "operation": "operation_get",
         "validate_layout": "layout_validate"
+      },
+      "templates": {
+        "copy": "template_copy",
+        "add": "template_add",
+        "import": "template_import"
       }
     },
     "scoped": [
@@ -1019,7 +1140,6 @@ enum Shared {
       "tool_result_read",
       "demo_list",
       "demo_read",
-      "document_template",
       "delegate"
     ]
   }

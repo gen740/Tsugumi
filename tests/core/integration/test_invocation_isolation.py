@@ -238,7 +238,7 @@ int tsugumi_main(const tsugumi_call* c) {
 }
 '''.replace("HOST_SECRET", json.dumps(str(victim)))
     definition = {
-        "type": "code", "language": "cpp",
+        "type": "code",
         "retainArtifact": True,
         "_outputs": FILE_FBS.replace('tsugumi: "file"', 'tsugumi: "directory"'),
         "_nix": '''{ pkgs, inputs, params }: {

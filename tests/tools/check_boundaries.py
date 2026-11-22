@@ -24,7 +24,7 @@ ALLOWED = {
 INCLUDES = [ROOT / path for path in (
     "util/include", "protocol/include", "rpc/include", "rpc/tls/include", "tsugumid/document/include",
     "tsugumid/runtime_support/include", "tsugumid/include", "workerd/include",
-    "workerd/nix/include", "client/include", "sdk/include", "sdk/describe",
+    "workerd/nix/include", "client/include", "sdk/include",
     "hostd/private", "hostd/agent/private", "tsugumid/runtime/src", "workerd/src",
 )]
 

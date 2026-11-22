@@ -1,6 +1,5 @@
 {
   "type": "code",
-  "language": "bash",
   "inputs": [
     {
       "name": "in"

@@ -1,6 +1,5 @@
 {
   "type": "code",
-  "language": "go",
   "inputs": [
     {
       "name": "number"

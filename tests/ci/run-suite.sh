@@ -113,10 +113,6 @@ case "$suite" in
     ;;
   sdk)
     python=$3
-    if ! $list; then
-      nix build .#ci-input-types --out-link build-ci-input-types
-      export TSUGUMI_INPUT_TYPES_TESTS="$root/build-ci-input-types/libexec/tsugumi-tests/tsugumi_input_types_tests"
-    fi
     run "$python" -c 'import matplotlib, plotly, altair'
     run "$python" -m pytest -q -m "$sdk_marker" -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile --durations=40 tests/python \
       --ignore=tests/python/test_sdk_examples.py --ignore=tests/python/test_csharp_sdk.py \

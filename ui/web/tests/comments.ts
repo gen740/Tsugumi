@@ -1,4 +1,4 @@
-import { cardIds } from './cardIds'
+import { addCodeCard, cardIds } from './cardIds'
 // Comments on a Card: written, edited, resolved and removed in its _meta.json,
 // each saved at once, on any Card, its copy having comments of its own; who did
 // what is kept; the canvas shows how many are open and the Agent is asked about those only.
@@ -26,7 +26,7 @@ const session = () => {
 
 {
   const { s, saves } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   assert.deepEqual(s.comments(k), [])
   assert.equal(get(s.cardMeta(k), 'comments'), undefined)
 
@@ -77,7 +77,7 @@ const session = () => {
 {
   // What else the Card's _meta.json says is kept, and undo takes a comment back.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   s.edit((x) => x.updateMeta(k, (m) => m.set('description', 'Plots')))
   await s.save()
   await s.addComment(k, 'one')
@@ -90,7 +90,7 @@ const session = () => {
 {
   // A Card in Card has a _meta.json too, though its settings are not edited here.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   s.setCardDefinition(k, { card: parse('{"type":"subgraph","external":"inner"}') })
   await s.addComment(k, 'split this')
   assert.equal(s.comments(k).length, 1)
@@ -109,7 +109,7 @@ const session = () => {
 {
   // Who did what: the user's marks here, and what the core recorded of the Agent's.
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   await s.addComment(k, 'mine')
   const [c] = s.comments(k)
   assert.equal(c.author, 'user')
@@ -135,7 +135,7 @@ console.log('comments: ok')
 
 {
   const { s } = session()
-  const k = await s.addCard('python', [], { x: 0, y: 0 })
+  const k = await addCodeCard(s, { x: 0, y: 0 })
   await s.addComment(k, 'Read only: [source](card:a?file=src%2Fmain.py&lines=2-4) uses a clock.', true)
   assert.equal(s.comments(k)[0].finding, true)
   assert.equal(s.openComments(k).length, 1, 'Kept observations remain visible as comments')

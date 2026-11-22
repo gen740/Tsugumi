@@ -252,7 +252,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   request.params.bfbs = bytes(call.params()->schema_bfbs());
   request.params.root = call.params()->root_type()->str();
   request.params.bytes = bytes(call.params()->bytes());
-  if (spawn.program.bash || job.r_params_environment)
+  if (spawn.program.bash)
     for (const auto* v : *call.environment())
       if (v->name()->string_view() == "TSUGUMI_PARAMS_JSON")
         request.params.json = v->value()->str();

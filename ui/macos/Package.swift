@@ -14,7 +14,6 @@ let package = Package(
     .library(name: "TsugumiLauncher", targets: ["TsugumiLauncher"]),
   ],
   dependencies: [
-    .package(name: "InputTemplates", path: "../shared/templates/input"),
     .package(path: "../../client/swift"),
     .package(name: "TsugumiVM", path: "../../vm/macos/runtime"),
     .package(url: "https://github.com/google/flatbuffers.git", exact: "25.12.19"),
@@ -72,7 +71,6 @@ let package = Package(
     .executableTarget(
       name: "TsugumiApp",
       dependencies: [
-        .product(name: "InputTemplates", package: "InputTemplates"),
         .product(name: "TsugumiRPC", package: "swift"), "TsugumiLauncher",
         "TsugumiAgentClient",
         .product(name: "SwiftTreeSitter", package: "SwiftTreeSitter"),

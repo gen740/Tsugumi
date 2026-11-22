@@ -19,6 +19,7 @@
   bash,
   bubblewrap,
   gtk4,
+  git,
   cardNixpkgs,
   hosq,
   core,
@@ -63,6 +64,7 @@ clangStdenv.mkDerivation {
   cmakeFlags = [
     "-DTSUGUMI_BUILD_LINUX_UI=ON"
     "-DTSUGUMI_BUILD_TESTS=OFF"
+    "-DTSUGUMI_TEMPLATE_GIT=${git}/bin/git"
     "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
     "-DHOSQ_INCLUDE_DIR=${hosq}/include"
     "-DTSUGUMI_CARD_NIXPKGS_REV=${cardNixpkgs.rev}"

@@ -1,5 +1,5 @@
 # How every Visualization template chooses the points it draws. The generator
-# (ui/shared/templates/visualization.py) writes what follows the marker below into
+# (tests/fixtures/card-templates/visualization.py) writes what follows the marker below into
 # each library's src/main.py in place of its "# @select@" line, so a Card
 # carries all of its selection code. Each library's source supplies the imports.
 

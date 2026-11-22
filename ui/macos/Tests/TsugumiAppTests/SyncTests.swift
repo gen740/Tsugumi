@@ -61,7 +61,7 @@ import TsugumiTestSupport
     }
   }
 
-  static let sinkCard = #"{"type":"code","language":"bash","inputs":[{"name":"in"}]}"#
+  static let sinkCard = #"{"type":"code","inputs":[{"name":"in"}]}"#
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""

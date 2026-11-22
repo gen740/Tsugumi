@@ -45,18 +45,18 @@ plot(values, type="b")
 
 def report_project(root, extension, source=REPORT):
     write_project(root, {
-        'data': {'card': {'type': 'code', 'language': 'bash', 'inputs': [{'name': 'start'}]}, 'outputs': NUMBERS,
+        'data': {'card': {'type': 'code', 'inputs': [{'name': 'start'}]}, 'outputs': NUMBERS,
                  'nix': '''{ pkgs, inputs, params }: { run = ''
                    printf '%s' '{"numbers":{"values":[1,2,3],"big":9007199254740993}}' > "$TSUGUMI_OUTPUT"
                  ''; }'''},
-        'report': {'card': {'type': 'code', 'language': 'r', 'inputs': [{'name': 'data'}],
+        'report': {'card': {'type': 'code', 'inputs': [{'name': 'data'}],
                            'recordIO': True, 'retainArtifact': True, 'artifactOutput': 'report',
                            'params': [{'name': 'scale', 'type': 'double', 'data': 2}]},
                    'outputs': OUTPUTS,
                    'nix': '{ pkgs, inputs, params }: { run = inputs.tsugumi.reportCard { src = ./src; entry = "report.' + extension + '"; }; }',
                    'src': {'report.' + extension: source,
                            'badge.svg': '<svg xmlns="http://www.w3.org/2000/svg" width="80" height="24"><rect width="80" height="24" fill="green"/></svg>'}},
-        'read': {'card': {'type': 'code', 'language': 'bash', 'inputs': [{'name': 'report'}]},
+        'read': {'card': {'type': 'code', 'inputs': [{'name': 'report'}]},
                  'nix': '''{ pkgs, inputs, params }: { run = ''
                    test -s "$DIR_REPORT/index.html"
                  ''; }'''},

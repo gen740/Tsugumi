@@ -41,9 +41,7 @@ Run them with `TSUGUMI_FULL_RULES=1 bash tests/ci/run-suite.sh core aarch64-darw
 and the same command with `agent`. To reproduce the shorter Mac CI run, build
 `nix build .#ci-core-native --out-link build-ci` and run `core`, `agent` and `host`
 without `TSUGUMI_FULL_RULES`. Standalone host, remote, SDK, adapter and Swift
-jobs use `nix build .#ci-runtime --out-link build-ci`. The suite runner builds
-the input description executable for SDK tests and the daemon double for plugin
-tests. The local Linux pass runs the full suite selection, including on ARM
+jobs use `nix build .#ci-runtime --out-link build-ci`. The suite runner builds the daemon double for plugin tests. The local Linux pass runs the full suite selection, including on ARM
 containers. The guest workflows build the distributable images.
 
 `nix build --no-link .#checks.aarch64-darwin.web-typecheck` checks TypeScript
@@ -115,8 +113,6 @@ For documentation changes, run `nix run .#build-doc` and `nix run .#test-doc`. T
 - `python3 hostd/tools/test-binary-cache.py`: check signed substitution, unknown-key rejection and HTTP authentication with disposable Nix stores and local test servers. The launcher and Linux integration suites also validate the generated VM cache configuration.
 - `tests/ci-remote-worker.sh`: run Cards through hostd's Host RPC, mutual-TLS broker and packaged `tsugumi-workerd` on Linux; requires listeners and Nix builds. The script name describes the remote worker scenario.
 - `nix develop -c /usr/bin/swift tests/tools/wkwebgpu.swift`: probe WebGPU and adapter availability in an offscreen WKWebView.
-- `python3 sdk/codegen/scaffold.py go`: synchronize the host Go scaffold in `ui/shared/templates/go.json` after editing `sdk/go/template/` (`--check` verifies them).
-- `python3 sdk/codegen/scaffold.py rust`: synchronize the host Rust scaffold in `ui/shared/templates/rust.json` after editing `sdk/rust/template/` (`--check` verifies them).
 
 Scripted Mac trials can register a trusted root before the first project opens:
 
@@ -156,14 +152,13 @@ the core pytest routes and the unfiltered CI runs of the C++ test targets.
 | Real remote execution | x86_64 Linux | Separate worker admission and core-to-worker suites in the remote job. |
 
 The canonical Agent suite also runs `tsugumi_input_types_tests` for resolver and
-Host input descriptions, and `test_host_projects_rpc.py` for the Host's
+Host FlatBuffers schema results, and `test_host_projects_rpc.py` for the Host's
 project-copy permissions and state exclusions. Edit refusal and operation-ID
 checks stay in `tsugumi_host_settings_tests`, and public edit/read-miss scenarios
 stay in `tsugumi_agent_rpc_tests`. Short-identifier tests link the Host and core
 in `tsugumi_host_settings_tests`.
 Every native core suite runs all four `tsugumi_file_transfer_tests` scenarios
-(`large`, `sparse`, `shrink-stream`, `shrink-sparse`). The SDK suite discovers
-`tests/python/test_input_types.py`; core pytest discovers
+(`large`, `sparse`, `shrink-stream`, `shrink-sparse`). Core pytest discovers
 `tests/core/test_short_identifiers.py`.
 
 `tsugumi_worker_condition_tests` runs with the canonical core suite;

@@ -17,10 +17,8 @@
   cacert,
   cardNixpkgs,
   hosq,
-  llvmPackages,
-  ruff,
   nixfmt,
-  shfmt,
+  git,
   withFormatters ? true,
 }:
 # Clang on Linux too (with GCC's libstdc++, as the Nix libraries linked here):
@@ -59,12 +57,10 @@ clangStdenv.mkDerivation {
   ++ lib.optionals clangStdenv.hostPlatform.isLinux [ icu ];
   cmakeFlags =
     lib.optionals withFormatters [
-      "-DTSUGUMI_FORMAT_CLANG=${llvmPackages.clang-unwrapped}/bin/clang-format"
-      "-DTSUGUMI_FORMAT_RUFF=${ruff}/bin/ruff"
       "-DTSUGUMI_FORMAT_NIX=${nixfmt}/bin/nixfmt"
-      "-DTSUGUMI_FORMAT_SH=${shfmt}/bin/shfmt"
     ]
     ++ [
+      "-DTSUGUMI_TEMPLATE_GIT=${git}/bin/git"
       "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
       "-DHOSQ_INCLUDE_DIR=${hosq}/include"
       "-DTSUGUMI_BUILD_TESTS=OFF"
@@ -77,10 +73,7 @@ clangStdenv.mkDerivation {
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
   # What the dev shell's own CMake configuration needs of the above.
   passthru.devEnv = {
-    TSUGUMI_FORMAT_CLANG = "${llvmPackages.clang-unwrapped}/bin/clang-format";
-    TSUGUMI_FORMAT_RUFF = "${ruff}/bin/ruff";
     TSUGUMI_FORMAT_NIX = "${nixfmt}/bin/nixfmt";
-    TSUGUMI_FORMAT_SH = "${shfmt}/bin/shfmt";
     TSUGUMI_FLATBUFFERS_SOURCE = "${flatbuffers.src}";
     TSUGUMI_CACERT = "${cacert}/etc/ssl/certs/ca-bundle.crt";
     HOSQ_INCLUDE_DIR = "${hosq}/include";

@@ -21,14 +21,14 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Display results and keep files
 
-- **Plot data with editable code.** Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. For example, plot a numeric column as a histogram and inspect the actual bins kept with the figure. [Visualisation templates](Visualization.md)
+- **Plot data with editable code.** Open the Visualization demo or write a Code Card with Matplotlib, Plotly or Altair. For example, plot a numeric column as a histogram and inspect the actual bins kept with the figure. [Visualisation templates](Visualization.md)
 - **Watch a running figure or show a value.** Right-click the Card in the Live Stream demo and choose **Open Display** to follow incoming revisions. Use a Bash Card to log a typed input and show it as text or an explicitly selected Markdown string, as the `result` Card of the marimo demo does. [Live displays](Usage.md#live-displays) · [Bash displays](CardGuide.md#bash)
 - **Run a notebook or render a report.** Add a marimo notebook to run committed cells once and return typed results. Use an R Markdown or Quarto Card to render a parameterised HTML report from an upstream value. [marimo notebooks](Marimo.md) · [R Markdown and Quarto](Reports.md)
 - **Keep a result for later.** In **Ports**, keep a File or Directory output as an artifact. Open its saved files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
 
 ### Write Cards and pin environments
 
-- **Choose a language.** **Add Card** offers a processing Card in Python, C++, Go, Rust, Ruby or C#. For Bash, R or Julia, set `language` in the Card's `_card.json`. The Card guide has the same typed input/output example in all nine languages. [First Card](CardGuide.md) · [Ruby](CardGuide.md#the-same-card-in-ruby) · [Go](CardGuide.md#go-cards) · [Rust](CardGuide.md#rust-cards) · [C#](CSharp.md)
+- Choose a Code Card’s SDK in `default.nix`. Start with a Draft or choose **From Template…** to copy saved Cards. The Card guide has the same typed input/output example in all nine languages. [First Card](CardGuide.md) · [Ruby](CardGuide.md#the-same-card-in-ruby) · [Go](CardGuide.md#go-cards) · [Rust](CardGuide.md#rust-cards) · [C#](CSharp.md)
 - **Pin dependencies and control state.** Use **Project settings → Name and Environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](CardGuide.md) · [Worker state](CardGuide.md#worker-state)
 - **Keep a monitoring worker resident.** Workers retained with `reuseWorker` have no count, idle-time or memory eviction limit. They stay until the environment stops or the Card's definition or execution conditions change; a failed, cancelled or timed-out call discards its worker, and a dead worker is replaced. Each invocation records reuse, and its log identifies replacement of resident state. Fresh workers prepared for speed keep their separate limits. [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
@@ -50,11 +50,11 @@ and Agent policy; `workerd` owns worker lifetimes and invocation values.
 The guest is built under `vm/guest`, the macOS VM helper under
 `vm/macos/runtime`, and protocol-aware Swift clients under `client/swift`.
 UI implementations are `ui/web` and `ui/macos`, with isolated module resources
-and Card templates in `ui/shared`.
+in `ui/shared`.
 
 See the [trust boundaries](security.md#1-the-trust-boundaries), [RPC contract](Protocol.md) and [repository map](../AGENTS.md#map).
 
-The decided target for the boundary between the core and the language SDKs, the Card ABI and what a Card sees is in [The core and the language SDKs](CoreAndSDK.md), [Card ABI 9](CardABI.md) and [The sandbox contract](SandboxContract.md). These are not implemented yet; each states what the code does today.
+The decided contracts cover the boundary between the core and the language SDKs, the Card ABI and what a Card sees. Each page records the decision and the current implementation. [The core and the language SDKs](CoreAndSDK.md) · [Card ABI 9](CardABI.md) · [The sandbox contract](SandboxContract.md)
 
 The host-side `tsugumi-hostd` exposes environment operations through `EnvironmentRequest` in `protocol/host.fbs`: state, start, stop and attached-folder changes. Its native adapter launches `tsugumid` on Linux; its signed Mac adapter boots the shared VM and applies the mounts hostd specifies. In both cases, the service owns readiness checks, endpoint and project registration, execution-broker authorization, concurrent starts and process-exit reporting. Host events carry state, progress and stopped notifications. On the Mac, quitting the app requests orderly host and shared VM shutdown, including work from other clients, after one confirmation if work is in progress. Closing the last window quits only when enabled in General Settings (off by default). Hostd and project cores do not exit for idleness; without the app, the resident host remains until explicitly stopped. An open Web UI can start it again through its existing reconnect. SIGTERM, SIGINT and SIGHUP also request bounded orderly shutdown; hostd exit or a lost Watch connection makes vmhost do the same. Archiving incompatible history requires an explicit start flag. `HostRuntimeRequest` reports runtime/store state without starting a VM.
 

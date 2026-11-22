@@ -234,7 +234,11 @@ struct CanvasRunControl: View {
       }
       Divider().frame(height: 14)
       Menu {
-        BuiltinCardItems { t in NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id, userInfo: ["template": t.rawValue]) }
+        NewCardItems(add: { kind in
+          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id, userInfo: ["template": kind.rawValue])
+        }, pickTemplate: {
+          NotificationCenter.default.post(name: .canvasAddBuiltin, object: tab.id)
+        })
       } label: { Image(systemName: "plus") }
         .menuStyle(.borderlessButton).menuIndicator(.hidden).fixedSize()
         .disabled(!session.isEditable)

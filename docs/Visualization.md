@@ -1,6 +1,6 @@
 # Visualization Cards
 
-Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. The Python Card includes the data selection and plotting code in `src/main.py`, a `default.nix` environment and a `figure` Directory output. Set `kind` to change the figure. After editing the library templates under `ui/shared/templates/visualization/`, run `python3 ui/shared/templates/visualization.py` to regenerate the app bundles and demo source.
+The **Visualization → report** demo includes editable Matplotlib Cards with a `default.nix` environment and a `figure` Directory output. Set `kind` to change the figure. To work with a different plotting library, use the Plotly and Altair examples in [the test fixture generator](../tests/fixtures/card-templates/visualization.py).
 
 | Library | Card display | Saved figure files |
 | --- | --- | --- |
@@ -8,7 +8,7 @@ Choose **Add Card → Visualization** and select Matplotlib, Plotly or Altair. T
 | Plotly | Interactive Plotly display | `plot.json`, self-contained `plot.html` |
 | Altair | Interactive Vega-Lite display | `plot.json`, self-contained `plot.html` |
 
-The format appears in the creation menu. Plotly and Altair templates do not promise static PNG, SVG or PDF exports; choose Matplotlib for those files. The HTML exports bundle their JavaScript and Japanese font, so opening a saved HTML file does not require a CDN. The normal interactive Card viewer also uses the app's bundled renderer. See the upstream [Matplotlib export API](https://matplotlib.org/stable/api/_as_gen/matplotlib.figure.Figure.savefig.html), [Plotly HTML export](https://plotly.com/python/interactive-html-export/) and [Altair saving guide](https://altair-viz.github.io/user_guide/saving_charts.html).
+Plotly and Altair templates do not promise static PNG, SVG or PDF exports; choose Matplotlib for those files. The HTML exports bundle their JavaScript and Japanese font, so opening a saved HTML file does not require a CDN. The normal interactive Card viewer also uses the app's bundled renderer. See the upstream [Matplotlib export API](https://matplotlib.org/stable/api/_as_gen/matplotlib.figure.Figure.savefig.html), [Plotly HTML export](https://plotly.com/python/interactive-html-export/) and [Altair saving guide](https://altair-viz.github.io/user_guide/saving_charts.html).
 
 ## Data and parameters
 

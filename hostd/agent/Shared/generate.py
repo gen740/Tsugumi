@@ -1,62 +1,21 @@
 """Writes ui/macos/Sources/AgentClient/Shared.swift from the files of this
 folder, which the web Agent imports as they are: the system prompts (the Agent's and the guide's), the RPC
 requests offered as tools, the Agent's own texts and the guide's script without a
-model connection. It also writes the list of
-the Python SDK's methods into demos/reference/cards.md, so that the model need not read
-the SDK. Run it after changing them or the SDK
+model connection. It also writes shared MCP instructions. Run it after changing
+the shared texts
 (tests/static/test_generated_shared.py checks that it was)."""
 
-import ast
-import json
 import pathlib
 import sys
 
 HERE = pathlib.Path(__file__).resolve().parent
 OUT = HERE.parents[2] / "ui" / "macos" / "Sources" / "AgentClient" / "Shared.swift"
-SDK = HERE.parents[2] / "sdk" / "python" / "tsugumi" / "__init__.py"
 PROMPT = HERE / "system-prompt.md"
-# The Card reference the Agent reads on demand (demo_read reference/cards.md).
-REFERENCE = HERE.parents[2] / "demos" / "reference" / "cards.md"
-# The SDK list stands in the reference between these two lines.
-SDK_BEGIN = "  The whole SDK (Inputs, Report and Run; generated from their source):\n"
-SDK_END = "  raise tsugumi.Failure("
-
-
-def sdk_list() -> str:
-    """Public role methods and pure result constructors from the Python SDK."""
-    tree = ast.parse(SDK.read_text())
-    lines = ["    inputs.<port>, inputs.params.<field> (read-only generated objects)\n",
-             "    return {port: generated_object_or_bytes}\n"]
-    for role in ("Inputs", "Report", "Run"):
-        cls = next(n for n in tree.body if isinstance(n, ast.ClassDef) and n.name == role)
-        receiver = role.lower()
-        for method in cls.body:
-            if not isinstance(method, ast.FunctionDef) or method.name.startswith("_"):
-                continue
-            if any(isinstance(d, ast.Name) and d.id == "property" for d in method.decorator_list):
-                lines.append(f"    {receiver}.{method.name}\n")
-            else:
-                args = ast.unparse(method.args).removeprefix("self").removeprefix(", ")
-                lines.append(f"    {receiver}.{method.name}({args})\n")
-    for name in ("builder", "message"):
-        function = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == name)
-        lines.append(f"    tsugumi.{name}({ast.unparse(function.args)})\n")
-    return "".join(lines)
-
-
-def prompt() -> str:
-    return PROMPT.read_text()
-
-
-def reference() -> str:
-    text = REFERENCE.read_text()
-    begin = text.index(SDK_BEGIN) + len(SDK_BEGIN)
-    return text[:begin] + sdk_list() + text[text.index(SDK_END, begin):]
 
 
 def swift() -> str:
     def raw(name: str) -> str:
-        text = (prompt() if name == PROMPT.name else (HERE / name).read_text()).rstrip("\n")
+        text = (HERE / name).read_text().rstrip("\n")
         assert '"""#' not in text, name
         return f'#"""\n{text}\n"""#'
 
@@ -69,7 +28,7 @@ def swift() -> str:
 
 
 def mcp_cpp() -> str:
-    shared = prompt()
+    shared = PROMPT.read_text()
     rules = shared[:shared.index("<!-- End of shared MCP rules -->\n")]
     transport = (HERE / "mcp-transport.md").read_text()
     assert ")TSUGUMI\"" not in transport + rules
@@ -91,8 +50,7 @@ MCP_CPP_OUT = HERE.parents[2] / "cli" / "src" / "mcp_instructions.hh"
 
 if __name__ == "__main__":
     if sys.argv[1:] == ["--check"]:
-        sys.exit(0 if OUT.read_text() == swift() and REFERENCE.read_text() == reference() and MCP_CPP_OUT.read_text() == mcp_cpp() else 1)
-    REFERENCE.write_text(reference())
+        sys.exit(0 if OUT.read_text() == swift() and MCP_CPP_OUT.read_text() == mcp_cpp() else 1)
     OUT.write_text(swift())
     MCP_CPP_OUT.write_text(mcp_cpp())
     print(f"wrote {OUT}")
