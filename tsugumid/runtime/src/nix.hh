@@ -104,7 +104,7 @@ class NixRunner {
   static types::TypeRef params_type(const Node& node);
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
-  // Build only the declared view files on the given native target.
+  // Build only the declared view files on the UI's native store.
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;
 

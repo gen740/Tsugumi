@@ -56,10 +56,10 @@ auto plan_text(const BuildPlan& plan, const NixCall& call, NixResult& result)
   if (!value)
     throw std::runtime_error("mock-build.json needs product or error");
   schema::CardPlan product;
-  if (auto error = schema::decode(*value, product))
+  if (auto error = schema::decode_card_plan(schema::text(*value), product))
     throw std::runtime_error("mock Card plan is invalid: " + error->message);
   if (call.views_only) {
-    *product.runs = {};
+    product.runs->value().clear();
     product.worker->reset();
     result.execution_list = true;
     result.implementation_count = 0;
@@ -67,7 +67,8 @@ auto plan_text(const BuildPlan& plan, const NixCall& call, NixResult& result)
   }
   result.execution_list =
       schema::get(plan.execution_list) && *schema::get(plan.execution_list);
-  result.implementation_count = static_cast<uint32_t>(product.runs->size());
+  result.implementation_count =
+      static_cast<uint32_t>(product.runs->value().size());
   if (!result.execution_list && result.implementation_count != 1)
     throw std::runtime_error("mock scalar Card plan needs exactly one run");
   enforce_implementation_limit(result.implementation_count,

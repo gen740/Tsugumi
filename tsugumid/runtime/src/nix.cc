@@ -439,7 +439,14 @@ auto NixRunner::build(const BuildRequest& req) -> CardBuildPlan {
 
 auto NixRunner::declared_views(const BuildRequest& req)
     -> std::vector<schema::CardView> {
-  return build_plan(req, !prepared_).common.views;
+  const SharedStoreDerivationTransport transport;
+  auto view_request = req;
+  view_request.target = {WorkerKind::native, native_system()};
+  view_request.transport = &transport;
+  // Exported projects get their declarations from the prepared plan.
+  if (prepared_ && !req.node->settings.system.empty())
+    view_request.target.system = req.node->settings.system;
+  return build_plan(view_request, !prepared_).common.views;
 }
 
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
@@ -529,17 +536,18 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
-  if (req.target.kind == WorkerKind::native && !node.settings.system.empty()) {
-    emulator = binfmt_interpreter(node.settings.system);
+  if (!views_only && req.target.kind == WorkerKind::native &&
+      req.target.system != native_system()) {
+    emulator = binfmt_interpreter(req.target.system);
     if (emulator.empty())
       throw Failed(
           FailureKind::unsupported,
-          "system " + node.settings.system +
+          "system " + req.target.system +
               " needs an emulator registered with the kernel (binfmt_misc), " +
               "and Nix's extra-platforms to include it: the shared VM on a Mac "
               "has qemu-x86_64; " +
               "on NixOS, set boot.binfmt.emulatedSystems",
-          {{"system", node.settings.system}});
+          {{"system", req.target.system}});
   }
   auto files = with_sources(node);
   const auto pin = nixpkgs_pin(node.pkgs_path);
@@ -717,14 +725,14 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     return plan;
   }
   schema::CardPlan product;
-  if (auto error = schema::decode(res.plan_json, product))
+  if (auto error = schema::decode_card_plan(res.plan_json, product))
     throw Failed(FailureKind::nix_failed,
                  "the Card build plan is invalid: " + error->message);
-  plan.implementations = *product.runs;
+  plan.implementations = std::move(product.runs->value());
   if (plan.implementations.size() != res.implementation_count)
     throw Failed(FailureKind::nix_failed,
                  "the Card build plan has a different implementation count");
-  build.views = std::move(*product.views);
+  build.views = std::move(product.views->value());
   build.emulator = emulator;
   if (const auto* worker = schema::get(product.worker)) build.worker = *worker;
   if (!views_only && needs_worker && build.worker.empty())
