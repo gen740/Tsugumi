@@ -7,6 +7,7 @@ pointing to that worker's dedicated writable authorized-keys file.
 Use tsugumi-test-env and pytest -m environment.
 """
 
+import errno
 import hashlib
 import json
 import os
@@ -18,11 +19,12 @@ import struct
 import tempfile
 import subprocess
 import threading
+import time
 from pathlib import Path
 
 import pytest
 from harness import remote_worker as R
-from harness.file_events import process_file, wait_for_file
+from harness.file_events import process_file
 from harness.host import Host
 from harness.real_cards import log, nix_string
 from harness.values import collected_items
@@ -264,8 +266,19 @@ def remote_gates(tmp_path, remote_daemon):
     def release(invocation):
         job = text(invocation.executionJobId)
         directory, = (tmp_path / "daemon-state/projects").glob(f"*/jobs/{job}")
-        fifo = wait_for_file(directory / "work/scratch/work/test-release")
-        with fifo.open("w") as gate:
+        fifo = directory / "work/scratch/work/test-release"
+        deadline = time.monotonic() + 30
+        while True:
+            try:
+                fd = os.open(fifo, os.O_WRONLY | os.O_NONBLOCK)
+                break
+            except OSError as error:
+                if error.errno not in (errno.ENOENT, errno.ENXIO):
+                    raise
+                if time.monotonic() >= deadline:
+                    pytest.fail(f"remote job {job} did not open its release gate: {fifo}")
+                time.sleep(0.05)
+        with os.fdopen(fd, "w") as gate:
             gate.write("release\n")
 
     return release
@@ -407,7 +420,7 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
     def numbers(values, value=""):
         programs = [python_program(f"""
 from card import Output
-from outputs.Number import NumberT
+from outputs.out.Number import NumberT
 
 def run(input):
     return Output(out=NumberT(value={value}{number}))
@@ -530,7 +543,7 @@ SECRET_PROJECT = "a2b3c4"
 USES_SECRET = """
 import os
 from card import Output
-from outputs.Number import NumberT
+from outputs.out.Number import NumberT
 
 def run(input):
     value = os.environ["database_password"]

@@ -20,7 +20,7 @@ The Card ABI that connects the two is in [Card ABI 9](CardABI.md), and what a Ca
 
 - The core is `tsugumid`, `workerd`, `hostd`, `protocol` and the UIs. None of them knows a programming language.
 - A language SDK is a swappable part, chosen per Card. Users can write their own.
-- tsugumi-kit ships eight default SDKs: C++, Python, Go, Rust, C#, Julia, R and Ruby. Tsugumi pins one kit revision in its `flake.lock`.
+- tsugumi-kit ships ten default SDKs: C++, Python, Go, Rust, C#, Julia, R, Ruby, Java and JavaScript. Tsugumi pins one kit revision in its `flake.lock`.
 - A Card selects its language SDK in `default.nix` from the kit the core passes as `inputs.tsugumi`. The core passes the kit unchanged, and the Card gives its builder the port schemas. [The builder interface](#the-builder-interface)
 - The contract between the core and a language SDK is the common [Card ABI](CardABI.md).
 - The worker comes from the core, including the build of a worker for a foreign system or a remote host. Across versions, the promise is the Card ABI.
@@ -55,6 +55,11 @@ The schemas are all the core tells a builder about the Card. No UI information r
 Every language SDK's builder places, next to `lib/main.so` in the run output, the generated API that the Card's code is written against, under `share/tsugumi/api/`: the generated sources (for example C++ `card.hh`, Python stubs, Go or Rust sources) and a `README.md` listing the Card's typed inputs, outputs and parameters. They are built from the same `schemas`. This is an obligation of each SDK, checked in tsugumi-kit.
 
 The Card API request uses the normal local Nix build with the Card's saved definition, current wiring, and configured system. It returns relative paths and raw bytes for regular files under each implementation's `share/tsugumi/api/`, or the build failure and the end of its log. One reply can cover up to 2,000 directory entries and 8 MiB of paths and file bytes. The build output lives in the Nix store. The Agent reads the files through `tools` with family `sdk` and action `api`. In both Card editors, **Build SDK** opens the same files in the read-only **SDK** section. [CardApi](Protocol.md#cardapi)
+
+A Card whose target can only be built on an execution service cannot show its
+API yet. The execution service accepts invocation jobs and returns their
+results. A build-only request needs a scoped, cancellable way to realize the
+plan and return the bounded API files from the worker's store.
 
 ## What the core evaluates
 

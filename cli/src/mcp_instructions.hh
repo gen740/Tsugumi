@@ -27,15 +27,16 @@ the person's decision.
   whole latest revision (types, ports, settings, _outputs.fbs).
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
-  every Card states it) and settings (params with their values in "data", trigger
-  "allInputs"/"eachInput", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
+  every Card states it) and settings (params with their values in "data", maxRuns, timeoutSeconds, recordIO, reuseWorker, "system": "x86_64-linux" for software
   with no aarch64 build, ...) and _meta.json its name, description and comments. card_id gives a new Card its
   permanent id from its name (an implemented Draft keeps its id); the name is what people read, the id is what tool arguments, paths, wires and evidence
   links use. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
-  {"name": "b"}]}) names that split, sending its value on every output. Input types come from the connected outputs.
+  {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
+  Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
 - Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
   documentation and the Card's generated API: tools family sdk action api builds the saved Card from its current
-  wiring and returns the files its builder places under share/tsugumi/api/. demo_list and demo_read find complete example projects.
+  wiring and returns the files its builder places under share/tsugumi/api/. Pass schemas to the SDK builder in
+  default.nix. Use a Path port for a file or folder. SDK guides and starters live in tsugumi-kit.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.

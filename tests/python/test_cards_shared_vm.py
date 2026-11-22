@@ -314,7 +314,7 @@ def test_unselected_branch_is_not_evaluated(env):
     inferring concurrency from wall-clock invocation spans was timing evidence.
     """
     broken = {"type": "code", "inputs": [{"name": "in"}], "_outputs": NUM,
-              "_nix": '''{ pkgs, inputs, params }:
+              "_nix": '''{ pkgs, params, inputs, schemas }:
 { run = builtins.throw "must never be evaluated"; }
 '''}
     defs = {"trigger": {"type": "trigger"},

@@ -17,7 +17,7 @@ start ──out→ settings ──number→ multiply
 | `settings` | Input value (input) | Sends a number you can edit on the Canvas |
 | `multiply` | Python step | Multiplies the number it receives by `factor`, outputs the result and shows it in its view |
 
-When it is done, the Canvas looks like this. Below are the same Cards as on the real screen, and they run without installing anything. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
+When it is done, the Canvas looks like this. The player illustrates the Card graph. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
 
 <div data-player="card-guide"></div>
 
@@ -121,17 +121,17 @@ A Card's summary goes in `_meta.json`. It appears on the Canvas and in the Card'
 }
 ```
 
-The SDK, the environment and the Card's views go in `default.nix`. `inputs.tsugumi` holds the SDKs from tsugumi-kit, already bound to this Card's ports; `pythonSdk.pythonCard` builds the Card and `pythonSdk.views` are the views the Python SDK bundles. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`. Packages come from the project's pinned nixpkgs.
+The SDK, the environment and the Card's views go in `default.nix`. `inputs.tsugumi` holds the SDKs from tsugumi-kit; `pythonSdk.pythonCard` builds the Card and `pythonSdk.views` are the views the Python SDK bundles. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`. Packages come from the project's pinned nixpkgs.
 
 `definitions/multiply/default.nix`
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   sdk = inputs.tsugumi.pythonSdk;
 in
 {
-  run = sdk.pythonCard { src = ./src; };
+  run = sdk.pythonCard { inherit schemas; src = ./src; };
   views = builtins.filter (view: view.name == "text") sdk.views;
 }
 ```
@@ -147,7 +147,7 @@ from outputs.result.hello.Result import ResultT
 
 
 def run(input: Input) -> Output:
-    n = input.number.value
+    n = input.require("number").value
     factor = input.params.factor
     tsugumi.send(f"{n} × {factor} = {n * factor}")
     return Output(result=ResultT(value=n * factor))
@@ -217,12 +217,12 @@ The input and output ports become members of `Card::Inputs` and `Card::Output`.
 `definitions/multiply/default.nix` (C++)
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   sdk = inputs.tsugumi.cppSdk;
 in
 {
-  run = sdk.cppCard { src = ./src; };
+  run = sdk.cppCard { inherit schemas; src = ./src; };
   views = builtins.filter (view: view.name == "text") sdk.views;
 }
 ```
@@ -235,7 +235,7 @@ in
 #include <string>
 
 auto run(const Card::Inputs& input) -> Card::Output {
-  const auto n = input.number.value;
+  const auto n = input.get<inputs::number::hello::NumberT>("number").value;
   const auto factor = input.params.factor.value_or(1);
   card::display::send(std::to_string(n) + " × " + std::to_string(factor) +
                       " = " + std::to_string(n * factor));
@@ -247,15 +247,15 @@ auto run(const Card::Inputs& input) -> Card::Output {
 
 ### R
 
-Messages are named lists. Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot2 ];`). The R SDK bundles no views, so the Card takes the `text` view from the C++ SDK.
+Messages are named lists. Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot2 ];`). The R SDK bundles the `text` view.
 
 `definitions/multiply/default.nix` (R)
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 {
-  run = inputs.tsugumi.rSdk.rCard { src = ./src; };
-  views = builtins.filter (view: view.name == "text") inputs.tsugumi.cppSdk.views;
+  run = inputs.tsugumi.rSdk.rCard { inherit schemas; src = ./src; };
+  views = builtins.filter (view: view.name == "text") inputs.tsugumi.rSdk.views;
 }
 ```
 
@@ -279,10 +279,10 @@ Messages are dictionaries keyed by field name.
 `definitions/multiply/default.nix` (Julia)
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 {
-  run = inputs.tsugumi.juliaSdk.juliaCard { src = ./src; };
-  views = builtins.filter (view: view.name == "text") inputs.tsugumi.cppSdk.views;
+  run = inputs.tsugumi.juliaSdk.juliaCard { inherit schemas; src = ./src; };
+  views = builtins.filter (view: view.name == "text") inputs.tsugumi.juliaSdk.views;
 }
 ```
 
@@ -307,7 +307,7 @@ A Card shows what it is doing in its views. A view is fixed by the Card's defini
 
 ```nix
 {
-  run = sdk.pythonCard { src = ./src; };
+  run = sdk.pythonCard { inherit schemas; src = ./src; };
   views = sdk.views ++ [
     { name = "notes"; type = "html"; blob = ./notes.html; }
   ];
@@ -320,7 +320,7 @@ A Card shows what it is doing in its views. A view is fixed by the Card's defini
 | `type` | `"html"`: one self-contained HTML file. `"dawn"`: one Wasm binary drawn with WebGPU |
 | `blob` | That one file, as a path or a derivation in the Nix store |
 
-The SDK's own views are added explicitly with `sdk.views` (or a part of it, with `builtins.filter`); nothing is added for you. The C++ SDK bundles html views for text, Markdown, tables, images, line charts (`LineChart`, series of x/y) and points (`Points`, x/y/z with optional colours), and the Python SDK the same and Plotly. Each SDK's guide lists the views it bundles and the values it encodes for them. A Card written with an SDK that bundles none of the views it needs takes them from `inputs.tsugumi.cppSdk.views` or `inputs.tsugumi.pythonSdk.views`. A Card that never sends declares no views.
+The SDK's own views are added explicitly with `sdk.views` (or a part of it, with `builtins.filter`); nothing is added for you. The C++ SDK bundles html views for text, Markdown, tables, images, line charts (`LineChart`, series of x/y) and points (`Points`, x/y/z with optional colours), and the Python SDK the same and Plotly. Each SDK's guide lists the views it bundles and the values it encodes for them. A Card that never sends declares no views.
 
 Where an SDK renders text into images (Matplotlib figures in the Python SDK, for example), it uses IPAexGothic from the kit as the Japanese fallback font, so Japanese labels render offline.
 
@@ -386,7 +386,7 @@ Cards start a fresh worker for each call by default. Set `reuseWorker: true` to 
 | `TMPDIR` | Scratch. Read the path from the environment. | Cleared for each call. |
 | `/tmp` | On Linux workers, the shared VM and remote workers, the same scratch as `TMPDIR`. | On native macOS only `TMPDIR` is scratch. |
 
-The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. A file input's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; }`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
+The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. A file input's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard { inherit schemas; src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; }`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
 
 ## Card definition reference
 
@@ -403,7 +403,7 @@ Definition files:
 | `_card.json` | What the Card is (`type`, required) and all settings: `inputs`, `params`, run settings |
 | `_meta.json` | The human `name` and intent, for every kind of Card: `description` (its summary, shown on the Canvas and in Card settings; `_card.json` has none), `content`, `context`, port descriptions. When implementing a Draft, preserve its intent and fill an empty `description` and `context` from the user and Draft |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `default.nix` | Code Cards only: a function `{ pkgs, inputs, params }:` returning `run` (one implementation or an ordered list), and optionally `views` and `exports`. Nothing else is accepted |
+| `default.nix` | Code Cards only: a function `{ pkgs, params, inputs, schemas }:` returning `run` (one implementation or an ordered list), and optionally `views` and `exports`. Nothing else is accepted |
 | `src/` | Code Cards only: the sources |
 
 Never write `_inputs.fbs`: input types come from the connected outputs. The SDK is chosen in `default.nix`; `_card.json` has no language.
@@ -503,7 +503,7 @@ implementation per threshold from the same source, with the threshold written
 beside `main.py` as `threshold.py`:
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   sdk = inputs.tsugumi.pythonSdk;
   thresholds = [
@@ -513,6 +513,7 @@ let
   compare = threshold: {
     label = "threshold=${toString threshold}";
     run = sdk.pythonCard {
+      inherit schemas;
       src = pkgs.runCommand "score-threshold-${toString threshold}" { } ''
         cp -r ${./src} $out
         chmod -R +w $out
@@ -559,7 +560,7 @@ true` is readable in `default.nix` as `params.<name>` (changing it rebuilds the 
 path reaches the Card's code through a small generated module beside its source:
 
 ```nix
-{ pkgs, inputs, params }:
+{ pkgs, params, inputs, schemas }:
 let
   raw = pkgs.fetchurl {
     url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
@@ -570,6 +571,7 @@ let
 in
 {
   run = inputs.tsugumi.pythonSdk.pythonCard {
+    inherit schemas;
     src = pkgs.runCommand "load-src" { } ''
       cp -r ${./src} $out
       chmod -R +w $out

@@ -34,7 +34,7 @@ export TSUGUMI_REMOTE_TEST_SEED_MANIFEST="$scratch/seed-manifest"
 
 # Fixtures generate Ed25519 identities and authorize hostd by its public key.
 TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
-  "$CORE_TEST_ENV" python3 -m pytest -q --durations=0 -m environment tests/core/integration/test_remote_execution.py
+  "$CORE_TEST_ENV" python3 -m pytest -vv -o faulthandler_timeout=180 --durations=0 -m environment tests/core/integration/test_remote_execution.py
 
 TSUGUMI_REMOTE_TEST_DAEMON="$scratch/package/bin/tsugumi-workerd" \
-  "$CORE_TEST_ENV" python3 -m pytest -q --durations=0 tests/remote
+  "$CORE_TEST_ENV" python3 -m pytest -vv -o faulthandler_timeout=180 --basetemp "$scratch/worker-pytest" --durations=0 tests/remote

@@ -19,7 +19,7 @@
   };
 
   inputs.tsugumi-kit = {
-    url = "github:gen740/tsugumi-kit/6c4abf618ea7a28f1b4e61f89d8ce8b02339e6d3";
+    url = "github:gen740/tsugumi-kit/main";
     inputs.nixpkgs.follows = "nixpkgs";
     inputs.flake-parts.follows = "flake-parts";
   };

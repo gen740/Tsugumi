@@ -102,6 +102,7 @@ jobs:
 
       - name: Build and run Cards through loopback tsugumi-workerd
         if: matrix.job == 'remote-execution'
+        timeout-minutes: 45
         run: bash tests/ci-remote-worker.sh
 
       - name: Card kit checks and the vendored ABI comparison
