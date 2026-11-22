@@ -113,8 +113,12 @@ case "$suite" in
     run nix build --no-link ".#checks.$system.card-kit"
     ;;
   demos)
+    # TODO(ABI 9): every demo module skips until the demos are ported
+    # (docs/Demos.md), and pytest reports that as 5 (no tests ran).
+    status=0
     run "${3:?supply the demo Python executable from .#ci-python}" -m pytest -q -m 'not static' -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile \
-      --durations=40 tests/python/test_demo*.py
+      --durations=40 tests/python/test_demo*.py || status=$?
+    if [[ $status != 0 && $status != 5 ]]; then exit "$status"; fi
     ;;
   *) echo "Unknown suite: $suite" >&2; exit 2 ;;
 esac
