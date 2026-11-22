@@ -344,7 +344,8 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
         json::Encode(json::Members{{"reply", json::Quote("ProjectSnapshot")},
                                    {"value", json::Encode(inspected)}}));
   }
-  if (name == "run_plan" || name.starts_with("project_file_")) {
+  if (name == "run_plan" || name == "card_api" ||
+      name.starts_with("project_file_")) {
     const auto revision = json::Get(inspected, "rev");
     const auto number = [](const std::string& value) {
       return json::UInt(json::String(value, value));
@@ -1276,6 +1277,20 @@ auto Tools::ExecuteTool(const std::string& conversation,
                            "Read the user-selected attached folder");
   }
   host::StripOwnedFields(call.name, spec->mutating, args);
+  if (call.name == "card_api") {
+    // Each request builds the inspected revision. The Nix store is the only
+    // build cache, so there is no durable tool receipt for this read.
+    auto result = ProjectCall(project, call.name, json::Encode(args), stop);
+    const auto envelope = json::Object(result);
+    const auto value = json::Object(json::Get(envelope, "value", "{}"));
+    const bool error = json::Text(envelope, "reply") == "Failure" ||
+                       json::Get(value, "failure", "null") != "null";
+    {
+      std::lock_guard lock(mutex);
+      conversations->RememberResource(conversation, project);
+    }
+    return ToolOutput(result, error, {project});
+  }
   const auto digest = crypto::sha256_hex(call.name + "\n" + project + "\n" +
                                          json::Encode(args));
   auto op_id = conversation + "-" + call.id;
@@ -1593,10 +1608,6 @@ auto Tools::ExecuteTool(const std::string& conversation,
     auto owned = json::Object(result);
     owned["helper_run_card"] = json::Get(args, "card");
     result = json::Encode(owned);
-  }
-  if (call.name == "card_api" && !error) {
-    const auto value = json::Object(json::Get(envelope, "value", "{}"));
-    error = json::Get(value, "failure", "null") != "null";
   }
   {
     std::lock_guard lock(mutex);
