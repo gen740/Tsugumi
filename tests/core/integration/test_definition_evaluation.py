@@ -86,7 +86,7 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
         settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": {"string": "first"}}]
         files = {"default.nix": expression("params.message")}
         changed_file = "_card.json"
-        replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data="second")]})
+        replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data={"string": "second"})]})
     elif changed_input == "port-schema":
         # A builder generates the Card's API from these exact schemas. Observe
         # them in the body as well so a stale directory cannot pass unnoticed.
