@@ -104,7 +104,7 @@ TEST_F(AgentProjectFixture,
   EXPECT_EQ(Read(root / "tsugumi.json"), before);
   EXPECT_EQ(Read(root / "definitions/plan/_card.json"),
             R"({"type":"draft"})");
-  EXPECT_FALSE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
+  EXPECT_FALSE(std::filesystem::exists(root / "definitions/plan/src/main.py"));
 
   const auto reply = Tool(conversation, "project_edit", args, "implement");
   ASSERT_TRUE(reply.Code().empty()) << reply.View();
@@ -121,7 +121,7 @@ TEST_F(AgentProjectFixture,
   const auto definition = Read(root / "definitions/plan/_card.json");
   EXPECT_EQ(JsonString(definition, "/type"), "code");
   EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/default.nix"));
-  EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/src/main.sh"));
+  EXPECT_TRUE(std::filesystem::exists(root / "definitions/plan/src/main.py"));
   const auto validation = Tool(conversation, "project_validate", "{}");
   ASSERT_TRUE(validation.Code().empty()) << validation.View();
   EXPECT_FALSE(JsonBool(validation.View(), "/isError")) << validation.View();

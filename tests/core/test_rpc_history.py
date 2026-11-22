@@ -4,7 +4,7 @@ import pytest
 
 from harness.artifact_faults import corrupt_retained_file
 from harness.fixtures import worker_project
-from harness.observations import decode_scalar, read_output, read_pages
+from harness.observations import read_output, read_pages
 from harness.scenario import FILE_OUTPUT, run, wait_run
 from projects import builtin_project, run_and_wait
 from tsugumi_client import RpcFailure, new_id, path, text
@@ -44,8 +44,7 @@ def test_record_and_artifact_are_independent(core_factory, project, tmp_path, re
         contents = read_pages(client, "ArtifactReadRequest", page_bytes=65536,
                               artifactId=text(artifacts[0].artifactId))
         assert contents.decode() == CONTENTS
-    if retain:
-        assert decode_scalar(read_output(client, run_id, port="doc")).endswith("/big.txt")
+        assert read_output(client, run_id, port="doc").endswith(b"/big.txt")
 
 
 def test_artifact_members_cannot_escape_the_artifact(core_factory, project, tmp_path):

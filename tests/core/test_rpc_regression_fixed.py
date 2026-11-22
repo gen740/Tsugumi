@@ -73,14 +73,14 @@ def test_saved_file_inputs_survive_cache_clear_and_restart(tmp_path, core_factor
 
 def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_factory):
     """A partial merge run preserves a saved file value from a long source name."""
-    # A long producer name exercises a saved File value whose path must change.
+    # A long producer name exercises a saved Path value whose path must change.
     src = "source-" + "x" * 80
     root = tmp_path / "p"
     write(root,
           defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
-                        "_outputs": FILE_FBS},
+                        "_outputs": FILE_FBS, "retainArtifact": True},
                 "join": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
-                "sink": dict(SINK, recordIO=True)},
+                "sink": dict(SINK, retainArtifact=True)},
           cards=[card(src, "doc"), card("join", "join"), card("out", "sink")],
           conns=[conn(src, "doc", "join", "a"), conn("join", "out", "out", "in")],
           files={"definitions/doc/report.txt": "quarterly numbers\n"})
