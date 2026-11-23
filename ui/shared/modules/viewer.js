@@ -16,7 +16,7 @@ addEventListener('message', event => {
   })
   port.start()
 }, { once: true })
-</script>`
+<\/script>`
 
 let current
 

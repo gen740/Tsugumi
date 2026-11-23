@@ -686,10 +686,6 @@ struct VisualizationWindow: View {
     VStack(alignment: .leading, spacing: 8) {
       HStack {
         Text(session.displayName(cardKey)).font(.title2.bold())
-        if session.cardViews.runs[cardKey]?.started == true {
-          ProgressView().controlSize(.small)
-          Text("実行中").foregroundStyle(.secondary)
-        }
         Spacer()
         Button("チャットに参照を追加") { AppModel.shared.chat(for: session).addReference(.display(cardKey)) }
       }
