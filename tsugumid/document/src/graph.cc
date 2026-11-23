@@ -914,7 +914,8 @@ class Builder {
       std::string error;
       node.outputs.front().type = collect_output_type(error);
       if (!node.outputs.front().type)
-        node.diags.push_back(diag(node.path, "invalid_type", "collect type: " + error));
+        node.diags.push_back(
+            diag(node.path, "invalid_type", "collect type: " + error));
     }
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       auto& node = res_->nodes[i];
@@ -922,17 +923,18 @@ class Builder {
       auto& output = node.outputs.front();
       const auto candidates = res_->merge_candidates(i, output.name);
       if (candidates.size() == 1) output.type = candidates.front();
-      std::set<std::string> names;
+      const auto short_name = [](const std::string& full) {
+        return full.substr(full.find_last_of('.') + 1);
+      };
+      std::map<std::string, size_t> name_counts;
+      for (const auto& type : candidates)
+        ++name_counts[short_name(type->root_type)];
       for (const auto& type : candidates) {
-        const auto& full = type->root_type;
-        const auto name = full.substr(full.find_last_of('.') + 1);
-        names.insert(name);
+        auto name = short_name(type->root_type);
+        output.merge_member_types.push_back(
+            name_counts.at(name) == 1 ? std::move(name) : type->root_type);
       }
-      if (names.size() != candidates.size()) {
-        names.clear();
-        for (const auto& type : candidates) names.insert(type->root_type);
-      }
-      output.merge_member_types.assign(names.begin(), names.end());
+      std::ranges::sort(output.merge_member_types);
     }
     for (const auto& edge : res_->edges) {
       auto& target = res_->nodes[edge.to];

@@ -132,6 +132,9 @@ def test_missing_output_skips_join_and_propagates(core_factory, project, tmp_pat
         daemon.restart()
         c = daemon.connect()
         assert [row.state for row in records(c, run, "downstream")] == [CardState.skipped]
+        replay, status = run_and_wait(c, "collect", propagate=False)
+        assert status.state == RunState.succeeded, status.failure
+        assert collected(c, tmp_path / "replayed", replay, "collect") == []
 
 
 def test_merge_forwards_heterogeneous_arrivals_unchanged(core_factory, project, tmp_path):

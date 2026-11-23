@@ -694,6 +694,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     if (n.empty_collect_ready) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.empty_collect_ready = false;
+      if (!n.queues.empty()) {
+        // Save the empty input group so this Collect can replay that batch.
+        w.groups.push_back({n.queues.begin()->first, true, {}});
+      }
       return w;
     }
     if (n.start && !n.start_fired) {
