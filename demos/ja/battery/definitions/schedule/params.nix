@@ -1,5 +1,3 @@
 {
-  run = {
-    tariff = "spot";
-  };
+  tariff = "spot";
 }

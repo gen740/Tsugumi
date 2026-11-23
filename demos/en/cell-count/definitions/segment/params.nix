@@ -1,6 +1,4 @@
 {
-  run = {
-    min_distance = 5;
-    min_area = 30;
-  };
+  min_area = 30;
+  min_distance = 5;
 }

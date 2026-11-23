@@ -1,5 +1,3 @@
 {
-  run = {
-    limit_sigma = 4.0;
-  };
+  limit_sigma = 4.0;
 }

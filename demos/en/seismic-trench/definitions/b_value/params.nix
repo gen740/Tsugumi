@@ -1,6 +1,4 @@
 {
-  run = {
-    mc = 4.5;
-    bin_width = 0.1;
-  };
+  bin_width = 0.1;
+  mc = 4.5;
 }

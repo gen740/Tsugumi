@@ -1,5 +1,3 @@
 {
-  run = {
-    max_violations = 1;
-  };
+  max_violations = 1;
 }

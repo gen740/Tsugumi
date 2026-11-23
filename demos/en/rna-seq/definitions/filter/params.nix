@@ -1,5 +1,3 @@
 {
-  run = {
-    min_total = 10;
-  };
+  min_total = 10;
 }

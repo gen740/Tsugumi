@@ -96,15 +96,15 @@ const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || t
 
 const INLINE_TYPES = new Set(['int', 'float', 'bool', 'string'])
 
-// The checked-in demos put one literal default on each assignment line.
+// The checked-in flat parameter sets put one current literal on each assignment line.
 // Read these for the static preview without evaluating any Nix expressions.
 function cardParams(dir, def) {
   const file = path.join(dir, 'params.nix')
   if (!fs.existsSync(file)) return []
-  const defaults = fs.readFileSync(file, 'utf8')
+  const source = fs.readFileSync(file, 'utf8')
   const values = []
   const scalar = /"(?:[^"\\]|\\.)*"|true|false|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
-  for (const [, name, literal] of defaults.matchAll(/^\s+([\w.-]+) = (.+);$/gm)) {
+  for (const [, name, literal] of source.matchAll(/^  ([\w.-]+) = (.+);$/gm)) {
     const parts = literal.match(scalar)
     const first = parts?.[0]
     if (first === undefined) continue
@@ -112,7 +112,7 @@ function cardParams(dir, def) {
       : /[.e]/i.test(first) ? 'float' : 'int'
     const decoded = parts.map((part) => JSON.parse(part.replace(/\\\$\{/g, '${')))
     const list = literal.startsWith('[')
-    const value = def.sweeps?.[name] ?? def.params?.[name] ?? (list ? decoded : decoded[0])
+    const value = def.sweeps?.[name] ?? (list ? decoded : decoded[0])
     values.push({ name, type: list ? `[${type}]` : type, value: paramText(value) })
   }
   return values

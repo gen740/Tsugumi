@@ -1,5 +1,3 @@
 {
-  run = {
-    factor = 3;
-  };
+  factor = 3;
 }

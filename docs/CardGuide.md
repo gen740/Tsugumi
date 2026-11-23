@@ -45,32 +45,10 @@ The lock below is the template's checked-in example. Use an explicit update to r
 
 ```json
 {
-  "nixPath": [
-    {
-      "name": "nixpkgs",
-      "url": "github:NixOS/nixpkgs/nixos-unstable",
-      "locked": {
-        "type": "github",
-        "owner": "NixOS",
-        "repo": "nixpkgs",
-        "rev": "1c89083e451e891152365b799595cf7790a43325",
-        "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
-        "lastModified": 1793341285
-      }
-    },
-    {
-      "name": "tsugumi-kit",
-      "url": "github:gen740/tsugumi-kit/main",
-      "locked": {
-        "type": "github",
-        "owner": "gen740",
-        "repo": "tsugumi-kit",
-        "rev": "54bf325572c0a66e5924b5cd091597975bcafbe3",
-        "narHash": "sha256-LLpRNabK7h3i3Ve9hO6WZFIief86ZGPJOqS7YeW8lqg=",
-        "lastModified": 1795417034
-      }
-    }
-  ]
+  "nixPath": {
+    "nixpkgs": "github:NixOS/nixpkgs/1c89083e451e891152365b799595cf7790a43325?narHash=sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+    "tsugumi-kit": "github:gen740/tsugumi-kit/f52e4e5047a724e92b8c33b51a4e58f0cc88569d?narHash=sha256-+m+J2WJ8Y2LHLpICvUob2gJ8bLnRBN3Up1XFHeblLcM="
+  }
 }
 ```
 
@@ -82,7 +60,7 @@ The lock below is the template's checked-in example. Use an explicit update to r
 
 ### The input value Card
 
-The run parameter has the same name as the field in the `Temperature` message. The `temperature` field of `Outputs` names the output port.
+The `value` parameter has the same name as the field in the `Temperature` message. The `temperature` field of `Outputs` names the output port.
 
 `definitions/settings/_card.json`
 
@@ -94,9 +72,7 @@ The run parameter has the same name as the field in the `Temperature` message. T
 
 ```nix
 {
-  run = {
-    value = 20.0;
-  };
+  value = 20.0;
 }
 ```
 
@@ -114,7 +90,7 @@ root_type Outputs;
 `definitions/convert/_card.json`
 
 ```json
-{"type": "code", "inputs": [{"name": "celsius"}], "params": {"plot": true}}
+{"type": "code", "inputs": [{"name": "celsius"}]}
 ```
 
 `definitions/convert/_outputs.fbs`
@@ -130,15 +106,11 @@ root_type Outputs;
 
 ```nix
 {
-  run = {
-    scale = 1.8;
-    offset = 32.0;
-    unit = "°F";
-  };
-  build = {
-    cxxflags = [ "-O2" ];
-    plot = false;
-  };
+  scale = 1.8;
+  offset = 32.0;
+  unit = "°F";
+  cxxflags = [ "-O2" ];
+  plot = true;
 }
 ```
 
@@ -150,9 +122,8 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
   common = {
-    inherit inputs;
+    inherit inputs params;
     outputs = ./_outputs.fbs;
-    params = ./params.nix;
   };
 in
 {
@@ -166,7 +137,7 @@ in
 }
 ```
 
-The override for `plot` adds gnuplot to the Card's available tools. `scale`, `offset` and `unit` are delivered on each call. The SDK creates types from the port schema, `_outputs.fbs` and the run declarations in `params.nix`.
+`default.nix` uses `cxxflags` and `plot` to configure the build. All five parameter values are also delivered on each call. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
 
 `definitions/convert/README.md`
 
@@ -199,7 +170,7 @@ auto run(const Card::Inputs& input) -> Card::Output {
 
 1. Press **Run** (⌘R). The first build prepares the Card's environment.
 2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
-3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. This experiment uses the saved 20-degree input and yields 36 without rebuilding the Card. Resetting the parameter removes its override and restores `32.0`.
+3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. The editor saves the new literal in `params.nix`. This experiment uses the saved 20-degree input and yields 36 with the same build. Set the value back to `32.0` to restore the original calculation.
 
 ## Inputs and outputs
 
@@ -218,10 +189,10 @@ A Card is `(input) -> output`. One call receives the values on its input ports a
 
 Any SDK that implements the [Card ABI](CardABI.md) can take the place of these: the core knows no language, only a built `lib/main.so` that exports `tsugumi_main`.
 
-The core supplies connected input types as `inputs.<port>.type`. The SDK combines them with `_outputs.fbs` and `params.nix` to generate the typed interface. **Build SDK** builds `card.api` via the [generic Nix evaluation tool](features.md#evaluating-a-card-expression) and shows the files under `share/tsugumi/api/`.
+The core supplies connected input types as `inputs.<port>.type`. The SDK combines them with `_outputs.fbs` and the types of the evaluated `params` to generate the typed interface. **Build SDK** builds `(import ./. { inherit params inputs; }).api` via the [generic Nix evaluation tool](features.md#evaluating-a-card-expression) and shows the files under `share/tsugumi/api/`.
 
 - An input declaration contains its name. Connect one wire to give it the upstream output’s type. An unconnected input is absent. The Card’s SDK reports `input_missing` with the port name when the Card requires an absent input.
-- Run parameters arrive in one `parameters.Params` message, with every field set to its effective value.
+- All parameters arrive in one `parameters.Params` message, with every field set to its current value.
 - The Card returns one value per output port it produces. A missing required output fails the call with `output_invalid`. The SDK checks the payload against the port's type.
 - Numeric messages keep IEEE NaN, positive and negative infinity and signed zero.
 
@@ -345,11 +316,11 @@ Definition files:
 
 | File | What it is |
 | --- | --- |
-| `_card.json` | What the Card is (`type`, required) and its settings, including `inputs`, parameter overrides and run settings |
+| `_card.json` | What the Card is (`type`, required) and its settings, including `inputs`, sweeps and run settings |
 | `README.md` | Optional one-line `description: …` between `---` lines and a Markdown body. Keep the description and body when implementing a Draft. |
 | `_comments.json` | Review comments, keyed by stable comment ids across versions. |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `params.nix` | Optional parameter declarations and their defaults |
+| `params.nix` | Optional flat set of current parameter literals |
 | `default.nix` | Code Cards only. A function `{ params, inputs }:` returning `run` and optional `views`, `exports` and `api` |
 | `src/` | Code Cards only: the sources |
 
@@ -391,7 +362,7 @@ worker stages a copy and the next Card receives its path.
 Set `"type": "input"` in `_card.json`. Declare the path in the Input Card's `params.nix`:
 
 ```nix
-{ run = { value = "data/events.fits"; }; }
+{ value = "data/events.fits"; }
 ```
 
 The path is relative to the Card's definition folder.
@@ -414,16 +385,11 @@ The next Card reads the path directly, for example `Path(input.events)` in Pytho
 
 ### Parameters
 
-Declare defaults in the optional `params.nix` in the Card's definition folder. The top-level attrset may contain `run`, `build`, or both. A parameter name may appear in just one section. Names use 1–128 ASCII letters, digits, underscores, hyphens or dots, excluding `.` and `..`. Run names must also be valid FlatBuffers field names, so identifiers such as `sample_rate` work across SDKs.
+The optional `params.nix` in the Card's definition folder is a flat attribute set holding the current values. Use names that are valid FlatBuffers field identifiers, such as `sample_rate`, for Code Cards.
 
-The default determines the type. A default can be a boolean, signed 64-bit integer, double-precision float, literal string or a nonempty homogeneous list of those scalars. `10` is an integer and `10.0` is a float. Use a decimal point in exponent notation, as in `1.0e3`, and parenthesize a negative list element, as in `[ 0 (-3) ]`. Declarations contain literals and the two section attrsets. Expressions, interpolation, paths, nested parameter objects, nested lists and null are invalid. The core validates the parsed declaration and caches it by file content.
+Each literal determines its parameter's type. Use booleans, signed 64-bit integers, double-precision floats, literal strings or nonempty homogeneous lists of those scalars. `10` is an integer and `10.0` is a float. Use a decimal point in exponent notation, as in `1.0e3`, and parenthesize a negative list element, as in `[ 0 (-3) ]`. The core validates the literal set and caches it by file content. Editing a value in the UI rewrites that literal in place and preserves the rest of the file, including its comments.
 
-For each name, the effective value is its default unless `_card.json` contains an override, for example `"params": {"offset": 0.0}`. JSON numbers can override a float. An integer override must be integral. Undeclared names and incompatible values are validation errors. Resetting the parameter removes the override. The editor leaves the declarations in `params.nix` intact.
-
-| Section | Where the value arrives |
-| --- | --- |
-| `run` | `CardInput.params` on each invocation, as `parameters.Params`. The fields have IDs assigned in bytewise name order. A value edit does not change the build inputs. |
-| `build` | `params.<name>` in `default.nix`, as a typed Nix value. Use it for settings that affect derivations. |
+Every value is available as `params.<name>` in `default.nix` and in `CardInput.params` on each invocation. The generated `parameters.Params` message assigns consecutive field IDs in bytewise name order. SDK code generation depends on the names and types. Editing a value affects a build only when the Nix definition uses that value in a derivation.
 
 ### Code Card settings
 
@@ -453,7 +419,7 @@ What the Card does with the value is its author's responsibility: child processe
 ### Run lists and connected Nix exports
 
 Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
-sweeps its declared run parameter with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. It hands
+sweeps its `value` parameter with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. It hands
 on each signal in its own invocation, labeled `value=8` and so on.
 
 A Code Card compares implementations with a run list: `run` is a list of
@@ -468,7 +434,7 @@ beside `main.py` as `threshold.py`:
 let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
-  common = { inherit inputs; outputs = ./_outputs.fbs; };
+  common = { inherit inputs params; outputs = ./_outputs.fbs; };
   thresholds = [
     10
     14
@@ -491,7 +457,7 @@ in
 }
 ```
 
-A list-valued run parameter is one ordinary vector. Under `sweeps`, each entry in a list-typed sweep is one vector. A one-member sweep still forms a batch. Multiple sweeps produce their Cartesian product with the last parameter varying fastest. Code Cards compare implementations through run lists.
+A list-valued parameter is one ordinary vector. Under `sweeps`, each entry in a list-typed sweep is one vector. A one-member sweep still forms a batch. Multiple sweeps produce their Cartesian product with the last parameter varying fastest. Code Cards compare implementations through run lists.
 
 The three swept values and two implementations produce six invocations, in input
 item order with implementation order varying fastest. Every batch input is an
@@ -514,7 +480,7 @@ same way. Each run implementation shares the same exports.
 ### Data fixed by Nix
 
 Large public data (an observation, a reference genome, a simulation's result) can be fixed like a
-package: fetched once into the Nix store by its hash, before a run. Declare the file name and hash as `build` parameters in `params.nix` and read them as `params.<name>` in `default.nix`. The store
+package: fetched once into the Nix store by its hash, before a run. Put the file name and hash in `params.nix` and read them as `params.<name>` in `default.nix`. The store
 path reaches the Card's code through a small generated module beside its source:
 
 ```nix
@@ -522,7 +488,7 @@ path reaches the Card's code through a small generated module beside its source:
 let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
-  common = { inherit inputs; outputs = ./_outputs.fbs; params = ./params.nix; };
+  common = { inherit inputs params; outputs = ./_outputs.fbs; };
   raw = pkgs.fetchurl {
     url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
     curlOptsList = [ "--ssl-reqd" ];           # --ssl-reqd (often faster than https)

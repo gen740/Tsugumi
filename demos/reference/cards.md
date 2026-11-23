@@ -16,7 +16,7 @@ For example, plan starts with _card.json {"type":"draft"} and a README.md with
 start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field.
 
-The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. `nix_path_lock_update` resolves one name or all names and writes `tsugumi.lock` with approval. Each external uses its own declarations and lock.
+The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. With approval, `nix_path_lock_update` writes one name or all names to `tsugumi.lock`, which maps names to locked URLs. Each external uses its own declarations and lock. If an import names an undeclared source, add the name to the owning project's `nixPath` and lock it.
 
 ```json
 {
@@ -154,9 +154,9 @@ unchanged to forward it. An Input Card can publish a saved project file or
 folder. Its string `value` parameter names the path relative to the Card's
 definition, or uses `project:<path>` relative to its project root.
 
-`default.nix` receives `{ params, inputs }`. Each connected port provides `inputs.<port>.type`, and a port with a unique Code producer can read `inputs.<port>.exports`. Pass `inputs`, `outputs = ./_outputs.fbs` and the optional `params = ./params.nix` to the SDK. Declare literal defaults in `params.nix`, using `run` for the invocation and `build` for values read by `default.nix`. Store overrides in `_card.json` under `params`.
+`params.nix` holds current values in a flat set of literals like `{ seed = 7; tariff = "spot"; }`. Every value reaches `CardInput.params` and `default.nix`. The UI edits the selected literal in place. In `default.nix { params, inputs }`, pass `common = { inherit inputs params; outputs = ./_outputs.fbs; }` to the SDK builders. Each connected port provides `inputs.<port>.type`, and a port with a unique Code producer can read `inputs.<port>.exports`.
 
-`run` names the built Card or an ordered list of implementations. `views` declares live displays and `exports` provides Nix values to connected Cards. `api` is a separate code-generation derivation. Use `tools` with family `sdk` and action `evaluate`, expression `card.api` and `build: true` to read the generated files under `share/tsugumi/api/`. The [SDK guides](https://github.com/gen740/tsugumi-kit/tree/main/docs) describe their types and views.
+`run` names the built Card or an ordered list of implementations. `views` declares live displays and `exports` provides Nix values to connected Cards. `api` is a separate code-generation derivation. Use `evaluate_nix` to evaluate in the Card's directory on the local system with `params` and `inputs` in scope. Evaluate `(import ./. { inherit params inputs; }).api` with `build: true` to read `share/tsugumi/api/`. The [SDK guides](https://github.com/gen740/tsugumi-kit/tree/main/docs) describe their types and views.
 Each call starts a fresh worker by default. Set `reuseWorker: true` when
 the Card intentionally carries process state across calls.
 
@@ -187,5 +187,3 @@ include bounded stdout/stderr and paths to the full output.
 
 `project_copy` copies attached, Card or conversation scratch files into Card source
 paths and returns their sizes and hashes. Data can also stay attached. Add the folder under `grants.hostPaths` and read the path from the named `TSUGUMI_GRANT_<NAME>` variable during execution.
-
-Cross-project Card copies carry declarations and pins for names used by the Card. When no evaluation record exists, the copy returns names to select.

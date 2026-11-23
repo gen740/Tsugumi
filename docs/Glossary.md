@@ -58,8 +58,8 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | **Worker** | The core's process that loads a Card's `lib/main.so` and calls it. Can stay resident across runs with `reuseWorker` ([The sandbox contract](SandboxContract.md#the-unit-of-isolation-is-the-card)) |
 | **bubblewrap / Seatbelt** | How Cards are isolated: bubblewrap inside the VM and on Linux, Seatbelt in a Web UI run directly on a Mac from the repository |
 | **nixPath** | Named Nix sources declared in `tsugumi.json` and resolved by Cards through `<name/path>` |
-| **tsugumi.lock** | The project document that records the pinned revision and NAR hash for each locked Nix source |
-| **params.nix** | A Card definition file that declares typed run and build parameters through literal defaults |
+| **tsugumi.lock** | The project document that maps each Nix source name to a URL pinned by revision and NAR hash |
+| **params.nix** | A Card definition file with a flat set of literals that hold the current parameter values and determine their types |
 
 ## Agent
 

@@ -1,8 +1,6 @@
 {
-  run = {
-    notebook = "notebook.py";
-    bindings = "{\"source\":\"inputs.data.source\",\"factor\":\"param.factor\"}";
-    selected = "result";
-    factor = 2.0;
-  };
+  bindings = "{\"source\":\"inputs.data.source\",\"factor\":\"param.factor\"}";
+  factor = 2.0;
+  notebook = "notebook.py";
+  selected = "result";
 }

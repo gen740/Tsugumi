@@ -3,9 +3,8 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
   common = {
-    inherit inputs;
+    inherit inputs params;
     outputs = ./_outputs.fbs;
-    params = ./params.nix;
   };
 in
 # MNIST is fixed like a package: fetched once by its hash, then every run reads

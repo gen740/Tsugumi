@@ -3,9 +3,8 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/rust> { inherit pkgs; };
   common = {
-    inherit inputs;
+    inherit inputs params;
     outputs = ./_outputs.fbs;
-    params = ./params.nix;
   };
 in
 {

@@ -1,6 +1,4 @@
 {
-  run = {
-    size = 480;
-    seed = 7;
-  };
+  seed = 7;
+  size = 480;
 }

@@ -1,5 +1,3 @@
 {
-  run = {
-    covariates = [ "female" "age" "ph.ecog" ];
-  };
+  covariates = [ "female" "age" "ph.ecog" ];
 }

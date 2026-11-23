@@ -1,6 +1,4 @@
 {
-  build = {
-    format = "text";
-    markdown_field = "value";
-  };
+  format = "text";
+  markdown_field = "value";
 }

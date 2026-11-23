@@ -1,6 +1,4 @@
 {
-  run = {
-    edge = "";
-    raise_by = 10;
-  };
+  edge = "";
+  raise_by = 10;
 }

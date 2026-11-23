@@ -196,9 +196,9 @@ No fields.
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`EvaluateNix`](#evaluatenix) | EvaluateNixResult | Evaluate a Nix expression in the saved Card's directory with its project's nixPath names and the real build's params and inputs. The lazy card binding is import ./. { inherit params inputs; }. Evaluation returns up to 8 MiB of JSON. Set build to realize a derivation in the Nix sandbox and return up to 2,000 regular output entries and 8 MiB including paths, with a log tail on failure. |
+| [`EvaluateNix`](#evaluatenix) | EvaluateNixResult | Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files. |
 | [`NixPathLockSource`](#nixpathlocksource) | NixPathLockedSource | Fetch a source for an explicit Host lock update. |
-| [`CardNixPathNames`](#cardnixpathnames) | CardNixPathNames | Read the latest evaluator record for this Card. |
+| [`RewriteParamLiteral`](#rewriteparamliteral) | RewrittenParamLiteral | Prepare a guarded params.nix edit for the Host. |
 | [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
 
@@ -210,7 +210,6 @@ No fields.
 | `at_rev` | `uint64` |  |  |
 | `expression` | `string` | yes | Nix expression relative to this Card's definition directory. |
 | `build` | `bool` |  | Realize the derivation returned by the expression. Defaults to false. |
-| `system` | `string` |  | Evaluation system. Defaults to the local native system. |
 
 ### NixPathLockSource
 
@@ -218,11 +217,13 @@ No fields.
 | --- | --- | --- | --- |
 | `url` | `string` | yes |  |
 
-### CardNixPathNames
+### RewriteParamLiteral
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
-| `definition_dir` | `string` | yes |  |
+| `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
+| `literal` | `string` | yes |  |
 | `at_rev` | `uint64` |  |  |
 
 ### InputTypes

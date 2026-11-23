@@ -18,7 +18,7 @@ the person's decision.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
   every Card states it) and settings such as maxRuns, timeoutSeconds, recordIO, reuseWorker and system.
-  Param data and sweep entries carry one typed field (for example {"data": {"double": 2.5}}).
+  Input Card sweeps are keyed by parameter name in _card.json, for example {"sweeps": {"value": [1.0, 2.5]}}.
   README.md holds the optional one-line description front matter and Markdown body, and _comments.json holds review
   comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.

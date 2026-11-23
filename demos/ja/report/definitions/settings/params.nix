@@ -1,7 +1,5 @@
 {
-  run = {
-    seed = 42;
-    rows = 500;
-    heading = "Quarterly sales";
-  };
+  heading = "Quarterly sales";
+  rows = 500;
+  seed = 42;
 }

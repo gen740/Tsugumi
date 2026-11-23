@@ -29,7 +29,7 @@ The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card
 
 The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](features.md#project-nix-search-path).
 
-- `params` contains the effective `build` values declared in [`params.nix`](CardGuide.md#parameters). Each value comes from the override in `_card.json` or the declared default.
+- `params` is the evaluated flat set of current values from [`params.nix`](CardGuide.md#parameters). The values are also sent at runtime in `CardInput.params`.
 - The `inputs` attribute set is derived from the wiring and keyed by destination input port name.
 
 | Upstream | `inputs.<port>` |
@@ -43,7 +43,7 @@ The core calls a Card's `default.nix` with `{ params, inputs }`. The Card import
 
 The `type` field is the store path of a FlatBuffers schema with one input port. Its `inputs.Inputs` root has one field with ID 0, using the connected type. It includes the input type's dependencies in `inputs.<port>`. A Path field is a `string (tsugumi: "path")`.
 
-Each kit entry point at `sdk/<lang>/default.nix` takes `{ pkgs }`. It exposes a language builder, an API builder and `views`. For example, the C++ entry point provides `cppCard` and `cppApi`. The run builder takes `src`, `outputs = ./_outputs.fbs`, `params = ./params.nix` when present, and `inputs`, plus language-specific options. The API builder takes `inputs`, `outputs` and optional `params`. Both generate the typed interface from the input files, the authored outputs and the run parameter declarations. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
+Each kit entry point at `sdk/<lang>/default.nix` takes `{ pkgs }`. It exposes a language builder, an API builder and `views`. For example, the C++ entry point provides `cppCard` and `cppApi`. Both builders take `common = { inherit inputs params; outputs = ./_outputs.fbs; }`. The run builder also takes `src` and language-specific options. The builders generate the typed interface from the input schemas, the authored outputs and the parameter names and types. A standalone caller can pass `params = import ./params.nix;`. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
@@ -51,7 +51,7 @@ The Card's top-level `api` attribute is a code-generation derivation. Its output
 
 ### Evaluating a Card expression
 
-The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `card.api` with that tool and shows `share/tsugumi/api/` read-only.
+The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory on the local system. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `(import ./. { inherit params inputs; }).api` with that tool and shows `share/tsugumi/api/` read-only.
 
 ## What the core evaluates
 
@@ -111,7 +111,7 @@ A Card declares its `views` next to `run`, `api` and `exports`:
 let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
-  common = { inherit inputs; outputs = ./_outputs.fbs; };
+  common = { inherit inputs params; outputs = ./_outputs.fbs; };
 in
 {
   run = sdk.cppCard (common // { src = ./src; });

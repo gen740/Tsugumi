@@ -1,5 +1,3 @@
 {
-  run = {
-    method = "DL";
-  };
+  method = "DL";
 }

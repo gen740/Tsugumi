@@ -1,5 +1,3 @@
 {
-  run = {
-    measurement = 7.0;
-  };
+  measurement = 7.0;
 }

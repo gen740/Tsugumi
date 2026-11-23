@@ -1,7 +1,5 @@
 {
-  run = {
-    hidden = 256;
-    epochs = 15;
-    seed = 0;
-  };
+  epochs = 15;
+  hidden = 256;
+  seed = 0;
 }

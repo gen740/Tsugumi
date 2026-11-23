@@ -1,5 +1,3 @@
 {
-  run = {
-    fail_on_purpose = false;
-  };
+  fail_on_purpose = false;
 }
