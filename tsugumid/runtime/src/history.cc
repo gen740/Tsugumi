@@ -542,16 +542,17 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   PRIMARY KEY (run_id, card, invocation, stream, tile)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
-  id BLOB PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  id BLOB NOT NULL, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, origin TEXT NOT NULL, location TEXT NOT NULL,
-  created_ms INTEGER NOT NULL, sealed_ms INTEGER, size_bytes INTEGER, tree_hash TEXT);
+  created_ms INTEGER NOT NULL, sealed_ms INTEGER, size_bytes INTEGER, tree_hash TEXT,
+  PRIMARY KEY (run_id, id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS )SQL" +
-         p + R"SQL(artifacts_run ON artifacts(run_id);
+         p + R"SQL(artifacts_id ON artifacts(id);
 )SQL";
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-constexpr int kHistoryVersion = 20;
+constexpr int kHistoryVersion = 21;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -1588,11 +1589,17 @@ ArtifactData artifact_row(const sql::Stmt& st) {
 }  // namespace
 
 std::optional<ArtifactData> History::artifact(sql::Db& db,
-                                              const std::string& artifact_id) {
+                                              const std::string& artifact_id,
+                                              std::optional<std::string_view> run_id) {
   auto st = db.prepare(
       "SELECT id, run_id, card, invocation, origin, location, created_ms, "
-      "sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?");
+      "sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?1 "
+      "AND (?2 IS NULL OR run_id=?2) ORDER BY run_id LIMIT 1");
   st.bind_blob(1, artifact_id);
+  if (run_id)
+    st.bind(2, *run_id);
+  else
+    st.bind_null(2);
   if (!st.step()) return std::nullopt;
   return artifact_row(st);
 }

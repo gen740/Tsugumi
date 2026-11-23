@@ -149,10 +149,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
     worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
     try {
-      if (!result.failure)
-        result.outputs = accept_outputs(std::move(outcome.outputs),
-                                        invocation.outputs, invocation.inputs,
-                                        outcome.created);
       if (!outcome.created.empty() && !stage)
         throw Failed(FailureKind::output_invalid, "unexpected artifact creation");
       auto budget = invocation.output_budget;
@@ -165,12 +161,22 @@ auto run_invocation(const ReleaseWorker& release_worker,
           throw Failed(FailureKind::output_invalid, "invalid created artifact id");
         const auto name = crypto::hex(id.data(), id.size());
         const auto destination = invocation.artifact_directory / name;
-        fs::copy_staging_output(stage->get(), name, destination,
-                                persist, invocation.transfer, &budget);
-        if (!stdfs::is_directory(stdfs::symlink_status(destination)))
-          throw Failed(FailureKind::output_invalid, "artifact must be a directory");
+        try {
+          fs::copy_staging_output(stage->get(), name, destination,
+                                  persist, invocation.transfer, &budget);
+          if (!stdfs::is_directory(stdfs::symlink_status(destination)))
+            throw Failed(FailureKind::output_invalid, "artifact must be a directory");
+        } catch (...) {
+          std::error_code error;
+          stdfs::remove_all(destination, error);
+          throw;
+        }
         result.created.push_back(id);
       }
+      if (!result.failure)
+        result.outputs = accept_outputs(std::move(outcome.outputs),
+                                        invocation.outputs, invocation.inputs,
+                                        outcome.created);
       if (!result.failure && invocation.validate) invocation.validate(result);
     } catch (const Failed& error) {
       result.failure = error.failure;

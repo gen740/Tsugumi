@@ -2870,21 +2870,21 @@ void Service::view_send(RequestIn& req) {
         std::ranges::count(views->second, name, &DeclaredView::name) != 1)
       throw Failed(FailureKind::invalid_request, "unknown or duplicate view name");
   }
-  std::shared_ptr<WorkerProc::ViewReceiver> receiver;
+  std::vector<std::shared_ptr<WorkerProc::ViewReceiver>> receivers;
   {
     std::lock_guard lock(view_routes_mu_);
     if (const auto routes = view_routes_.find(key); routes != view_routes_.end())
       for (const auto& route : routes->second) {
-        if (auto active = route.lock()) {
-          if (receiver)
-            throw Failed(FailureKind::busy, "several processes are running this Card");
-          receiver = std::move(active);
-        }
+        if (auto active = route.lock()) receivers.push_back(std::move(active));
       }
   }
-  if (!receiver)
+  if (receivers.empty())
     throw Failed(FailureKind::not_found, "no Card process is listening");
-  if (!receiver->send({name, std::string(bytes->begin(), bytes->end())}))
+  const WorkerDisplayData message{name, std::string(bytes->begin(), bytes->end())};
+  bool delivered = false;
+  for (const auto& receiver : receivers)
+    if (receiver->send(message)) delivered = true;
+  if (!delivered)
     throw Failed(FailureKind::busy, "the Card cannot accept a view message");
   FBB b;
   const auto ack = R::CreateAck(b);

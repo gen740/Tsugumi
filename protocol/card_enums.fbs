@@ -41,4 +41,5 @@ enum FailureKind : ushort {
   value_conflict = 32,
   source_changed = 33,
   project_in_use = 34,
+  input_invalid = 35,
 }

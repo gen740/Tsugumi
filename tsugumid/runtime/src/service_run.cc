@@ -932,7 +932,6 @@ auto Service::seal_artifacts(const InvocationSummaryData& invocation,
   if (!fs::resolves_inside(store_->state_dir(), destination))
     throw Failed(FailureKind::invalid_path, "artifact destination escapes the project");
   stdfs::create_directories(destination);
-  std::vector<ArtifactData> records;
   for (const auto& id : ids) {
     if (id.size() != 16)
       throw Failed(FailureKind::output_invalid, "invalid created artifact id");
@@ -941,29 +940,45 @@ auto Service::seal_artifacts(const InvocationSummaryData& invocation,
     // The worker's private snapshot can live on a different filesystem.
     // Build the sealed directory beside its final name.
     const auto temporary = destination / ("." + name + "-" + crypto::uuid4());
-    stdfs::copy(staging / name, temporary, stdfs::copy_options::recursive);
     const auto remove_write = [](const auto& path) {
       constexpr auto write = stdfs::perms::owner_write | stdfs::perms::group_write |
                              stdfs::perms::others_write;
       stdfs::permissions(path, write, stdfs::perm_options::remove);
     };
-    for (const auto& entry : stdfs::recursive_directory_iterator(temporary))
-      remove_write(entry.path());
-    remove_write(temporary);
-    const auto size = fs::directory_size(temporary);
-    const auto hash = "tree:" + fs::sha256_tree(temporary);
-    const auto sealed = now_ms();
-    if (stdfs::exists(stdfs::symlink_status(target)))
-      throw Failed(FailureKind::output_invalid, "artifact id already exists");
-    stdfs::rename(temporary, target);
-    records.push_back({id, invocation.run_id, invocation.card,
-                       invocation.invocation, "created",
-                       target.lexically_relative(opts_.root).generic_string(),
-                       invocation.started_at.value_or(sealed), sealed, size, hash});
+    const auto cleanup = [&] (const auto& path) {
+      std::error_code error;
+      if (!stdfs::is_directory(stdfs::symlink_status(path, error))) return;
+      stdfs::permissions(path, stdfs::perms::owner_write,
+                         stdfs::perm_options::add, error);
+      for (const auto& entry : stdfs::recursive_directory_iterator(path))
+        if (stdfs::is_directory(entry.symlink_status()))
+          stdfs::permissions(entry.path(), stdfs::perms::owner_write,
+                             stdfs::perm_options::add, error);
+      stdfs::remove_all(path, error);
+    };
+    bool installed = false;
+    try {
+      if (stdfs::exists(stdfs::symlink_status(target)))
+        throw Failed(FailureKind::output_invalid, "artifact id already exists");
+      stdfs::copy(staging / name, temporary, stdfs::copy_options::recursive);
+      const auto size = fs::directory_size(temporary);
+      const auto hash = "tree:" + fs::sha256_tree(temporary);
+      for (const auto& entry : stdfs::recursive_directory_iterator(temporary))
+        remove_write(entry.path());
+      remove_write(temporary);
+      stdfs::rename(temporary, target);
+      installed = true;
+      const auto sealed = now_ms();
+      const ArtifactData record{id, invocation.run_id, invocation.card,
+          invocation.invocation, "created",
+          target.lexically_relative(opts_.root).generic_string(),
+          invocation.started_at.value_or(sealed), sealed, size, hash};
+      history_->write_sync([&](sql::Db& db) { History::put_artifact(db, record); });
+    } catch (...) {
+      cleanup(installed ? target : temporary);
+      throw;
+    }
   }
-  history_->write_sync([&](sql::Db& db) {
-    for (const auto& record : records) History::put_artifact(db, record);
-  });
 }
 
 auto Service::register_store_artifact(const std::string& run, const CardPath& card,
@@ -980,10 +995,10 @@ auto Service::register_store_artifact(const std::string& run, const CardPath& ca
   history_->write_sync([&](sql::Db& db) {
     // A deterministic store id may be emitted again on a later run.
     const auto existing = History::artifact(db, id);
-    if (!existing) History::put_artifact(db, record);
-    else if (existing->origin != record.origin ||
-             existing->tree_hash != record.tree_hash)
+    if (existing && (existing->origin != record.origin ||
+                     existing->tree_hash != record.tree_hash))
       throw Failed(FailureKind::output_invalid, "store artifact id collision");
+    if (!History::artifact(db, id, run)) History::put_artifact(db, record);
   });
 }
 
@@ -1057,22 +1072,17 @@ void Service::artifact_read(RequestIn& req) {
 
   uint64_t offset = r->offset().value_or(0);
   uint64_t limit = content_limit(r->limit_bytes());
-  struct stat st{};
-  if (::stat(file.c_str(), &st) != 0 || !S_ISREG(st.st_mode))
+  const auto page = fs::read_range_inside(root, file, offset, limit);
+  if (!page)
     throw Failed(FailureKind::not_found, "the artifact content is missing");
-  auto size = static_cast<uint64_t>(st.st_size);
+  if (offset > page->size)
+    throw Failed(FailureKind::invalid_range, "offset is past the end");
   if (!a->tree_hash || *a->tree_hash != "tree:" + fs::sha256_tree(root))
     throw Failed(FailureKind::integrity_error, "the artifact content is corrupt");
-  const auto hash = fs::sha256_file(file);
-  if (offset > size)
-    throw Failed(FailureKind::invalid_range, "offset is past the end");
-  auto slice =
-      fs::read_range(file, offset, std::min<uint64_t>(limit, size - offset));
-  if (!slice)
-    throw Failed(FailureKind::not_found, "the artifact content is missing");
   reply(req, wire::file_page(req.request_id,
                              stdfs::path(member).filename().string(),
-                             *slice, offset, size, hash));
+                             page->bytes, offset, page->size,
+                             fs::sha256_file(file)));
 }
 
 auto Service::set_card_views(const CardPath& card,

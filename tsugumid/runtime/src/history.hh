@@ -222,7 +222,8 @@ class History {
                                                   const CardPath& card,
                                                   const std::string& port);
   static std::optional<ArtifactData> artifact(sql::Db& db,
-                                              const std::string& artifact_id);
+                                              const std::string& artifact_id,
+                                              std::optional<std::string_view> run_id = std::nullopt);
   static std::vector<ArtifactData> artifacts(
       sql::Db& db, const std::string& run_id,
       const std::optional<CardPath>& card, std::optional<uint64_t> invocation,
