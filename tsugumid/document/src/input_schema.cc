@@ -10,6 +10,7 @@ namespace tsugumi {
 namespace {
 
 constexpr std::string_view kCollectedName = "tsugumi.builtin.Collected";
+constexpr std::string_view kArtifactName = "tsugumi.Artifact";
 constexpr const char* kCollectedInclude = "include \"tsugumi/artifact.fbs\";\n";
 constexpr const char* kCollectedTypes = R"(namespace tsugumi.builtin;
 table Envelope { schema:string; bytes:[ubyte]; artifacts:[tsugumi.ArtifactId]; }
@@ -68,7 +69,6 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
   std::string unions;
   std::string fields;
   bool uses_collected = false;
-  bool collected_candidate = false;
   int field_id = 0;
   for (const auto& port : node.input_defs) {
     const auto wire = std::ranges::find_if(graph.edges, [&](const Edge& edge) {
@@ -99,17 +99,19 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
     }
 
     std::vector<std::string> names;
-    for (const auto& [_, type] : candidates) {
+    for (const auto& [id, type] : candidates) {
       if (type->root_type == kCollectedName) {
         uses_collected = true;
-        collected_candidate = true;
         names.emplace_back(kCollectedName);
       } else {
-        names.push_back(types::render_input_candidate(
-            *type, "inputs." + port.name, declarations));
+        auto prefix = "inputs." + port.name;
+        if (candidates.size() > 1) prefix += ".s" + id.substr(0, 12);
+        names.push_back(
+            types::render_input_candidate(*type, prefix, declarations));
       }
     }
     std::string field_type;
+    std::string field_schema;
     if (collect) {
       uses_collected = true;
       field_type = kCollectedName;
@@ -125,8 +127,13 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
     } else {
       continue;
     }
+    if (field_type == kCollectedName) field_schema = schema_id(*collected());
+    if (field_type == kArtifactName) field_schema = candidates.begin()->first;
     fields += "  " + port.name + ": " + field_type +
-              " (id: " + std::to_string(field_id++) + ");\n";
+              " (id: " + std::to_string(field_id++);
+    if (!field_schema.empty())
+      fields += ", tsugumi_schema: \"" + field_schema + "\"";
+    fields += ");\n";
   }
   if (fields.empty()) return std::nullopt;
   std::string text =
@@ -136,16 +143,7 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
   text += "attribute \"tsugumi_schema\";\n";
   for (const auto& attr : declarations.attributes)
     text += "attribute \"" + attr + "\";\n";
-  if (uses_collected) {
-    std::string declaration(kCollectedTypes);
-    if (collected_candidate) {
-      constexpr std::string_view marker = "table Collected";
-      const auto name_end = declaration.find(marker) + marker.size();
-      declaration.insert(
-          name_end, " (tsugumi_schema: \"" + schema_id(*collected()) + "\")");
-    }
-    text += declaration;
-  }
+  if (uses_collected) text += kCollectedTypes;
   for (const auto& name : declarations.order) {
     const auto& decl = declarations.types.at(name);
     text += stamp_declaration(decl.text, decl.schema);
