@@ -21,7 +21,10 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
     let scheduled = false
     let ticket = 0
     const outstanding = new Map<number, () => void>()
-    let reverse = Promise.resolve()
+    const messageMax = 1 << 24
+    let reverseBytes = 0
+    const reverse: Uint8Array<ArrayBuffer>[] = []
+    let sending = false
     const release = () => {
       for (const message of pending) message.complete?.()
       for (const complete of outstanding.values()) complete()
@@ -54,6 +57,22 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
       pending.push(message)
       schedule()
     })
+    const flushReverse = async () => {
+      if (sending || loading.signal.aborted) return
+      sending = true
+      while (reverse.length && !loading.signal.aborted) {
+        const bytes = reverse.shift()!
+        try {
+          if (!send) throw new Error(L('接続していません'))
+          await send(view, bytes)
+        } catch (cause) {
+          if (!loading.signal.aborted) setMessageError(errorText(cause))
+        } finally {
+          reverseBytes -= Math.max(1, bytes.length)
+        }
+      }
+      sending = false
+    }
     const receive = (event: MessageEvent) => {
       if (event.source !== target?.contentWindow) return
       const data = event.data
@@ -67,17 +86,14 @@ export function HtmlViewFrame({ view, card, read, send }: { view: LiveView; card
         setMessageError(L('ビューのメッセージを送信できませんでした'))
       } else if (data?.tsugumi === 'send' && data.bytes instanceof ArrayBuffer) {
         const bytes = new Uint8Array(data.bytes)
-        reverse = reverse.then(async () => {
-          if (loading.signal.aborted) return
-          try {
-            if (!send) throw new Error(L('接続していません'))
-            await send(view, bytes)
-          } catch (cause) {
-            if (!loading.signal.aborted) setMessageError(errorText(cause))
-          } finally {
-            if (!loading.signal.aborted) post({ type: 'reverseCredit', size: bytes.length })
-          }
-        })
+        if (bytes.length > messageMax || reverseBytes > messageMax) {
+          setMessageError(L('ビューのメッセージを送信できませんでした'))
+        } else {
+          reverseBytes += Math.max(1, bytes.length)
+          reverse.push(bytes)
+          void flushReverse()
+        }
+        post({ type: 'reverseCredit', size: bytes.length })
       }
     }
     window.addEventListener('message', receive)
