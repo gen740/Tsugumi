@@ -395,12 +395,11 @@ extension ProjectSession {
   }
 
   @discardableResult
-  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue, expectedRev: UInt64) async throws -> UInt64 {
+  func setParam(_ k: CardKey, _ name: String, _ literal: String, expectedRev: UInt64) async throws -> UInt64 {
     let edit = Tsugumi_Host_ProjectRewriteParamLiteralT()
     edit.card = cardPath(path(k))
     edit.name = name
-    let type = resolution[k]?.parameters.first { $0.name == name }?.type ?? ""
-    edit.literal = parameterLiteral(value, type)
+    edit.literal = literal
     edit.expectedRev = expectedRev
     return try await operate(.projectrewriteparamliteral, body: edit).rev ?? rev
   }

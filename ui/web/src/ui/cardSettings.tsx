@@ -11,10 +11,10 @@ import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { prefs } from '../model/prefs'
-import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parameterInputLiteral, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
-import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
+import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str } from '../../shared/json'
 import { D, R, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
@@ -917,70 +917,43 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
   const session = model.session
   const { name, type } = parameter
   const value = parameter.value
-  const sweep = arr(get(model.definition, 'sweeps', name))
   const [draft, setDraft] = useState<string>()
-  const [sweepDraft, setSweepDraft] = useState<string>()
   const [edit] = useState(() => new InlineParamEdit())
   useObserve(edit)
 
   const disabled = !session.isEditable || edit.applying || model.applying
   const begin = () => {
-    if (draft === undefined) edit.begin(paramText(value), session.rev)
+    if (draft === undefined) edit.begin(paramText(value, type), session.rev)
   }
   const clear = () => {
     setDraft(undefined)
-    edit.begin(paramText(value), session.rev)
+    edit.begin(paramText(value, type), session.rev)
   }
   const save = async (text: string | undefined, overwrite = false) => {
-    if (text !== undefined && await edit.commitParam(session, model.cardKey, name, parseParam(text, type), overwrite)) clear()
+    if (text !== undefined && await edit.commitParam(session, model.cardKey, name, parameterInputLiteral(text, type), overwrite)) clear()
   }
   const set = (text: string) => {
     begin()
     setDraft(text)
     void save(text)
   }
-  const setSweep = (values: J[] | undefined) => {
-    const sweeps = clone(get(model.definition, 'sweeps'))
-    const next = isObj(sweeps) ? sweeps : obj()
-    next.set(name, values)
-    model.setSetting('sweeps', next.size ? next : undefined)
-  }
-  const pendingSweepRemoval = !sweep && get(session.cardDefinition(model.cardKey), 'sweeps', name) !== undefined
-  const valueDisabled = disabled || pendingSweepRemoval
-  const sweepText = sweepDraft ?? serialize(sweep ?? [], false)
   return (
     <Row label={name}>
       <div>
         <div className="row gap6 center" data-guide={'param:' + name}>
-          {sweep ? <TextField value={sweepText} disabled={disabled} onChange={(text) => {
-            setSweepDraft(text)
-            const values = arr(tryParse(text))
-            if (values) setSweep(values)
-          }} style={{ width: 220 }} />
-            : type === 'bool'
-            ? <Toggle checked={draft === undefined ? bool(value) ?? false : draft === 'true'} disabled={valueDisabled} onChange={v => set(String(v))} />
+          {type === 'bool'
+            ? <Toggle checked={draft === undefined ? bool(value) ?? false : draft === 'true'} disabled={disabled} onChange={v => set(String(v))} />
             : <>
-              <TextField value={draft ?? paramText(value)} disabled={valueDisabled} onChange={text => { begin(); setDraft(text) }}
+              <TextField value={draft ?? paramText(value, type)} disabled={disabled} onChange={text => { begin(); setDraft(text) }}
                 onKeyDown={e => {
                   if (e.key !== 'Enter' || e.nativeEvent.isComposing || draft === undefined) return
                   e.stopPropagation()
                   void save(draft)
                 }} style={{ width: 220 }} />
-              {draft !== undefined && <Button disabled={valueDisabled} onClick={() => void save(draft)}>{L('保存')}</Button>}
+              {draft !== undefined && <Button disabled={disabled} onClick={() => void save(draft)}>{L('保存')}</Button>}
             </>}
           <span className="caption2 secondary nowrap">{type}</span>
         </div>
-        {model.kind === 'input' && <div className="row gap6 center">
-          <Toggle kind="checkbox" small checked={!!sweep} disabled={disabled || draft !== undefined} onChange={enabled => {
-            setSweepDraft(undefined)
-            setSweep(enabled ? [value] : undefined)
-          }} label={L('値ごとに呼び出す')} help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
-        </div>}
-        {sweep && <div className="caption secondary">
-          {arr(tryParse(sweepText)) ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', sweep.length)
-            : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
-        </div>}
-
         <RevisionEditNotice edit={edit} text={() => draft ?? ''}
           overwrite={() => void save(draft, true)} reload={clear} />
       </div>

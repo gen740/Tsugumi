@@ -266,8 +266,17 @@ TEST(InputTypes, GeneratedSchemaKeepsMergeCandidatesAndCollectMembers) {
     EXPECT_FALSE(schema.contains("namespace inputs.merged.tsugumi;"));
     EXPECT_TRUE(schema.contains("tsugumi_schema: \"" + id + "\""));
     std::string error, root;
-    EXPECT_TRUE(types::schema_bfbs(schema, &root, &error)) << error << '\n' << schema;
+    ASSERT_TRUE(types::schema_bfbs(schema, &root, &error)) << error << '\n'
+                                                           << schema;
     EXPECT_EQ(root, "inputs.Inputs");
+    const auto collected =
+        types::compile(schema, "tsugumi.builtin.Collected", &error);
+    ASSERT_TRUE(collected) << error;
+    EXPECT_TRUE(schema.contains("batch: tsugumi.builtin.Collected (id: " +
+                                std::to_string(same ? 1 : 2) +
+                                ", tsugumi_schema: \"" +
+                                schema_id(**collected) + "\");"));
+    EXPECT_FALSE(schema.contains("table Collected (tsugumi_schema:"));
   }
 }
 

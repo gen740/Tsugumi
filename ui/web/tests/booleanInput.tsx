@@ -7,7 +7,7 @@ import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
 import { get, parse } from '../shared/json'
 import { CardNodeView, ParamFieldView } from '../src/ui/cardNode'
-import { CardEditorModel } from '../src/ui/cardSettings'
+import { CardEditorModel, CardSettingsEditor } from '../src/ui/cardSettings'
 import * as H from '../shared/gen/tsugumi/host'
 import { R, cardPath } from '../src/wire/rpc'
 
@@ -48,7 +48,7 @@ let pending: Promise<void> | undefined
 const render = (editable: boolean) => <ParamFieldView param={session.inlineParams(card)[0]} editable={editable}
   commit={value => {
     pending = (async () => {
-      await session.setParam(card, 'value', value === 'true', session.rev)
+      await session.setParam(card, 'value', value, session.rev)
     })()
     return pending
   }} />
@@ -67,6 +67,40 @@ assert.equal(operations, before + 1, 'Toggling submits one operation')
 assert.equal(get(session.cardDefinition(card), 'params'), undefined)
 assert.equal(session.inlineParams(card)[0].value, 'true')
 
+// List parameters in Settings display and submit Nix syntax.
+session.resolution.get(card)!.parameters = [{ name: 'values', type: '[float]', value: parse('[1,-2.5]') }]
+const definition = session.cardDefinition(card)
+const list = '[ 2.0 (-3.5) 4.0 ]'
+let listWrites = 0
+const operateBeforeList = session.operateProject
+session.operateProject = async request => {
+  assert.equal(request.bodyType, H.ProjectOperationBody.ProjectRewriteParamLiteral)
+  const param = request.body as H.ProjectRewriteParamLiteralT
+  assert.deepEqual(param.card?.segments, [card])
+  assert.equal(param.name, 'values')
+  assert.equal(param.literal, list)
+  assert.equal(param.expectedRev, session.rev)
+  listWrites++
+  const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n,
+    resolution: [Object.assign(new R.ResolvedCardT(), { card: cardPath([card]),
+      parameters: [new R.CardParameterT('values', '[float]', '[2,-3.5,4]')] })] })
+  const builder = new Builder()
+  builder.finish(new H.ProjectEditsT().pack(builder))
+  return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...builder.asUint8Array()] })
+}
+const settings = TestRenderer.create(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
+const row = settings.root.findByProps({ 'data-guide': 'param:values' })
+const input = row.findByType('input')
+assert.equal(input.props.value, '[ 1.0 (-2.5) ]')
+TestRenderer.act(() => input.props.onChange({ target: { value: list } }))
+await TestRenderer.act(async () => input.props.onKeyDown({
+  key: 'Enter', nativeEvent: { isComposing: false }, stopPropagation() {},
+}))
+assert.equal(listWrites, 1)
+assert.deepEqual(session.cardDefinition(card), definition)
+settings.unmount()
+session.operateProject = operateBeforeList
+
 const draft = await session.addCard('draft', [], { x: 100, y: 0 })
 const draftEditor = new CardEditorModel(session, draft)
 draftEditor.implementAs('input')
@@ -75,9 +109,9 @@ assert.equal(draftEditor.implementation, preset.id)
 assert.equal(await draftEditor.apply(), true)
 assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ value = false; }\n')
 assert.equal(get(session.cardDefinition(draft), 'params'), undefined)
-const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
-  .replace(/^namespace .*;\n/, ''))
-assert.equal(await outputSchema(draft), await outputSchema(card))
+const draftSchema = await session.sourceText(`definitions/${draft}/_outputs.fbs`)
+assert.match(draftSchema, /table Value \{ value:bool; \}/)
+assert.match(draftSchema, /table Outputs \{ value:Value \(required\); \}/)
 
 const customDraft = await session.addCard('draft', [], { x: 200, y: 0 })
 const original = 'table Value { value:bool; } table Outputs { custom:Value (required); } root_type Outputs;'

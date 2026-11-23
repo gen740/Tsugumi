@@ -1263,7 +1263,7 @@ struct GraphCanvas: View {
   private func commitParam(_ k: CardKey, _ name: String, _ text: String, _ edit: InlineParamEdit?, overwrite: Bool) async -> Bool {
     guard session.isEditable, let edit else { return false }
     guard let parameter = session.resolution[k]?.parameters.first(where: { $0.name == name }) else { return false }
-    return await edit.commitParam(session, card: k, name: name, value: parseParam(text, parameter.type), overwrite: overwrite)
+    return await edit.commitParam(session, card: k, name: name, literal: parameterInputLiteral(text, parameter.type), overwrite: overwrite)
   }
 
   private func deleteSelection() {

@@ -923,34 +923,26 @@ private struct ParamRow: View {
   @Bindable var model: CardEditorModel
   let parameter: CardParameter
   @State private var draft: String?
-  @State private var sweepDraft: String?
   @State private var edit = InlineParamEdit()
 
   private var session: ProjectSession { model.session }
   private var name: String { parameter.name }
-  private var sweep: [JSONValue]? { model.definition?["sweeps"]?[name]?.array }
   private var disabled: Bool {
-    let pendingSweepRemoval = sweep == nil && session.cardDefinition(model.cardKey)?["sweeps"]?[name] != nil
-    return !session.isEditable || edit.revision.applying || model.applying || pendingSweepRemoval
+    return !session.isEditable || edit.revision.applying || model.applying
   }
 
   var body: some View {
     let value = parameter.effectiveValue
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        if let sweep {
-          TextField(name, text: Binding(get: { sweepDraft ?? JSONValue.array(sweep).serialized(pretty: false) }, set: {
-            sweepDraft = $0
-            if let values = (try? JSONValue.parse($0))?.array { setSweep(values) }
-          }))
-        } else if parameter.type == "bool" {
+        if parameter.type == "bool" {
           Toggle(name, isOn: Binding(get: { draft.map { $0 == "true" } ?? value.bool ?? false }, set: {
             begin()
             draft = $0 ? "true" : "false"
             save()
           }))
         } else {
-          TextField(name, text: Binding(get: { draft ?? parameterText(value) }, set: {
+          TextField(name, text: Binding(get: { draft ?? parameterText(value, type: parameter.type) }, set: {
             begin()
             draft = $0
           }))
@@ -961,46 +953,24 @@ private struct ParamRow: View {
       }
       .guideTarget("param:\(name)")
       .disabled(disabled)
-      if model.kind == .input {
-        Toggle("値ごとに呼び出す", isOn: Binding(get: { sweep != nil }, set: { enabled in
-          sweepDraft = nil
-          setSweep(enabled ? [value] : nil)
-        }))
-        .toggleStyle(.checkbox).controlSize(.small)
-        .help("並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。")
-        .disabled(disabled || draft != nil)
-      }
-      if let sweep {
-        if let sweepDraft, (try? JSONValue.parse(sweepDraft))?.array == nil {
-          Text("値を JSON の配列で書いてください。例: [8, 12, 16]").font(.caption).foregroundStyle(.secondary)
-        } else {
-          Text("\(sweep.count) 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。").font(.caption).foregroundStyle(.secondary)
-        }
-      }
       RevisionEditNotice(edit: edit.revision, text: { draft ?? "" },
                          overwrite: { save(overwrite: true) }, reload: clear)
     }
   }
 
   private func begin() {
-    if draft == nil { edit.begin(parameterText(parameter.effectiveValue), rev: session.rev) }
+    if draft == nil { edit.begin(parameterText(parameter.effectiveValue, type: parameter.type), rev: session.rev) }
   }
 
   private func clear() {
     draft = nil
-    edit.begin(parameterText(parameter.effectiveValue), rev: session.rev)
+    edit.begin(parameterText(parameter.effectiveValue, type: parameter.type), rev: session.rev)
   }
 
   private func save(overwrite: Bool = false) {
     guard let draft else { return }
-    let value = parseParam(draft, parameter.type)
-    Task { if await edit.commitParam(session, card: model.cardKey, name: name, value: value, overwrite: overwrite) { clear() } }
-  }
-
-  private func setSweep(_ values: [JSONValue]?) {
-    var sweeps = model.definition?["sweeps"] ?? .object([])
-    sweeps[name] = values.map(JSONValue.array)
-    model.definition?["sweeps"] = sweeps.object?.isEmpty == true ? nil : sweeps
+    let literal = parameterInputLiteral(draft, parameter.type)
+    Task { if await edit.commitParam(session, card: model.cardKey, name: name, literal: literal, overwrite: overwrite) { clear() } }
   }
 }
 

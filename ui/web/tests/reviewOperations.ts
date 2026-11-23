@@ -83,9 +83,9 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
     if (param.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
     return saved(s, request)
   }
-  assert.equal(await edit.commitParam(s, 'a', 'value', num(3), false), false)
+  assert.equal(await edit.commitParam(s, 'a', 'value', '3', false), false)
   assert.equal(edit.conflictRev, 1n, edit.error)
-  assert.equal(await edit.commitParam(s, 'a', 'value', num(3), true), true)
+  assert.equal(await edit.commitParam(s, 'a', 'value', '3', true), true)
   assert.deepEqual(guards, [0n, 1n])
 
   const draft = session()
@@ -133,9 +133,9 @@ for (const echoFirst of [false, true]) {
     if (echoFirst) s.applyDelta(result.delta)
     return result
   }
-  await s.setParam('sub/a', 'value', num(2), s.rev)
+  await s.setParam('sub/a', 'value', '2', s.rev)
   assert.equal(numText(s.resolution.get('sub/a').parameters[0].value), '2')
-  await s.setParam('sub/a', 'value', num(3), s.rev)
+  await s.setParam('sub/a', 'value', '3', s.rev)
   assert.equal(calls, 2)
   assert.equal(numText(s.resolution.get('sub/a').parameters[0].value), '3')
   assert.equal(s.saveError, undefined)
@@ -210,7 +210,7 @@ for (const draft of [false, true]) {
   }
   const save = async (overwrite: boolean) => {
     if (draft) { await s.finishDraftEdit(overwrite); return !s.inlineDraft }
-    return edit.commitParam(s, 'a', 'value', num(3), overwrite)
+    return edit.commitParam(s, 'a', 'value', '3', overwrite)
   }
   assert.equal(await save(false), false)
   actual = 4; publish(actual)

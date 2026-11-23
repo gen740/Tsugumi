@@ -11,8 +11,8 @@ namespace tsugumi {
 namespace {
 
 constexpr std::string_view kCollectedName = "tsugumi.builtin.Collected";
-constexpr const char* kCollectedInclude = "include \"tsugumi/artifact.fbs\";\n";
 constexpr std::string_view kArtifactName = "tsugumi.Artifact";
+constexpr const char* kCollectedInclude = "include \"tsugumi/artifact.fbs\";\n";
 
 auto add_candidates(const Resolution& graph, size_t source,
                     const std::string& port,
@@ -112,6 +112,8 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
     } else {
       continue;
     }
+    if (field_type == kCollectedName) field_schema = schema_id(*collected());
+    if (field_type == kArtifactName) field_schema = candidates.begin()->first;
     fields += "  " + port.name + ": " + field_type +
               " (id: " + std::to_string(field_id++);
     if (!field_schema.empty())
