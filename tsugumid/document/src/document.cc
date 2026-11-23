@@ -81,6 +81,15 @@ auto Document::is_card_note_file(const std::string& path) -> bool {
          is_document_file(std::string(rel));
 }
 
+auto Document::is_generated_input_file(const std::string& path) -> bool {
+  auto local = local_document_path(path);
+  if (!local.starts_with("definitions/") || !local.ends_with("/_inputs.fbs"))
+    return false;
+  local.remove_prefix(12);
+  local.remove_suffix(12);
+  return valid_id(std::string(local));
+}
+
 auto Document::is_note_file(const std::string& path) -> bool {
   const auto rel = local_document_path(path);
   if (!rel.starts_with("notes/") || !rel.ends_with(".md")) return false;
@@ -465,7 +474,7 @@ std::string execution_fingerprint(const Document& doc) {
     if (path.starts_with("skills/") || path.starts_with("templates/") ||
         relative.starts_with("templates/") ||
         Document::is_card_note_file(path) || Document::is_note_file(path) ||
-        relative == "layout.bin")
+        relative == "layout.bin" || Document::is_generated_input_file(path))
       continue;
     h.update("\0src\0", 5);
     h.update(path);

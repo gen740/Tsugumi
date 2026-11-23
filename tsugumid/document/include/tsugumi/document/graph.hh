@@ -142,6 +142,7 @@ struct Node {
                             // written in
   std::vector<NixPathEntry> nix_path;  // declarations in project_dir
   std::vector<CardNixReference> nix_references;
+  std::optional<std::string> generated_inputs;
   std::map<std::string, NixInput> nix_ports;
   std::string params_nix_json = "{}";
   std::string run_params_buffer;

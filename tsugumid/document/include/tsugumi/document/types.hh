@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "tsugumi/document/schema_sources.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
 
 namespace reflection {
@@ -49,7 +50,8 @@ struct CatalogResult {
 // Parses an _outputs.fbs text. The root table is the port catalog; each field
 // is one port carrying a table or an annotated Path string.
 CatalogResult parse_catalog(const std::string& fbs_text,
-                            const std::string& filename);
+                            const std::string& filename,
+                            const SchemaSourceReader& read = {});
 
 // The whole schema of an _outputs.fbs text, rooted at its catalog (`root`).
 std::optional<std::string> schema_bfbs(const std::string& fbs_text,

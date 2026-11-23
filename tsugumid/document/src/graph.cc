@@ -12,6 +12,7 @@
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
+#include "tsugumi/document/input_schema.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
@@ -328,6 +329,15 @@ class Builder {
     finish_checks();
     compute_guarantees();
     resolve_nix_inputs();
+    for (auto& node : res_->nodes) {
+      if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
+      try {
+        node.generated_inputs = generated_input_schema(*res_, node);
+      } catch (const std::runtime_error& error) {
+        node.exec_diags.push_back(diag(node.path, "invalid_inputs", error.what(),
+                                       true, node.def_dir + "_inputs.fbs"));
+      }
+    }
     return res_;
   }
 
@@ -572,9 +582,12 @@ class Builder {
             diag(n.path, "missing_outputs", rel + " is missing", true, rel));
       return;
     }
-    // Parsed catalogs by content (the source's hash): an unchanged
-    // _outputs.fbs is neither read nor parsed again.
-    std::string key = rel + '\0' + doc_.sources.at(rel).hash;
+    // Included definition schemas participate in the same cache key.
+    std::string key = rel;
+    for (auto it = doc_.sources.lower_bound(n.def_dir);
+         it != doc_.sources.end() && it->first.starts_with(n.def_dir); ++it)
+      if (it->first.ends_with(".fbs") && it->first != n.def_dir + "_inputs.fbs")
+        key += '\0' + it->first + '\0' + it->second.hash;
     static std::mutex mu;
     static std::map<std::string, types::CatalogResult> parsed;
     std::optional<types::CatalogResult> cat;
@@ -589,7 +602,10 @@ class Builder {
                                rel + " could not be read", true, rel));
         return;
       }
-      cat = types::parse_catalog(*text, rel);
+      cat = types::parse_catalog(*text, rel, [&](const std::string& include) {
+        // Output types must be available independently of incoming wiring.
+        return include == n.def_dir + "_inputs.fbs" ? std::nullopt : read_(include);
+      });
       std::lock_guard<std::mutex> l(mu);
       if (parsed.size() >= 2048) parsed.clear();
       parsed[key] = *cat;

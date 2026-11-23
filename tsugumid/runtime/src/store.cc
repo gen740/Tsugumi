@@ -239,6 +239,41 @@ std::optional<Receipt> Store::receipt(const std::string& op_id) const {
                  statement.blob(2)};
 }
 
+namespace {
+
+// Compare against the staged document and keep the generated source and its
+// journaled write in the same transaction as the wiring or schema change.
+auto refresh_input_files(Document& doc, std::vector<FileOp>& ops)
+    -> std::vector<std::string> {
+  std::map<std::string, std::optional<std::string>> files;
+  for (const auto& [path, _] : doc.sources)
+    if (Document::is_generated_input_file(path)) files[path] = std::nullopt;
+  for (const auto& node : doc.resolution->nodes)
+    if (node.generated_inputs)
+      files[node.def_dir + "_inputs.fbs"] = node.generated_inputs;
+  std::vector<std::string> changed;
+  for (auto& [path, contents] : files) {
+    const auto old = doc.sources.find(path);
+    if (contents) {
+      const auto hash = crypto::sha256_hex(*contents);
+      if (old != doc.sources.end() && old->second.hash == hash) continue;
+      const auto child = doc.sources.lower_bound(path + '/');
+      if (child != doc.sources.end() && child->first.starts_with(path + '/'))
+        throw Failed(FailureKind::invalid_path, path + " is a generated file");
+      doc.sources.insert_or_assign(path, SourceEntry{hash, contents->size()});
+    } else {
+      if (old == doc.sources.end()) continue;
+      doc.sources.erase(old);
+    }
+    std::erase_if(ops, [&](const FileOp& op) { return op.path == path; });
+    ops.push_back({path, std::move(contents)});
+    changed.push_back(path);
+  }
+  return changed;
+}
+
+}  // namespace
+
 void Store::open(const std::function<void()>& before_resolve) {
   stdfs::create_directories(state_dir());
   // Project identity: a short reference persisted in internal state, never in
@@ -262,6 +297,9 @@ void Store::open(const std::function<void()>& before_resolve) {
   loaded->execution_rev = exec_rev;
   if (before_resolve) before_resolve();
   auto doc = finalize(loaded);
+  std::vector<FileOp> generated;
+  refresh_input_files(*doc, generated);
+  apply_ops(generated, false);
   std::lock_guard<std::mutex> l(mu_);
   doc_ = doc;
 }
@@ -448,12 +486,15 @@ void Store::apply_ops(const std::vector<FileOp>& ops, bool inject) {
   }
 }
 
-void Store::check_disk_unchanged(const Document& base,
-                                 const std::vector<FileOp>& ops) const {
+void Store::check_disk_unchanged(
+    const Document& base, const std::vector<FileOp>& ops,
+    const std::map<std::string, std::optional<std::string>>& expectations) const {
   for (const auto& op : ops) {
     const auto target = opts_.root / op.path;
     std::optional<std::string> expected;
-    if (Document::is_document_file(op.path)) {
+    if (const auto it = expectations.find(op.path); it != expectations.end()) {
+      expected = it->second;
+    } else if (Document::is_document_file(op.path)) {
       auto it = base.disk_hashes.find(op.path);
       if (it != base.disk_hashes.end()) expected = it->second;
     } else {
@@ -921,6 +962,17 @@ Store::Staged Store::stage_reload(const std::string& op_id,
         throw Failed(FailureKind::invalid_document, diagnostic.message);
   }
   Staged st;
+  if (!doc->resolution) finalize(doc, nullptr, base.get());
+  std::map<std::string, std::string> prior_inputs;
+  for (const auto& [path, source] : doc->sources)
+    if (Document::is_generated_input_file(path))
+      prior_inputs.emplace(path, source.hash);
+  for (const auto& path : refresh_input_files(*doc, st.ops)) {
+    const auto old = prior_inputs.find(path);
+    st.disk_expectations.emplace(path, old == prior_inputs.end()
+                                           ? std::nullopt
+                                           : std::optional(old->second));
+  }
   st.delta.base_rev = base->rev;
   st.delta.op_id = op_id;
   st.delta.origin = origin;
@@ -948,6 +1000,7 @@ Store::Staged Store::stage_reload(const std::string& op_id,
                  !st.delta.definitions_removed.empty() ||
                  !st.delta.sources_upsert.empty() ||
                  !st.delta.sources_removed.empty();
+  st.effective |= !st.ops.empty();
   // Disk hashes always follow what is on disk now, even without effective
   // changes.
   doc->rev = base->rev;
@@ -963,6 +1016,21 @@ void Store::prepare_delta(Staged& st) const {
   doc->rev = base->rev + 1;
   finalize(doc, &st.ops, base.get());
   check_ports(*doc->resolution);
+  for (const auto& path : refresh_input_files(*doc, st.ops)) {
+    std::erase(st.delta.sources_upsert, path);
+    std::erase(st.delta.sources_removed, path);
+    const auto before = base->sources.find(path);
+    const auto after = doc->sources.find(path);
+    if (after == doc->sources.end()) {
+      if (before != base->sources.end()) st.delta.sources_removed.push_back(path);
+      else std::erase_if(st.ops, [&](const FileOp& op) { return op.path == path; });
+    } else if (before == base->sources.end() ||
+               before->second.hash != after->second.hash) {
+      st.delta.sources_upsert.push_back(path);
+    } else {
+      std::erase_if(st.ops, [&](const FileOp& op) { return op.path == path; });
+    }
+  }
   doc->execution_rev = doc->execution_fingerprint != base->execution_fingerprint
                            ? base->execution_rev + 1
                            : base->execution_rev;
@@ -996,8 +1064,8 @@ void Store::commit(Staged& st, const std::string& kind,
     st.doc = nullptr;
     return;
   }
-  check_disk_unchanged(*base, st.ops);
   prepare_delta(st);
+  check_disk_unchanged(*base, st.ops, st.disk_expectations);
   auto doc = st.doc;
   Receipt receipt{st.delta.op_id, kind, digest, make_receipt(&st.delta)};
   check_cancelled();
