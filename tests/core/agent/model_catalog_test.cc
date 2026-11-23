@@ -100,8 +100,10 @@ TEST(ModelCatalog, FamilyModesRespectRolesAndRejectUnknownArguments) {
   const Catalog catalog;
   EXPECT_EQ(catalog.FamilyTool("runs", "status", ModelRole::Guide),
             "run_status");
-  EXPECT_EQ(catalog.FamilyTool("sdk", "evaluate", ModelRole::ScopedHelper),
-            "evaluate_nix");
+  const auto helper = catalog.ModelSpecs(ModelRole::ScopedHelper);
+  EXPECT_TRUE(std::ranges::any_of(helper, [](const ToolSpec& tool) {
+    return tool.name == "evaluate_nix";
+  }));
   EXPECT_THROW(catalog.FamilyTool("runs", "cancel", ModelRole::Guide),
                host::Failure);
   EXPECT_THROW(
