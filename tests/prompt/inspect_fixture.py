@@ -8,9 +8,12 @@ TOOLS = [
     {key: tool[key] for key in ("name", "description", "inputSchema")}
     for tool in json.loads((ROOT / "tests/fixtures/agent-tools.json").read_text())
 ]
-# Captured through the real MCP server and tsugumid for a one-Card project
-# with the Collatz initial definition, set to 43 instead of the demo's 27.
+# The one-Card fixture stores its initial value as a Nix literal.
 SNAPSHOT = json.loads(Path(__file__).with_name("inspect_snapshot.json").read_text())
+
+
+PARAM_PATH = "definitions/initial/params.nix"
+PARAM_BYTES = b"{ value = 43; }\n"
 
 
 def reply(request):
@@ -22,11 +25,19 @@ def reply(request):
         return {"tools": TOOLS}
     if method == "tools/call":
         params = request["params"]
-        if params["name"] != "project_inspect":
-            return {"isError": True, "content": [{"type": "text", "text": "This replay only supports project_inspect."}]}
-        if params.get("arguments", {}) != {}:
-            return {"isError": True, "content": [{"type": "text", "text": "project_inspect takes no arguments."}]}
-        return {"isError": False, "content": [{"type": "text", "text": json.dumps(SNAPSHOT, separators=(",", ":"))}]}
+        name = params["name"]
+        arguments = params.get("arguments", {})
+        if name == "project_inspect" and arguments == {}:
+            result = SNAPSHOT
+        elif name == "project_file_read" and arguments == {"path": PARAM_PATH}:
+            source = next(s for s in SNAPSHOT["value"]["sources"] if s["path"] == PARAM_PATH)
+            result = {"reply": "FileContent", "value": {
+                "name": PARAM_PATH, "bytes": list(PARAM_BYTES), "hash": source["hash"],
+                "size_bytes": len(PARAM_BYTES), "offset": 0, "eof": True,
+            }}
+        else:
+            return {"isError": True, "content": [{"type": "text", "text": "Unexpected replay call."}]}
+        return {"isError": False, "content": [{"type": "text", "text": json.dumps(result, separators=(",", ":"))}]}
     if method == "ping":
         return {}
     raise KeyError(method)

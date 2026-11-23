@@ -8,9 +8,9 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Workflow** | A graph of Cards connected by wires. The same thing a person draws, the Agent edits and the runtime executes ([Rationale](Rationale.md)) |
 | **Card** | A unit of processing, with input and output ports and settings ([Cards and Workflows](features.md#2-cards-and-workflows)) |
-| **Card type** | What a Card is, stated as `"type"` in its `_card.json`: `code`, `draft`, `trigger`, `input`, `branch`, `fork`, `merge`, `collect` or `subgraph` ([Kinds of Card](features.md#kinds-of-card)) |
+| **Card type** | What a Card is, stated as `"type"` in its `_card.json`: `code`, `draft`, `trigger`, `input`, `merge`, `collect` or `subgraph` ([Kinds of Card](features.md#kinds-of-card)) |
 | **Code Card** | A Card whose `default.nix` builds its processing with a language SDK into `lib/main.so`, usually from sources in `src/` ([Your first Card](CardGuide.md)) |
-| **Built-in Card** | A Card without code, such as a Trigger, Input, Branch, Fork, Merge or Collect |
+| **Built-in Card** | A Card kind managed by the core. Trigger starts a run, Input emits built port values, Merge forwards arrivals and Collect aggregates them |
 | **Draft** | An unimplemented Card with only a name and content. Wire Drafts up to draw a plan (they have no ports) and have the Agent implement them |
 | **Card in Card (child Workflow)** | A Card with a Workflow inside. From outside it looks like one Card; open it to go inside |
 | **Definition** | The folder `definitions/<id>/` that is a Card's substance. One per Card |
@@ -23,17 +23,15 @@ The words used in Tsugumi's documents and screens. See each row's link for detai
 | --- | --- |
 | **Run** | One execution of a Workflow. Records the version (commit) at its start |
 | **Invocation** | One execution of a Card within a Run. In a loop, the same Card is invoked many times |
-| **Batch** | An ordered set of values sent together on one wire. A run list, a value sweep or a batch input can produce several invocations for one trigger. An ordinary FlatBuffers vector is one value, not a batch |
-| **Value sweep** | An Input Card parameter written as `"sweep": [...]` instead of `"data"`: each value is handed on in its own invocation ([Run lists and Collect](features.md#run-lists-and-collect)) |
-| **Implementation label** | The name of one implementation: a run list entry's `label`, or a value sweep's `name=value`. Shown in the history and used to pair members when comparing runs |
+| **Batch** | An ordered set of values sent together on one wire. A run list or a batch input can produce several invocations for one trigger. An ordinary FlatBuffers vector is one value, not a batch |
+| **Implementation label** | The name of one implementation: a run list entry's `label`. Shown in the history and used to pair members when comparing runs |
 | **Stage** | A step within an invocation: schema generation, Nix evaluation, build, run, output validation, saving ([Inspect a stage](RunHistory.md#inspect-an-invocation)) |
-| **`skipped`** | Downstream of a branch that was not taken. Not a failure |
+| **`skipped`** | A Card whose connected input cannot arrive because its producer omitted the output or skipped |
 | **`blocked`** | A Card that cannot run because of a failed, blocked or cancelled upstream Card. Comes with a reason. Drafts and paths requiring their outputs receive no execution state |
 | **`interrupted`** | A local or remote run left unfinished when its submitting `tsugumid` ended; recorded as `failed` with failure kind `interrupted`, with no result rescue or automatic rerun |
 | **Partial run (single run)** | Running only the chosen Cards, or "from here". Uses saved inputs ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)) |
 | **Saved inputs** | The full set of inputs of the latest trigger, including any batches. Partial runs use these inputs independently of `recordIO` |
 | **`recordIO`** | A setting that keeps the input and output values of every invocation of a Card in the history (off by default) |
-| **`retainArtifact`** | A setting that keeps a Card's artifacts |
 | **Artifact** | A file or folder a Card output |
 | **View** | A display surface a Card declares in its `default.nix`: a name, a type (`html` or `dawn`) and one file ([Views](CoreAndSDK.md#views)) |
 | **Display** | What a Card sends to one of its views while it works: text, a table, an image, a chart and so on. Live only: displays are not recorded, so check results in outputs and artifacts ([Visualisation](features.md#7-visualisation)) |

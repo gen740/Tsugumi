@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace gw;
-table ChirpPlots { value:string; }
-table Outputs { plots:ChirpPlots (required, tsugumi: "directory"); }
+table Outputs { plots:tsugumi.Artifact (required); }
 root_type Outputs;

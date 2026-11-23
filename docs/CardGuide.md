@@ -39,16 +39,26 @@ The Trigger starts the run. The Input Card `settings` sends an editable temperat
 }
 ```
 
-The lock below is the template's checked-in example. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
+The lock below is an example of the pins for these declarations. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
 
 `tsugumi.lock`
 
 ```json
 {
-  "nixPath": {
-    "nixpkgs": "github:NixOS/nixpkgs/1c89083e451e891152365b799595cf7790a43325?narHash=sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
-    "tsugumi-kit": "github:gen740/tsugumi-kit/f52e4e5047a724e92b8c33b51a4e58f0cc88569d?narHash=sha256-+m+J2WJ8Y2LHLpICvUob2gJ8bLnRBN3Up1XFHeblLcM="
-  }
+  "entries": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable",
+      "rev": "1c89083e451e891152365b799595cf7790a43325",
+      "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4="
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main",
+      "rev": "d877ed11303997268e2806bfccaf028f7275930b",
+      "narHash": "sha256-izi0h8DFTMsNv0iShVdkGwp/qLvhli2XGQv+P8yrJ0M="
+    }
+  ]
 }
 ```
 
@@ -83,6 +93,21 @@ namespace thermometer;
 table Temperature { value:double; }
 table Outputs { temperature:Temperature (required); }
 root_type Outputs;
+```
+
+`definitions/settings/default.nix`
+
+```nix
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.temperature.value = params.value;
+  };
+}
 ```
 
 ### The conversion Card
@@ -122,7 +147,8 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
   common = {
-    inherit inputs params;
+    inherit params;
+    inputs = ./_inputs.fbs;
     outputs = ./_outputs.fbs;
   };
 in
@@ -137,7 +163,7 @@ in
 }
 ```
 
-`default.nix` uses `cxxflags` and `plot` to configure the build. All five parameter values are also delivered on each call. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
+`default.nix` uses `cxxflags` and `plot` to configure the build. The SDK embeds the evaluated parameters in the Card build. The SDK generates the interface from the port schema, `_outputs.fbs` and the names and types of the evaluated `params`.
 
 `definitions/convert/README.md`
 
@@ -156,8 +182,8 @@ auto run(const Card::Inputs& input) -> Card::Output {
   using Fallback = decltype(Card::Output::fahrenheit)::value_type;
   using Celsius = Card::InputType<"celsius", Fallback>;
   const auto celsius = input.get<Celsius>("celsius");
-  const double fahrenheit = celsius.value * input.params.scale + input.params.offset;
-  card::display::send(card::display::Scalar{fahrenheit, input.params.unit});
+  const double fahrenheit = celsius.value * Card::params.scale + Card::params.offset;
+  card::display::send(card::display::Scalar{fahrenheit, Card::params.unit});
   Card::Output output;
   output.fahrenheit.emplace().value = fahrenheit;
   return output;
@@ -170,122 +196,43 @@ auto run(const Card::Inputs& input) -> Card::Output {
 
 1. Press **Run** (⌘R). The first build prepares the Card's environment.
 2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
-3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. The editor saves the new literal in `params.nix`. This experiment uses the saved 20-degree input and yields 36 with the same build. Set the value back to `32.0` to restore the original calculation.
+3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. The editor saves the new literal in `params.nix`. This experiment uses the saved 20-degree input and yields 36 after rebuilding the Card. Set the value back to `32.0` to restore the original calculation.
 
 ## Inputs and outputs
 
-A Card is `(input) -> output`. One call receives the values on its input ports and its parameters, and returns the values for its output ports. That is all that crosses between the Card and Tsugumi: there is no run ID, Card ID or invocation number, no hook before or after the call, and no report object. What the Card shows while it works goes to its [views](#views); what it writes to stdout and stderr goes to its log.
+Name each input in `_card.json` and connect at most one wire. An output can
+feed several inputs. Use Merge to join several sources. A normal Card waits
+for every connected input and skips if an upstream Card finishes without it.
 
-| SDK in `default.nix` | Entry point | Guide |
-| --- | --- | --- |
-| `cppCard` | `auto run(const Card::Inputs& input) -> Card::Output` | [C++](https://github.com/gen740/tsugumi-kit/blob/main/docs/cpp-sdk.md) |
-| `pythonCard` | `def run(input: Input) -> Output` | [Python](https://github.com/gen740/tsugumi-kit/blob/main/sdk/python/README.md) |
-| `rCard` | `main <- function(input)` returns a named list | [R](https://github.com/gen740/tsugumi-kit/blob/main/sdk/r/README.md) |
-| `juliaCard` | `main(input)` returns a NamedTuple or Dict | [Julia](https://github.com/gen740/tsugumi-kit/blob/main/sdk/julia/README.md) |
-| `goCard` | `func run(input tsugumi.Inputs) (tsugumi.Output, error)` | [Go](https://github.com/gen740/tsugumi-kit/blob/main/sdk/go/README.md) |
-| `rustCard` | `fn run(input: Inputs<'_>) -> Result<Output, Failure>` with `tsugumi::export!(run)` | [Rust](https://github.com/gen740/tsugumi-kit/blob/main/sdk/rust/README.md) |
-| `rubyCard` | `def main(input)` returns a Hash | [Ruby](https://github.com/gen740/tsugumi-kit/blob/main/sdk/ruby/README.md) |
-| `csharpCard` | `public static Output Run(Input input)` | [C#](https://github.com/gen740/tsugumi-kit/blob/main/sdk/csharp/README.md) |
+The root table of `_outputs.fbs` lists the output ports. Each field names a
+table type. Mark outputs the Card must produce as `(required)`. A Card may
+omit other outputs to select which downstream Cards run.
 
-Any SDK that implements the [Card ABI](CardABI.md) can take the place of these: the core knows no language, only a built `lib/main.so` that exports `tsugumi_main`.
-
-The core supplies connected input types as `inputs.<port>.type`. The SDK combines them with `_outputs.fbs` and the types of the evaluated `params` to generate the typed interface. **Build SDK** builds `(import ./. { inherit params inputs; }).api` via the [generic Nix evaluation tool](features.md#evaluating-a-card-expression) and shows the files under `share/tsugumi/api/`.
-
-- An input declaration contains its name. Connect one wire to give it the upstream output’s type. An unconnected input is absent. The Card’s SDK reports `input_missing` with the port name when the Card requires an absent input.
-- All parameters arrive in one `parameters.Params` message, with every field set to its current value.
-- The Card returns one value per output port it produces. A missing required output fails the call with `output_invalid`. The SDK checks the payload against the port's type.
-- Numeric messages keep IEEE NaN, positive and negative infinity and signed zero.
+Tsugumi generates `_inputs.fbs` from the wiring and the upstream schemas. Use
+**Build SDK** to read the generated interface. Merge candidates appear as a
+union in that schema when their types differ. The SDK decodes each arrival
+using its schema ID.
 
 ### Building outputs
 
-A Path port carries the path directly.
+Pack the port table with the SDK. Report errors through its failure API.
+Use `cancelled` and `remaining_ms` for work that observes cancellation and deadlines.
 
-- **A new file or directory.** Create it under the Card's working directory, finish writing and close it **before returning**, then return its path. A relative path such as `filtered.csv` works. Directories may contain regular files and subdirectories. The worker rejects symlinks, paths under `TMPDIR` and granted host paths as new outputs.
-- **Forwarding an input**: return the input's path unchanged. Tsugumi records the stored original without copying it.
+### Artifacts
 
-The worker snapshots the new files after the call returns. Each call has limits on the total bytes and number of entries it outputs, set in the project's settings (64 GiB and 1,000 entries by default; forwarded inputs do not count). Exceeding them fails the call with `output_invalid`. [Run history](RunHistory.md#keep-and-open-artifacts) describes how outputs are kept.
-
-### Failures and cancellation
-
-Raise or return the SDK's failure (Python `tsugumi.Failure("validation_failed", "why")`, C++ `tsugumi::Failure(kind, message)` and so on) to fail the call with a kind, a message and, where the SDK can tell, the source file and line. Any other uncaught error fails with `worker_failed`. A failed call's outputs are discarded and its worker is not reused.
-
-During a call, the Card can ask whether it has been cancelled and how much of its deadline remains (`cancelled()` and `remaining_ms()` in each SDK). A long loop should check between units of work. A stop or deadline also ends code that does not check.
+Include `tsugumi/artifact.fbs` and use `tsugumi.Artifact` for a file or directory.
+Use the SDK to create a writable directory or upload existing contents. Return
+the Artifact in an output. A downstream Card can open the granted Artifact for
+reading or forward its ID. The directory is sealed when the creating call ends.
 
 ## Views
 
-A Card shows what it is doing in its views. A view is fixed by the Card's definition, before any run: the Card declares its views in `default.nix`, next to `run`, `api` and `exports`, and the Card's view window shows each of them, empty, until data arrives. While the Card runs it sends messages to a view by name; the view draws them.
+Return `views` at the top level of `default.nix` alongside `run`. The example
+uses the SDK's Markdown view. A custom declaration has `name`, `type` and `blob`.
+The HTML file receives and sends bytes on a MessagePort. Display traffic is
+live, and data saved for later inspection should go through output ports.
 
-```nix
-{
-  run = sdk.pythonCard (common // { src = ./src; });
-  api = sdk.pythonApi common;
-  views = sdk.views ++ [
-    { name = "notes"; type = "html"; blob = ./notes.html; }
-  ];
-}
-```
-
-| Field | Meaning |
-| --- | --- |
-| `name` | The name the Card sends to |
-| `type` | `"html"`: one self-contained HTML file. `"dawn"`: one Wasm binary drawn with WebGPU |
-| `blob` | That one file, as a path or a derivation in the Nix store |
-
-The SDK's own views are added explicitly with `sdk.views` (or a part of it, with `builtins.filter`); nothing is added for you. The C++ SDK bundles html views for text, Markdown, tables, images, line charts (`LineChart`, series of x/y) and points (`Points`, x/y/z with optional colours), and the Python SDK the same and Plotly. Each SDK's guide lists the views it bundles and the values it encodes for them. A Card that never sends declares no views.
-
-Where an SDK renders text into images (Matplotlib figures in the Python SDK, for example), it uses IPAexGothic from the kit as the Japanese fallback font, so Japanese labels render offline.
-
-### Sending
-
-The Card ABI gives the Card one effect, `send(view, bytes)`. The bytes are opaque to Tsugumi: their format is a private agreement between the code that sends and the view that reads. Each SDK has a raw form and typed forms that encode a value for one of its bundled views:
-
-| Language | Raw bytes | A typed value |
-| --- | --- | --- |
-| C++ | `card::display::send("notes", bytes)` | `card::display::send(card::display::Table{columns, rows})` |
-| Python | `tsugumi.send("notes", data)` | `tsugumi.send(tsugumi.Markdown("**42**"))`, `tsugumi.send(tsugumi.mpl.figure(fig))` |
-| R, Julia | `send("notes", bytes)` | `send(value)` |
-| Go | `tsugumi.Send("notes", data)` | `tsugumi.SendValue(value)` |
-| Rust | `tsugumi::send("notes", data)` | `tsugumi::send_value(value)` |
-| Ruby | `Tsugumi.send("notes", data)` | `Tsugumi.send(value)` |
-| C# | `Effects.Send("notes", data)` | `Effects.Send(value)` |
-
-- The core passes the message through without looking at it: it adds the Card and the run that is active when the message arrives and hands it to the UI. It does not check the view name. The UI matches the name against the Card's declared views and shows an error for a name the Card did not declare.
-- `send` stays valid for the life of the Card's process. A thread the Card started can keep sending after the call returns, for example to show progress of work that continues between calls.
-- When the UI falls behind, it keeps only the latest message for each view. Views also hear when a run that includes the Card starts and ends.
-- **Nothing a Card sends is recorded.** A view is for watching the work as it happens; it is not saved with the run, and it cannot be reopened from Run History, compared between runs or read by the Agent afterwards. A value people should check later belongs in an output port, a file or an artifact.
-
-### HTML views
-
-An `html` view is one self-contained HTML file: scripts, styles, fonts, images and any Wasm are inlined. The UI loads it in an isolated frame with no network access (`connect-src 'none'`), so nothing can be fetched at run time.
-
-The page draws its own empty state when it loads. The UI then posts one window message, `{tsugumi: 1, port}`, transferring a `MessagePort`. Everything else arrives on that port:
-
-| Message | Meaning |
-| --- | --- |
-| `{type: "data", bytes: ArrayBuffer}` | One message the Card sent to this view |
-| `{type: "run", state: "started"}` / `{type: "run", state: "ended"}` | A run that includes this Card started or ended |
-
-```html
-<!doctype html>
-<meta charset="utf-8">
-<main>No data yet</main>
-<script>
-  const main = document.querySelector('main')
-  window.addEventListener('message', event => {
-    if (event.data?.tsugumi !== 1) return
-    event.data.port.onmessage = ({ data }) => {
-      if (data.type === 'data') main.textContent = new TextDecoder().decode(data.bytes)
-      if (data.type === 'run') main.dataset.run = data.state
-    }
-  })
-</script>
-```
-
-The view owns its layout and resizing. To bundle libraries into one file, build the HTML with Nix (the kit's [bundled views](https://github.com/gen740/tsugumi-kit/tree/main/sdk/views) use esbuild in a `runCommand`) and give the derivation as `blob`. [Showing Card views](security.md#showing-card-views) describes their isolation.
-
-### Dawn views
-
-A `dawn` view is a Wasm binary that draws with WebGPU through the pinned `webgpu.h` and nothing else. The UI does not host it yet: a declared `dawn` view shows a placeholder. Its exports are being fixed in the [Card ABI](CardABI.md).
+See [Views](CoreAndSDK.md#views) for the display protocol and Dawn contract.
 
 ## Worker state
 
@@ -297,99 +244,51 @@ Cards start a fresh worker for each call by default. Set `reuseWorker: true` to 
 | `TMPDIR` | Scratch. Read the path from the environment. | Cleared for each call. |
 | `/tmp` | On Linux workers, the shared VM and remote workers, the same scratch as `TMPDIR`. | On native macOS only `TMPDIR` is scratch. |
 
-The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. A file input's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard (common // { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; })`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
+The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. An opened artifact's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard (common // { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; })`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
 
 ## Card definition reference
 
 ### A Card's folder
 
-`definitions/<id>/` belongs to one Card. The permanent id is the Card's name and identifies it in canvas keys, connections, saved inputs, run records and evidence links. The core's `card_id` RPC reserves a lowercase slug from the supplied stem, adding `-2`, `-3` and so on as needed. Pass `project_path` to reserve an id inside a Card in Card.
-
-The core checks `tsugumi.json`, `_card.json` and `_comments.json` against the
-[project](../protocol/project_document.fbs), [Card](../protocol/card_document.fbs)
-and [review comment](../protocol/comments_document.fbs) schemas. Saves use a
-two-space indent and schema field order. The UI stores Card placement, flow,
-groups and note geometry in [`layout.bin`](../protocol/layout_document.fbs).
-Each note's text is Markdown in `notes/<id>.md`.
-
-Definition files:
-
-| File | What it is |
+| File | Role |
 | --- | --- |
-| `_card.json` | What the Card is (`type`, required) and its settings, including `inputs`, sweeps and run settings |
-| `README.md` | Optional one-line `description: …` between `---` lines and a Markdown body. Keep the description and body when implementing a Draft. |
-| `_comments.json` | Review comments, keyed by stable comment ids across versions. |
-| `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `params.nix` | Optional flat set of current parameter literals |
-| `default.nix` | Code Cards only. A function `{ params, inputs }:` returning `run` and optional `views`, `exports` and `api` |
-| `src/` | Code Cards only: the sources |
+| `_card.json` | Card type, input names and execution settings |
+| `_outputs.fbs` | Output ports and their types |
+| `_inputs.fbs` | Generated input schema for connected ports |
+| `params.nix` | Current parameter literals |
+| `default.nix` | Nix definition receiving `{ params, inputs }` |
+| `README.md` | Optional one-line `description` front matter and Markdown body |
+| `_comments.json` | Review comments |
+| `src/`, `views/` | Card source and optional custom view source |
 
-Input types come from the connected outputs. Select the SDK in `default.nix`.
+The folder ID is the Card's name on the canvas.
 
 ### Card types
 
-Every `_card.json` states what the Card is in `type`; a missing or unknown `type` is a definition error.
-`code` runs the Card's own sources (below), `draft` is a step described but not written yet, and `subgraph` is a Card in Card (with `external`).
-The other types are built-in Cards with no code:
-
-| Type | Ports | Use |
-| --- | --- | --- |
-| `trigger` | out `out` | Where a whole run starts |
-| `input` | in `start`, outs from `_outputs.fbs` | Passes on values or a project file or folder |
-| `branch` | ins `value`, `condition` (a [Condition buffer](CardABI.md#built-in-values)), outs `a` (true), `b` (false) | Sends to one side |
-| `fork` | in `value`, outs as declared in `outputs` (default `a`, `b`) | Sends the same value to every output |
-| `merge` | ins as declared in `inputs`, out `out` | Emits each arrival unchanged when every connected input has the same type. Mixed FlatBuffer inputs produce one union member per distinct type |
-| `collect` | in `in`, out `out` | Sends a batch as one `Collected` buffer of opaque port envelopes |
-
-Use one wire per input port. Route several paths into separate inputs of a Merge Card, then connect its output to the destination. Such a Card can print the value to stdout, which goes to its log, and send it to a `text` view.
+Use Code for processing, Input for values built with Nix, and Trigger to start
+the workflow. Merge and Collect route and aggregate arrivals. Draft is a
+placeholder, and Subgraph embeds a project from `externals/<id>/`.
 
 ### An input Card with fixed values
 
-`demos/en/report/definitions/settings`: params named like the fields of its output table.
-To control a Branch from the Canvas, declare a `bool` parameter named `value`
-and an output message with a `value:bool` field. Wire that output to the
-Branch’s `condition` input. The Canvas renders the parameter as a toggle.
-
-```nix
-{ run = { seed = 42; }; }
-```
+The `sdk.input` helper takes the output schema and a map of output port names
+to FlatBuffers JSON table values. It builds the port bytes, which core emits.
+See the [temperature Card](#the-input-value-card) above.
 
 ### An input Card that passes on a project file or folder
 
-The editor has a picker for files and folders in the project. At run time the
-worker stages a copy and the next Card receives its path.
-
-Set `"type": "input"` in `_card.json`. Declare the path in the Input Card's `params.nix`:
-
-```nix
-{ value = "data/events.fits"; }
-```
-
-The path is relative to the Card's definition folder.
-
-Use `project:definitions/shared/data/events.fits` for a saved source in another
-Card of the owning project.
-The same rules apply inside external projects: `project:` names that external
-project's root. Paths cannot be absolute or contain `..`, and must name a saved
-project file or a folder containing saved sources. The base never changes according to which file exists.
-
-`_outputs.fbs` (a Path port):
-
-```
-attribute "tsugumi";
-table Outputs { events:string (required, tsugumi: "path"); }
-root_type Outputs;
-```
-
-The next Card reads the path directly, for example `Path(input.events)` in Python.
+Use `sdk.artifact ./data.csv` where a value of type `tsugumi.Artifact` is
+expected in `sdk.input`. The SDK packages the file or directory in the build
+output. Core registers its existing read-only store directory.
 
 ### Parameters
 
-The optional `params.nix` in the Card's definition folder is a flat attribute set holding the current values. Use names that are valid FlatBuffers field identifiers, such as `sample_rate`, for Code Cards.
-
-Each literal determines its parameter's type. Use booleans, signed 64-bit integers, double-precision floats, literal strings or nonempty homogeneous lists of those scalars. `10` is an integer and `10.0` is a float. Use a decimal point in exponent notation, as in `1.0e3`, and parenthesize a negative list element, as in `[ 0 (-3) ]`. The core validates the literal set and caches it by file content. Editing a value in the UI rewrites that literal in place and preserves the rest of the file, including its comments.
-
-Every value is available as `params.<name>` in `default.nix` and in `CardInput.params` on each invocation. The generated `parameters.Params` message assigns consecutive field IDs in bytewise name order. SDK code generation depends on the names and types. Editing a value affects a build only when the Nix definition uses that value in a derivation.
+`params.nix` is a flat attrset of literals. Entries can be booleans, signed
+64-bit integers, doubles, strings and nonempty homogeneous lists of these types.
+`10` and `10.0` have different types. Editing a value in the UI replaces that
+literal in place, preserving the type, other entries and comments. Pass
+the evaluated values to the builder. A derivation depends on the values
+its expression uses.
 
 ### Code Card settings
 
@@ -418,111 +317,36 @@ What the Card does with the value is its author's responsibility: child processe
 
 ### Run lists and connected Nix exports
 
-Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
-sweeps its `value` parameter with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. It hands
-on each signal in its own invocation, labeled `value=8` and so on.
-
-A Code Card compares implementations with a run list: `run` is a list of
-`{ label; run; }`, one built Card per entry. The label names the implementation
-in the history and when comparing runs. Labels are unique within a list. The
-`score` Card receives `samples.out` on its `signal` port and builds one
-implementation per threshold from the same source, with the threshold written
-beside `main.py` as `threshold.py`:
+A definition can return several variants. An Input Card can map a list of literals
+to distinct values using the same mechanism.
 
 ```nix
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
-  common = { inherit inputs params; outputs = ./_outputs.fbs; };
-  thresholds = [
-    10
-    14
-  ];
-  compare = threshold: {
-    label = "threshold=${toString threshold}";
-    run = sdk.pythonCard (common // {
-      src = pkgs.runCommand "score-threshold-${toString threshold}" { } ''
-        cp -r ${./src} $out
-        chmod -R +w $out
-        echo "THRESHOLD = ${toString threshold}" > $out/threshold.py
-      '';
-    });
-  };
-in
-{
-  run = map compare thresholds;
-  api = sdk.pythonApi common;
-  exports.thresholdCount = builtins.length thresholds;
-}
+run = map (value: {
+  label = toString value;
+  run = sdk.input { outputs = ./_outputs.fbs; values.temperature = { inherit value; }; };
+}) params.temperatures;
 ```
 
-A list-valued parameter is one ordinary vector. Under `sweeps`, each entry in a list-typed sweep is one vector. A one-member sweep still forms a batch. Multiple sweeps produce their Cartesian product with the last parameter varying fastest. Code Cards compare implementations through run lists.
+Variants from different Cards form batch axes. Collect turns a batch into one
+`Collected` envelope list. Runtime port values flow between Cards independently
+of their derivation inputs.
 
-The three swept values and two implementations produce six invocations, in input
-item order with implementation order varying fastest. Every batch input is an
-independent axis. `maxRuns` counts triggers, and a failed member cancels the
-rest of the batch. Inspect each member's history for its inputs and result.
-An empty list yields an empty batch.
-
-Add a built-in `collect` after `score` to send one ordinary port value with an
-`items` vector, which the `summary` Card reads on its `results` port
-(`input.results.items`). Each item carries its name and kind, with the original
-bytes or path. See the fixed [Collected layout](CardABI.md#built-in-values).
-
-Refer to Nix exports as `inputs.<destination-port>.exports`. Collect, Fork, Branch's
-`value` input and Workflow boundaries preserve a unique Code producer. Use a
-direct connection to that Code Card if the producer would otherwise be
-ambiguous. The `score` Card exports `thresholdCount`, which `summary` reads through
-Collect as `inputs.results.exports.thresholdCount` and writes beside its own source the
-same way. Each run implementation shares the same exports.
+Set `exports` to publish Nix values to guaranteed downstream Cards. A downstream
+definition reads them as `inputs.<card_id>.<attr>`. For example, C can see both
+A and B in `A → B → C`. TODO(open): Exports across Merge, Collect, feedback,
+Draft and nested or external boundaries.
 
 ### Data fixed by Nix
 
-Large public data (an observation, a reference genome, a simulation's result) can be fixed like a
-package: fetched once into the Nix store by its hash, before a run. Put the file name and hash in `params.nix` and read them as `params.<name>` in `default.nix`. The store
-path reaches the Card's code through a small generated module beside its source:
-
-```nix
-{ params, inputs }:
-let
-  pkgs = import <nixpkgs> { };
-  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
-  common = { inherit inputs params; outputs = ./_outputs.fbs; };
-  raw = pkgs.fetchurl {
-    url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
-    curlOptsList = [ "--ssl-reqd" ];           # --ssl-reqd (often faster than https)
-    hash = params.hash;                        # "sha256-..." (nix hash file <file>)
-  };
-  data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
-in
-{
-  run = sdk.pythonCard (common // {
-    src = pkgs.runCommand "load-src" { } ''
-      cp -r ${./src} $out
-      chmod -R +w $out
-      echo 'EVENTS = "${data}"' > $out/observation.py
-    '';
-  });
-  api = sdk.pythonApi common;
-}
-```
-
-The Card returns the store location as data in a FlatBuffer table such as
-`{ path:string; }`. A long build step (a simulation) can use the same approach
-with `pkgs.runCommand` or `stdenv.mkDerivation`.
-
-### Path outputs
-
-Declare the output as `string (tsugumi: "path")` and create the file or directory
-under the Card's working directory before returning its path. See [Building outputs](#building-outputs).
+Use a locked project source and include its store path in the Card build when
+the program needs immutable data. To send a project file through the graph,
+declare an Artifact output and publish it with an Input Card.
 
 ### Reading a merge output
 
-The input is a table whose `value` is a union with one member per merge input; the union's type
-says which port the value arrived on. In the SDKs that use FlatBuffers' object API (C++, Python,
-Go, Rust, C#), read the generated union type and value fields; R, Julia and Ruby give
-`{type = "port", value = ...}`. Each SDK's guide shows the generated names.
+Build SDK after connecting the Merge. Decode a single candidate as its
+ordinary type, or select a member of the generated union when there are
+multiple candidates. Merge forwards the original bytes and artifact IDs.
 
 ### Templates
 
@@ -578,7 +402,7 @@ working copy open for correction.
 
 | To know | Document |
 | --- | --- |
-| Branches, merges and loops, passing files, data pinned with Nix | [The bundled demos](Demos.md) (their code is still to be ported to the current Card ABI: [TODO](Demos.md#todo-port-the-demos-to-the-current-card-abi)) |
+| Conditional outputs, loops, artifacts and data pinned with Nix | [The bundled demos](Demos.md) ([display port status](Demos.md#demo-status)) |
 | Examples of code that runs | [tsugumi-kit's templates](https://github.com/gen740/tsugumi-kit/tree/main/templates) |
 | One language's API, dependencies and threads | [tsugumi-kit](https://github.com/gen740/tsugumi-kit/tree/main) |
 | The contract between the core and an SDK | [Card ABI](CardABI.md) |

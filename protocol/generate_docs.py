@@ -20,7 +20,7 @@ GROUPS = [
     ("Running", ["RunPlan", "Run", "RunCancel", "RunStatus"]),
     ("History and artifacts", ["RunHistory", "RunInvocations", "RunLatestInvocations", "RunRecord", "RunValueRead", "RunCategoryDelete", "RunHistoryDelete",
                  "RunDefinitionPaths", "ArtifactList", "ArtifactRead", "LogRange", "RunEnvironments", "RunEnvironmentPaths", "RunEnvironmentUses"]),
-    ("Views", ["ViewSetVisible", "ViewSave", "CardViewRead"]),
+    ("Views", ["ViewSetVisible", "ViewSave", "CardViewRead", "ViewSend", "ViewCredit"]),
     ("Versions", ["VersionInit", "VersionMark", "VersionCheckout", "VersionGraph", "VersionCanvas", "VersionNote", "VersionDiff", "VersionComments"]),
 ]
 

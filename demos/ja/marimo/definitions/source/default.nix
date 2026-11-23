@@ -1,7 +1,14 @@
 { params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = {
+    inherit params;
+    inputs = ./_inputs.fbs;
+    outputs = ./_outputs.fbs;
+  };
+in
 {
-  run = ''
-    jq '{value: {source: .measurement}}' \
-      <<< "$TSUGUMI_PARAMS_JSON" > "$TSUGUMI_OUTPUT"
-  '';
+  run = sdk.pythonCard (common // { src = ./src; });
+  api = sdk.pythonApi common;
 }

@@ -180,7 +180,7 @@ private struct NixPathSettings: View {
       }
       NixPathRows(session: session, prefix: prefix).id(prefix)
     } header: {
-      InfoHeader("Nix 検索パス", info: "Card は <名前/パス> でソースを参照します。「更新」で URL を解決し、tsugumi.lock に固定します。")
+      InfoHeader("Nix 検索パス", info: "Card は <名前/パス> でソースを参照します。「更新」で追加または URL が変わったソースを固定し、削除したソースの固定を外します。")
     }
   }
 }
@@ -461,7 +461,7 @@ private struct RunHistorySettings: View {
           }
           if scope == .before { DatePicker("日時", selection: $before) }
         } header: {
-          InfoHeader("削除", info: "実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。")
+          InfoHeader("削除", info: "実行記録、保存した値、ログ、実行が所有する成果物（.tsugumi/artifacts/<run>）と scratch を削除します。実行中は削除できません。")
         }
       }
       .formStyle(.grouped)

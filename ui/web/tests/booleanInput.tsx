@@ -93,9 +93,11 @@ const row = settings.root.findByProps({ 'data-guide': 'param:values' })
 const input = row.findByType('input')
 assert.equal(input.props.value, '[ 1.0 (-2.5) ]')
 TestRenderer.act(() => input.props.onChange({ target: { value: list } }))
-await TestRenderer.act(async () => input.props.onKeyDown({
+// Async act in the bundled renderer creates MessagePorts that keep Node running.
+TestRenderer.act(() => input.props.onKeyDown({
   key: 'Enter', nativeEvent: { isComposing: false }, stopPropagation() {},
 }))
+await session.save()
 assert.equal(listWrites, 1)
 assert.deepEqual(session.cardDefinition(card), definition)
 settings.unmount()

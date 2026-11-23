@@ -1,3 +1,3 @@
 ---
-description: Starts the signal detection sweep
+description: Starts the signal detection comparison
 ---

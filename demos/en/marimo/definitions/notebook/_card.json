@@ -6,7 +6,5 @@
     }
   ],
   "recordIO": true,
-  "retainArtifact": true,
-  "artifactOutput": "report",
   "reuseWorker": false
 }

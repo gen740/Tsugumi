@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace bcg;
-table Regression { value:string; }
-table Outputs { regression:Regression (required, tsugumi: "file"); }
+table Outputs { regression:tsugumi.Artifact (required); }
 root_type Outputs;

@@ -1,11 +1,4 @@
 {
   "type": "input",
-  "recordIO": true,
-  "sweeps": {
-    "value": [
-      8,
-      12,
-      16
-    ]
-  }
+  "recordIO": true
 }

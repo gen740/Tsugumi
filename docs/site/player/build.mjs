@@ -82,7 +82,7 @@ function cardFiles(dir) {
   })
 }
 
-const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'subgraph'])
+const KINDS = new Set(['code', 'draft', 'trigger', 'input', 'merge', 'collect', 'subgraph'])
 
 /** A demo's Card states one of the types (the UIs show anything else as a
  *  definition error, which no demo has). */
@@ -98,7 +98,7 @@ const INLINE_TYPES = new Set(['int', 'float', 'bool', 'string'])
 
 // The checked-in flat parameter sets put one current literal on each assignment line.
 // Read these for the static preview without evaluating any Nix expressions.
-function cardParams(dir, def) {
+function cardParams(dir) {
   const file = path.join(dir, 'params.nix')
   if (!fs.existsSync(file)) return []
   const source = fs.readFileSync(file, 'utf8')
@@ -112,7 +112,7 @@ function cardParams(dir, def) {
       : /[.e]/i.test(first) ? 'float' : 'int'
     const decoded = parts.map((part) => JSON.parse(part.replace(/\\\$\{/g, '${')))
     const list = literal.startsWith('[')
-    const value = def.sweeps?.[name] ?? (list ? decoded : decoded[0])
+    const value = list ? decoded : decoded[0]
     values.push({ name, type: list ? `[${type}]` : type, value: paramText(value) })
   }
   return values
@@ -127,7 +127,7 @@ function readCard(root, id, ports, wires) {
   const description = frontMatter?.[1]
   const body = markdown.slice(frontMatter?.[0].length ?? 0)
   const kind = kindOf(def, id)
-  const allParams = cardParams(dir, def)
+  const allParams = cardParams(dir)
   // Resolved ports are the core's; Drafts have no ports.
   const resolved = kind === 'draft' ? undefined : ports?.[id]
   if (kind !== 'draft' && !resolved) throw new Error(`no resolved ports for ${id}: run harvest.py --ports`)

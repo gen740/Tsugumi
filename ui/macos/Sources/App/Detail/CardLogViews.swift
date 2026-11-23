@@ -101,7 +101,7 @@ struct DependenciesCategory: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: 14) {
-        Text("この Card が使う SDK、nixpkgs の package、ほかの Card の出力は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。")
+        Text("この Card が使う SDK、nixpkgs の package、上流 Card の Nix exports は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。")
           .font(.callout).foregroundStyle(.secondary).fixedSize(horizontal: false, vertical: true)
         HStack {
           if hasDefinition {

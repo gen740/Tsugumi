@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace exo;
-table DetrendedDir { value:string; }
-table Outputs { detrended:DetrendedDir (required, tsugumi: "directory"); }
+table Outputs { detrended:tsugumi.Artifact (required); }
 root_type Outputs;

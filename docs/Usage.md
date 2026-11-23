@@ -49,9 +49,8 @@ A template folder contains one directory per Card, each with the original Card d
 
 ## Canvas tools
 
-Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its `value` output to a Branch’s `condition` input. Connect the value to route to the Branch’s other input and run with the toggle both ways. The timeline shows which branch ran. The same preset is available when implementing a Draft. [Card types and execution](features.md#2-cards-and-workflows)
+Right-click the Canvas and choose **Boolean Input** to create a toggle. Wire its value to a Code Card that chooses which optional outputs to produce. Use Merge to bring alternative outputs back to one downstream input. The timeline distinguishes skipped Cards. [Card types and execution](features.md#2-cards-and-workflows)
 
-Choose **Fork** to send one value to several Cards as a named step. It starts with outputs `a` and `b`; add or rename outputs under **Ports** in its settings. Unlike a Branch, every output receives the value on every run.
 
 Use **Arrange** to place Cards and reduce wire crossings. Use **Untangle Wires** when the Cards are already where you want them. Both are available from the Canvas context menu and can be undone. Untangling changes the visual order of ports while preserving the connections and the way the Workflow runs.
 
@@ -109,7 +108,7 @@ Use the app settings for language, appearance, model connections, Skills and sho
 
 The Mac app shows one project or Home per window. **⌘⇧N** adds a Home window; **⌘N**, **⌘O**, demos and duplicates open in a new window. Opening an already open project brings its window forward. **⌘W** saves and closes that project; **⌘Q** checks unsaved changes across windows. The shared VM supports up to 16 open projects.
 
-Closing a project window leaves its execution environment resident. Stop it explicitly through the environment controls when it should end. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects).
+Closing a project window leaves its execution environment resident. Stop it explicitly through the environment controls when it should end. Workflows, history, chats and selections are separate; API keys, app settings and the shared VM/store are shared. The Web UI uses [one project per browser tab](WebUI.md#several-projects). Only one UI connection can open each project at a time.
 
 ## Working with the Agent
 

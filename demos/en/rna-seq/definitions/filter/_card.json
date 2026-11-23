@@ -4,7 +4,5 @@
     {
       "name": "airway"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "counts"
+  ]
 }

@@ -1,8 +1,10 @@
 # Pearson's r of bill length and bill depth: overall and within each stratum.
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  by <- inputs$params$stratify
-  d <- read.csv(inputs$path("penguins"))
+  by <- params$stratify
+  d <- read.csv(file.path(artifact_open(inputs$penguins), "penguins.csv"))
   if (!by %in% c("species", "sex", "island")) stop("stratify must be species, sex or island, not ", by)
   d$stratum <- d[[by]]
   d <- d[!is.na(d$stratum), ]  # sex is unknown for some penguins
@@ -18,12 +20,12 @@ main <- function(inputs, report, run) {
   result <- rbind(overall, strata)
   result$reversed <- sign(result$r) != sign(overall$r)
 
-  points <- file.path(run$output_directory, "points.csv")
+  points <- file.path(workspace, "points.csv")
   write.csv(d[, c("stratum", "bill_length_mm", "bill_depth_mm")], points, row.names = FALSE)
-  correlations <- file.path(run$output_directory, "correlations.csv")
+  correlations <- file.path(workspace, "correlations.csv")
   write.csv(result, correlations, row.names = FALSE)
-  outputs[["points"]] <- list(value = points)
-  outputs[["correlations"]] <- list(value = correlations)
+  outputs[["points"]] <- artifact_upload(points)
+  outputs[["correlations"]] <- artifact_upload(correlations)
 
   shown <- data.frame(
     層 = result$stratum, n = result$n, r = sprintf("%.3f", result$r),
@@ -31,7 +33,7 @@ main <- function(inputs, report, run) {
     傾き = sprintf("%.3f", result$slope),
     向き = ifelse(result$stratum == "全体", "", ifelse(result$reversed, "全体と逆", "全体と同じ")),
     check.names = FALSE)
-  report$table(shown)
+  # TODO(open): Port the demo display.
 
   outputs
 }

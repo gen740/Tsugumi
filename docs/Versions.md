@@ -2,7 +2,7 @@
 
 A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History".
 
-Versions contain the project's definitions: `tsugumi.json`, `tsugumi.lock`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including `default.nix` and `params.nix`, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
+Versions contain the project's definitions: `tsugumi.json`, `tsugumi.lock`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including `default.nix`, `params.nix` and generated `_inputs.fbs`, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
 
 Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `versionPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
 
@@ -91,7 +91,7 @@ A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-ag
 
 ## Nix source pins
 
-A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update replaces one pin or updates all the declarations in the selected project. [Project Nix search path](features.md#project-nix-search-path)
+A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update reconciles one declaration or all declarations in the selected project. [Project Nix search path](features.md#project-nix-search-path)
 
 ## Demo histories
 

@@ -29,7 +29,9 @@ export class RPCFailure extends Error {
   readonly retryAfterMs?: number
 
   constructor(f: { kind: D.FailureKind; args?: D.KeyValueT[]; diagnostic?: string | Uint8Array | null; currentRev?: bigint | null; retryAfterMs?: number | null }) {
-    super(`${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
+    super(f.kind === D.FailureKind.project_in_use
+      ? L('別の画面でこのプロジェクトを開いています。')
+      : `${D.FailureKind[f.kind] ?? f.kind}: ${s(f.diagnostic)}`)
     this.kind = f.kind
     this.permissions = (f.args ?? []).filter(kv => s(kv.key) === 'permission').map(kv => s(kv.value))
     this.args = {}

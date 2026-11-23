@@ -7,7 +7,5 @@
     {
       "name": "edger"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "agreement"
+  ]
 }

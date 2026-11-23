@@ -1,4 +1,6 @@
+include "tsugumi/artifact.fbs";
+
 namespace mnist;
-table Dataset { directory:string; source:string; train_count:uint; test_count:uint; }
+table Dataset { directory:tsugumi.Artifact (required); source:string; train_count:uint; test_count:uint; }
 table Outputs { dataset:Dataset (required); }
 root_type Outputs;

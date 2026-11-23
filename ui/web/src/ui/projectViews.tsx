@@ -196,7 +196,7 @@ function NixPathSettings({ session }: { session: ProjectSession }) {
   const projects = [...session.externals.keys()].sort()
   const prefix = projects.includes(selected) ? selected : ''
   return (
-    <Section title={L('Nix 検索パス')} info={L('Card は <名前/パス> でソースを参照します。「更新」で URL を解決し、tsugumi.lock に固定します。')}>
+    <Section title={L('Nix 検索パス')} info={L('Card は <名前/パス> でソースを参照します。「更新」で追加または URL が変わったソースを固定し、削除したソースの固定を外します。')}>
       {projects.length > 0 && <Row label={L('対象プロジェクト')}>
         <Select value={prefix} onChange={setSelected} options={[
           { value: '', label: L('ルートプロジェクト') },
@@ -452,7 +452,7 @@ function RunHistorySettings({ session }: { session: ProjectSession }) {
     <div className="col fill">
       <div className="scroll flex1">
         <Form>
-          <Section title={L('削除')} info={L('実行の記録・値・ログと、実行ごとのファイル（成果物など、.tsugumi/runs/<run>）を、.tsugumi/runs.sqlite から削除します。対象の実行の scratch も削除します。最後の入力（その Card だけを再実行するための入力）は残します。実行中は削除できません。')}>
+          <Section title={L('削除')} info={L('実行記録、保存した値、ログ、実行が所有する成果物（.tsugumi/artifacts/<run>）と scratch を削除します。実行中は削除できません。')}>
             <Row label={L('対象')}>
               <Select<'before' | 'all'> value={scope} onChange={setScope}
                 options={[{ value: 'before', label: L('指定した日時より前に終わった実行') }, { value: 'all', label: L('すべての実行') }]} />

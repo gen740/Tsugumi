@@ -7,7 +7,5 @@
     {
       "name": "results"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "design"
+  ]
 }

@@ -3,20 +3,22 @@ library(ggplot2)
 library(ggrepel)
 
 # Meta-regression: does the effect change with the moderator?
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  name <- inputs$params$moderator
-  method <- inputs$params$method
-  d <- read.csv(inputs$path("trials"))
+  name <- params$moderator
+  method <- params$method
+  d <- read.csv(file.path(artifact_open(inputs$trials), "bcg.csv"))
   d$x <- d[[name]]
   overall <- rma(yi, vi, data = d, method = method)
   m <- rma(yi, vi, mods = ~ x, data = d, method = method)
   rows <- data.frame(moderator = name, method = method, intercept = coef(m)[1], slope = coef(m)[2], slope_se = m$se[2],
                      QM = m$QM, QM_p = m$QMp, tau2 = m$tau2, tau2_without = overall$tau2, R2 = m$R2, I2 = m$I2)
-  file <- file.path(run$output_directory, "regression.csv")
+  file <- file.path(workspace, "regression.csv")
   write.csv(rows, file, row.names = FALSE)
-  outputs[["regression"]] <- list(value = file)
-  report$log(paste(capture.output(print(rows)), collapse = "\n"))
+  outputs[["regression"]] <- artifact_upload(file)
+  message(paste(capture.output(print(rows)), collapse = "\n"))
   grid <- seq(min(d$x), max(d$x), length.out = 100)
   band <- as.data.frame(predict(m, newmods = grid))
   band$x <- grid
@@ -33,7 +35,7 @@ main <- function(inputs, report, run) {
          title = sprintf("Slope %.4f (p = %.2g). τ² %.3f → %.3f, proportion explained R² = %.0f%%", m$b[2], m$pval[2], overall$tau2, m$tau2, m$R2),
          subtitle = "Point size is the weight, numbers are trial numbers, the band is the 95% confidence interval") +
     theme_minimal(base_size = 12)
-  report$figure(print(figure), alt = sprintf("Meta-regression on %s, slope %.4f", name, m$b[2]), width = 7.5, height = 5)
+  # TODO(open): Port the demo display.
 
   outputs
 }

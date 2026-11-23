@@ -3,7 +3,8 @@ let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/go> { inherit pkgs; };
   common = {
-    inherit inputs params;
+    inherit params;
+    inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;
     outputs = ./_outputs.fbs;
   };
 in
@@ -12,5 +13,5 @@ in
     src = ./src;
   });
   api = sdk.goApi common;
-  views = sdk.views;
+  # TODO(open): Port the demo display.
 }

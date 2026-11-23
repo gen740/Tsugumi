@@ -3,6 +3,9 @@
   "inputs": [
     {
       "name": "input"
+    },
+    {
+      "name": "events"
     }
   ]
 }

@@ -11,9 +11,11 @@ read_counts <- function(dir) {
 }
 
 # edgeR: a different method on the same counts, with the paired design (quasi-likelihood F test).
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  x <- read_counts(inputs$path("counts"))
+  x <- read_counts(artifact_open(inputs$counts))
   y <- DGEList(x$counts)
   y <- normLibSizes(y)
   design <- model.matrix(~ cell + dex, x$samples)
@@ -22,13 +24,11 @@ main <- function(inputs, report, run) {
   test <- glmQLFTest(fit, coef = "dextrt")
   all <- as.data.frame(topTags(test, n = Inf, sort.by = "none"))
   rows <- data.frame(x$genes, log2fc = all$logFC, log_cpm = all$logCPM, p = all$PValue, fdr = all$FDR)
-  file <- file.path(run$output_directory, "edger.csv")
+  file <- file.path(workspace, "edger.csv")
   write.csv(rows, file, row.names = FALSE)
-  outputs[["results"]] <- list(value = file)
-  significant <- rows$fdr < inputs$params$fdr
-  report$table(data.frame(
-    項目 = c("遺伝子", sprintf("FDR < %g", inputs$params$fdr), "うち上昇", "うち低下", "BCV (共通)"),
-    値 = c(nrow(rows), sum(significant), sum(significant & rows$log2fc > 0), sum(significant & rows$log2fc < 0), sprintf("%.3f", sqrt(y$common.dispersion)))))
+  outputs[["results"]] <- artifact_upload(file)
+  significant <- rows$fdr < params$fdr
+  # TODO(open): Port the demo display.
 
   outputs
 }

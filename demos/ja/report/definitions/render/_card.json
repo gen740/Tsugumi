@@ -7,7 +7,5 @@
     {
       "name": "config"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "report"
+  ]
 }

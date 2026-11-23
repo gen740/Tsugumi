@@ -1,8 +1,8 @@
 library(ggplot2)
 
 # Why the totals differ: rates by department, drawn by where people applied.
-main <- function(inputs, report) {
-  d <- read.csv(inputs$path("admissions"))
+main <- function(inputs) {
+  d <- read.csv(file.path(artifact_open(inputs$admissions), "admissions.csv"))
   wide <- aggregate(count ~ gender + dept, d, sum)
   names(wide)[3] <- "applied"
   admitted <- d[d$admit == "Admitted", c("gender", "dept", "count")]
@@ -24,7 +24,7 @@ main <- function(inputs, report) {
     labs(x = "学科 (匿名化された A〜F)", y = "合格率 (%)", title = "女性の応募は合格率の低い学科に偏っていた") +
     theme_minimal(base_size = 13) +
     theme(legend.position = "top")
-  report$figure(print(figure), alt = "Admission rate by department and gender, with the number of applicants", width = 7.5, height = 5.2)
+  # TODO(open): Port the demo display.
 
   invisible(NULL)
 }

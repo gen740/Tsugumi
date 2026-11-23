@@ -28,25 +28,19 @@ the service executable. By default it lives beside the fallback
 
 ## Invocation boundary
 
-The worker checks the nested input and parameter FlatBuffers before calling
-the entry point in `lib/main.so`. The Card returns a binary `CardResult` with
-typed outputs or a failure. Launch secrets arrive in `WorkerStart`. The
-worker keeps a fixed work directory, input staging, and `TMPDIR`. Input and
-temporary staging are cleared between successful calls. Files in the work
-directory remain available to a resident Card.
+The worker calls `tsugumi_main` with the fixed Card input envelope. The
+language SDK decodes each arrived value with the generated schema. Launch
+secrets arrive in `WorkerStart`. The work directory and `TMPDIR` are fixed
+at launch.
 
-New File and Directory outputs come from the working directory. The
-invocation engine snapshots declared files and directory trees using pinned
-directory descriptors and follows no symbolic links. Forwarded inputs
-retain their original identity. For new outputs the default budget is
-64 GiB of logical file data and 1,000 filesystem entries per invocation.
+Artifact grants come from input envelopes. The worker exposes writable
+directories through `artifact_create`, seals their snapshots at call
+completion, and resolves active grants through `artifact_open`. Forwarding
+an artifact ID preserves its identity. See the [Card ABI](../docs/CardABI.md).
 
-The worker drains process-lifetime `send(view, bytes)` messages without
-opening a view or reading its declarations. Local workers relay them
-directly to the core. For remote jobs the adapter relays them through an
-inherited socket to the listener. Status replies drain a 1 MiB transient
-queue of the latest pending data per view. Remote job results contain
-typed outputs and the bounded log.
+View effects can run on Card threads throughout the process lifetime.
+The worker relays bytes in both directions and uses flow control to bound
+pending messages.
 
 ## Remote execution
 
@@ -54,9 +48,7 @@ The broker sends authenticated requests to the TLS listener. The listener
 admits jobs through its journal and starts each invocation in its own
 supervised Linux namespace. The invocation transfers input blobs, realises
 the Card build plan in the private Nix store, and runs the worker specified
-by the plan. The same invocation engine checks output bytes and snapshots
-new files. Remote forwarding uses the original job-relative input
-path, so result transfer does not duplicate the input.
+by the plan. The invocation engine checks artifact IDs and transfers newly created artifacts with its result. Forwarded grants retain their IDs.
 
 ## Verification
 

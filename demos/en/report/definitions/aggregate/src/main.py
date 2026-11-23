@@ -2,14 +2,17 @@
 import csv
 from collections import defaultdict
 
+from card import Input, Output, params
+from report.RegionTotal import RegionTotalT
+from report.Summary import SummaryT
 from tsugumi import Failure
 
 
-def main(inputs, report):
-    if inputs.params.failOnPurpose:
-        report.log("aggregate: failing on purpose (turn off fail_on_purpose and re-run this Card)")
+def run(inputs: Input) -> Output:
+    if params.fail_on_purpose:
+        print("aggregate: failing on purpose (turn off fail_on_purpose and re-run this Card)")
         raise Failure('worker_failed', 'fail_on_purpose is enabled')
-    path = inputs.csv.value.decode()
+    path = inputs.require("csv").open() / "sales.csv"
     revenue = defaultdict(int)
     units = defaultdict(int)
     rows = 0
@@ -19,15 +22,9 @@ def main(inputs, report):
             u, price = int(row['units']), int(row['unit_price'])
             revenue[row["region"]] += u * price
             units[row["region"]] += u
-    regions = []
-    for region in sorted(revenue):
-        regions.append({
-            'region': region,
-            'revenue': revenue[region],
-            'units': units[region],
-        })
-    return {'summary': {
-        'rows': rows,
-        'revenue': sum(revenue.values()),
-        'regions': regions,
-    }}
+    regions = [
+        RegionTotalT(region=region, revenue=revenue[region], units=units[region])
+        for region in sorted(revenue)
+    ]
+    # TODO(open): Port the demo display.
+    return Output(summary=SummaryT(rows=rows, revenue=sum(revenue.values()), regions=regions))
