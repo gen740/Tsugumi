@@ -12,6 +12,7 @@ from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
 from harness.document import set_param
+from harness.nix_path import declarations, test_lock_entries, write_lock
 
 MSG_FBS = """
 namespace demo;
@@ -56,12 +57,16 @@ def conn(a: str, ap: str, b: str, bp: str) -> dict:
     return {"from": {"card": a, "port": ap}, "to": {"card": b, "port": bp}}
 
 
-def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test") -> None:
+def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test",
+          *, locked=None) -> None:
     """Writes a project. `defs` are the bodies of _card.json by name; a body
-    may carry "_outputs" (its _outputs.fbs) and "_nix" (its default.nix).
+    may carry "_outputs" (its _outputs.fbs), "_params" (its params.nix) and
+    "_nix" (its default.nix).
     `files` are written as they are, except those under
     definitions/<a def>/, which every Card made from it gets."""
     files = files or {}
+    if locked is None:
+        locked = test_lock_entries()
     root.mkdir(parents=True, exist_ok=True)
     for c in cards:
         cid = c["id"]
@@ -79,13 +84,11 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
         outputs, nix = body.pop("_outputs", None), body.pop("_nix", None)
+        params = body.pop("_params", "{ }\n" if nix and "sdk.pythonCard" in nix else None)
         for k, v in c.items():
             if k not in ("id", "definition", "params"):
                 body[k] = v
         for pname, value in (c.get("params") or {}).items():
-            match = [p for p in body.get("params", []) if p["name"] == pname]
-            if not match:
-                raise ValueError(f"card {cid}: param {pname} is not defined")
             set_param(body, pname, value)
         # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
@@ -94,6 +97,8 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             put(folder / "_outputs.fbs", outputs)
         if nix:
             put(folder / "default.nix", nix)
+        if params is not None:
+            put(folder / "params.nix", params)
         for rel, data in files.items():
             if d and rel.startswith(theirs):
                 put(root / (mine + rel[len(theirs):]), data)
@@ -102,16 +107,16 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
     put(root / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default",
+        "name": name, "nixPath": declarations(locked),
         "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
+    write_lock(root, locked)
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:
     """An input Card wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"type": "trigger"},
-        "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "x"}},
-                                                   {"name": "value", "type": "bool", "data": {"bool": True}}],
+        "source": {"type": "input", "_params": '{ run = { text = "x"; value = true; }; }',
                    "_outputs": MSG_FBS},
         "sink": SINK,
         "branch": {"type": "branch"},

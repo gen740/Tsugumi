@@ -296,7 +296,7 @@ auto initial_project_json(const std::string& name) -> std::string {
 auto parse_project_json(const std::string& text) -> ParsedDocument {
   auto doc = parsed(Schema::Project, "tsugumi.json", text);
   const auto& p = document_text::root<D::Project>(doc.buffer);
-  if (!p.pkgsPath()) invalid("tsugumi.json: \"pkgsPath\" is required");
+  // NIXPATH-CONTRACT: lane B validates nixPath declarations in this schema.
   check_nix_sources(p);
   check_version_paths(p);
   check_log_limit(p, "tsugumi.json");
@@ -481,6 +481,19 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   doc->project_buffer = std::move(project.buffer);
   doc->project_json = std::move(project.text);
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
+
+  // NIXPATH-CONTRACT: lane B owns the typed lock snapshot, validation and edits.
+  std::error_code lock_error;
+  if (stdfs::exists(stdfs::symlink_status(root / "tsugumi.lock", lock_error))) {
+    std::string lock;
+    fs::stream_beneath(root, "tsugumi.lock", UINT64_MAX, [&](std::string_view chunk) {
+      consume("tsugumi.lock", chunk.size());
+      lock.append(chunk);
+    });
+    doc->sources.emplace("tsugumi.lock", SourceEntry{
+        crypto::sha256_hex(lock), lock.size(),
+        std::make_shared<const std::string>(std::move(lock))});
+  }
 
   if (auto layout = fs::read_file(root / "layout.bin")) {
     consume("layout.bin", layout->size());

@@ -17,7 +17,9 @@
   cacert,
   cardNixpkgs,
   hosq,
-  kitSource,
+  testNixPathLock ? {
+    nixPath = [ ];
+  },
   nixfmt,
   git,
   withFormatters ? true,
@@ -63,7 +65,6 @@ clangStdenv.mkDerivation {
     ++ [
       "-DTSUGUMI_TEMPLATE_GIT=${git}/bin/git"
       "-DTSUGUMI_FLATBUFFERS_SOURCE=${flatbuffers.src}"
-      "-DTSUGUMI_KIT_DIR=${kitSource}"
       "-DHOSQ_INCLUDE_DIR=${hosq}/include"
       "-DTSUGUMI_BUILD_TESTS=OFF"
       "-DTSUGUMI_TEST_SUPPORT_DIR=${placeholder "testSupport"}"
@@ -75,7 +76,7 @@ clangStdenv.mkDerivation {
     ++ lib.optionals clangStdenv.hostPlatform.isLinux [ "-DTSUGUMI_BWRAP=${bubblewrap}/bin/bwrap" ];
   # What the dev shell's own CMake configuration needs of the above.
   passthru.devEnv = {
-    TSUGUMI_KIT_DIR = "${kitSource}";
+    TSUGUMI_TEST_NIX_LOCK = builtins.toJSON testNixPathLock;
     TSUGUMI_FORMAT_NIX = "${nixfmt}/bin/nixfmt";
     TSUGUMI_FLATBUFFERS_SOURCE = "${flatbuffers.src}";
     TSUGUMI_CACERT = "${cacert}/etc/ssl/certs/ca-bundle.crt";

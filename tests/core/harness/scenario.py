@@ -52,9 +52,11 @@ class Project:
         files = dict(sources or {})
         if outputs is not None:
             files["_outputs.fbs"] = outputs
+        if "sdk.pythonCard" in files.get("default.nix", ""):
+            files.setdefault("params.nix", "{ }\n")
         if plan is not None:
             # This source is interpreted only by the test build adapter.
-            files["default.nix"] = "{ pkgs, inputs, params, ... }: { }"
+            files["default.nix"] = "{ params, inputs }: { }"
             files["mock-build.json"] = json.dumps(plan)
         self.cards[name] = (definition, files)
         return self

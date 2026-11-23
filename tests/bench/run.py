@@ -18,11 +18,13 @@ import uuid
 
 from measure_stages import (ROOT, UNAVAILABLE, Daemon, path, print_table, run_once,
                             summarize, summary, text)
+from harness.real_cards import PYTHON_BINDINGS
 from projects import SINK, card, conn, write
 
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
-PYTHON_RUN = 'inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = ./src; }'
+# Requires the redesigned kit pin with sdk/python/default.nix.
+PYTHON_RUN = 'sdk.pythonCard { src = ./src; outputs = ./_outputs.fbs; params = ./params.nix; inherit inputs; }'
 # Every benchmark Card returns its own metrics as the declared `metrics` output.
 METRICS = 'namespace bench; table Metrics { value:string; } '
 VALUE = METRICS + 'table Number { value:ulong; } table Outputs { out:Number (required); metrics:Metrics (required); } root_type Outputs;'
@@ -101,7 +103,7 @@ def python_card(operation, *, service=None, resident=False, run_list=False):
               "reuseWorker": resident, "recordIO": True,
               "_outputs": PATH if operation in ("file-1gib", "file-sparse-1gib", "source", "directory-10000")
               else VALUE,
-              "_nix": "{ pkgs, params, inputs, schemas }: { run = " + expression + "; }\n"}
+              "_nix": "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + expression + "; }\n"}
     if service:
         result["executionService"] = service
     if operation == "file-input-1gib":
@@ -261,7 +263,7 @@ def stage_project(root, scenario):
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
-                       "input": {"type": "input", "params": [{"name": "value", "type": "uint64", "data": 1}],
+                       "input": {"type": "input", "_params": "{ run.value = 1; }",
                                  "_outputs": "table Value { value:ulong; } "
                                              "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]

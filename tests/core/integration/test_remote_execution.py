@@ -27,7 +27,7 @@ from harness import remote_worker as R
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from harness.file_events import process_file
 from harness.host import Host
-from harness.real_cards import log, python_run
+from harness.real_cards import PYTHON_BINDINGS, log, python_run
 from harness.values import collected_items
 from projects import (
     FILE_FBS,
@@ -250,7 +250,7 @@ def wait_for_release():
 
 
 def entry(run, extra=""):
-    return "{ pkgs, params, inputs, schemas }: { run = " + run + "; " + extra + " }"
+    return "{ params, inputs }: let " + PYTHON_BINDINGS + " in { run = " + run + "; " + extra + " }"
 
 
 @pytest.fixture
@@ -303,7 +303,7 @@ def run(input):
     copyfile(input.in_, output)
     return Output(doc=output)
 """
-    source = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "payload.txt"}}],
+    source = {"type": "input", "_params": '{ run.value = "payload.txt"; }',
               "_outputs": FILE_FBS}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,

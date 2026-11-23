@@ -26,12 +26,14 @@ def completed_definition(client, card="work", *, start=None):
     """Return a fresh run's output, actual definition identity and invocation."""
     run_id = run(client, start or card)
     status = wait_run(client, run_id)
+    card_path = path(*card.split("/"))
+
     def log(stream):
-        return text(client.call("LogRangeRequest", runId=run_id, card=path(card),
+        return text(client.call("LogRangeRequest", runId=run_id, card=card_path,
                                 stream=stream, limitBytes=262144).text)
 
     assert status.state == RunState.succeeded, (status.failure and text(status.failure.diagnostic), log(2))
-    invocation, = client.call("RunInvocationsRequest", runId=run_id, card=path(card)).records
+    invocation, = client.call("RunInvocationsRequest", runId=run_id, card=card_path).records
     number = text(invocation.environmentId)
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
     environment = next(e for e in environments if text(e.id) == number)
@@ -67,22 +69,13 @@ def synthetic_sources(outputs=()):
 
 
 def synthetic_run(value=None, *, header=None, name="synthetic-card"):
-    """A builder written in the Card's own default.nix with the production
-    arguments: it compiles the synthetic sources to lib/main.so and places the
-    port schemas, a README and a nested file under share/tsugumi/api/ (plus a
-    symlink that a reader must not follow). `value` is a Nix string expression;
-    `header` is shell that writes value.h instead."""
+    """Compile a kit-independent C Card using its confirmed sources."""
     header = header or ('cp ${pkgs.writeText "value.h" ("#define VALUE " + builtins.toJSON ('
                         + value + ') + "\\n")} value.h')
     return ('(pkgs.runCommandCC "' + name + "\" { } ''\n"
-            '  mkdir -p "$out/lib" "$out/share/tsugumi/api/include"\n'
+            '  mkdir -p "$out/lib"\n'
             "  " + header + "\n"
             "  cp ${./card_abi.h} card_abi.h\n"
             "  cp ${./card.c} card.c\n"
             '  $CC -shared -fPIC -o "$out/lib/main.so" card.c\n'
-            '  cp ${schemas}/_inputs.fbs ${schemas}/_outputs.fbs ${schemas}/_params.fbs "$out/share/tsugumi/api/"\n'
-            "  printf '# Card API\\n' > \"$out/share/tsugumi/api/README.md\"\n"
-            "  printf '#define CARD 1\\n' > \"$out/share/tsugumi/api/include/card.h\"\n"
-            "  printf '\\000\\377' > \"$out/share/tsugumi/api/raw\"\n"
-            '  ln -s /etc/hosts "$out/share/tsugumi/api/escape"\n'
             "'')")

@@ -1,5 +1,7 @@
-"""Small Card fixtures (built with the kit's pythonCard) shared by host
-and VM integration scenarios."""
+"""Small Card fixtures shared by host and VM integration scenarios.
+
+Python builders here require the redesigned kit pin with sdk/python/default.nix.
+"""
 
 import json
 import socket
@@ -16,6 +18,8 @@ TXT = "namespace t; table Txt { value:string; } table Outputs { out:Txt (require
 
 FLAG = "namespace t; table Flag { value:bool; } table Outputs { flag:Flag (required); } root_type Outputs;"
 
+PYTHON_BINDINGS = """  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };"""
 
 def accept_in_background(listener: socket.socket) -> list:
     """Record accepted peers without leaking sockets or a blocking accept thread."""
@@ -62,12 +66,13 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return "(inputs.tsugumi.pythonSdk.pythonCard { inherit schemas; src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })"
+    return ("(sdk.pythonCard { inherit inputs; outputs = ./_outputs.fbs; params = ./params.nix;"
+            " src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })")
 
 
 def python_nix(main: str, *, values: dict | None = None, let: str = "", tools: str = "", extra: str = "") -> str:
     """default.nix of a Card whose run is python_run(main, ...)."""
-    return ("{ pkgs, params, inputs, schemas }:\n" + (f"let\n{let}\nin\n" if let else "")
+    return ("{ params, inputs }:\nlet\n" + PYTHON_BINDINGS + f"\n{let}\nin\n"
             + "{ run = " + python_run(main, values=values, tools=tools) + "; " + extra + "}\n")
 
 

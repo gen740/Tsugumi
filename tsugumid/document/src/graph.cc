@@ -236,30 +236,6 @@ auto param_value_json(ParamType t, const ParamValue& v) -> std::string {
   return "null";
 }
 
-namespace {
-// A Nix source's package overrides as the attribute set default.nix reads:
-// package -> {override, overrideAttrs}.
-auto overrides_json(const D::NixSource& source) -> std::string {
-  json::Members packages;
-  if (const auto* list = source.overrides())
-    for (const auto* o : *list) {
-      json::Members entry;
-      std::string text;
-      if (o->override()) {
-        o->override_flexbuffer_root().ToString(true, true, text);
-        entry["override"] = text;
-      }
-      if (o->overrideAttrs()) {
-        text.clear();
-        o->overrideAttrs_flexbuffer_root().ToString(true, true, text);
-        entry["overrideAttrs"] = text;
-      }
-      packages[o->package()->str()] = json::Encode(entry);
-    }
-  return json::Encode(packages);
-}
-}  // namespace
-
 auto param_value_label(ParamType t, const ParamValue& v) -> std::string {
   return t == ParamType::String ? v.string : param_value_json(t, v);
 }
@@ -704,13 +680,11 @@ class Builder {
   // ("externals/<p>/", nested further inside its own externals).
   void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
-    std::string pkgs =
-        project.pkgsPath() ? project.pkgsPath()->str() : "tsugumi:default";
-    std::vector<NixSourceRef> sources;
-    if (const auto* list = project.nixSources())
-      for (const auto* s : *list)
-        sources.push_back({s->name()->str(), s->type()->str(),
-                           s->ref()->str(), overrides_json(*s)});
+    // NIXPATH-CONTRACT: declarations belong to the definition's project.
+    std::vector<NixPathEntry> sources;
+    if (const auto* list = project.nixPath())
+      for (const auto* source : *list)
+        sources.push_back({source->name()->str(), source->url()->str()});
     for (const auto* card : *project.canvas()->cards()) {
       const auto id = card->id()->str();
       Node n;
@@ -718,8 +692,7 @@ class Builder {
       n.path.push_back(id);
       n.def_dir = prefix + "definitions/" + id + "/";
       n.project_dir = prefix;
-      n.pkgs_path = pkgs;
-      n.nix_sources = sources;
+      n.nix_path = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
         auto it = doc_.definitions.find(id);
@@ -1251,7 +1224,7 @@ class Builder {
                            std::set<size_t>& result) const -> void {
     const auto kind = res_->nodes[source].kind;
     if (kind != CardType::Collect && kind != CardType::Branch &&
-        kind != CardType::Fork && kind != CardType::Merge) {
+        kind != CardType::Fork) {
       result.insert(source);
       return;
     }
@@ -1282,18 +1255,18 @@ class Builder {
         trace_nix_producers(edge.from, visiting, producers[edge.to_port]);
       }
       for (const auto& [name, from] : producers) {
-        if (name == "tsugumi" || name == "sources") {
-          node.diags.push_back(
-              diag(node.path, "nix_input_reserved",
-                   "input " + name + " is reserved by the Nix SDK"));
-          continue;
+        // NIXPATH-CONTRACT: lane B provides the wired type and optional producer.
+        const auto* type = node.input(name);
+        if (!type || !type->resolved()) continue;
+        NixInput input{*type, std::nullopt};
+        if (from.size() == 1) {
+          const size_t producer = *from.begin();
+          if (std::ranges::find(allowed, producer) != allowed.end()) {
+            input.exports_node = producer;
+            node.nix_references.push_back({res_->nodes[producer].path, name});
+          }
         }
-        if (from.size() != 1) continue;
-        const size_t producer = *from.begin();
-        if (std::ranges::find(allowed, producer) != allowed.end()) {
-          node.nix_inputs.emplace(name, producer);
-          node.nix_references.push_back({res_->nodes[producer].path, name});
-        }
+        node.nix_ports.emplace(name, std::move(input));
       }
     }
   }

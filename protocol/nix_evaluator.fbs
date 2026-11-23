@@ -3,34 +3,74 @@ namespace Tsugumi.NixEvaluator;
 
 table Initialize {
   entry:string (required);
-  allowed:[string];
   epoch:ulong;
 }
 
+table LockedSource {
+  type:string (required);
+  owner:string (required);
+  repo:string (required);
+  rev:string (required);
+  nar_hash:string (required);
+  last_modified:long;
+}
+table Pin {
+  name:string (required);
+  source:LockedSource (required);
+}
+table ProjectScope {
+  project:string;
+  pins:[Pin];
+}
+table DefinitionScope {
+  directory:string (required);
+  card:string (required);
+  project:string;
+}
+table Scope {
+  definitions:[DefinitionScope];
+  generated:[string];
+  projects:[ProjectScope];
+}
 table Evaluate {
-  pin_url:string (required);
-  pin_hash:string (required);
+  scope:Scope (required);
+  core_nixpkgs:LockedSource (required);
+  nix_dir:string;
+  needs_worker:bool;
   args:string (required);
+  card:string;
   max_implementations:uint;
 }
 
 table Reuse {
+  scope:Scope (required);
   epoch:ulong;
   drv:string (required);
   out:string (required);
 }
 
-table Flake {
-  ref:string (required);
-  // Approved arguments for Nix's override and overrideAttrs.
-  overrides:string;
+table Expression {
+  scope:Scope (required);
+  args:string (required);
+  card:string (required);
+  definition_dir:string (required);
+  text:string (required);
+  build:bool;
 }
 
-union RequestBody { Initialize, Evaluate, Reuse, Flake }
+table LockSource { url:string (required); }
+table ParamsDeclaration { text:string (required); origin:string (required); }
+
+union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, ParamsDeclaration }
 
 table Request {
   system:string;
   body:RequestBody (required);
+}
+
+table CardNames {
+  card:string (required);
+  names:[string];
 }
 
 table Evaluation {
@@ -40,21 +80,21 @@ table Evaluation {
   implementation_count:uint;
   implementation_labels:[string];
   epoch:ulong;
+  resolved:[CardNames];
 }
 table Reusable { value:bool; }
-table FlakeInfo {
-  ref:string (required);
-  rev:string;
-  nar_hash:string;
-  packages:[string];
-  // Evaluated package manifest consumed by Nix.
-  nix_json:string (required);
+table ExpressionValue {
+  json:string;
+  drv:string;
+  output_name:string;
+  resolved:[CardNames];
 }
+table ParamsValue { json:string (required); }
 table Log { line:string; }
 // Size-prefixed stdout frames from the build client.
 table BuildLog { line:string; truncated:bool; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 
-union ReplyBody { Evaluation, Reusable, FlakeInfo, Log, Build, Error }
+union ReplyBody { Evaluation, Reusable, ExpressionValue, LockedSource, ParamsValue, Log, Build, Error }
 table Reply { body:ReplyBody (required); }

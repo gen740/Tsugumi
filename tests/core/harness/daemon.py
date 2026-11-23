@@ -14,6 +14,7 @@ from tsugumi_client import Client
 
 from .control import read_ready, read_startup_error
 from .file_events import process_file
+from .nix_path import declarations, test_lock_entries, write_lock
 
 ROOT = Path(__file__).resolve().parents[3]
 BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build")).resolve()
@@ -37,10 +38,12 @@ FAULTS = {
 
 def write_project(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    entries = test_lock_entries()
     (root / "tsugumi.json").write_text(json.dumps({
-        "name": "rpc-test", "pkgsPath": "tsugumi:default",
+        "name": "rpc-test", "nixPath": declarations(entries),
         "canvas": {"cards": [], "connections": []},
     }))
+    write_lock(root, entries)
 
 
 class StartupFailure(RuntimeError):

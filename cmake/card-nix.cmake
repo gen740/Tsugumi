@@ -1,5 +1,3 @@
-set(TSUGUMI_KIT_DIR "$ENV{TSUGUMI_KIT_DIR}" CACHE PATH "Pinned Tsugumi kit source")
-
 # Use the same layout beside installed programs and in the CMake build tree.
 set(TSUGUMI_CARD_NIX_OUTPUT share/tsugumi/nix)
 function(tsugumi_card_nix_files directory)
@@ -15,9 +13,4 @@ function(tsugumi_card_nix_files directory)
 endfunction()
 
 tsugumi_card_nix_files("" nix/card-entry.nix)
-if(TSUGUMI_KIT_DIR)
-  file(CREATE_LINK "${TSUGUMI_KIT_DIR}" "${PROJECT_BINARY_DIR}/${TSUGUMI_CARD_NIX_OUTPUT}/kit" SYMBOLIC)
-  install(CODE "
-    file(CREATE_LINK \"${TSUGUMI_KIT_DIR}\" \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/${TSUGUMI_CARD_NIX_OUTPUT}/kit\" SYMBOLIC)
-  ")
-endif()
+# NIXPATH-CONTRACT: the evaluator directory carries only core-owned Nix files.

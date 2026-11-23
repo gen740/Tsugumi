@@ -49,5 +49,4 @@ def positions(buffer):
 
 
 def set_param(body, name, value):
-    param = next(p for p in body["params"] if p["name"] == name)
-    param["data"] = {param["type"].replace("[]", "s"): value}
+    body.setdefault("params", {})[name] = value

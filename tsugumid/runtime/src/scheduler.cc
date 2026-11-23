@@ -1914,7 +1914,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
           std::string bytes;
           std::string err;
           if (!types::json_to_flatbuffer(
-                  *port.type, NixRunner::params_json(fields, false), &bytes,
+                  *port.type, NixRunner::params_json(fields), &bytes,  // NIXPATH-CONTRACT: runtime params remain lane B.
                   &err))
             throw Failed(FailureKind::output_invalid,
                          "input " + port.name + ": " + err);

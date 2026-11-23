@@ -125,9 +125,15 @@ struct ValueSweepMember {
 };
 ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index);
 
-struct NixSourceRef {
-  std::string name, type, ref;
-  std::string overrides = "{}";
+// NIXPATH-CONTRACT: shared with lane B's resolved document model.
+struct NixPathEntry {
+  std::string name;
+  std::string url;
+};
+
+struct NixInput {
+  types::PortType type;
+  std::optional<size_t> exports_node;
 };
 
 struct CardNixReference {
@@ -143,12 +149,10 @@ struct Node {
   std::string def_dir;
   std::string project_dir;  // "" or "externals/<p>/": the project the Card is
                             // written in
-  std::string pkgs_path;    // of the project the Card is written in
-  std::vector<NixSourceRef>
-      nix_sources;  // what that project opts in to (tsugumi.json nixSources)
+  std::vector<NixPathEntry> nix_path;
   std::vector<CardNixReference> nix_references;
-  std::map<std::string, size_t>
-      nix_inputs;  // destination port -> guaranteed Code producer
+  std::map<std::string, NixInput> nix_ports;
+  std::string build_params_json = "{}";  // NIXPATH-CONTRACT: supplied by lane B
   std::optional<Tsugumi::Document::BoundaryT>
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)

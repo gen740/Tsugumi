@@ -1,6 +1,5 @@
 """Read a real Card's Nix output from run history."""
 
-import json
 import os
 import socket
 import sqlite3
@@ -9,6 +8,7 @@ from uuid import uuid4
 
 import pytest
 
+from harness.nix_path import test_lock_entries as fixture_locks
 from harness.real_cards import log, python_card, python_nix
 from harness.scenario import run
 from projects import (MSG_FBS, card, run_and_wait, start_run, wait_for_log, wait_run,
@@ -72,8 +72,9 @@ def test_build_log_preserves_output_and_flushes_before_notifications(core_factor
         "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-log-@id@" {} ''
     printf 'before invalid bytes\n' >&2
     printf 'builder byte: \377\n' >&2
@@ -181,8 +182,9 @@ def test_run_nix_parallelism(core_factory, tmp_path, monkeypatch, max_jobs, opti
         "type": "code",
         "_outputs": "table Outputs {} root_type Outputs;",
         "_nix": r'''
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-cores-@id@" {} ''
     printf '%s\n' "$NIX_BUILD_CORES" > "$out"
   '';
@@ -236,7 +238,7 @@ def test_stop_disconnects_the_daemon_build(core_factory, monkeypatch, tmp_path):
         assert marker.read(1) == b"", "the builder is still alive"
 
 
-def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, tmp_path):
+def test_stop_ends_locked_source_materialization(core_factory, monkeypatch, tmp_path):
     root = tmp_path / "project"
     with ExitStack() as stack:
         proxy = stack.enter_context(socket.socket())
@@ -245,16 +247,13 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
         proxy.settimeout(120)
         address = "http://127.0.0.1:" + str(proxy.getsockname()[1])
 
-        # The project's pin names a tarball no store has, so the Card's
-        # evaluation fetches it through this proxy.
-        write(root, {"fetch": python_card(EMPTY_MAIN, outputs="table Outputs {} root_type Outputs;")},
-              [card("fetch", "fetch")], [])
-        doc_file = root / "tsugumi.json"
-        doc = json.loads(doc_file.read_text())
+        # The pinned NAR is absent, so materializing the lock uses this proxy.
+        pin = next(entry for entry in fixture_locks() if entry["name"] == "nixpkgs")
         revision = uuid4().hex + "cafef00d"
-        doc["pkgsPath"] = ("https://github.com/NixOS/nixpkgs/archive/" + revision
-                           + ".tar.gz#sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-        doc_file.write_text(json.dumps(doc))
+        pin["locked"] = dict(pin["locked"], rev=revision,
+                             narHash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        write(root, {"fetch": {"type": "code", "_nix": "{ params, inputs }: { run = []; }"}},
+              [card("fetch", "fetch")], [], locked=[pin])
         # This fixture never answers. Its network deadlines must not end the
         # wait on behalf of Stop (the host may configure a short connect timeout).
         monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "")
@@ -269,7 +268,8 @@ def test_stop_ends_an_evaluation_waiting_for_nixpkgs(core_factory, monkeypatch, 
         stack.enter_context(peer)
         peer.settimeout(15)
         stream = stack.enter_context(peer.makefile("rb"))
-        assert stream.readline().startswith(b"CONNECT github.com:443 ")
+        connect = stream.readline()
+        assert connect.startswith(b"CONNECT ") and b"github.com:443 " in connect
         while stream.readline().strip():
             pass
         assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
@@ -284,8 +284,9 @@ def blocked_builder(name, port):
         # Fixed-output derivations can reach loopback in the Nix sandbox.
         # The fixture checks the connection lifetime across PID namespaces.
         "_nix": r'''
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
   probe = pkgs.runCommand "tsugumi-build-stop-@id@" {
     outputHashMode = "flat";
     outputHashAlgo = "sha256";

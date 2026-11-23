@@ -72,6 +72,17 @@ struct BuildRequest {
       on_build;  // a derivation build starting or ending
 };
 
+struct ExpressionRequest {
+  DocumentPtr doc;
+  CardPath card;
+  std::string expression;
+  bool build = false;
+  std::string system;
+  std::stop_token cancel;
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  NixOutput log;
+};
+
 struct CacheClearOutcome {
   std::vector<std::string> deleted;
   std::vector<std::string> retained;
@@ -83,13 +94,7 @@ class NixRunner {
   NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
-  // The port schemas given to a Card's builder: _inputs.fbs, _outputs.fbs
-  // and _params.fbs.
-  static std::map<std::string, std::string> generate(const Node& node);
-  // Builds JSON for all effective params and for nix:true params (Nix).
-  static std::string params_json(const Node& node, bool nix_only);
-  static std::string params_json(const std::vector<ParamDef>& params,
-                                 bool nix_only);
+  static std::string params_json(const std::vector<ParamDef>& params);
   // FlatBuffer of all effective params (table Params).
   static std::string params_buffer(const Node& node);
   static types::TypeRef params_type(const Node& node);
@@ -98,17 +103,23 @@ class NixRunner {
   // Build only the declared view files on the UI's native store.
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;
+  auto evaluate_expression(const ExpressionRequest& req) -> ExpressionResult;
+  auto lock_source(const std::string& url) -> LockedSource;
+  auto params_declaration(const std::filesystem::path& def_dir) -> std::string;
+  auto params_declaration(const std::filesystem::path& def_dir,
+                          std::string_view text) -> std::string;
+  auto resolved_names(const CardPath& card) const
+      -> std::optional<std::vector<std::string>>;
 
   CacheClearOutcome clear_cache();
-  // A flake to opt in to, as the settings ask for it: a flake reference or a
-  // GitHub page's URL.
-  FlakeInfo resolve_flake(const std::string& ref);
 
  private:
   auto build_plan(const BuildRequest& req, bool views_only) -> CardBuildPlan;
+  auto configure_call(NixCall& call, const Document& doc, const Node& node,
+                      bool expression_only = false) -> void;
+  auto remember_names(const ResolvedNames& names, uint64_t order) -> void;
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
-  // The nixpkgs pin of a pkgsPath (each Card uses its own project's).
   NixEvaluator& evaluator();
   // The prepared build of `card` (--prepared-cards), checked against the
   // evaluation the core would run now.
@@ -124,12 +135,15 @@ class NixRunner {
   std::filesystem::path nix_dir_;
   std::mutex eval_mu_;
   std::unique_ptr<NixEvaluator> evaluator_;
-  // At most one evaluation per Card, capped at 256 Cards; edits replace
-  // entries, and deleted Cards are pruned.
+  // Entries are per Card and system, capped at 256.
   std::mutex evaluations_mu_;
-  std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
-  std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>>
-      prepared_;
+  std::map<std::pair<std::string, std::string>,
+           std::pair<EvaluationKey, NixResult>>
+      evaluations_;
+  mutable std::mutex names_mu_;
+  std::map<std::string, std::pair<uint64_t, std::vector<std::string>>>
+      resolved_names_;
+  std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;

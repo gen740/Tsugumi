@@ -47,7 +47,6 @@ cat >> "$stage/tsugumi/flake.nix" <<'NIX'
         let
           tsugumid = pkgs.callPackage ./nix/core.nix {
             hosq = inputs.hosq;
-            kitSource = inputs.tsugumi-kit;
             cardNixpkgs = {
               rev = inputs.nixpkgs.rev;
               narHash = inputs.nixpkgs.narHash;

@@ -2609,18 +2609,9 @@ void Service::file_read(RequestIn& req) {
 }
 
 void Service::nix_source_resolve(RequestIn& req) {
-  auto info = nix_->resolve_flake(
-      project_request(req)->value_as_NixSourceResolveRequest()->ref()->str());
-  FBB b;
-  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
-  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
-  auto ref = b.CreateString(info.ref);
-  auto rev = b.CreateString(info.rev);
-  auto hash = b.CreateString(info.nar_hash);
-  auto res =
-      R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved,
-                         res.Union()));
+  // NIXPATH-CONTRACT: lane B removes this RPC when adding lock updates.
+  (void)req;
+  throw Failed(FailureKind::unsupported, "use the nixPath lock update");
 }
 
 void Service::input_types(RequestIn& req) {

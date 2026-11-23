@@ -59,12 +59,19 @@ table NixSource {
   overrides:[PackageOverride];
 }
 
+// NIXPATH-CONTRACT: lane B owns the project schema cutover.
+table NixPathEntry {
+  name:string (required);
+  url:string (required);
+}
+
 table Project {
   name:string;
   /// The Nixpkgs the project's Cards are built with. Required at the root;
   /// a nested project (externals/) uses its parent's.
   pkgsPath:string;
   nixSources:[NixSource];
+  nixPath:[NixPathEntry];
   /// Additional literal project-relative files or folders kept in versions.
   versionPaths:[string];
   /// Host policy, carried without affecting execution.
