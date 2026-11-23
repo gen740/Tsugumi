@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "top",
-      "type": "uint64",
-      "data": {
-        "uint64": 12
-      }
-    },
-    {
-      "name": "known",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "FKBP5",
-          "DUSP1",
-          "TSC22D3",
-          "KLF15",
-          "PER1",
-          "CRISPLD2"
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "results"

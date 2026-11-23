@@ -1,8 +1,8 @@
 # marimo notebook Cards
 
-> The demo described here is written for the previous Card ABI and is to be ported with the other demos ([TODO](Demos.md#todo-port-the-demos-to-the-current-card-abi)). This page describes the Cards as they are to be ported.
+> This page describes the planned notebook Card behavior. See [demo status](Demos.md#todo-port-the-demos-to-the-current-card-abi).
 
-Open the **marimo notebook → typed result** demo for a complete notebook Card. It is an ordinary Python Card: `src/notebook.py` is the editable notebook, `src/main.py` maps the Card's input to notebook variables and returns the result, and `src/runner.py` runs the notebook in a child process. `default.nix` takes marimo and Matplotlib from the project's pinned nixpkgs (`packages = ps: [ ps.marimo ps.matplotlib ];`) and the Python SDK supplies the kit's IPAexGothic as Matplotlib's Japanese fallback font. Nothing is installed when a notebook runs or when a result is opened.
+Open the **marimo notebook → typed result** demo for a complete notebook Card. It is an ordinary Python Card: `src/notebook.py` is the editable notebook, `src/main.py` maps the Card's input to notebook variables and returns the result, and `src/runner.py` runs the notebook in a child process. `default.nix` takes marimo and Matplotlib from the project’s locked `<nixpkgs>` source (`packages = ps: [ ps.marimo ps.matplotlib ];`) and the Python SDK supplies the kit's IPAexGothic as Matplotlib's Japanese fallback font. Nothing is installed when a notebook runs or when a result is opened.
 
 ## One committed invocation
 

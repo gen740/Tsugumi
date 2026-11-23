@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 0
-      }
-    },
-    {
-      "name": "train_size",
-      "type": "uint64",
-      "data": {
-        "uint64": 10000
-      }
-    },
-    {
-      "name": "test_size",
-      "type": "uint64",
-      "data": {
-        "uint64": 2000
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "dataset"

@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "paired",
-      "type": "bool",
-      "data": {
-        "bool": true
-      }
-    },
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": {
-        "double": 0.05
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "counts"

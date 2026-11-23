@@ -1,8 +1,4 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 {
   run = ''
     test -s "$DIR_RMARKDOWN/index.html"

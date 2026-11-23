@@ -1,40 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "exposure",
-      "type": "string",
-      "data": {
-        "string": "female"
-      }
-    },
-    {
-      "name": "subsets",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "TRUE",
-          "age < 65",
-          "age >= 65",
-          "ph.ecog == 0",
-          "ph.ecog == 1",
-          "ph.ecog >= 2"
-        ]
-      }
-    },
-    {
-      "name": "adjustments",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "",
-          "age",
-          "age + ph.ecog",
-          "age + ph.ecog + ph.karno + wt.loss"
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "lung"

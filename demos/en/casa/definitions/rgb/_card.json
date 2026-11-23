@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "percentile",
-      "type": "double",
-      "data": {
-        "double": 99.5
-      }
-    },
-    {
-      "name": "q",
-      "type": "double",
-      "data": {
-        "double": 10.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "input"

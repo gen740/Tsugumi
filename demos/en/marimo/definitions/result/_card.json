@@ -1,23 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "format",
-      "type": "string",
-      "data": {
-        "string": "text"
-      },
-      "nix": true
-    },
-    {
-      "name": "markdown_field",
-      "type": "string",
-      "data": {
-        "string": "value"
-      },
-      "nix": true
-    }
-  ],
   "inputs": [
     {
       "name": "in"

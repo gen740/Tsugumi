@@ -1,12 +1,16 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = {
+    inherit inputs;
+    outputs = ./_outputs.fbs;
+    params = ./params.nix;
+  };
+in
 # MNIST is fixed like a package: fetched once by its hash, then every run reads
 # the same files from the Nix store. No network during a run.
 let
-  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
   mirror = "https://ossci-datasets.s3.amazonaws.com/mnist";
   fetch =
     name: hash:
@@ -32,11 +36,13 @@ let
   '';
 in
 {
-  run = inputs.tsugumi.pythonCard {
-    inherit sdk src;
+  run = sdk.pythonCard (common // {
+    inherit src;
     packages = ps: [
       ps.numpy
       ps.matplotlib
     ];
-  };
+  });
+  api = sdk.pythonApi common;
+  views = sdk.views;
 }

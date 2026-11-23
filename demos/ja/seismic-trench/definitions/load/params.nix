@@ -1,0 +1,6 @@
+{
+  run = {
+    urls = [ "https://earthquake.usgs.gov/fdsnws/event/1/query?format=csv&starttime=2000-01-01&endtime=2025-01-01&minlatitude=34&maxlatitude=42&minlongitude=138&maxlongitude=146&minmagnitude=4.0&orderby=time-asc" ];
+    names = [ "japan-trench.csv" ];
+  };
+}

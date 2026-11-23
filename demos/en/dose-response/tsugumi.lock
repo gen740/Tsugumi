@@ -1,0 +1,28 @@
+{
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable",
+      "locked": {
+        "type": "github",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1c89083e451e891152365b799595cf7790a43325",
+        "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+        "lastModified": 1793341285
+      }
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main",
+      "locked": {
+        "type": "github",
+        "owner": "gen740",
+        "repo": "tsugumi-kit",
+        "rev": "54bf325572c0a66e5924b5cd091597975bcafbe3",
+        "narHash": "sha256-LLpRNabK7h3i3Ve9hO6WZFIief86ZGPJOqS7YeW8lqg=",
+        "lastModified": 1795417034
+      }
+    }
+  ]
+}

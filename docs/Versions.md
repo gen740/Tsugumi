@@ -2,7 +2,7 @@
 
 A project's folder is a git repository. Projects made in the app, and copies of demos, become repositories the first time they are opened. Other projects can be made repositories with "Start Versioning" in "Version History".
 
-Versions contain the project's definitions: `tsugumi.json`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including Nix definitions and pins, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
+Versions contain the project's definitions: `tsugumi.json`, `tsugumi.lock`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including `default.nix` and `params.nix`, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
 
 Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `versionPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
 
@@ -89,9 +89,9 @@ A Card's comments ([Generating Cards from comments](Usage.md#working-with-the-ag
 - A version is made when a run starts or with "Keep as Version". A comment written and deleted in between is not kept; to keep one, resolve it instead of deleting it.
 - They can be read from git too (for example `git show <version>:definitions/<id>/_comments.json`).
 
-## nixpkgs
+## Nix source pins
 
-A new project holds the nixpkgs of the Tsugumi that made it (`flake.lock`) as a fixed value in `pkgsPath` of `tsugumi.json`. It is part of the version, so going back to an earlier version brings back its nixpkgs too. A project that is not pinned (`tsugumi:default`) can be pinned in the Workflow settings.
+A version includes `tsugumi.json` and `tsugumi.lock` for the root project and its externals. Checking out a version restores its declarations and exact source pins. An explicit lock update replaces one pin or updates all the declarations in the selected project. [Project Nix search path](features.md#project-nix-search-path)
 
 ## Demo histories
 

@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "hidden",
-      "type": "uint64",
-      "data": {
-        "uint64": 256
-      }
-    },
-    {
-      "name": "epochs",
-      "type": "uint64",
-      "data": {
-        "uint64": 15
-      }
-    },
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "data"

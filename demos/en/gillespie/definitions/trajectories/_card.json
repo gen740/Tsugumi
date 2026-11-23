@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "shown_runs",
-      "type": "uint64",
-      "data": {
-        "uint64": 8
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "settings"

@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "fdr",
-      "type": "double",
-      "data": {
-        "double": 0.05
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "deseq2"

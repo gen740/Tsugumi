@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "radius",
-      "type": "uint64",
-      "data": {
-        "uint64": 2
-      }
-    },
-    {
-      "name": "bits",
-      "type": "uint64",
-      "data": {
-        "uint64": 2048
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "molecules"

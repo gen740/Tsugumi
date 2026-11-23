@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "tariff",
-      "type": "string",
-      "data": {
-        "string": "spot"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "scenario"

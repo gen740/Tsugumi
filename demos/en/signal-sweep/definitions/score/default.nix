@@ -1,8 +1,4 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 let
   thresholds = [
     10

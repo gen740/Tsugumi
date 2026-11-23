@@ -2,4 +2,4 @@
 description: Pin the analysis tool CIAO with Nix
 ---
 
-Build the Chandra X-ray Center's analysis tool CIAO 4.18 with Nix, pinned by the hash of its source, and pass its store path and version to the next Card. The build happens only the first time; later runs use what is in the store as it is. The expression is read from https://github.com/gen740/ciao, pinned by commit and hash (nixSources of tsugumi.json). The Python modules, the ds9 integration and CALDB are not included.
+The project pins the CIAO source by commit and hash in `tsugumi.lock`. The Card imports `<ciao/src/package.nix>` with the project’s nixpkgs.

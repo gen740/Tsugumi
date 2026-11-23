@@ -1,8 +1,7 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+in
 {
   run = ''
     set -e

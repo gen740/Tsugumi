@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "transform",
-      "type": "string",
-      "data": {
-        "string": "km"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "fit"

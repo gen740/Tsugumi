@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "background_radius",
-      "type": "uint64",
-      "data": {
-        "uint64": 30
-      }
-    },
-    {
-      "name": "sigma",
-      "type": "double",
-      "data": {
-        "double": 1.5
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "scene"

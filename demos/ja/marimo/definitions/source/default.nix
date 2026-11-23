@@ -1,8 +1,4 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 {
   run = ''
     jq '{value: {source: .measurement}}' \

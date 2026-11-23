@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "stratify",
-      "type": "string",
-      "data": {
-        "string": "species"
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "penguins"

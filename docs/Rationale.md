@@ -90,7 +90,7 @@ Processing is split into small Cards so that people can understand the decisions
 
 In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
 
-Tsugumi passes Nix only the parameters marked `nix: true` (`params` of `default.nix`) and keeps run-time-only parameters out of the build inputs; the others reach the Card as its params buffer when it runs. `README.md` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
+`params.nix` groups parameters by when they are used. Effective `build` values reach `default.nix` and can change a derivation. Effective `run` values reach the Card's invocation buffer. Saving a run value in `_card.json` lets a person try a condition against the same build. The SDK generates the typed interface from the declarations, and Nix reuses derivations and store outputs.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
@@ -98,7 +98,7 @@ The layout on screen is kept apart from the computation's definition, too: a sav
 
 If a computation of a few lines split into a Card started the Nix evaluator or a language runtime every time, preparation would take longer than the computation.
 
-The Nix evaluator is built into `tsugumid`, and the evaluated state of nixpkgs and the daemon connection are reused across Cards and runs. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
+The Nix evaluator is built into `tsugumid`, and the daemon connection is reused and evaluation caches are scoped by system and locked sources. Every Code Card is a shared library, `lib/main.so`, called by a worker that loads it, whatever its language. By default each invocation gets a fresh worker, so that a Card keeps no hidden state, and the next worker is started and its library loaded ahead of time; a Card that sets `reuseWorker: true` keeps one resident worker, with its interpreter and module state, across invocations.
 
 A reused worker's state carries across runs; there is no run-start hook, so a Card that keeps state resets it from its inputs. On failure, cancellation, a deadline or a memory limit, the worker is ended. **The cost of starting is lowered, while computations that keep state, and when they initialise, stay explicit.**
 

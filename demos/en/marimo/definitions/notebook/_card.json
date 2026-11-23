@@ -1,35 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "notebook",
-      "type": "string",
-      "data": {
-        "string": "notebook.py"
-      }
-    },
-    {
-      "name": "bindings",
-      "type": "string",
-      "data": {
-        "string": "{\"source\":\"inputs.data.source\",\"factor\":\"param.factor\"}"
-      }
-    },
-    {
-      "name": "selected",
-      "type": "string",
-      "data": {
-        "string": "result"
-      }
-    },
-    {
-      "name": "factor",
-      "type": "double",
-      "data": {
-        "double": 2.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "data"

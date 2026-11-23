@@ -1,14 +1,17 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 let
-  sdk = inputs.tsugumi.sdk { languages = [ "cpp" ]; };
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
+  common = {
+    inherit inputs;
+    outputs = ./_outputs.fbs;
+    params = ./params.nix;
+  };
 in
 {
-  run = inputs.tsugumi.cppCard {
-    inherit sdk;
+  run = sdk.cppCard (common // {
     src = ./src;
-  };
+  });
+  api = sdk.cppApi common;
+  views = sdk.views;
 }

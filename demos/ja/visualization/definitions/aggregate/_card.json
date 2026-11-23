@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "offset",
-      "type": "double",
-      "data": {
-        "double": 0.0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "start"

@@ -1,26 +1,13 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "method",
-      "type": "string",
-      "data": {
-        "string": "DL"
-      }
-    },
-    {
-      "name": "exclude",
-      "type": "uint64[]",
-      "data": {
-        "uint64s": []
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "trials"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "pooled"
+  "artifactOutput": "pooled",
+  "params": {
+    "exclude": []
+  }
 }

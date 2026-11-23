@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "trees",
-      "type": "uint64",
-      "data": {
-        "uint64": 100
-      }
-    },
-    {
-      "name": "max_depth",
-      "type": "uint64",
-      "data": {
-        "uint64": 20
-      }
-    },
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 0
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "data"
