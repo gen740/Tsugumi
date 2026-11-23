@@ -21,6 +21,7 @@
 #include <algorithm>
 #include <atomic>
 #include <chrono>
+#include <condition_variable>
 #include <cstdlib>
 #include <cstring>
 #include <deque>
@@ -76,21 +77,31 @@ class DisplayChannel {
   explicit DisplayChannel(Fd&& descriptor)
       : socket_(std::move(descriptor)), thread_([this] { read(); }) {}
   ~DisplayChannel() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_all();
     ::shutdown(socket_.value, SHUT_RDWR);
-    join();
+    if (thread_.joinable()) thread_.join();
   }
 
-  auto take(bool finished) -> Batch {
-    // The supervisor has waited for the adapter, so EOF follows its final
-    // bytes even if the listener's reader has not caught up yet.
-    if (finished) join();
-    std::lock_guard lock(mutex_);
+  auto take(bool finished) -> std::pair<Batch, bool> {
+    std::unique_lock lock(mutex_);
+    if (finished)
+      ready_.wait(lock, [&] { return closed_ || !pending_.empty() || stopping_; });
     Batch batch;
-    batch.reserve(pending_.size());
-    for (auto& entry : pending_) batch.push_back(std::move(entry.value));
-    pending_.clear();
-    size_ = 0;
-    return batch;
+    if (!pending_.empty()) {
+      auto& next = pending_.front();
+      auto credit = queued_bytes_.find(next.value->view);
+      credit->second -= next.size;
+      if (credit->second == 0) queued_bytes_.erase(credit);
+      batch.push_back(std::move(next.value));
+      pending_.pop_front();
+      ready_.notify_all();
+    }
+    // A finished adapter can still have complete frames in the socket.
+    return {std::move(batch), !pending_.empty() || (finished && !closed_)};
   }
 
   auto expired() -> bool {
@@ -104,11 +115,6 @@ class DisplayChannel {
     size_t size;
   };
 
-  auto join() -> void {
-    std::lock_guard lock(join_mutex_);
-    if (thread_.joinable()) thread_.join();
-  }
-
   auto read() -> void {
     using Tsugumi::Worker::WorkerDisplay;
     try {
@@ -119,35 +125,34 @@ class DisplayChannel {
         if (!verifier.VerifyBuffer<WorkerDisplay>(nullptr)) continue;
         auto value = std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>(
             flatbuffers::GetRoot<WorkerDisplay>(frame->data())->UnPack());
-        std::lock_guard lock(mutex_);
-        const auto old =
-            std::ranges::find_if(pending_, [&](const Entry& entry) {
-              return entry.value->view == value->view;
-            });
-        if (old != pending_.end()) {
-          size_ -= old->size;
-          pending_.erase(old);
-        }
-        while (size_ + frame->size() > kRemoteDisplayBytes) {
-          size_ -= pending_.front().size;
-          pending_.pop_front();
-        }
-        size_ += frame->size();
-        pending_.push_back({std::move(value), frame->size()});
+        if (value->view.empty() || value->bytes.size() > TSUGUMI_MESSAGE_MAX)
+          continue;
+        const auto charge = message_cost(value->bytes.size());
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock, [&] {
+          return stopping_ || queued_bytes_[value->view] <=
+                                  kViewBudget - TSUGUMI_MESSAGE_MAX;
+        });
+        if (stopping_) break;
+        queued_bytes_[value->view] += charge;
+        pending_.push_back({std::move(value), charge});
+        ready_.notify_all();
       }
     } catch (const std::exception&) {
       ::shutdown(socket_.value, SHUT_RD);
     }
     std::lock_guard lock(mutex_);
     closed_ = std::chrono::steady_clock::now();
+    ready_.notify_all();
   }
 
   Fd socket_;
   std::mutex mutex_;
   std::deque<Entry> pending_;
-  size_t size_ = 0;
+  std::map<std::string, size_t> queued_bytes_;
+  bool stopping_ = false;
+  std::condition_variable ready_;
   std::optional<std::chrono::steady_clock::time_point> closed_;
-  std::mutex join_mutex_;
   std::thread thread_;
 };
 
@@ -400,8 +405,11 @@ class Daemon {
           }
         }
         const bool finished = status.state == R::JobState::Succeeded;
-        if (const auto channel = display_channel(*journal, q.job_id))
-          status.displays = channel->take(finished);
+        if (const auto channel = display_channel(*journal, q.job_id)) {
+          auto [messages, more] = channel->take(finished);
+          status.displays = std::move(messages);
+          status.display_pending = more;
+        }
         return reply(std::move(status));
       }
       case R::RequestBody::CancelRequest: {

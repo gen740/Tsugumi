@@ -14,6 +14,7 @@ struct RemoteInvocationResult {
   bool auxiliary_logs_truncated = false;
   BuildEnvironmentData environment;
   bool built = false;
+  std::vector<ArtifactKey> created;
 };
 
 // The prefix of a job's log (its size-prefixed entries) that the core already
@@ -35,7 +36,7 @@ auto stage_remote_archive(const RemoteJobClient& client,
 auto stage_remote_invocation(
     const RemoteJobClient& client, const std::string& service,
     const std::string& instance, const std::string& job_id,
-    const std::vector<std::filesystem::path>& file_roots,
+    std::vector<ArtifactGrant> grants,
     const std::string& archive_digest, const ExecutionRequest& request)
     -> std::string;
 auto import_remote_result(

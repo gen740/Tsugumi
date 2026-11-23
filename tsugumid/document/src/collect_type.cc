@@ -8,14 +8,14 @@ namespace {
 
 // Opaque envelopes, the Card ABI's own CardPort: the core never reflects or
 // rebuilds member types.
-constexpr const char* kCollectedSchema = R"(namespace Tsugumi.Data;
-enum PortKind : ubyte { unspecified = 0, Path = 1, FlatBuffer = 2 }
+constexpr const char* kCollectedSchema = R"(namespace tsugumi;
+struct ArtifactId { bytes:[ubyte:16]; }
 namespace Tsugumi.Card;
 table CardPort {
   name:string (id: 0, required);
-  kind:Tsugumi.Data.PortKind (id: 1);
+  schema:string (id: 1);
   bytes:[ubyte] (id: 2);
-  path:string (id: 3);
+  artifacts:[tsugumi.ArtifactId] (id: 3);
 }
 namespace tsugumi.builtin;
 table Collected {

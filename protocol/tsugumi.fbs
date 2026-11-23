@@ -455,7 +455,7 @@ table RewriteParamLiteralRequest {
   literal:string (id: 2, required);
   at_rev:uint64 = null (id: 3);
 }
-enum RunRecordCategory:ubyte { Unspecified, Logs, Values, Files }
+enum RunRecordCategory:ubyte { Unspecified, Logs, Values }
 
 /// -> RunCategoryDeleteResult. Delete one category from a finished run.
 table RunCategoryDeleteRequest {
@@ -464,9 +464,6 @@ table RunCategoryDeleteRequest {
   category:RunRecordCategory (id: 2);
 }
 
-/// -> RunFileReferences. Find runs that refer to a run's retained files.
-table RunFileReferencesRequest { run_id:string (id: 0, required); }
-table RunFileReferences { run_ids:[string] (id: 0); }
 
 table RunCategoryDeleteResult {
   run_id:string (id: 0, required);
@@ -583,7 +580,6 @@ table OutputTypesRequest {
   text:string (id: 0, required);
   port:string (id: 1);
   type_name:string (id: 2);
-  kind:Tsugumi.Data.PortKind (id: 3);
 }
 
 /// -> EvaluateNixResult. Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files.
@@ -817,6 +813,22 @@ table ViewSetVisibleRequest {
   enabled:bool = null (id: 2);
 }
 
+/// -> Ack. Send opaque bytes from an open view to its Card process.
+table ViewSendRequest {
+  card:Tsugumi.Data.CardPath (required);
+  view:string (required);
+  bytes:[ubyte] (required);
+}
+
+/// -> Ack. Return display capacity after the UI forwards or discards a message.
+table ViewCreditRequest {
+  subscription_id:string (required);
+  card:Tsugumi.Data.CardPath (required);
+  view:string (required);
+  bytes:uint32;
+  credit_id:uint64 = null;
+}
+
 // A client's viewport, carried by the core as one FlatBuffer.
 table ViewCamera {
   scope:[string];
@@ -913,8 +925,9 @@ union RequestPayload {
   VersionDiffRequest = 58,
   VersionCommentsRequest = 59,
   RunCategoryDeleteRequest = 60,
-  RunFileReferencesRequest = 61,
   CardViewReadRequest = 62,
+  ViewSendRequest = 63,
+  ViewCreditRequest = 64,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1247,12 +1260,9 @@ table ArtifactInfo {
   run_id:string (id: 1, required);
   card:Tsugumi.Data.CardPath (id: 2, required);
   invocation:uint64 = null (id: 3);
-  output:string (id: 4, required);
-  /// A directory artifact has one member per file; a file artifact has one
-  /// member, its name.
-  directory:bool (id: 5);
-  name:string (id: 6, required);
-  members:[ArtifactMember] (id: 7, required);
+  size_bytes:uint64 = null (id: 4);
+  tree_hash:string (id: 5);
+  members:[ArtifactMember] (id: 6, required);
 }
 
 table ArtifactPage {
@@ -1331,7 +1341,6 @@ union ReplyPayload {
   VersionDiff = 46,
   VersionComments = 47,
   RunCategoryDeleteResult = 48,
-  RunFileReferences = 49,
 }
 
 // ---- Notifications -----------------------------------------------------------
@@ -1378,11 +1387,6 @@ table CardViewsUpdated {
   failure:Tsugumi.Data.Failure (id: 2);
 }
 
-table DisplayRunStateChanged {
-  card:Tsugumi.Data.CardPath (id: 0, required);
-  run_id:string (id: 1, required);
-  state:Tsugumi.Data.DisplayRunState (id: 2);
-}
 
 /// An absent end_offset and unspecified stream indicate invocation log
 /// metadata changed without new stream bytes.
@@ -1403,7 +1407,6 @@ union NotificationPayload {
   TraceChanged:Tsugumi.Trace.TraceChanged = 5,
   RunCategoryDeleteResult = 6,
   CardViewsUpdated = 7,
-  DisplayRunStateChanged = 8,
 }
 
 // ---- Frame -------------------------------------------------------------------

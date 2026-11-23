@@ -199,7 +199,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       });
   auto spec =
       stage_remote_invocation(client_, target_, instance_, s.execution_job_id,
-                              service_.file_roots(), archive_digest, request);
+                              service_.artifact_grants(request.inputs), archive_digest, request);
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
@@ -235,7 +235,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       if (stop.stop_requested()) continue;
       more_log = live_log.accept(*reply);
       if (request.display)
-        for (const auto& display : reply->displays) request.display(display);
+        for (const auto& display : reply->displays) request.display(display, request.stop);
       s.execution_state = remote_execution_state(reply->state);
       if (request.transfer && !reply->transfer_name.empty())
         request.transfer("copy", reply->transfer_name, reply->transfer_done,
@@ -282,6 +282,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       // A stopped job keeps its workspace until release: collect the rest
       // of its log first. Each poll is a bounded exchange that advances the
       // cursor and stays interruptible as before.
+      if (reply->display_pending) continue;
       if (job.cancel_requested) {
         if (more_log) continue;
         output.failure =
@@ -306,6 +307,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
                 History::put_environment(db, s.run_id, result.environment);
           });
         }
+        service_.seal_artifacts(s, request.directory / "artifacts", result.created);
         output.outputs = std::move(result.outputs);
         output.auxiliary_logs = std::move(result.auxiliary_logs);
         output.auxiliary_logs_truncated = result.auxiliary_logs_truncated;
@@ -325,7 +327,7 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
       return output;
     }
     // A log behind the job's own continues without waiting.
-    if (more_log) continue;
+    if (more_log || (reply && reply->display_pending)) continue;
     // The worker protocol reports progress by polling. Stop interrupts the
     // interval and the exchange so Cancel can use a new connection immediately.
     std::unique_lock lock(wait_mutex);

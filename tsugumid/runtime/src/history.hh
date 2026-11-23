@@ -51,13 +51,12 @@ struct RemoteJobRecord {
 
 struct StoredValueMeta {
   std::string name;
-  PortKind kind;
   std::string bfbs;
   std::string root_type;
   uint64_t size_bytes = 0;
-  std::optional<std::string> artifact_id;
-  std::string hash;               // SHA-256 of the bytes, stored with the value
-  std::string file_content_hash;  // File digest or tree:<directory digest>
+  std::vector<std::pair<ArtifactKey, std::optional<uint64_t>>> artifacts;
+  std::string hash;  // SHA-256 of the recorded bytes
+
 };
 
 struct LogEnd {
@@ -250,10 +249,6 @@ class History {
 
   const std::filesystem::path& path() const { return path_; }
 
-  static auto file_referencing_runs(sql::Db& db, const std::string& run_id)
-      -> std::vector<std::string>;
-  static auto owns_recorded_file(sql::Db& db, const std::string& run_id,
-                                 const std::string& path) -> bool;
   static auto delete_category(sql::Db& db, const std::string& run_id,
                               Tsugumi::RPC::RunRecordCategory category) -> void;
 

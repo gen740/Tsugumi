@@ -211,7 +211,7 @@ auto job_state(const R::ReplyT& reply) -> RemoteJobState {
           j->log_size,
           std::string(j->log_bytes.begin(), j->log_bytes.end()),
           j->secrets_wanted,
-          std::move(displays)};
+          std::move(displays), j->display_pending};
 }
 auto require_ack(const R::ReplyT& reply) -> void {
   if (!reply.body.AsAck())

@@ -1,5 +1,9 @@
 #include "server.hh"
 
+#include <algorithm>
+#include <condition_variable>
+
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
@@ -8,39 +12,22 @@ namespace D = Tsugumi::Data;
 
 namespace {
 
-auto display_note(const CardPath& card, const std::string& run, uint64_t epoch,
-                  std::string view, std::string bytes) -> Note {
+auto display_note(const CardPath& card, std::string view, std::string bytes,
+                  uint64_t credit) -> Note {
   Note note;
   note.kind = Note::Kind::Display;
   note.card_key = path_key(card);
-  note.coalesce_key = std::to_string(epoch) + "|" + view;
   note.approx_bytes = bytes.size() + view.size() + 1024;
   note.build = std::make_shared<const Note::Build>(
-      [card, run, view = std::move(view), bytes = std::move(bytes)](auto& b) {
+      [card, view = std::move(view), bytes = std::move(bytes), credit](auto& b) {
         const auto display = D::CreateDisplay(
             b, wire::path(b, card),
-            run.empty() ? flatbuffers::Offset<flatbuffers::String>{}
-                        : b.CreateString(run),
             b.CreateString(view),
             b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                           bytes.size()));
+                           bytes.size()), credit);
         return std::make_pair(R::NotificationPayload::DisplayUpdated,
                               R::CreateDisplayUpdated(b, display).Union());
       });
-  return note;
-}
-
-auto display_run_note(const CardPath& card, const std::string& run,
-                      D::DisplayRunState state) -> Note {
-  Note note;
-  note.kind = Note::Kind::DisplayRunState;
-  note.card_key = path_key(card);
-  note.build = std::make_shared<const Note::Build>([card, run, state](auto& b) {
-    const auto value = R::CreateDisplayRunStateChanged(
-        b, wire::path(b, card), b.CreateString(run), state);
-    return std::make_pair(R::NotificationPayload::DisplayRunStateChanged,
-                          value.Union());
-  });
   return note;
 }
 
@@ -65,17 +52,23 @@ struct Server::State : RequestSink {
     uint64_t seq = 1;
     std::set<std::string> visible;
     bool enabled = true;
-    // A fresh key space for each Card after a control message or visibility
-    // change. A newer frame cannot replace an older one across that boundary.
-    std::map<std::string, uint64_t> display_intervals;
-    uint64_t display_interval = 0;
   };
   RequestSink* sink;
   TransportServer transport;
   std::map<ConnId, std::shared_ptr<Subscription>> subscriptions;
-  std::string display_run;
-  uint64_t display_epoch = 0;
-  std::map<std::string, CardPath> participating_cards;
+  struct Credit {
+    size_t used = 0;
+    std::map<uint64_t, size_t> messages;
+  };
+  struct ViewTarget {
+    std::string id;
+    std::set<std::string> cards;
+    std::map<std::pair<std::string, std::string>, Credit> credits;
+  };
+  std::mutex relay_mutex;
+  std::condition_variable_any relay_ready;
+  std::map<ConnId, ViewTarget> targets;
+  uint64_t next_credit = 0;
   State(ServerOptions options, RequestSink* sink)
       : sink(sink), transport(std::move(options), this) {}
   auto hello(const RequestIn& in) -> std::pair<std::string, bool> override {
@@ -84,29 +77,18 @@ struct Server::State : RequestSink {
   void dispatch(RequestIn in) override { sink->dispatch(std::move(in)); }
   void disconnected(ConnId conn) override {
     subscriptions.erase(conn);
+    {
+      std::lock_guard lock(relay_mutex);
+      targets.erase(conn);
+    }
+    relay_ready.notify_all();
     sink->disconnected(conn);
   }
   void send(ConnId conn, const std::shared_ptr<Subscription>& sub, Note note) {
     PendingMessage pending;
-    switch (note.kind) {
-      case Note::Kind::CardViews:
-      case Note::Kind::DisplayRunState:
-        pending.trace = false;
-        sub->display_intervals[note.card_key] = ++sub->display_interval;
-        break;
-      case Note::Kind::Display: {
-        pending.trace = false;
-        auto [interval, inserted] = sub->display_intervals.try_emplace(
-            note.card_key, sub->display_interval + 1);
-        if (inserted) ++sub->display_interval;
-        pending.coalesce_key = "display|" + std::to_string(interval->second) +
-                               "|" + note.coalesce_key;
-        break;
-      }
-      default:
-        pending.coalesce_key = std::move(note.coalesce_key);
-        break;
-    }
+    pending.trace = note.kind != Note::Kind::CardViews &&
+                    note.kind != Note::Kind::Display;
+    pending.coalesce_key = std::move(note.coalesce_key);
     pending.group = sub->id;
     pending.approx_bytes = note.approx_bytes;
     pending.build = [sub, build = std::move(note.build)] {
@@ -131,7 +113,14 @@ Server::Server(ServerOptions options, RequestSink* sink)
     : state_(std::make_unique<State>(std::move(options), sink)) {}
 Server::~Server() { stop(); }
 void Server::start() { state_->transport.start(); }
-void Server::stop() { state_->transport.stop(); }
+void Server::stop() {
+  state_->transport.stop();
+  {
+    std::lock_guard lock(state_->relay_mutex);
+    state_->targets.clear();
+  }
+  state_->relay_ready.notify_all();
+}
 int Server::bound_tcp_port() const {
   return state_->transport.bound_tcp_port();
 }
@@ -145,6 +134,11 @@ void Server::subscribe(ConnId conn, std::string id, std::string reply) {
     state_->transport.clear_notes(conn);
     auto sub = std::make_shared<State::Subscription>();
     sub->id = std::move(id);
+    {
+      std::lock_guard lock(state_->relay_mutex);
+      state_->targets[conn] = State::ViewTarget{sub->id, {}, {}};
+    }
+    state_->relay_ready.notify_all();
     state_->subscriptions[conn] = std::move(sub);
     state_->transport.send(conn, std::move(reply));
   });
@@ -165,22 +159,20 @@ void Server::set_visible(ConnId conn, std::string id,
         const bool was_enabled = sub->enabled;
         sub->visible = std::move(cards);
         sub->enabled = enabled;
-        std::erase_if(sub->display_intervals, [&](const auto& item) {
-          return !enabled || !sub->visible.contains(item.first);
-        });
+        {
+          std::lock_guard lock(state_->relay_mutex);
+          auto& target = state_->targets.at(conn);
+          target.cards = enabled ? sub->visible : std::set<std::string>{};
+          std::erase_if(target.credits, [&](const auto& entry) {
+            return !target.cards.contains(entry.first.first);
+          });
+        }
+        state_->relay_ready.notify_all();
         if (!enabled) return;
         for (auto& note : initial)
           if (sub->visible.contains(note.card_key) &&
               (!was_enabled || !previous.contains(note.card_key)))
             state_->send(conn, sub, std::move(note));
-        for (const auto& card : sub->visible) {
-          if (was_enabled && previous.contains(card)) continue;
-          const auto active = state_->participating_cards.find(card);
-          if (active != state_->participating_cards.end())
-            state_->send(conn, sub,
-                         display_run_note(active->second, state_->display_run,
-                                          D::DisplayRunState::started));
-        }
       });
 }
 
@@ -190,40 +182,70 @@ void Server::broadcast(Note note) {
 }
 
 auto Server::display(const CardPath& card, std::string_view view,
-                     std::string_view bytes) -> void {
-  state_->transport.ordered([this, card, view = std::string(view),
-                             bytes = std::string(bytes)]() mutable {
-    state_->broadcast(display_note(card, state_->display_run,
-                                   state_->display_epoch, std::move(view),
-                                   std::move(bytes)));
-  });
+                     std::string_view bytes, std::stop_token stop) -> void {
+  if (bytes.size() > TSUGUMI_MESSAGE_MAX || view.empty()) return;
+  const auto key = std::make_pair(path_key(card), std::string(view));
+  ConnId conn = 0;
+  std::string subscription;
+  uint64_t id = 0;
+  {
+    std::unique_lock lock(state_->relay_mutex);
+    const auto listener = [&] {
+      return std::ranges::find_if(state_->targets, [&](const auto& item) {
+        return item.second.cards.contains(key.first);
+      });
+    };
+    if (!state_->relay_ready.wait(lock, stop, [&] {
+          const auto target = listener();
+          if (target == state_->targets.end()) return true;
+          const auto credit = target->second.credits.find(key);
+          return credit == target->second.credits.end() ||
+                 credit->second.used <= workerd::kViewBudget - TSUGUMI_MESSAGE_MAX;
+        }) || stop.stop_requested())
+      return;
+    const auto target = listener();
+    if (target == state_->targets.end()) return;  // no receiver
+    conn = target->first;
+    subscription = target->second.id;
+    auto& credit = target->second.credits[key];
+    const auto charge = workerd::message_cost(bytes.size());
+    id = ++state_->next_credit;
+    credit.used += charge;
+    credit.messages.emplace(id, charge);
+    // Order posting with admission, even when several invocations send to one view.
+    state_->transport.ordered(conn, [this, conn, subscription, key, id,
+                                     note = display_note(card, key.second,
+                                                         std::string(bytes), id)] {
+      const auto target = state_->subscriptions.find(conn);
+      if (target == state_->subscriptions.end() || target->second->id != subscription ||
+          !target->second->visible.contains(key.first))
+        return;
+      {
+        std::lock_guard check(state_->relay_mutex);
+        const auto& credits = state_->targets.at(conn).credits;
+        const auto slot = credits.find(key);
+        if (slot == credits.end() || !slot->second.messages.contains(id)) return;
+      }
+      state_->send(conn, target->second, note);
+    });
+  }
 }
 
-auto Server::begin_display_run(std::string run) -> void {
-  state_->transport.ordered([this, run = std::move(run)] {
-    state_->display_run = run;
-    ++state_->display_epoch;
-  });
-}
-
-auto Server::start_display_run(const CardPath& card, const std::string& run)
-    -> void {
-  state_->transport.ordered([this, card, run] {
-    if (run != state_->display_run) return;
-    if (state_->participating_cards.try_emplace(path_key(card), card).second)
-      state_->broadcast(
-          display_run_note(card, run, D::DisplayRunState::started));
-  });
-}
-
-auto Server::end_display_run(const std::string& run) -> void {
-  state_->transport.ordered([this, run] {
-    if (run != state_->display_run) return;
-    for (const auto& [key, card] : state_->participating_cards)
-      state_->broadcast(display_run_note(card, run, D::DisplayRunState::ended));
-    state_->participating_cards.clear();
-    state_->display_run.clear();
-    ++state_->display_epoch;
-  });
+auto Server::return_view_credit(ConnId conn, const std::string& subscription,
+                                 const CardPath& card, const std::string& view,
+                                 uint64_t id, size_t bytes) -> void {
+  std::lock_guard lock(state_->relay_mutex);
+  const auto target = state_->targets.find(conn);
+  if (target == state_->targets.end() || target->second.id != subscription) return;
+  const auto credit = target->second.credits.find({path_key(card), view});
+  if (credit == target->second.credits.end()) return;
+  const auto message = credit->second.messages.find(id);
+  if (message == credit->second.messages.end() ||
+      message->second != workerd::message_cost(bytes))
+    return;
+  credit->second.used -= message->second;
+  credit->second.messages.erase(message);
+  if (credit->second.messages.empty()) target->second.credits.erase(credit);
+  state_->relay_ready.notify_all();
 }
 }  // namespace tsugumi

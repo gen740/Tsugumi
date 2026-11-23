@@ -194,23 +194,12 @@ def decode_value(value, folder):
     name = value["name"]
     data = bytes(value.get("inline_bytes", []))
     if not data:
-        return None
+        artifacts = value.get("artifacts", [])
+        return {"artifacts": artifacts} if artifacts else None
     raw = folder / f"{name}.bin"
     raw.write_bytes(data)
     entry = {"bytes": f"{name}.bin"}
-    if value.get("kind") in ("File", "Directory"):
-        # The content itself, from where the core keeps it.
-        kept = value.get("file_path")
-        if kept and os.path.exists(kept):
-            target = folder / name / os.path.basename(kept.rstrip("/"))
-            target.parent.mkdir(parents=True, exist_ok=True)
-            if os.path.isdir(kept):
-                shutil.copytree(kept, target, symlinks=True)
-            else:
-                shutil.copyfile(kept, target)
-            entry["file"] = str(target.relative_to(folder))
-        else:
-            entry["file_missing"] = True
+    entry["artifacts"] = value.get("artifacts", [])
     schema = folder / f".{name}.bfbs"
     schema.write_bytes(bytes(value.get("schema_bfbs", [])))
     result = subprocess.run(
@@ -223,12 +212,6 @@ def decode_value(value, folder):
         entry["decode_error"] = result.stderr.strip()
     else:
         entry["json"] = f"{name}.json"
-        if "file" in entry:
-            # The path inside the guest means nothing outside it: name the copy.
-            decoded = json.loads(produced.read_text())
-            if isinstance(decoded, dict) and isinstance(decoded.get("value"), str):
-                decoded["value"] = entry["file"]
-                produced.write_text(json.dumps(decoded, indent=2, ensure_ascii=False) + "\n")
     return entry
 
 
@@ -242,6 +225,44 @@ def read_log(rpc, run_id, card, invocation, stream):
         if not part.get("text") or following is None or following <= offset or following >= part.get("size_bytes", 0):
             return text
         offset = following
+
+
+def export_artifacts(rpc, run_id, result):
+    cursor = None
+    while True:
+        request = {"run_id": run_id}
+        if cursor:
+            request["cursor"] = cursor
+        page = rpc.call("ArtifactListRequest", request)
+        for artifact in page.get("artifacts", []):
+            artifact_id = artifact["artifact_id"]
+            if len(artifact_id) != 32 or any(c not in "0123456789abcdef" for c in artifact_id):
+                raise ValueError("malformed artifact id")
+            root = result / "artifacts" / artifact_id
+            root.mkdir(parents=True, exist_ok=True)
+            for member in artifact.get("members", []):
+                relative = Path(member["path"])
+                if relative.is_absolute() or ".." in relative.parts:
+                    raise ValueError("artifact member escapes the export directory")
+                target = root / relative
+                target.parent.mkdir(parents=True, exist_ok=True)
+                with target.open("wb") as output:
+                    offset = 0
+                    while True:
+                        part = rpc.call("ArtifactReadRequest", {
+                            "artifact_id": artifact_id, "member": relative.as_posix(),
+                            "offset": offset, "limit_bytes": 1 << 20,
+                        })
+                        output.write(bytes(part.get("bytes", [])))
+                        if part.get("eof"):
+                            break
+                        next_offset = part.get("next_offset")
+                        if next_offset is None or next_offset <= offset:
+                            raise ValueError("artifact read did not advance")
+                        offset = next_offset
+        cursor = page.get("next_cursor")
+        if not cursor:
+            return
 
 
 def collect(rpc, run_id, result, wired):
@@ -330,6 +351,7 @@ def main():
         if status.get("failure"):
             summary["failure"] = status["failure"]
         stage("results")
+        export_artifacts(rpc, run_id, result)
         summary["cards"] = collect(rpc, run_id, result, wired_outputs(project))
         summary["results"] = [{"card": c["card"], "invocation": c["invocation"], "port": port,
                                **{k: f"{c['folder']}/{v}" for k, v in value.items() if k in ("json", "file")}}

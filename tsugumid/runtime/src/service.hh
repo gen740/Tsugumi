@@ -23,6 +23,7 @@
 #include "store.hh"
 #include "tsugumi/rpc/lanes.hh"
 #include "tsugumi/util/json.hh"
+#include "tsugumi/workerd/worker_proc.hh"
 #include "versions.hh"
 #include "wire.hh"
 
@@ -112,13 +113,15 @@ class Service : public RequestSink {
   auto run_scratch() const -> const std::filesystem::path& {
     return run_scratch_;
   }
-  auto file_roots() const -> std::vector<std::filesystem::path>;
-  auto keep_file_value(const Value& value,
-                       const std::filesystem::path& directory,
-                       const std::atomic<bool>& stop,
-                       const std::function<void(std::string_view, uint64_t,
-                                                uint64_t)>& progress = {})
-      -> Value;
+  auto set_view_receiver(const CardPath& card,
+                         std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void;
+  auto artifact_grants(std::span<const Value> inputs) -> std::vector<ArtifactGrant>;
+  auto seal_artifacts(const InvocationSummaryData& invocation,
+                      const std::filesystem::path& staging,
+                      std::span<const ArtifactKey> ids) -> void;
+  auto register_store_artifact(const std::string& run, const CardPath& card,
+                               uint64_t invocation, const ArtifactKey& id,
+                               const std::filesystem::path& store_path) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
   auto invalidate_resident(const std::string& card) -> void;
@@ -180,7 +183,6 @@ class Service : public RequestSink {
   void scratch_delete(RequestIn& req);
   void history_delete(RequestIn& req);
   void history_category_delete(RequestIn& req);
-  void history_file_references(RequestIn& req);
   void run(RequestIn& req);
   void version_init(RequestIn& req);
   void version_mark(RequestIn& req);
@@ -222,6 +224,8 @@ class Service : public RequestSink {
   void artifact_read(RequestIn& req);
   void log_range(RequestIn& req);
   void view_set_visible(RequestIn& req);
+  void view_send(RequestIn& req);
+  void view_credit(RequestIn& req);
   void card_view_read(RequestIn& req);
   void view_save(RequestIn& req);
 
@@ -259,10 +263,8 @@ class Service : public RequestSink {
   std::unique_ptr<Store> store_;
   std::unique_ptr<History> history_;
   std::unique_ptr<Versions> versions_;
-  // Artifact files whose content was checked against their hash, by path:
-  // (size, modification time) when checked. Later pages read their range only.
-  std::mutex verified_mu_;
-  std::map<std::string, std::pair<uint64_t, int64_t>> verified_;
+  std::mutex view_routes_mu_;
+  std::map<std::string, std::vector<std::weak_ptr<WorkerProc::ViewReceiver>>> view_routes_;
   std::mutex view_files_mu_;
   std::map<std::string, std::vector<DeclaredView>> view_files_;  // path_key
   std::unique_ptr<NixRunner> nix_;

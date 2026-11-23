@@ -49,6 +49,7 @@ struct RemoteJobState {
   // The running job waits for its Card secrets (JobSecretsRequest).
   bool secrets_wanted = false;
   std::vector<WorkerDisplayData> displays = {};
+  bool display_pending = false;
 };
 
 struct RemoteProbe {

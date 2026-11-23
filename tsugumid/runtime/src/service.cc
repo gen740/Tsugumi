@@ -25,6 +25,7 @@
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_facts.hh"
 #include "worker_selection.hh"
@@ -275,8 +276,7 @@ void Service::open() {
   versions_ = std::make_unique<Versions>(opts_.root);
 
   substituters_ = configured_substituters(opts_.substituters_file);
-  for (const char* d : {"runs", "inputs"})
-    stdfs::create_directories(store_->state_dir() / d);
+  stdfs::create_directories(store_->state_dir() / "runs");
   run_scratch_ = disk_scratch_path(opts_.run_scratch_dir.empty()
                                        ? default_run_scratch(opts_.root)
                                        : opts_.run_scratch_dir);
@@ -299,55 +299,6 @@ void Service::open() {
       cache_usage_ = std::make_unique<CacheUsage>(opts_.usage_roots_dir,
                                                   opts_.usage_scratch_dir);
   }
-}
-
-auto Service::file_roots() const -> std::vector<stdfs::path> {
-  return {store_->state_dir() / "runs", store_->state_dir() / "inputs",
-          run_scratch_ / "runs"};
-}
-
-auto Service::keep_file_value(
-    const Value& value, const stdfs::path& directory,
-    const std::atomic<bool>& stop,
-    const std::function<void(std::string_view, uint64_t, uint64_t)>& progress)
-    -> Value {
-  if (value.kind == PortKind::FlatBuffer) return value;
-  if (value.path.empty())
-    throw Failed(FailureKind::output_invalid, "Path value has no path");
-  for (const auto& root : file_roots()) {
-    const auto rel =
-        stdfs::path(value.path).lexically_normal().lexically_relative(root);
-    if (!fs::valid_relative_path(rel.generic_string())) continue;
-    const auto check = [&] {
-      if (stop.load())
-        throw Failed(FailureKind::cancelled,
-                     "keeping file value was cancelled");
-    };
-    const auto destination = directory / rel.filename();
-    const auto copy = [&](const stdfs::path& from, const stdfs::path& to) {
-      check();
-      const auto total = stdfs::file_size(root / from);
-      uint64_t done = 0;
-      if (progress) progress(from.generic_string(), 0, total);
-      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
-        check();
-        done += chunk.size();
-        if (progress) progress(from.generic_string(), done, total);
-      });
-    };
-    try {
-      fs::copy_path_beneath(root, rel, destination, copy);
-    } catch (const fs::Error& error) {
-      throw Failed(FailureKind::output_invalid,
-                   std::string("kept path: ") + error.what());
-    }
-    check();
-    auto kept = value;
-    kept.path = destination.string();
-    return kept;
-  }
-  throw Failed(FailureKind::output_invalid,
-               "Path value is outside the run's folders: " + value.path);
 }
 
 auto Service::invalidate_resident(const std::string& card) -> void {
@@ -727,7 +678,6 @@ std::vector<std::string> Service::capabilities() {
                                    "RunScratchDelete",
                                    "RunHistoryDelete",
                                    "RunCategoryDelete",
-                                   "RunFileReferences",
                                    "OperationGet",
                                    "ProjectFileList",
                                    "ProjectFileStat",
@@ -752,6 +702,8 @@ std::vector<std::string> Service::capabilities() {
                                    "ArtifactRead",
                                    "LogRange",
                                    "ViewSetVisible",
+                                   "ViewSend",
+                                   "ViewCredit",
                                    "ViewSave",
                                    "CardViewRead",
                                    "NixPathLockSource",
@@ -954,8 +906,6 @@ void Service::dispatch(RequestIn req) {
       return on_lane(m, std::move(req), &Service::scratch_delete);
     case P::RunCategoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_category_delete);
-    case P::RunFileReferencesRequest:
-      return on_lane(r, std::move(req), &Service::history_file_references);
     case P::RunHistoryDeleteRequest:
       return on_lane(m, std::move(req), &Service::history_delete);
     case P::RunRequest:
@@ -1031,6 +981,10 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::artifact_read);
     case P::LogRangeRequest:
       return on_lane(r, std::move(req), &Service::log_range);
+    case P::ViewSendRequest:
+      return on_lane(r, std::move(req), &Service::view_send);
+    case P::ViewCreditRequest:
+      return on_lane(r, std::move(req), &Service::view_credit);
     case P::ViewSetVisibleRequest:
       return on_lane(r, std::move(req), &Service::view_set_visible);
     case P::ViewSaveRequest:
@@ -2201,8 +2155,7 @@ void Service::history_category_delete(RequestIn& req) {
     if (!crypto::is_run_id(run_id))
       throw Failed(FailureKind::invalid_request, "invalid run id");
     if (category != R::RunRecordCategory::Logs &&
-        category != R::RunRecordCategory::Values &&
-        category != R::RunRecordCategory::Files)
+        category != R::RunRecordCategory::Values)
       throw Failed(FailureKind::invalid_request, "invalid run record category");
     if (scheduler_->active_status() || history_->read(History::has_remote_jobs))
       throw Failed(FailureKind::busy,
@@ -2213,16 +2166,7 @@ void Service::history_category_delete(RequestIn& req) {
     if (!run) throw Failed(FailureKind::not_found, "unknown run");
     if (!run->status.terminal())
       throw Failed(FailureKind::busy, "the run has not finished");
-    if (category == R::RunRecordCategory::Files) {
-      const auto runs = store_->state_dir() / "runs";
-      const auto dir = runs / run_id;
-      // Unlink owned files first. A partial filesystem failure leaves the
-      // indexes in place, and a new operation can retry the same removal.
-      if (stdfs::is_symlink(runs) || stdfs::is_symlink(dir))
-        throw Failed(FailureKind::invalid_path, "run history is a symbolic link");
-      for (const auto* name : {"values", "artifacts"})
-        stdfs::remove_all(dir / name);
-    }
+    // TODO(open): decide whether artifacts have a separate recording category.
     FBB b;
     const auto result = R::CreateRunCategoryDeleteResult(
         b, b.CreateString(run_id), category);
@@ -2249,22 +2193,6 @@ void Service::history_category_delete(RequestIn& req) {
     store_failure_receipt(op_id, kind, digest, failure);
     throw Failed(failure);
   }
-}
-
-void Service::history_file_references(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_RunFileReferencesRequest();
-  const auto id = r->run_id()->str();
-  if (!crypto::is_run_id(id))
-    throw Failed(FailureKind::invalid_request, "invalid run id");
-  const auto refs = history_->read([&](sql::Db& db) {
-    if (!History::run(db, id))
-      throw Failed(FailureKind::not_found, "unknown run");
-    return History::file_referencing_runs(db, id);
-  });
-  FBB b;
-  auto result = R::CreateRunFileReferences(b, b.CreateVectorOfStrings(refs));
-  reply(req, wire::reply(b, req.request_id,
-                        R::ReplyPayload::RunFileReferences, result.Union()));
 }
 
 void Service::history_delete(RequestIn& req) {
@@ -2304,20 +2232,23 @@ void Service::history_delete(RequestIn& req) {
     const auto scratch_after = fs::directory_size(run_scratch_ / "runs");
     files +=
         scratch_before > scratch_after ? scratch_before - scratch_after : 0;
-    // The runs' kept files: recorded values and declared artifacts.
     for (const auto& id : ids) {
       if (!crypto::is_run_id(id))
         continue;  // a run id from a copy names no folder of ours
-      auto dir = store_->state_dir() / "runs" / id;
-      std::error_code ec;
-      if (!stdfs::is_directory(dir, ec)) continue;
-      for (auto it = stdfs::recursive_directory_iterator(dir, ec);
-           !ec && it != stdfs::recursive_directory_iterator(); it.increment(ec))
-        if (it->is_regular_file(ec)) files += it->file_size(ec);
-      stdfs::remove_all(dir, ec);
-      if (ec)
-        log::warn("history: cannot remove " + dir.string() + ": " +
-                  ec.message());
+      const auto artifacts = store_->state_dir() / "artifacts";
+      const auto dir = artifacts / id;
+      if (stdfs::is_symlink(artifacts) || stdfs::is_symlink(dir))
+        throw Failed(FailureKind::invalid_path, "artifact storage is a symbolic link");
+      if (stdfs::is_directory(dir)) {
+        files += fs::directory_size(dir);
+        // Sealed directories need owner write permission to unlink members.
+        for (const auto& entry : stdfs::recursive_directory_iterator(dir))
+          if (stdfs::is_directory(entry.symlink_status()))
+            stdfs::permissions(entry.path(), stdfs::perms::owner_write,
+                               stdfs::perm_options::add);
+        stdfs::remove_all(dir);
+      }
+      stdfs::remove_all(store_->state_dir() / "runs" / id);
     }
     uint64_t after = sizes();
     FBB b;
@@ -2736,8 +2667,6 @@ void Service::output_types(RequestIn& req) {
   if (bfbs && r->port() && r->type_name()) {
     changed = types::set_catalog_port(
         text, r->port()->str(), r->type_name()->str(),
-        r->kind() == D::PortKind::unspecified ? D::PortKind::FlatBuffer
-                                              : r->kind(),
         &err);
     if (changed) bfbs = types::schema_bfbs(*changed, &root, &err);
   }
@@ -2905,6 +2834,73 @@ auto Service::refresh_card_views(DocumentPtr doc) -> void {
       });
     });
   }
+}
+
+auto Service::set_view_receiver(
+    const CardPath& card, std::weak_ptr<WorkerProc::ViewReceiver> receiver) -> void {
+  std::lock_guard lock(view_routes_mu_);
+  auto& routes = view_routes_[path_key(card)];
+  std::erase_if(routes, [](const auto& route) { return route.expired(); });
+  const auto current = receiver.lock();
+  if (std::ranges::none_of(routes, [&](const auto& route) {
+        return route.lock() == current;
+      }))
+    routes.push_back(std::move(receiver));
+}
+
+void Service::view_send(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewSendRequest();
+  const auto card = wire::card_arg(r->card());
+  const auto key = path_key(card);
+  const auto name = r->view()->str();
+  const auto* bytes = r->bytes();
+  if (bytes->size() > TSUGUMI_MESSAGE_MAX || name.empty())
+    throw Failed(FailureKind::invalid_request, "invalid view message");
+  {
+    std::lock_guard lock(subs_mu_);
+    const auto visible = visible_cards_.find(req.conn);
+    if (ui_owner_ != req.conn || visible == visible_cards_.end() ||
+        !visible->second.contains(key))
+      throw Failed(FailureKind::permission_denied, "the view is not open");
+  }
+  {
+    std::lock_guard lock(view_files_mu_);
+    const auto views = view_files_.find(key);
+    if (views == view_files_.end() ||
+        std::ranges::count(views->second, name, &DeclaredView::name) != 1)
+      throw Failed(FailureKind::invalid_request, "unknown or duplicate view name");
+  }
+  std::shared_ptr<WorkerProc::ViewReceiver> receiver;
+  {
+    std::lock_guard lock(view_routes_mu_);
+    if (const auto routes = view_routes_.find(key); routes != view_routes_.end())
+      for (const auto& route : routes->second) {
+        if (auto active = route.lock()) {
+          if (receiver)
+            throw Failed(FailureKind::busy, "several processes are running this Card");
+          receiver = std::move(active);
+        }
+      }
+  }
+  if (!receiver)
+    throw Failed(FailureKind::not_found, "no Card process is listening");
+  if (!receiver->send({name, std::string(bytes->begin(), bytes->end())}))
+    throw Failed(FailureKind::busy, "the Card cannot accept a view message");
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
+}
+
+void Service::view_credit(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_ViewCreditRequest();
+  if (!r->credit_id() || r->bytes() > TSUGUMI_MESSAGE_MAX)
+    throw Failed(FailureKind::invalid_request, "invalid view credit");
+  server_->return_view_credit(req.conn, r->subscription_id()->str(),
+                              wire::card_arg(r->card()), r->view()->str(),
+                              *r->credit_id(), r->bytes());
+  FBB b;
+  const auto ack = R::CreateAck(b);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::Ack, ack.Union()));
 }
 
 void Service::view_set_visible(RequestIn& req) {

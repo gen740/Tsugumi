@@ -54,7 +54,6 @@ table Project {
   agentExclude:[string];
   recordLogs:bool = null;
   recordIO:bool = null;
-  retainArtifact:bool = null;
   logLimitBytes:ulong = null;
   outputLimitBytes:ulong = null;
   outputLimitEntries:ulong = null;
