@@ -1875,10 +1875,8 @@ export class ProjectSession extends Observable {
     })).catch(e => this.cardEditFailed(e))
   }
 
-  /** Mutates the value inside the caller's transaction, without an autosave. */
-  async setParam(k: CardKey, name: string, value: J, expectedRev: bigint) {
-    const type = this.resolution.get(k)?.parameters?.find(p => p.name === name)?.type ?? ''
-    const edit = new H.ProjectRewriteParamLiteralT(cardPath(path(k)), name, parameterLiteral(value, type), expectedRev)
+  async setParam(k: CardKey, name: string, literal: string, expectedRev: bigint) {
+    const edit = new H.ProjectRewriteParamLiteralT(cardPath(path(k)), name, literal, expectedRev)
     return (await this.operate(H.ProjectOperationBody.ProjectRewriteParamLiteral, edit)).rev ?? this.rev
   }
 
@@ -2269,9 +2267,7 @@ export class ProjectSession extends Observable {
   /** Scalar parameters editable on Input Cards. */
   inlineParams(k: CardKey): ParamData[] {
     if (this.kind(k) !== 'input') return []
-    const sweeps = get(this.cardDefinition(k), 'sweeps')
-    return (this.resolution.get(k)?.parameters ?? []).filter(p =>
-      !p.type.startsWith('[') && get(sweeps, p.name) === undefined)
+    return (this.resolution.get(k)?.parameters ?? []).filter(p => !p.type.startsWith('['))
       .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
   }
 
@@ -2590,15 +2586,16 @@ export function formatBytes(n: number | bigint | null | undefined): string {
 
 /** Integers keep their exact decimal spelling (64 bit safe); the core
  *  validates types and ranges and reports what it rejects. */
-export function parseParam(text: string, type: string): J {
-  return type === 'string' ? text : tryParse(text) ?? text
+export function parameterInputLiteral(text: string, type: string): string {
+  if (type.startsWith('[')) return text
+  return parameterLiteral(type === 'string' ? text : tryParse(text) ?? text, type)
 }
 
-export const paramText = (v: J | undefined): string => {
+export const paramText = (v: J | undefined, type = ''): string => {
+  if (Array.isArray(v)) return parameterLiteral(v, type)
   if (typeof v === 'string') return v
   const n = numText(v)
   if (n !== undefined) return n
   if (typeof v === 'boolean') return v ? 'true' : 'false'
-  if (Array.isArray(v)) return serialize(v, false)
   return ''
 }

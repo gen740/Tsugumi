@@ -15,7 +15,7 @@ import { NEW_PORT, Pt, Rect, snapToGrid } from '../model/canvasKit'
 import { useObserve } from '../model/observable'
 import { CANVAS_ONLY, prefs, ShortcutAction } from '../model/prefs'
 import {
-  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parseParam, path, portTypeName, ProjectSession,
+  CardKey, DefinitionTemplate, key, KIND_ICON, KIND_LABEL, NOTE_COLORS, parameterInputLiteral, path, portTypeName, ProjectSession,
 } from '../model/session'
 import { Workspace, WorkflowTab } from '../model/workspace'
 import { arr, clone, dbl, get, J, JObj, obj, real, str } from '../../shared/json'
@@ -259,7 +259,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
     if (!session.isEditable) return false
     const parameter = session.resolution.get(k)?.parameters?.find(p => p.name === name)
     if (!parameter) return false
-    return edit.commitParam(session, k, name, parseParam(text, parameter.type), overwrite)
+    return edit.commitParam(session, k, name, parameterInputLiteral(text, parameter.type), overwrite)
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {

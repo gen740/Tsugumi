@@ -213,9 +213,9 @@ import TsugumiTestSupport
       if body.expectedRev != session.rev { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
       return self.result(unchanged(request.opId))
     }
-    #expect(await edit.commitParam(session, card: "a", name: "value", value: .number("3"), overwrite: false) == false)
+    #expect(await edit.commitParam(session, card: "a", name: "value", literal: "3", overwrite: false) == false)
     #expect(edit.revision.conflictRev == 1 && edit.revision.error == nil)
-    #expect(await edit.commitParam(session, card: "a", name: "value", value: .number("3"), overwrite: true))
+    #expect(await edit.commitParam(session, card: "a", name: "value", literal: "3", overwrite: true))
     #expect(guards == [0, 1])
     var draftBases: [String] = []
     session.operateProject = { request in
@@ -233,6 +233,31 @@ import TsugumiTestSupport
     #expect(session.inlineDraft?.revision.conflictRev != nil && session.inlineDraft?.content == "mine")
     _ = await session.finishDraftEdit(overwrite: true)
     #expect(session.inlineDraft == nil && draftBases == ["before", "agent"])
+  }
+
+  @Test func parameterListSavesAsANixLiteral() async throws {
+    let (session, dir) = try session()
+    defer { try? FileManager.default.removeItem(at: dir) }
+    let resolved = Tsugumi_RPC_CardParameterT()
+    resolved.name = "values"; resolved.type = "[float]"; resolved.valueJson = "[1,-2.5]"
+    let parameter = try #require(CardParameter(resolved))
+    let displayed = parameterText(parameter.effectiveValue, type: parameter.type)
+    #expect(displayed == "[ 1.0 (-2.5) ]")
+    let draft = "[ 2.0 (-3.5) 4.0 ]"
+    var calls = 0
+    session.operateProject = { request in
+      calls += 1
+      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectRewriteParamLiteralT)
+      #expect(body.card.segments == ["a"])
+      #expect(body.name == parameter.name && body.literal == draft)
+      #expect(body.expectedRev == session.rev)
+      return self.result(self.delta(session.rev, request.opId, "old"))
+    }
+    let edit = InlineParamEdit()
+    edit.begin(displayed, rev: session.rev)
+    let literal = parameterInputLiteral(draft, parameter.type)
+    #expect(await edit.commitParam(session, card: "a", name: parameter.name, literal: literal, overwrite: false))
+    #expect(calls == 1)
   }
 
   @Test func rapidHistoryAndOrdinaryEditsKeepQueueOrder() async throws {
@@ -352,9 +377,9 @@ import TsugumiTestSupport
         if echoFirst { session.applyDelta(d) }
         return self.result(d)
       }
-      try await session.setParam("sub/a", "value", .number("2"), expectedRev: session.rev)
+      try await session.setParam("sub/a", "value", "2", expectedRev: session.rev)
       #expect(session.resolution["sub/a"]?.parameters.first?.effectiveValue == .number("2"))
-      try await session.setParam("sub/a", "value", .number("3"), expectedRev: session.rev)
+      try await session.setParam("sub/a", "value", "3", expectedRev: session.rev)
       #expect(calls == 2 && session.saveError == nil)
       #expect(session.resolution["sub/a"]?.parameters.first?.effectiveValue == .number("3"))
     }
@@ -565,7 +590,7 @@ extension ProjectOperationTests {
       }
       func save(_ overwrite: Bool) async -> Bool {
         if draft { _ = await s.finishDraftEdit(overwrite: overwrite); return s.inlineDraft == nil }
-        return await edit.commitParam(s, card: "a", name: "value", value: .number("3"), overwrite: overwrite)
+        return await edit.commitParam(s, card: "a", name: "value", literal: "3", overwrite: overwrite)
       }
       #expect(await save(false) == false)
       actual = 4; s.applyDelta(changed(actual, "third"))

@@ -169,7 +169,7 @@ final class UIScript {
         NSApp.windows.first { $0.title.contains(w.dropFirst().joined(separator: " ")) }?.performClose(nil)
       case "edit":
         if let s = session, let p = s.resolution[w[1]]?.parameters.first(where: { $0.name == w[2] }) {
-          _ = try? await s.setParam(w[1], w[2], parseParam(w[3], p.type), expectedRev: s.rev)
+          _ = try? await s.setParam(w[1], w[2], parameterInputLiteral(w[3], p.type), expectedRev: s.rev)
         }
       case "external":
         // Another client changes a Card's settings (its _card.json) while this window holds edits.
@@ -231,7 +231,7 @@ final class UIScript {
         try? await Task.sleep(for: .milliseconds(100))
         for s in open {
           if let p = s.resolution[w[1]]?.parameters.first(where: { $0.name == w[2] }) {
-            _ = try? await s.setParam(w[1], w[2], parseParam(w[3], p.type), expectedRev: s.rev)
+            _ = try? await s.setParam(w[1], w[2], parameterInputLiteral(w[3], p.type), expectedRev: s.rev)
           }
           say("offlineedit \(s.identity.url.lastPathComponent) dirty=\(s.dirty)")
         }

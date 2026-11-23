@@ -21,11 +21,17 @@ func parseParam(_ text: String, _ type: String) -> JSONValue {
   return (try? JSONValue.parse(text)) ?? .string(text)
 }
 
-func parameterText(_ value: JSONValue) -> String {
-  value.string ?? value.serialized(pretty: false)
+func parameterText(_ value: JSONValue, type: String = "") -> String {
+  if type.hasPrefix("[") { return parameterLiteral(value, type) }
+  return value.string ?? value.serialized(pretty: false)
 }
 
-func parameterLiteral(_ value: JSONValue, _ type: String) -> String {
+func parameterInputLiteral(_ text: String, _ type: String) -> String {
+  if type.hasPrefix("[") { return text }
+  return parameterLiteral(parseParam(text, type), type)
+}
+
+private func parameterLiteral(_ value: JSONValue, _ type: String) -> String {
   if let values = value.array, type.hasPrefix("[") {
     let itemType = String(type.dropFirst().dropLast())
     return "[ " + values.map {

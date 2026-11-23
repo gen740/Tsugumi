@@ -142,9 +142,9 @@ export class InlineParamEdit extends RevisionEdit {
     if (ok && this.fieldBase === base) this.fieldBase = { ...base, value: clone(after) }
     return ok
   }
-  async commitParam(session: ProjectSession, card: string, name: string, value: J, overwrite: boolean) {
+  async commitParam(session: ProjectSession, card: string, name: string, literal: string, overwrite: boolean) {
     const expectedRev = overwrite ? this.conflictRev ?? this.baseRev : this.baseRev
-    return this.applyOperation(session, () => session.setParam(card, name, value, expectedRev))
+    return this.applyOperation(session, () => session.setParam(card, name, literal, expectedRev))
   }
   begin(value: string, rev: bigint) { this.initial = value; this.reload(rev) }
   async commit(session: ProjectSession, text: string, change: (s: ProjectSession) => void) {
