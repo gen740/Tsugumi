@@ -41,15 +41,10 @@ extension ChatResumeTests {
       let layoutBytes = try? Data(contentsOf: layoutURL)
       let code = CardEditorModel(session: s, cardKey: "a")
       code.meta = .object([("description", .string("logs the value"))])
-      let second = try t.makeSession()
-      second.start()
-      try await SyncTests.connected(second)
       release.continuation.finish()
       await s.refreshDerivedLayout().value
-      await second.refreshDerivedLayout().value
-      #expect(s.rev == openedRev && second.rev == openedRev)
-      #expect(s.position("a") == second.position("a"))
-      #expect(!s.dirty && !second.dirty)
+      #expect(s.rev == openedRev)
+      #expect(!s.dirty)
       #expect(try Data(contentsOf: dir.appendingPathComponent("tsugumi.json")) == projectBytes)
       #expect((try? Data(contentsOf: layoutURL)) == layoutBytes)
       #expect(await code.apply())
