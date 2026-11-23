@@ -801,9 +801,14 @@ std::pair<std::string, bool> Service::hello(const RequestIn& in) {
   auto r = R::CreateHelloResult(b, b.CreateString(store_->project_id()),
                                 b.CreateString(opts_.server_instance_id),
                                 b.CreateVector(cv));
-  return {
-      wire::reply(b, in.request_id, R::ReplyPayload::HelloResult, r.Union()),
-      true};
+  auto response = wire::reply(b, in.request_id, R::ReplyPayload::HelloResult,
+                              r.Union());
+  if (h->client() == Tsugumi::Trace::Client::MacOS ||
+      h->client() == Tsugumi::Trace::Client::Web) {
+    std::lock_guard lock(subs_mu_);
+    ui_connections_.insert(in.conn);
+  }
+  return {std::move(response), true};
 }
 
 void Service::disconnected(ConnId conn) {
@@ -822,6 +827,8 @@ void Service::disconnected(ConnId conn) {
   std::lock_guard<std::mutex> l(subs_mu_);
   subscriptions_.erase(conn);
   visible_cards_.erase(conn);
+  ui_connections_.erase(conn);
+  if (ui_owner_ == conn) ui_owner_.reset();
 }
 
 void Service::on_lane(Lane& lane, RequestIn req,
@@ -1537,6 +1544,12 @@ void Service::open_project(RequestIn& req) {
                                      view ? &*view : nullptr);
   {
     std::lock_guard<std::mutex> l(subs_mu_);
+    if (ui_connections_.contains(req.conn)) {
+      if (ui_owner_ && ui_owner_ != req.conn)
+        throw Failed(FailureKind::project_in_use,
+                     "the project is open in another UI connection");
+      ui_owner_ = req.conn;
+    }
     subscriptions_[req.conn] = sub;
     visible_cards_.erase(req.conn);
   }
