@@ -246,6 +246,27 @@ auto copy_entry(int source, const std::filesystem::path& label,
 
 }  // namespace
 
+auto create_artifact_holders(const std::filesystem::path& root,
+                             const std::filesystem::path& relative) -> void {
+  constexpr mode_t mode = 0311;
+  auto create = [&](const std::filesystem::path& path) {
+    if (::mkdir(path.c_str(), mode) != 0 && errno != EEXIST)
+      failed("mkdir artifact holder", path);
+    struct stat info{};
+    if (::lstat(path.c_str(), &info) != 0) failed("stat artifact holder", path);
+    if (!S_ISDIR(info.st_mode))
+      failed("invalid artifact holder", path, ENOTDIR);
+    if ((info.st_mode & 07777) != mode && ::chmod(path.c_str(), mode) != 0)
+      failed("chmod artifact holder", path);
+  };
+  auto path = root;
+  create(path);
+  for (const auto& segment : relative) {
+    path /= segment;
+    create(path);
+  }
+}
+
 auto clear_staging(const std::filesystem::path& path,
                    const std::function<void(int, const char*)>& recover,
                    std::string_view preserved_entry) -> void {

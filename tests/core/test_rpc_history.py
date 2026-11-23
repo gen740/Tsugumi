@@ -85,7 +85,8 @@ def test_a_corrupted_retained_artifact_is_rejected(core_factory, project, tmp_pa
     client.call("ProjectCacheClearRequest", opId=new_id())
     assert read_pages(client, "ArtifactReadRequest", artifactId=artifact_id, member="report.txt") == original
 
-    corrupt_retained_file(project, original)
+    corrupt_retained_file(project / ".tsugumi/artifacts" / run_id / "work/@1" / artifact_id,
+                          original)
 
     with pytest.raises(RpcFailure) as failure:
         client.call("ArtifactReadRequest", artifactId=artifact_id, member="report.txt")

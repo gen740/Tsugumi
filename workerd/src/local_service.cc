@@ -2,7 +2,6 @@
 #include <stdexcept>
 
 #include "tsugumi/workerd/local.hh"
-#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi::workerd {
 namespace L = Tsugumi::LocalWorker;
@@ -52,12 +51,7 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
           spawn.gui = source.gui;
           spawn.network = source.network;
           spawn.ro_paths = source.ro_paths;
-          for (const auto& grant : source.grants) {
-            if (!grant || !grant->id || grant->path.empty())
-              throw std::runtime_error("invalid worker artifact grant");
-            spawn.grants.push_back(
-                {wire::artifact_id(*grant->id), grant->path});
-          }
+          spawn.artifacts_root = source.artifacts_root;
           spawn.hidden_paths = source.hidden_paths;
           spawn.card = request.card;
           if (source.uid) spawn.uid = *source.uid;

@@ -12,6 +12,12 @@ namespace tsugumi::fs {
 using TransferProgress =
     std::function<void(const std::filesystem::path&, uint64_t, uint64_t)>;
 
+// Create a root and its relative run/Card/invocation holding directories.
+// Even a Card running as the owner's UID can only traverse them by name.
+auto create_artifact_holders(const std::filesystem::path& root,
+                             const std::filesystem::path& relative = {})
+    -> void;
+
 // Empty an existing directory without replacing it (it may be mounted in a
 // resident worker). Follow no symlinks. Restore owner permissions on opened
 // directories, since Cards can copy read-only trees from the Nix store.

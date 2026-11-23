@@ -25,7 +25,7 @@ typedef struct tsugumi_effects {
   int (*artifact_create)(void* host, tsugumi_artifact_id* id, tsugumi_bytes* path);
       /* new writable directory for this call, sealed read-only when the call returns; path is NUL-terminated, valid during the call. 0 ok, <0 error. */
   int (*artifact_open)(void* host, const tsugumi_artifact_id* id, tsugumi_bytes* path);
-      /* read-only directory path, only for ids granted to this call (in its input CardPorts); opened lazily. 0 ok, <0 error (not granted / missing). */
+      /* read-only directory path, only for ids granted to this call (in its input CardPorts). 0 ok, <0 error (not granted / missing). */
 } tsugumi_effects;
 typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);

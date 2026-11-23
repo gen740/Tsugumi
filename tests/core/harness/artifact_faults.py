@@ -5,17 +5,16 @@ import stat
 from pathlib import Path
 
 
-def corrupt_retained_file(project: Path, original: bytes) -> None:
-    """Replace copies of a unique fixture output after the execution cache is cleared.
+def corrupt_retained_file(artifact: Path, original: bytes) -> None:
+    """Replace a unique fixture output after the execution cache is cleared.
 
     Match complete content rather than filenames, database rows or directory names.
-    The worker's scenario lives outside the project, so only its saved output has
-    these exact bytes. Never follow a symlink outside the fixture's project.
+    Start at the granted artifact directory to avoid listing its holding folders.
     """
     if not original:
         raise ValueError("artifact fault injection requires unique nonempty content")
     matches = []
-    for directory, _, filenames in os.walk(project, followlinks=False):
+    for directory, _, filenames in os.walk(artifact, followlinks=False):
         for filename in filenames:
             candidate = Path(directory) / filename
             info = candidate.lstat()

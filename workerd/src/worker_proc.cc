@@ -18,11 +18,6 @@
 #ifdef __APPLE__
 #include <libproc.h>
 #else
-#include <linux/mount.h>
-#include <linux/nsfs.h>
-#include <sched.h>
-#include <sys/ioctl.h>
-#include <sys/syscall.h>
 #include <sys/vfs.h>
 #endif
 
@@ -99,136 +94,6 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
                    &trace::kFlatBufferCodec);
 }
 
-#ifdef __linux__
-struct ScopedFd {
-  int fd;
-  ~ScopedFd() { close_fd(fd); }
-};
-
-auto attach_artifact(int user_ns, int mount_ns, const std::string& source,
-                     const std::string& destination) -> int {
-  int result[2];
-  if (::pipe2(result, O_CLOEXEC) != 0) return errno;
-  const ScopedFd receiver{result[0]};
-  ScopedFd sender{result[1]};
-  const auto child = ::fork();
-  if (child < 0) return errno;
-  if (child == 0) {
-    ::close(receiver.fd);
-    const auto mount_artifact = [&] {
-      // Copy the launcher's mount namespace while still looking at the host
-      // filesystem, but under the sandbox mount namespace's owning user
-      // namespace. This gives an unprivileged launcher may_mount() without
-      // granting the Card any additional capabilities.
-      if (::setns(user_ns, CLONE_NEWUSER) != 0 || ::unshare(CLONE_NEWNS) != 0)
-        return errno;
-      const int directory =
-          ::open(source.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-      if (directory < 0) return errno;
-      const int tree = ::syscall(
-          SYS_open_tree, directory, "",
-          OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | AT_RECURSIVE | AT_EMPTY_PATH);
-      if (tree < 0) return errno;
-      struct mount_attr attrs{};
-      attrs.attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV;
-      if (::syscall(SYS_mount_setattr, tree, "", AT_EMPTY_PATH | AT_RECURSIVE,
-                    &attrs, sizeof(attrs)) != 0 ||
-          ::setns(mount_ns, CLONE_NEWNS) != 0)
-        return errno;
-      const int target = ::open(destination.c_str(),
-                                O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
-      if (target < 0) return errno;
-      if (::syscall(SYS_move_mount, tree, "", target, "",
-                    MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH) != 0)
-        return errno;
-      return 0;
-    };
-    const int error = mount_artifact();
-    ssize_t written;
-    do {
-      written = ::write(sender.fd, &error, sizeof(error));
-    } while (written < 0 && errno == EINTR);
-    ::_exit(0);
-  }
-  close_fd(sender.fd);
-  int error;
-  ssize_t size;
-  do {
-    size = ::read(receiver.fd, &error, sizeof(error));
-  } while (size < 0 && errno == EINTR);
-  while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {
-  }
-  return size == sizeof(error) ? error : EIO;
-}
-
-auto receive_mount_namespace(int socket) -> int {
-  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))]{};
-  char setup = 0;
-  iovec data{&setup, sizeof(setup)};
-  msghdr message{};
-  message.msg_iov = &data;
-  message.msg_iovlen = 1;
-  message.msg_control = control;
-  message.msg_controllen = sizeof(control);
-  ssize_t size;
-  do {
-    size = ::recvmsg(socket, &message, MSG_CMSG_CLOEXEC);
-  } while (size < 0 && errno == EINTR);
-  const auto* header = CMSG_FIRSTHDR(&message);
-  if (!header || header->cmsg_level != SOL_SOCKET ||
-      header->cmsg_type != SCM_RIGHTS ||
-      header->cmsg_len != CMSG_LEN(sizeof(int)))
-    return -1;
-  int ns;
-  std::memcpy(&ns, CMSG_DATA(header), sizeof(ns));
-  if (size == 1 && setup == 1 &&
-      !(message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) &&
-      ::ioctl(ns, NS_GET_NSTYPE) == CLONE_NEWNS)
-    return ns;
-  ::close(ns);
-  return -1;
-}
-
-auto artifact_mountpoint(const std::string& scratch, const ArtifactGrant& grant)
-    -> std::string {
-  if (grant.path.starts_with("/nix/store/")) return grant.path;
-  return scratch + "/opened-artifacts/" +
-         crypto::hex(grant.id.data(), grant.id.size());
-}
-
-auto broker_artifacts(int socket, const std::string& scratch,
-                      const std::vector<ArtifactGrant>& grants) -> void {
-  const ScopedFd mount_ns{receive_mount_namespace(socket)};
-  const ScopedFd user_ns{mount_ns.fd < 0 ? -1
-                                         : ::ioctl(mount_ns.fd, NS_GET_USERNS)};
-  std::set<ArtifactKey> opened;
-  ArtifactKey id(16, '\0');
-  for (;;) {
-    const auto size = ::recv(socket, id.data(), id.size(), MSG_TRUNC);
-    if (size < 0 && errno == EINTR) continue;
-    if (size != static_cast<ssize_t>(id.size())) break;
-    const auto grant = std::ranges::find(grants, id, &ArtifactGrant::id);
-    int error = ENOENT;
-    if (grant != grants.end()) {
-      if (opened.contains(id)) {
-        error = 0;
-      } else if (user_ns.fd < 0) {
-        error = ENOTSUP;
-      } else {
-        error = attach_artifact(user_ns.fd, mount_ns.fd, grant->path,
-                                artifact_mountpoint(scratch, *grant));
-        if (!error) opened.insert(id);
-      }
-    }
-    ssize_t sent;
-    do {
-      sent = ::send(socket, &error, sizeof(error), MSG_NOSIGNAL);
-    } while (sent < 0 && errno == EINTR);
-    if (sent != sizeof(error)) break;
-  }
-}
-#endif
-
 #ifdef __APPLE__
 // Seatbelt profile for sandbox: true Cards when tsugumid runs directly on a
 // macOS host (sandbox-exec is deprecated but still the system's process
@@ -277,6 +142,11 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
     exec += " (subpath " + quote(p) + ")";
   }
   std::string read_only_grants;
+  if (!sp.artifacts_root.empty()) {
+    const auto rule = " (subpath " + quote(sp.artifacts_root) + ")";
+    read += rule;
+    read_only_grants += rule;
+  }
   for (const auto& bind : sp.binds) {
     const auto rule = " (subpath " + quote(bind.source) + ")";
     read += rule;
@@ -479,9 +349,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   std::string certificate = TSUGUMI_CACERT;
   std::string temporary = tmp_dir();
   std::vector<std::string> gui_env;
-#ifdef __linux__
-  const auto artifact_root = scratch_ + "/opened-artifacts";
-#endif
 #ifdef __APPLE__
   if (sp.gui || sp.sandbox.limits.limited())
     throw Failed(FailureKind::unsupported,
@@ -570,9 +437,36 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     if (filesystem || !sp.hidden_paths.empty())
       argv.insert(argv.end(), {"--bind", scratch_, scratch_});
     if (filesystem) {
-      for (const auto& bind : sp.binds)
-        argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
-                                 bind.source, bind.target});
+      for (const auto& bind : sp.binds) {
+        bool writable = bind.write;
+        std::filesystem::path protected_subtree;
+        if (writable && !sp.artifacts_root.empty()) {
+          const auto source = std::filesystem::canonical(bind.source);
+          const auto root = std::filesystem::canonical(sp.artifacts_root);
+          const auto relative = source.lexically_relative(root);
+          if (!relative.empty() && *relative.begin() != "..") {
+            writable = false;
+          } else {
+            const auto child = root.lexically_relative(source);
+            if (!child.empty() && *child.begin() != "..")
+              protected_subtree = std::filesystem::path(bind.target) / child;
+          }
+        }
+        argv.insert(argv.end(), {writable ? "--bind" : "--ro-bind", bind.source,
+                                 bind.target});
+        if (!protected_subtree.empty())
+          argv.insert(argv.end(), {"--ro-bind", sp.artifacts_root,
+                                   protected_subtree.string()});
+      }
+      if (!sp.artifacts_root.empty()) {
+        // Keep search-only directories unreadable even with identity off.
+        // The Card must not be able to regain capabilities in a user namespace.
+        argv.push_back("--disable-userns");
+        argv.insert(argv.end(),
+                    {"--ro-bind", sp.artifacts_root, kSandboxArtifactsRoot});
+        if (!sp.sandbox.identity)
+          argv.insert(argv.end(), {"--cap-drop", "ALL"});
+      }
       if (sp.network)
         for (const char* path :
              {"/etc/resolv.conf", "/etc/hosts", "/etc/nsswitch.conf"})
@@ -601,23 +495,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
       if (filesystem)
         argv.insert(argv.end(), {"--dev-bind-try", "/dev/dri", "/dev/dri"});
       gui_env.push_back(socket->variable + "=" + value);
-    }
-    if (!sp.grants.empty()) {
-      for (const auto& grant : sp.grants)
-        std::filesystem::create_directories(
-            artifact_root + "/" +
-            crypto::hex(grant.id.data(), grant.id.size()));
-      argv.insert(argv.end(), {"--ro-bind", artifact_root, artifact_root});
-      if (!sp.sandbox.identity) argv.insert(argv.end(), {"--cap-drop", "ALL"});
-      // A store artifact keeps its store path in the sandbox. Hide its
-      // contents even when its containing store item is in the Card closure.
-      for (const auto& grant : sp.grants)
-        if (grant.path.starts_with("/nix/store/")) {
-          const auto placeholder =
-              artifact_root + "/" +
-              crypto::hex(grant.id.data(), grant.id.size());
-          argv.insert(argv.end(), {"--ro-bind", placeholder, grant.path});
-        }
     }
     argv.insert(argv.end(), {"--chdir", work_dir(), "--", sp.worker_binary});
   } else {
@@ -700,27 +577,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   }
   spec.fds = {{3, data[1]}, {4, control[1]}};
-#ifdef __linux__
-  std::array<int, 2> artifacts{-1, -1};
-  ScopedFd host_proc{-1};
-  ScopedFd artifact_client{-1};
-  ScopedFd artifact_server{-1};
-  if (bwrap && !sp.grants.empty()) {
-    host_proc.fd = ::open("/proc", O_PATH | O_DIRECTORY | O_CLOEXEC);
-    if (host_proc.fd < 0 || ::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC,
-                                         0, artifacts.data()) != 0) {
-      close_channels();
-      remove_card_cgroup(cgroup_);
-      throw Failed(FailureKind::worker_failed,
-                   "cannot create artifact broker channels");
-    }
-    artifact_server.fd = artifacts[0];
-    artifact_client.fd = artifacts[1];
-    spec.fds.emplace_back(workerd::kArtifactSocket, artifact_client.fd);
-    spec.fds.emplace_back(workerd::kHostProc, host_proc.fd);
-    spec.argv.push_back("--artifact-broker");
-  }
-#endif
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];
   try {
@@ -753,15 +609,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #endif
   alive_ = true;
   try {
-#ifdef __linux__
-    if (artifact_server.fd >= 0) {
-      close_fd(artifact_client.fd);
-      close_fd(host_proc.fd);
-      artifact_socket_ = std::exchange(artifact_server.fd, -1);
-      artifact_broker_ =
-          std::thread(broker_artifacts, artifact_socket_, scratch_, sp.grants);
-    }
-#endif
     if (sp.secrets) {
       flatbuffers::FlatBufferBuilder builder;
       std::vector<flatbuffers::Offset<W::EnvVar>> environment;
@@ -930,15 +777,6 @@ void WorkerProc::set_logs(LogSink logs) {
   logs_ = std::move(logs);
 }
 
-auto WorkerProc::artifact_path(const ArtifactGrant& grant) const
-    -> std::string {
-#ifdef __linux__
-  return artifact_mountpoint(scratch_, grant);
-#else
-  return grant.path;
-#endif
-}
-
 void WorkerProc::clear_scratch() {
   if (borrowed_) {
     borrowed_clear_();
@@ -998,13 +836,6 @@ void WorkerProc::terminate(bool force) {
     }
     return;
   }
-#ifdef __linux__
-  if (artifact_socket_ >= 0) {
-    ::shutdown(artifact_socket_, SHUT_RDWR);
-    if (artifact_broker_.joinable()) artifact_broker_.join();
-    close_fd(artifact_socket_);
-  }
-#endif
   if (pid_ > 0) {
     if (force) proc::kill_group(pid_, SIGTERM);
     ::shutdown(data_fd_, SHUT_RDWR);
@@ -1421,8 +1252,11 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   std::vector<flatbuffers::Offset<W::ArtifactGrant>> grant_offsets;
   for (const auto& grant : grants) {
     const auto id = wire::artifact_struct(grant.id);
-    grant_offsets.push_back(W::CreateArtifactGrant(
-        b, &id, b.CreateString(grant.path)));
+    const auto store = grant.store_path.empty()
+                           ? flatbuffers::Offset<flatbuffers::String>{}
+                           : b.CreateString(grant.store_path);
+    grant_offsets.push_back(
+        W::CreateArtifactGrant(b, &id, b.CreateString(grant.path), store));
   }
   const auto grant_vector = b.CreateVector(grant_offsets);
   const auto artifact_root = artifact_directory.empty()

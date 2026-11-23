@@ -2,6 +2,7 @@
 #pragma once
 #include <cstdint>
 #include <exception>
+#include <filesystem>
 #include <optional>
 #include <string>
 #include <utility>
@@ -58,6 +59,10 @@ using ArtifactKey = std::string;
 struct ArtifactGrant {
   ArtifactKey id;
   std::string path;
+  // Core-side holding layout used to stage the grant on a remote worker.
+  std::filesystem::path location = {};
+  // On the remote staging wire, the original path of an Input Card artifact.
+  std::string store_path = {};
 };
 
 struct Value {

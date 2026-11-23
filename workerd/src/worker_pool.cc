@@ -66,7 +66,6 @@ std::unique_ptr<WorkerProc> WorkerPool::spawn(WorkerSpawn sp) {
 WorkerPool::Lease WorkerPool::acquire(const std::string& card,
                                       const std::string& key,
                                       const WorkerSpawn& sp, bool reuse) {
-  const bool allow_standby = !reuse && sp.grants.empty();
   std::string standby_key = key;
   Lease lease;
   std::vector<std::unique_ptr<WorkerProc>> ended;
@@ -114,7 +113,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card,
       }
       it = resident_.erase(it);
     }
-    if (!lease.worker && allow_standby) {
+    if (!lease.worker && !reuse) {
       if (auto it = standby_.find(standby_key); it != standby_.end()) {
         if (it->second.worker->alive())
           lease.worker = std::move(it->second.worker);
@@ -136,7 +135,7 @@ WorkerPool::Lease WorkerPool::acquire(const std::string& card,
       throw;
     }
   }
-  if (allow_standby && !sp.secrets && mode_ == WorkerPoolMode::standby)
+  if (!reuse && !sp.secrets && mode_ == WorkerPoolMode::standby)
     refill(standby_key, sp);
   return lease;
 }

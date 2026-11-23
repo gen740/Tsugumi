@@ -1,7 +1,10 @@
 """History portability and deletion, checked through public RPC."""
 
+import os
 import shutil
+import stat
 from contextlib import closing
+from pathlib import Path
 
 import pytest
 
@@ -17,6 +20,34 @@ from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 
 
 CONTENTS = "retained history 日本語\n" * 500
+
+
+def copy_closed_project(source, destination):
+    """Model an offline backup that can read the execute-only artifact holders."""
+    root = source / ".tsugumi/artifacts"
+    modes = {}
+
+    def allow_read(directory):
+        mode = stat.S_IMODE(directory.stat().st_mode)
+        if not mode & stat.S_IRUSR:
+            modes[directory.relative_to(source)] = mode
+            directory.chmod(mode | stat.S_IRUSR)
+
+    try:
+        if root.is_dir():
+            allow_read(root)
+            for parent, children, _ in os.walk(root):
+                for child in children:
+                    directory = Path(parent) / child
+                    if not directory.is_symlink():
+                        allow_read(directory)
+        shutil.copytree(source, destination, symlinks=True)
+    finally:
+        for relative, mode in reversed(modes.items()):
+            (source / relative).chmod(mode)
+            copied = destination / relative
+            if copied.is_dir():
+                copied.chmod(mode)
 
 
 def listed(client):
@@ -52,7 +83,7 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     original.stop()
 
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     copied = core_factory(project_root=copied_project, mocked_builds=True, mocked_worker=True)
     client = copied.connect()
     assert listed(client) == list(reversed(run_ids))
@@ -68,7 +99,7 @@ def test_project_copy_restores_history_and_merges_new_runs(core_factory, project
     # This models moving the user's complete project back, without depending
     # on the names, schema, or layout of core's private history files.
     project.rename(tmp_path / "previous-project")
-    shutil.copytree(copied_project, project, symlinks=True)
+    copy_closed_project(copied_project, project)
     original.start()
     assert set(listed(original.connect())) == set(run_ids + [new_run])
     # Copy/import order never changes which local scratch is protected.
@@ -115,7 +146,7 @@ def test_deleting_history_removes_records_and_artifacts_without_resurrection(cor
     assert listed(daemon.connect()) == []
     daemon.stop()
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     restored = core_factory(project_root=copied_project)
     client = restored.connect()
     assert listed(client) == []
@@ -170,7 +201,7 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     assert read_pages(client, "ArtifactReadRequest", artifactId=second_artifact, member="report.txt").decode() == CONTENTS
     daemon.stop()
     copied_project = tmp_path / "copy"
-    shutil.copytree(project, copied_project, symlinks=True)
+    copy_closed_project(project, copied_project)
     restored = core_factory(project_root=copied_project)
     assert listed(restored.connect()) == [second]
 
