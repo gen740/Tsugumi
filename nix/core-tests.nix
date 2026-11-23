@@ -39,6 +39,9 @@ clangStdenv.mkDerivation {
         [
           ../hostd/tools/test-binary-cache.py
           ../vm/guest/src/control_wire.hh
+          # The evaluator double compiles the real params.nix parser.
+          ../tsugumid/runtime/src/nix_params.cc
+          ../tsugumid/runtime/src/nix_params.hh
           (lib.fileset.fileFilter (
             file: file.name == "CMakeLists.txt" || file.hasExt "cmake" || file.hasExt "cc" || file.hasExt "hh"
           ) ../tests/core)
@@ -61,6 +64,8 @@ clangStdenv.mkDerivation {
           tsugumid-mock = [
             ../tests/core/cmake/daemon-double.cmake
             ../tests/core/doubles/nix_eval.cc
+            ../tsugumid/runtime/src/nix_params.cc
+            ../tsugumid/runtime/src/nix_params.hh
           ];
           tsugumi_document_edit_driver = [
             ../tests/core/cmake/host-edit-driver.cmake
