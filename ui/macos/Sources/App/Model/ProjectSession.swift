@@ -72,7 +72,7 @@ struct CardRunState: Equatable {
   var cached = false
   var workerReused = false
   /// Outputs the latest invocation sent, and every output that sent a value
-  /// in this run (a branch lists only the side it chose).
+  /// in this run.
   var sent: Set<String> = []
   var sentInRun: Set<String> = []
   var startedAt: Int64?

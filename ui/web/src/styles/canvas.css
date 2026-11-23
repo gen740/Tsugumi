@@ -82,7 +82,6 @@
 .cv-port:hover .cv-port-new { opacity: 1; }
 .cv-port-out { border-radius: 50%; background: var(--accent); display: block; }
 .cv-port-in { display: block; background: var(--control-bg); border: 1.4px solid var(--secondary); box-sizing: border-box; }
-.cv-port-in.condition { background: color-mix(in srgb, var(--green) 35%, transparent); border-color: var(--green); }
 
 /* stage strip */
 .cv-stages { display: flex; align-items: center; width: 100%; min-width: 0; }

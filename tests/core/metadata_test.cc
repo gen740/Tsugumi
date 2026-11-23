@@ -334,67 +334,6 @@ TEST_F(DocumentStorage, DraftHasNoPortsFromMetadataOrSchema) {
   EXPECT_EQ(after->resolution, before->resolution);
 }
 
-TEST_F(DocumentStorage, DraftEndsAcceptManyWiresAndCarryEmptyWithoutPorts) {
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"condition"},{"id":"plan"},{"id":"next"},{"id":"branch"},{"id":"collect"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"next","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"condition"}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"value"}},
-    {"from":{"card":"next","port":""},"to":{"card":"collect","port":"in"}}
-  ]}})");
-  fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"type":"input"})");
-  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
-                   "table Condition { value:bool; } table Outputs { "
-                   "value:Condition; } root_type Outputs;");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft","inputs":[{"name":"ignored"}]})");
-  fs::write_atomic(root / "definitions/next/_card.json",
-                   R"({"type":"draft"})");
-  fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/collect/_card.json",
-                   R"({"type":"collect"})");
-  Store store({root, ""});
-  store.open();
-  const auto& resolution = *store.current()->resolution;
-  EXPECT_EQ(resolution.edges.size(), 6);
-  const auto waiting = Scheduler::draft_waiting(resolution);
-  for (const auto* id : {"plan", "next", "branch", "collect"})
-    EXPECT_TRUE(waiting.contains(resolution.index.at(id)));
-  EXPECT_FALSE(waiting.contains(resolution.index.at("start")));
-  EXPECT_TRUE(resolution.find({"plan"})->inputs.empty());
-  EXPECT_TRUE(resolution.find({"plan"})->outputs.empty());
-  EXPECT_TRUE(resolution.find({"next"})->inputs.empty());
-  EXPECT_EQ(resolution.find({"branch"})->input("condition")->type,
-            types::empty_type());
-  for (const auto& diagnostic : resolution.all_diagnostics(false))
-    ADD_FAILURE() << diagnostic.code << ": " << diagnostic.message;
-}
-
-TEST_F(DocumentStorage, BranchConditionInheritsItsUpstreamSchema) {
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"branch"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"branch","port":"condition"}},
-    {"from":{"card":"plan","port":""},"to":{"card":"branch","port":"value"}}
-  ]}})");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft"})");
-  fs::write_atomic(root / "definitions/branch/_card.json",
-                   R"({"type":"branch"})");
-  Store store({root, ""});
-  store.open();
-  const auto& graph = *store.current()->resolution;
-  const auto* branch = graph.find({"branch"});
-  EXPECT_EQ(branch->input("condition")->type,
-            graph.find({"start"})->output("out")->type);
-  EXPECT_TRUE(branch->diags.empty());
-}
-
 TEST_F(DocumentStorage, NixExportsAreTransitiveAndStopAtMerge) {
   fs::write_atomic(root / "tsugumi.json", R"({
     "canvas": {
@@ -429,33 +368,24 @@ TEST_F(DocumentStorage, NixExportsAreTransitiveAndStopAtMerge) {
   EXPECT_TRUE(graph.find({"D"})->nix_references.empty());
 }
 
-TEST_F(DocumentStorage, ADraftAndARealSourceCannotShareAnInput) {
+TEST_F(DocumentStorage, ASecondWireSuggestsMerge) {
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"plan"},{"id":"sink"},{"id":"relay"},{"id":"condition"}],"connections":[
-    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"value"}},
-    {"from":{"card":"relay","port":"a"},"to":{"card":"sink","port":"value"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"value"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"relay","port":"condition"}},
-    {"from":{"card":"condition","port":"value"},"to":{"card":"sink","port":"condition"}}
+      R"({"nixPath":[],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"sink"}],"connections":[
+    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"in"}},
+    {"from":{"card":"start","port":"out"},"to":{"card":"sink","port":"in"}}
   ]}})");
-  fs::write_atomic(root / "definitions/plan/_card.json",
-                   R"({"type":"draft"})");
+  fs::write_atomic(root / "definitions/plan/_card.json", R"({"type":"draft"})");
   fs::write_atomic(root / "definitions/sink/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/relay/_card.json",
-                   R"({"type":"branch"})");
-  fs::write_atomic(root / "definitions/condition/_card.json",
-                   R"({"type":"input"})");
-  fs::write_atomic(root / "definitions/condition/_outputs.fbs",
-                   "table Condition { value:bool; } table Outputs { "
-                   "value:Condition; } root_type Outputs;");
+                   R"({"type":"merge","inputs":[{"name":"in"}]})");
   Store store({root, ""});
   store.open();
-  const auto* sink = store.current()->resolution->find({"sink"});
-  EXPECT_EQ(sink->input("value")->type, types::empty_type());
-  ASSERT_EQ(sink->diags.size(), 1);
-  EXPECT_EQ(sink->diags.front().code, "multiple_input_wires");
+  const auto& graph = *store.current()->resolution;
+  ASSERT_EQ(graph.edges.size(), 1u);
+  const auto& diagnostics = graph.find({"sink"})->diags;
+  ASSERT_EQ(diagnostics.size(), 1u);
+  EXPECT_EQ(diagnostics.front().code, "input_already_connected");
+  EXPECT_NE(diagnostics.front().message.find("Merge"), std::string::npos);
 }
 
 TEST_F(DocumentStorage,

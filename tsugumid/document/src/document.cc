@@ -355,7 +355,7 @@ auto parse_card_json(const std::string& id, const std::string& text)
   if (!card.type())
     invalid(rel +
                 ": \"type\" is required (one of code, draft, trigger, input, "
-                "branch, fork, merge, collect, subgraph)",
+                "merge, collect, subgraph)",
             {{"path", rel}});
   const auto* external = card.external();
   if ((*card.type() == D::CardType::subgraph) != (external != nullptr))

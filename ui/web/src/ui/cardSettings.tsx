@@ -135,7 +135,6 @@ export class CardEditorModel extends Observable {
       this.presetFiles.clear()
     }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
-    if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
   }
 
@@ -726,7 +725,7 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
       </Section>
       {model.session.kind(model.cardKey) === 'draft' && <Section title={L('Draft を手動で実装')} footer={L('定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。')}>
         <Row label={L('種類')}><Select value={model.implementation} onChange={v => model.implementAs(v)} options={
-          ['draft', 'code', 'input', 'input_bool', 'trigger', 'branch', 'fork', 'merge', 'collect']
+          ['draft', 'code', 'input', 'input_bool', 'trigger', 'merge', 'collect']
             .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
@@ -1067,7 +1066,7 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           </>
         )}
       </Section>
-      {model.kind === 'fork' && def !== undefined ? <ForkOutputsSection model={model} /> : <OutputPortsSection model={model} />}
+      <OutputPortsSection model={model} />
       {model.kind !== 'subgraph' && model.kind !== 'draft' && model.kind !== 'invalid' && (
         <Section title={L('記録と成果物')}>
           {([
@@ -1098,37 +1097,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
 }
 
 const shortType = (full: string) => full.split('.').pop() ?? full
-
-/** A Fork's outputs, declared in _card.json (a and b until they are). Each one
- *  receives the value, with its type. */
-function ForkOutputsSection({ model }: { model: CardEditorModel }) {
-  const r = model.session.resolution.get(model.cardKey)
-  const outputs = arr(get(model.definition, 'outputs')) ?? [obj([['name', 'a']]), obj([['name', 'b']])]
-  const names = outputs.map((x) => str(get(x, 'name')) ?? '')
-  const edit = (fn: (a: J[]) => void) => {
-    const a = outputs.map((x) => clone(x))
-    fn(a)
-    model.setSetting('outputs', a)
-  }
-  const next = () => [...'abcdefghijklmnopqrstuvwxyz'].find((c) => !names.includes(c)) ?? `out${names.length + 1}`
-  return (
-    <Section title={L('出力ポート')} footer={L('分配は受け取った値をすべての出力へ送ります。出力の型は value と同じです。')}>
-      {names.map((name, i) => (
-        <Row key={i}>
-          <div className="row gap8 center fill">
-            <TextField value={name} placeholder={L('名前')} mono help={L('出力ポートの名前')} style={{ width: 140 }}
-              onChange={(v) => edit((a) => isObj(a[i]) && (a[i] as JObj).set('name', v))} />
-            <TextField {...portNote(model, 'outputs', name)} placeholder={L('用途（何を出すか）')} style={{ flex: 1 }} />
-            <span className="caption secondary nowrap">{portTypeName(r?.outputs.find((p) => p.name === name)) ?? L('未解決')}</span>
-            <Button kind="borderless" iconOnly icon="minus.circle" help={L('出力を削除')} disabled={names.length <= 1}
-              onClick={() => edit((a) => a.splice(i, 1))} />
-          </div>
-        </Row>
-      ))}
-      <Row><Button onClick={() => edit((a) => a.push(obj([['name', next()]])))}>{L('出力を追加')}</Button></Row>
-    </Section>
-  )
-}
 
 /** Output ports as `_outputs.fbs` defines them (its source is the truth).
  *  Each port's type is chosen from the tables of that schema, as the core

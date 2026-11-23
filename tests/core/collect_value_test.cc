@@ -7,25 +7,18 @@
 #include <vector>
 
 #include "tsugumi/document/collect_type.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/protocol/card_generated.h"
+#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
 namespace {
-
-using Envelopes =
-    flatbuffers::Vector<flatbuffers::Offset<Tsugumi::Card::CardPort>>;
 
 auto output_port() -> types::PortType {
   std::string error;
   auto type = collect_output_type(error);
   EXPECT_TRUE(type) << error;
-  return {"out", PortKind::FlatBuffer, false, std::move(type)};
-}
-
-auto envelopes(const Value& value) -> const Envelopes* {
-  constexpr flatbuffers::voffset_t kItems = 4;
-  return flatbuffers::GetRoot<flatbuffers::Table>(value.bytes.data())
-      ->GetPointer<const Envelopes*>(kItems);
+  return {.name = "out", .type = std::move(type)};
 }
 
 TEST(CollectValue, EmptyListHasEmptyItems) {
@@ -35,46 +28,37 @@ TEST(CollectValue, EmptyListHasEmptyItems) {
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, {}, cancel);
   EXPECT_EQ(value.name, "out");
-  EXPECT_EQ(value.kind, PortKind::FlatBuffer);
   EXPECT_EQ(value.type, output.type);
-  ASSERT_TRUE(types::verify(*output.type, value.bytes));
-  ASSERT_NE(envelopes(value), nullptr);
-  EXPECT_EQ(envelopes(value)->size(), 0u);
+  EXPECT_EQ(value.schema, schema_id(*output.type));
+  EXPECT_TRUE(value.artifacts.empty());
+  const auto* collected = flatbuffers::GetRoot<builtin::Collected>(value.bytes.data());
+  ASSERT_NE(collected->items(), nullptr);
+  EXPECT_EQ(collected->items()->size(), 0u);
 }
 
-TEST(CollectValue, PreservesOpaqueBytesAndPathsInArrivalOrder) {
+TEST(CollectValue, PreservesOpaqueSchemaBytesAndArtifactIds) {
   const auto output = output_port();
   ASSERT_TRUE(output.type);
+  const ArtifactKey a(16, 'a'), b(16, 'b');
   const std::vector<Value> members{
-      {"file", PortKind::Path, nullptr, {}, {}, {}, "/run/out/report.txt"},
-      {"reading",
-       PortKind::FlatBuffer,
-       nullptr,
-       std::string("opaque\0", 7),
-       {}},
-      {"folder", PortKind::Path, nullptr, {}, {}, {}, "/run/out/data"},
+      {"left", nullptr, std::string("opaque\0", 7), "first", {b, a}},
+      {"right", nullptr, std::string("\xff\0", 2), "second", {a}},
   };
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, members, cancel);
-  ASSERT_TRUE(types::verify(*output.type, value.bytes));
-  const auto* items = envelopes(value);
+  EXPECT_EQ(value.artifacts, (std::vector<ArtifactKey>{a, b}));
+  const auto* collected = flatbuffers::GetRoot<builtin::Collected>(value.bytes.data());
+  const auto* items = collected->items();
   ASSERT_NE(items, nullptr);
   ASSERT_EQ(items->size(), members.size());
   for (flatbuffers::uoffset_t i = 0; i < items->size(); ++i) {
     const auto* item = items->Get(i);
     const auto& member = members[i];
-    EXPECT_EQ(item->name()->str(), member.name);
-    EXPECT_EQ(item->kind(), member.kind);
-    if (member.kind == PortKind::Path) {
-      EXPECT_EQ(item->path()->str(), member.path);
-      EXPECT_EQ(item->bytes(), nullptr);
-    } else {
-      EXPECT_EQ(item->path(), nullptr);
-      ASSERT_NE(item->bytes(), nullptr);
-      const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
-      EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
-      EXPECT_EQ((data - value.bytes.data()) % FLATBUFFERS_MAX_ALIGNMENT, 0);
-    }
+    EXPECT_EQ(item->schema()->str(), member.schema);
+    EXPECT_EQ(wire::artifact_ids(item->artifacts()), member.artifacts);
+    ASSERT_NE(item->bytes(), nullptr);
+    const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
+    EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
   }
 }
 
@@ -91,16 +75,8 @@ TEST(CollectValue, CancellationStopsAnEmptyBatch) {
 TEST(CollectValue, RejectsACollectedVectorLargerThan16MiB) {
   const auto output = output_port();
   const std::vector<Value> members{
-      {"first",
-       PortKind::FlatBuffer,
-       nullptr,
-       std::string(size_t{9} << 20, 'a'),
-       {}},
-      {"second",
-       PortKind::FlatBuffer,
-       nullptr,
-       std::string(size_t{9} << 20, 'a'),
-       {}},
+      {"first", nullptr, std::string(size_t{9} << 20, 'a'), "first"},
+      {"second", nullptr, std::string(size_t{9} << 20, 'a'), "second"},
   };
   const std::atomic<bool> cancel{false};
   try {

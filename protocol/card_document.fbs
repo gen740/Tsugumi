@@ -11,19 +11,12 @@ enum CardType:ubyte {
   draft,
   trigger,
   input,
-  branch,
-  fork,
   merge,
   collect,
   subgraph,
 }
 
 table Input {
-  name:string (required);
-}
-
-/// A Fork's output port; other Cards' outputs come from their schema.
-table Output {
   name:string (required);
 }
 
@@ -70,8 +63,6 @@ table Card {
   external:string;
   symbol:string;
   inputs:[Input];
-  /// A Fork's.
-  outputs:[Output];
   maxRuns:ulong = null;
   /// Positive; absent means no deadline.
   timeoutSeconds:ulong = null;

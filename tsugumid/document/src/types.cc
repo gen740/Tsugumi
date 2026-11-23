@@ -117,26 +117,13 @@ bool is_float(BaseType t) {
 // Renders reachable declarations of a schema under a namespace prefix.
 class Renderer {
  public:
-  // `nested`: the closure becomes a member of a merged type. A member that is
-  // itself a merged type has its own tsugumi.merge namespaces renamed to
-  // "nested", so no dotted name of one level can be read as another level's
-  // (FlatBuffers also tries shorter namespace prefixes when it resolves a
-  // name). Member types that are not merged keep their names.
-  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false,
+  Renderer(const reflection::Schema& s, std::string prefix,
            InputDeclarations* declarations = nullptr)
-      : s_(s), prefix_(std::move(prefix)), nested_(nested),
-        declarations_(declarations) {}
-
-  std::string original(const std::string& full) const {
-    static const std::string merge = "tsugumi.merge";
-    if (nested_ && (full == merge || full.rfind(merge + ".", 0) == 0))
-      return "nested" + full.substr(merge.size());
-    return full;
-  }
+      : s_(s), prefix_(std::move(prefix)), declarations_(declarations) {}
 
   std::string qualified(const std::string& name) const {
     if (declarations_ && artifact(name)) return name;
-    return prefix_.empty() ? original(name) : prefix_ + "." + original(name);
+    return prefix_.empty() ? name : prefix_ + "." + name;
   }
 
   void object(int index) {
@@ -168,8 +155,8 @@ class Renderer {
   void emit(std::string& out) {
     for (auto [is_obj, index] : order_) {
       std::string full =
-          original(is_obj ? s_.objects()->Get(index)->name()->str()
-                          : s_.enums()->Get(index)->name()->str());
+          is_obj ? s_.objects()->Get(index)->name()->str()
+                 : s_.enums()->Get(index)->name()->str();
       auto dot = full.rfind('.');
       std::string ns = dot == std::string::npos ? "" : full.substr(0, dot);
       std::string base = dot == std::string::npos ? full : full.substr(dot + 1);
@@ -359,7 +346,6 @@ class Renderer {
 
   const reflection::Schema& s_;
   std::string prefix_;
-  bool nested_ = false;
   InputDeclarations* declarations_;
   std::set<int> objs_;
   std::set<int> enums_;
@@ -684,12 +670,12 @@ CatalogResult parse_catalog(const std::string& fbs_text,
 }
 
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested) {
+                           std::string& out) {
   const auto* s = t.schema();
   int root = -1;
   for (flatbuffers::uoffset_t i = 0; i < s->objects()->size(); ++i)
     if (s->objects()->Get(i) == s->root_table()) root = static_cast<int>(i);
-  Renderer r(*s, prefix, nested);
+  Renderer r(*s, prefix);
   r.object(root);
   r.emit(out);
   return r.qualified(s->root_table()->name()->str());
@@ -698,7 +684,7 @@ std::string render_closure(const Type& t, const std::string& prefix,
 auto render_input_candidate(const Type& type, const std::string& prefix,
                             InputDeclarations& declarations) -> std::string {
   const auto& schema = *type.schema();
-  Renderer renderer(schema, prefix, false, &declarations);
+  Renderer renderer(schema, prefix, &declarations);
   const auto* root = schema.root_table();
   const auto name = renderer.qualified(root->name()->str());
   for (flatbuffers::uoffset_t i = 0; i < schema.objects()->size(); ++i)
@@ -721,82 +707,6 @@ TypeRef empty_type() {
   return t;
 }
 
-auto merged_type(const std::vector<const PortType*>& inputs, std::string* error)
-    -> std::optional<MergeType> {
-  if (inputs.empty()) {
-    *error = "a Merge needs at least one connected input";
-    return std::nullopt;
-  }
-  if (std::ranges::any_of(inputs, [](const auto* port) {
-        return port->kind == PortKind::Path;
-      })) {
-    if (!std::ranges::all_of(inputs, [](const auto* port) {
-          return port->kind == PortKind::Path;
-        })) {
-      *error = "Path and FlatBuffer inputs cannot share a Merge output";
-      return std::nullopt;
-    }
-    return MergeType{};
-  }
-  std::map<std::string, size_t> seen;
-  std::vector<const PortType*> members;
-  MergeType result;
-  for (const auto* port : inputs) {
-    std::string closure;
-    const auto root = render_closure(*port->type, "type", closure);
-    const auto [entry, inserted] =
-        seen.try_emplace(closure + root, members.size());
-    if (inserted) members.push_back(port);
-    if (members.size() > UINT8_MAX) {
-      *error = "a Merge supports at most 255 distinct FlatBuffer types";
-      return std::nullopt;
-    }
-    result.tags.emplace(port->name, static_cast<uint8_t>(entry->second + 1));
-  }
-  if (members.size() == 1)
-    return MergeType{
-        members.front()->type, {}, members.front()->merge_member_types};
-
-  std::string text;
-  std::string boxes = "namespace tsugumi.merge;\n";
-  std::string arrival = "union Arrival { ";
-  std::set<std::string> names;
-  std::map<std::string, size_t> short_name_counts;
-  auto short_name = [](const std::string& full) {
-    return full.substr(full.find_last_of('.') + 1);
-  };
-  for (const auto* member : members)
-    ++short_name_counts[short_name(member->type->root_type)];
-  for (size_t i = 0; i < members.size(); ++i) {
-    const auto& member = *members[i];
-    const auto& full = member.type->root_type;
-    const auto short_type = short_name(full);
-    const auto base = short_type + "Box";
-    std::string box = base;
-    for (size_t suffix = 2; !names.insert(box).second; ++suffix)
-      box = base + std::to_string(suffix);
-    const auto root =
-        render_closure(*member.type, "tsugumi.merge.t" + std::to_string(i),
-                       text, /*nested=*/true);
-    boxes += "table " + box + " { bytes:[ubyte] (id: 0, nested_flatbuffer: \"" +
-             root + "\"); }\n";
-    arrival += (i ? ", " : "") + box;
-    if (member.merge_member_types.empty()) {
-      result.member_types.push_back(
-          short_name_counts.at(short_type) > 1 ? full : short_type);
-    } else {
-      result.member_types.insert(result.member_types.end(),
-                                 member.merge_member_types.begin(),
-                                 member.merge_member_types.end());
-    }
-  }
-  text += boxes + arrival + " }\ntable Merged { value:Arrival (id: 1); }\n";
-  auto type = compile(text, "tsugumi.merge.Merged", error);
-  if (!type) return std::nullopt;
-  result.type = *type;
-  return result;
-}
-
 namespace {
 
 std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
@@ -817,30 +727,6 @@ std::unique_ptr<flatbuffers::Parser> parser_from_type(const Type& t,
 }
 
 }  // namespace
-
-auto wrap_in_union(uint8_t tag, const std::string& bytes) -> std::string {
-  flatbuffers::FlatBufferBuilder b(bytes.size() + 64);
-  b.ForceVectorAlignment(bytes.size(), sizeof(uint8_t),
-                         FLATBUFFERS_MAX_ALIGNMENT);
-  auto nested = b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
-                               bytes.size());
-  auto start = b.StartTable();
-  b.AddOffset(flatbuffers::FieldIndexToOffset(0), nested);  // Box.bytes, id 0
-  auto box = flatbuffers::Offset<flatbuffers::Table>(b.EndTable(start));
-  start = b.StartTable();
-  b.AddElement<uint8_t>(flatbuffers::FieldIndexToOffset(0), tag,
-                        0);  // Merged.value_type, id 0
-  b.AddOffset(flatbuffers::FieldIndexToOffset(1), box);  // Merged.value, id 1
-  b.Finish(flatbuffers::Offset<flatbuffers::Table>(b.EndTable(start)));
-  return std::string(reinterpret_cast<const char*>(b.GetBufferPointer()),
-                     b.GetSize());
-}
-
-bool verify(const Type& t, const std::string& bytes) {
-  return flatbuffers::Verify(*t.schema(), *t.root(),
-                             reinterpret_cast<const uint8_t*>(bytes.data()),
-                             bytes.size());
-}
 
 bool json_to_flatbuffer(const Type& t, const std::string& json,
                         std::string* out, std::string* error,

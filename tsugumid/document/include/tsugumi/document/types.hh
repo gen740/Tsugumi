@@ -72,30 +72,15 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 // Renders the closure of `t` into fbs declarations under namespace `prefix`
 // and returns the new fully qualified root name.
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested = false);
+                           std::string& out);
 
 // Builtin message types.
 TypeRef empty_type();
-
-struct MergeType {
-  TypeRef type;
-  // Empty for pass-through. Otherwise each input maps to its type's union tag.
-  std::map<std::string, uint8_t> tags;
-  std::vector<std::string> member_types;
-};
-
-auto merged_type(const std::vector<const PortType*>& inputs, std::string* error)
-    -> std::optional<MergeType>;
 
 // Builds a FlatBuffer of `t` from JSON text. Returns false with error text.
 bool json_to_flatbuffer(const Type& t, const std::string& json,
                         std::string* out, std::string* error,
                         bool force_defaults = false);
-// Writes the core-owned union box without decoding the nested buffer.
-auto wrap_in_union(uint8_t tag, const std::string& bytes) -> std::string;
-// Verifies `bytes` as a buffer of `t`.
-bool verify(const Type& t, const std::string& bytes);
-
 // Generates a Params schema text (`table Params {...}`) for the given
 // name -> fbs type list.
 }  // namespace tsugumi::types

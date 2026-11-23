@@ -142,8 +142,6 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
         "source": {"type": "input", "params": {"text": "x", "value": True},
                    "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
         "sink": SINK,
-        "branch": {"type": "branch"},
-        "fork": {"type": "fork"},
         "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
     }
     # The input Card is a start Card (no inputs).

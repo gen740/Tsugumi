@@ -34,12 +34,12 @@ session.operateProject = async request => {
 const preset = TEMPLATES.find(t => t.id === 'input_bool')
 assert.ok(preset)
 const card = await session.addCard(preset.id, [], { x: 0, y: 0 }, 'calibrate')
-const branch = await session.addCard('branch', [], { x: 0, y: 100 })
+const merge = await session.addCard('merge', [], { x: 0, y: 100 })
 assert.equal(definitionKind(session.cardDefinition(card)), 'input')
-await session.connect([card, 'value'], [branch, 'condition'], [])
+await session.connect([card, 'value'], [merge, 'a'], [])
 assert.ok(session.connections([]).some(wire =>
   get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
-  get(wire, 'to', 'card') === branch && get(wire, 'to', 'port') === 'condition'))
+  get(wire, 'to', 'card') === merge && get(wire, 'to', 'port') === 'a'))
 
 session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', value: false }]
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
@@ -102,10 +102,10 @@ assert.equal(await freshEditor.apply(), true)
 assert.equal(await session.sourceText(freshEditor.outputsPath!), localSchema)
 
 // Routing ports shrink with the body. At 20%, the old 16px target covered the
-// start's title and the branch's centre, stealing a body drag to start a wire.
+// start's title and the routing Card's centre, stealing a body drag to start a wire.
 for (const flow of ['topToBottom', 'leftToRight'] as const) {
   for (const zoom of [1, 0.2]) {
-    for (const kind of ['trigger', 'branch', 'merge', 'collect'] as const) {
+    for (const kind of ['trigger', 'merge', 'collect'] as const) {
       const data = { ...session.nodeData(card), kind,
         inputs: kind === 'trigger' ? [] : [{ name: 'value' }, { name: 'condition' }],
         outputs: [{ name: 'a' }, { name: 'b' }] }

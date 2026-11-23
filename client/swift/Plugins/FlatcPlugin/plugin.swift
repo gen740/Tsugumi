@@ -9,7 +9,7 @@ struct FlatcPlugin: BuildToolPlugin {
     let protocolDir = context.package.directoryURL.appending(path: "../../protocol").standardizedFileURL
     let flatc = try locateFlatc()
     let out = context.pluginWorkDirectoryURL.appending(path: "generated")
-    let schemas = ["card_enums", "tsugumi_enums", "rpc_trace", "worker_types", "data", "card", "worker", "local_worker", "remote_worker", "tsugumi", "service_common", "agent", "host", "vm_guest", "vm_host", "runtime_state"]
+    let schemas = ["artifact", "card_enums", "tsugumi_enums", "rpc_trace", "worker_types", "data", "card", "worker", "local_worker", "remote_worker", "tsugumi", "service_common", "agent", "host", "vm_guest", "vm_host", "runtime_state"]
     let inputs = schemas.map { protocolDir.appending(path: "\($0).fbs") }
     // The layout a project keeps (layout.bin); its fields keep the documents'
     // camelCase names, which flatc warns about.

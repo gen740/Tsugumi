@@ -272,7 +272,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
  private:
   struct Token {
-    Value value;
+    std::shared_ptr<const Value> value;
+    std::string port;
     CardPath from;
     uint64_t from_inv = 0;
   };
@@ -313,6 +314,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     uint64_t recorded_invocations = 0;
     uint64_t activations = 0;
     bool running = false;
+    // No future arrival can enable another activation.
+    bool closed = false;
+    bool blocked_input = false;
+    bool empty_collect_ready = false;
     bool halted = false;  // failed hard (e.g. maxRuns) and no longer scheduled
     bool saved_inputs =
         false;  // some of its inputs are saved values, not this run's
@@ -544,8 +549,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   auto saved_group(const NodeRt& node, const SavedInputGroup& saved,
                    uint64_t activation) -> TokenGroup {
-    const auto* port = node.node->input(saved.port);
-    if (!port || !port->resolved())
+    if (!node.node->input(saved.port))
       throw Failed(FailureKind::input_missing,
                    "saved input no longer matches " + saved.port);
     TokenGroup group{saved.port, saved.execution_list, {}, ++token_seq_};
@@ -553,9 +557,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     group.saved_input = true;
     group.saved_partial_result = saved.partial_result;
     for (const auto& value : saved.values) {
-      if (value.kind != port->kind)
-        throw Failed(FailureKind::input_missing,
-                     "saved input no longer matches " + saved.port);
       if (value.kind == PortKind::Path) {
         std::error_code ec;
         if (value.path.empty() || !stdfs::exists(value.path, ec))
@@ -563,7 +564,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               FailureKind::input_missing,
               "the saved file for " + saved.port + " no longer exists");
       }
-      group.members.push_back({value, {}, activation});
+      group.members.push_back(
+          {std::make_shared<const Value>(value), saved.port, {}, activation});
     }
     return group;
   }
@@ -640,18 +642,69 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       auto it = out_edges_.find({n.idx, out.name});
       if (it == out_edges_.end()) continue;
       for (const auto& [to, port] : it->second)
-        if (nodes_[to].in_targets &&
+        if (nodes_[to].in_targets && !nodes_[to].closed &&
             nodes_[to].queues[port].size() >= kQueueCapacity)
           return false;
     }
     return true;
   }
 
+  // Close exhausted streams before dispatch so a skipped join cannot hold
+  // up a producer that still has work for a different consumer.
+  auto close_exhausted_inputs() -> void {
+    const auto& incoming = doc_->resolution->incoming;
+    for (bool changed = true; changed;) {
+      changed = false;
+      for (auto& node : nodes_) {
+        if (!node.in_targets || node.running || node.closed) continue;
+        const auto kind = node.node->kind;
+        const bool starts_without_input =
+            node.start && !node.start_fired &&
+            (kind != CardType::Merge || !node.queues.empty());
+        if ((!node.halted && starts_without_input) || node.empty_collect_ready)
+          continue;
+        size_t exhausted = 0;
+        bool failed = false;
+        for (const auto& [port, queue] : node.queues) {
+          if (!queue.empty()) continue;
+          const auto& producer = nodes_[incoming[node.idx].at(port)];
+          if (producer.in_targets && !producer.closed) continue;
+          ++exhausted;
+          failed |= producer.last == CardState::failed ||
+                    producer.last == CardState::cancelled ||
+                    producer.blocked_input;
+        }
+        if (!node.halted) {
+          if (kind == CardType::Merge ? exhausted != node.queues.size()
+                                     : exhausted == 0 && !node.queues.empty())
+            continue;
+          if (kind == CardType::Collect && node.activations == 0 && !failed) {
+            node.empty_collect_ready = true;
+            changed = true;
+            continue;
+          }
+        }
+        node.closed = true;
+        node.blocked_input = failed;
+        changed = true;
+      }
+    }
+  }
+
   std::optional<Work> take_ready(NodeRt& n) {
-    if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+    if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
       return std::nullopt;
     Work w;
     w.node = n.idx;
+    if (n.empty_collect_ready) {
+      if (!downstream_has_space(n)) return std::nullopt;
+      n.empty_collect_ready = false;
+      if (!n.queues.empty()) {
+        // Save the empty input group so this Collect can replay that batch.
+        w.groups.push_back({n.queues.begin()->first, true, {}});
+      }
+      return w;
+    }
     if (n.start && !n.start_fired) {
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
@@ -726,6 +779,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       while (true) {
         bool dispatched = false;
         if (!cancel_) {
+          close_exhausted_inputs();
           bool progressed = true;
           while (progressed && running_ < p_.max_concurrency) {
             progressed = false;
@@ -767,13 +821,13 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   FailureData stall_reason_locked() {
     for (auto& n : nodes_) {
-      if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+      if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
         continue;
       for (const auto& out : n.node->outputs) {
         auto it = out_edges_.find({n.idx, out.name});
         if (it == out_edges_.end()) continue;
         for (const auto& [to, port] : it->second)
-          if (nodes_[to].in_targets &&
+          if (nodes_[to].in_targets && !nodes_[to].closed &&
               nodes_[to].queues[port].size() >= kQueueCapacity)
             return FailureData::make(
                 FailureKind::execution_limit,
@@ -789,9 +843,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   bool any_ready_locked() {
     for (auto& n : nodes_) {
-      if (!n.in_targets || n.running || n.halted || n.node->is_virtual)
+      if (!n.in_targets || n.running || n.halted || n.closed || n.node->is_virtual)
         continue;
-      if (n.start && !n.start_fired) return true;
+      if (n.empty_collect_ready || (n.start && !n.start_fired)) return true;
       if (n.queues.empty()) continue;
       if (n.node->kind == CardType::Merge) {
         for (auto& [_, q] : n.queues)
@@ -1012,9 +1066,9 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     size_t bytes = 0;
     for (const auto& group : groups) {
       for (const auto& member : group.members) {
-        if (member.value.bytes.size() > kMaxBatchBytes - bytes)
+        if (member.value->bytes.size() > kMaxBatchBytes - bytes)
           throw batch_limit(node, "input batch exceeds 32 MiB");
-        bytes += member.value.bytes.size();
+        bytes += member.value->bytes.size();
       }
     }
     if (node.kind == CardType::Collect) return 1;
@@ -1054,8 +1108,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     for (const auto& group : batch.groups) {
       SavedInputGroup values{
           group.port, group.execution_list, {}, group.partial_result};
-      for (const auto& member : group.members)
-        values.values.push_back(member.value);
+      for (const auto& member : group.members) {
+        values.values.push_back(*member.value);
+        values.values.back().name = group.port;
+      }
       rt.last_port_inputs[group.port] =
           std::make_pair(batch.activation, values);
       saved.push_back(std::move(values));
@@ -1067,7 +1123,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                    const std::vector<Produced>& members, uint64_t first,
                    bool partial_result) -> void {
     for (const auto& output : batch.outputs) {
-      if (!output.execution_list && output.count == 0) continue;
       const auto edge = out_edges_.find({rt.idx, output.port});
       if (edge == out_edges_.end()) continue;
       TokenGroup group{output.port, output.execution_list, {}};
@@ -1076,13 +1131,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         const auto value = std::ranges::find(members[index].outputs,
                                              output.port, &Value::name);
         if (value != members[index].outputs.end())
-          group.members.push_back({*value, rt.node->path, first + index});
+          group.members.push_back({std::make_shared<const Value>(*value),
+                                   output.port, rt.node->path, first + index});
       }
       for (const auto& [to, port] : edge->second) {
-        if (!nodes_[to].in_targets) continue;
+        if (!nodes_[to].in_targets || nodes_[to].closed) continue;
+        if (group.members.empty() && nodes_[to].node->kind != CardType::Collect)
+          continue;
         group.port = port;
         group.seq = ++token_seq_;
-        for (auto& member : group.members) member.value.name = port;
+        for (auto& member : group.members) member.port = port;
         nodes_[to].queues.at(port).push_back(group);
       }
     }
@@ -1334,9 +1392,10 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
     for (const auto& t : w.inputs) {
-      inputs.push_back(t.value);
+      inputs.push_back(*t.value);
+      inputs.back().name = t.port;
       if (!t.from.empty())
-        sources.push_back({t.value.name, t.from, t.from_inv});
+        sources.push_back({t.port, t.from, t.from_inv});
     }
     Produced out;
     if (w.preparation_failure) {
@@ -1652,16 +1711,16 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   auto validate_outputs(const Node& node, const Work& w,
                         std::vector<Value>& outputs,
                         const std::vector<Value>& inputs) -> void {
-    // Paths received as inputs may be passed on unchanged (branch, fork, a
-    // Card forwarding its input); anything else must be newly produced in the
-    // invocation's own output directory. The bytes are never opened.
+    // Forwarded paths may be reused. Other paths must be produced in the
+    // invocation's own output directory.
     std::set<std::string> forwarded;
     for (const auto& in : inputs)
       if (in.kind == PortKind::Path && !in.path.empty())
         forwarded.insert(stdfs::path(in.path).lexically_normal().string());
     std::set<std::string> seen;
     for (auto& v : outputs) {
-      if (node.kind != CardType::Code && node.kind != CardType::Collect) {
+      if (node.kind != CardType::Code && node.kind != CardType::Collect &&
+          node.kind != CardType::Merge) {
         const auto* port = node.output(v.name);
         if (!port)
           throw Failed(FailureKind::output_invalid, "unknown output " + v.name,
@@ -1775,40 +1834,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
 
   // ---- builtins
   // --------------------------------------------------------------
-
-  const Value* input(const std::vector<Value>& in, const std::string& name) {
-    for (const auto& v : in)
-      if (v.name == name) return &v;
-    return nullptr;
-  }
-
-  // A value passed on unchanged under another output port.
-  static auto forwarded(const Value& value, const std::string& port) -> Value {
-    Value out{port, value.kind, value.type, value.bytes, {}};
-    out.path = value.path;
-    return out;
-  }
-
-  // Branch's condition, the core-defined
-  // `table tsugumi.builtin.Condition { value:bool (id: 0); }`: field 0 of the
-  // arriving buffer's root table, read by that fixed layout.
-  static auto condition_value(const Value& condition) -> bool {
-    constexpr flatbuffers::voffset_t kValue = 4;  // field id 0
-    const auto* data =
-        reinterpret_cast<const uint8_t*>(condition.bytes.data());
-    flatbuffers::Verifier verifier(data, condition.bytes.size());
-    if (condition.kind != PortKind::FlatBuffer ||
-        condition.bytes.size() < sizeof(flatbuffers::uoffset_t) ||
-        !verifier.VerifyOffset<flatbuffers::uoffset_t>(0))
-      throw Failed(FailureKind::input_missing,
-                   "branch condition is not a Condition buffer");
-    const auto* root = flatbuffers::GetRoot<flatbuffers::Table>(data);
-    if (!root->VerifyTableStart(verifier) ||
-        !root->VerifyField<uint8_t>(verifier, kValue, sizeof(uint8_t)))
-      throw Failed(FailureKind::input_missing,
-                   "branch condition is not a Condition buffer");
-    return root->GetField<uint8_t>(kValue, 0) != 0;
-  }
 
   auto input_ports(const Node& node, const Work& work) -> std::vector<Value> {
     const stdfs::path package(work.implementation->package);
@@ -1924,30 +1949,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         stage_begin(s, Phase::execute);
         p.outputs = input_ports(node, w);
         break;
-      case CardType::Branch: {
-        const Value* v = input(in, "value");
-        const Value* c = input(in, "condition");
-        if (!v || !c)
-          throw Failed(FailureKind::input_missing,
-                       "branch needs value and condition");
-        const bool cond = condition_value(*c);
-        p.outputs.push_back(forwarded(*v, cond ? "a" : "b"));
-        card_log(node.path, s.invocation, LogStream::standard_output,
-                 std::string("branch -> ") + (cond ? "a" : "b") + "\n");
-        break;
-      }
-      case CardType::Fork: {
-        const Value* v = input(in, "value");
-        if (!v) throw Failed(FailureKind::input_missing, "fork needs value");
-        std::string sent;
-        for (const auto& port : node.outputs) {
-          p.outputs.push_back(forwarded(*v, port.name));
-          sent += (sent.empty() ? "" : ", ") + port.name;
-        }
-        card_log(node.path, s.invocation, LogStream::standard_output,
-                 "fork -> " + sent + "\n");
-        break;
-      }
       case CardType::Collect:
         p.outputs.push_back(collect_values(node.outputs.front(), in,
                                            w.cancellation->stop));
@@ -1956,18 +1957,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (in.size() != 1)
           throw Failed(FailureKind::input_missing,
                        "merge consumes exactly one arrival");
-        const Value& v = in.front();
-        const auto& out = node.outputs.front();
-        if (!out.resolved())
-          throw Failed(FailureKind::output_invalid,
-                       "merge: the output type is not resolved");
-        auto value = v;
-        value.name = out.name;
-        value.type = out.type;
-        value.artifact_id.reset();
-        value.recorded_path.reset();
-        if (!node.merge_tags.empty())
-          value.bytes = types::wrap_in_union(node.merge_tags.at(v.name), v.bytes);
+        auto value = in.front();
+        value.name = node.outputs.front().name;
         p.outputs.push_back(std::move(value));
         break;
       }
@@ -2112,8 +2103,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       final[n.idx] =
           n.activations > 0 || n.halted ? n.last : CardState::skipped;
     }
-    // Never invoked: blocked when an upstream failed/blocked, or partial inputs
-    // arrived.
+    // Missing inputs from failed producers block their consumers. A missing
+    // output from a successful producer, including a skipped chain, does not.
     for (bool changed = true; changed;) {
       changed = false;
       for (auto& n : nodes_) {
@@ -2123,16 +2114,19 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         if (final[n.idx] == CardState::blocked ||
             final[n.idx] == CardState::cancelled)
           continue;
-        bool partial = false;
-        for (auto& [_, q] : n.queues) partial |= !q.empty();
-        bool upstream_bad = false;
+        bool upstream_bad = n.blocked_input;
         for (const auto& e : res.edges)
-          if (e.to == n.idx && nodes_[e.from].in_targets &&
+          if (e.to == n.idx && n.queues.at(e.to_port).empty() &&
+              nodes_[e.from].in_targets &&
               (final[e.from] == CardState::failed ||
                final[e.from] == CardState::blocked ||
                final[e.from] == CardState::cancelled))
             upstream_bad = true;
-        if (partial || upstream_bad) {
+        const bool has_partial_inputs =
+            std::ranges::any_of(n.queues, [](const auto& port) {
+              return !port.second.empty();
+            });
+        if (upstream_bad || (cancel_ && has_partial_inputs)) {
           final[n.idx] = cancel_ ? CardState::cancelled : CardState::blocked;
           changed = true;
         }
@@ -2167,6 +2161,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       rec.summary.params = recorded_params(n.node->settings.params);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
+      rec.summary.ended_at = now_ms();
       rec.summary.waiting = waiting[n.idx];
       History& h = svc_.history();
       h.submit([&h, rec](sql::Db& db) { h.complete_invocation(db, rec); },
@@ -2384,6 +2379,9 @@ auto find_draft_waiting(const Resolution& res, const PlanEdges& edges)
     if (res.nodes[i].kind == CardType::Draft) {
       waits.insert(i);
       waiting.push_back(i);
+    } else if (res.nodes[i].kind == CardType::Collect) {
+      // Collect can emit an empty batch even if its producer never runs.
+      remaining[i] = edges.incoming[i].size() + 1;
     } else if (res.nodes[i].kind == CardType::Merge) {
       remaining[i] = edges.incoming[i].size();
     } else {
@@ -2513,7 +2511,7 @@ RunPlanData Scheduler::plan(const Resolution& res, const CardPath& card,
   }
   // A Card further down that waits for all its inputs would never run without
   // the ports nothing in this run feeds; a port something in this run feeds
-  // gets that value alone, and an `any` Card runs on what arrives.
+  // gets that value alone. Merge runs on what arrives.
   std::set<size_t> given(starts.begin(), starts.end());
   given.insert(seeds.begin(), seeds.end());
   for (size_t i : targets) {

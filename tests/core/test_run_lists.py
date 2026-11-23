@@ -3,13 +3,12 @@
 from itertools import product
 import json
 import shutil
-from pathlib import Path
 
 import pytest
 
 from projects import wait_invocation
 from harness.scenario import Gate, Project, run, wait_run
-from harness.values import collected_items as collected, recorded_input_json
+from harness.values import collected_items as collected, recorded_input_json, reference_json
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -20,8 +19,7 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; '
-             'table Outputs { out:string (tsugumi: "path"); } root_type Outputs;')
+ARTIFACT_OUTPUT = 'table Doc {} table Outputs { out:Doc; } root_type Outputs;'
 
 
 def mock_plan(runs, *, execution_list=False, **options):
@@ -137,7 +135,7 @@ def test_cartesian_order_is_saved_and_replayed(core_factory, project, tmp_path):
 
 
 def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_factory, project, tmp_path):
-    """An empty run list produces a typed empty vector through a downstream scalar implementation."""
+    """An empty run list skips the join and Collect emits an empty vector."""
     diagnostic = "the evaluation selected no implementations"
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project).card("start", {"type": "trigger"})
@@ -154,47 +152,33 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
 
     run_id = run(client, "start", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
-    for name in ("left", "work"):
-        page = invocation_page(client, run_id, name)
-        assert not page.records
-        batch, = page.batches
-        assert batch.complete and batch.executionList and batch.invocationCount == 0
+    page = invocation_page(client, run_id, "left")
+    assert not page.records
+    batch, = page.batches
+    assert batch.complete and batch.executionList and batch.invocationCount == 0
+    page = invocation_page(client, run_id, "work")
+    assert not page.batches
+    assert [row.state for row in page.records] == [CardState.skipped]
     assert collected(client, tmp_path / "decode", run_id) == []
     journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
     assert any(diagnostic in line and "left activation 1" in line
                for line in text(journal.text).splitlines())
-
-    assert not any(
-        note.valueType == NotificationPayload.RunEvent
-        and text(note.value.runId) == run_id
-        and note.value.valueType == RunEventValue.RunCardChanged
-        and note.value.value.invocation.card.segments in ([b"left"], [b"work"])
-        for note in client.notifications
-    )
-
-    replay = run(client, "work", propagate=False)
-    assert wait_run(client, replay).state == RunState.succeeded
-    page = invocation_page(client, replay, "work")
-    assert not page.records
-    batch, = page.batches
-    assert batch.complete and batch.executionList and batch.invocationCount == 0
 
 
 def test_singleton_run_list_and_vector_value_have_different_execution_shapes(core_factory, project, tmp_path):
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
     from harness.native_card import STATIC_RESULT_ENTRY, native_card
     from harness.values import encode_message
-    from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
     vector_run = native_card(tmp_path / "vector", STATIC_RESULT_ENTRY, [
-        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", vector,
+        ("out", encode_message(tmp_path / "encode", vector,
                                                     {"items": [1, 2, 3]}, root_type="Vector")),
     ])
     work_run = native_card(tmp_path / "work", STATIC_RESULT_ENTRY, [
-        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", NUMBER,
+        ("out", encode_message(tmp_path / "encode", NUMBER,
                                                     {"value": 42}, root_type="Number")),
     ])
     graph.card("vector", {"type": "code", "sandbox": {"filesystem": False}}, outputs=vector,
@@ -218,38 +202,6 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
     assert batch.executionList and batch.invocationCount == 1
     assert recorded_input_json(client, tmp_path / "decode", run_id, "work") == {"items": [1, 2, 3]}
     assert collected(client, tmp_path / "decode", run_id) == [{"value": 42}]
-
-
-def test_branch_filters_cartesian_batch_and_sends_an_empty_list(core_factory, project, tmp_path):
-    """Direct fan-out and both Branch outputs preserve list shape."""
-    client = core_factory(mocked_builds=True, mocked_worker=True).connect()
-    graph = Project(project).card("start", {"type": "trigger"})
-    producer(graph, "values", [10, 20])
-    flag = 'table Flag { value:bool; } table Outputs { out:Flag (required); } root_type Outputs;'
-    yes, = scripted_implementations(tmp_path, [
-        [{"op": "output", "port": "out", "type": "bool", "value": True}],
-    ])
-    graph.card("flags", {"type": "code", "sandbox": {"filesystem": False}}, outputs=flag,
-               plan=mock_plan([yes, yes], execution_list=True))
-    graph.card("branch", {"type": "branch"})
-    graph.card("selected", {"type": "collect", "recordIO": True})
-    graph.card("empty", {"type": "collect", "recordIO": True})
-    graph.card("original", {"type": "collect", "recordIO": True})
-    graph.connect("values", "out", "branch", "value").connect("values", "out", "original", "in")
-    graph.connect("flags", "out", "branch", "condition")
-    graph.connect("branch", "a", "selected", "in").connect("branch", "b", "empty", "in")
-    graph.save(client)
-
-    run_id = run(client, "start", propagate=True)
-    assert wait_run(client, run_id).state == RunState.succeeded
-    batch, = invocation_page(client, run_id, "branch").batches
-    assert batch.executionList and batch.invocationCount == 4
-    assert {text(output.port): (output.count, output.executionList)
-            for output in batch.outputs} == {"a": (4, True), "b": (0, True)}
-    selected = collected(client, tmp_path / "decode", run_id, "selected")
-    assert sorted(item["value"] for item in selected) == [10, 10, 20, 20]
-    assert collected(client, tmp_path / "decode", run_id, "empty") == []
-    assert sorted(item["value"] for item in collected(client, tmp_path / "decode", run_id, "original")) == [10, 20]
 
 
 def test_cartesian_limit_prevents_workers_and_partial_output(core_factory, project):
@@ -316,26 +268,39 @@ def test_output_batch_limit_withholds_successful_members(core_factory, project, 
     assert batch.complete and batch.failed and not batch.outputs
 
 
-def test_collected_path_members_preserve_saved_batch_order(core_factory, project, tmp_path):
-    """A saved Path batch preserves its file and directory paths through Collect."""
+def test_collected_artifact_members_preserve_batch_order_and_grants(core_factory, project, tmp_path):
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     graph = Project(project)
     packages = scripted_implementations(tmp_path / "packages", [
-        [{"op": "file", "port": "out", "path": "data.txt", "text": "one"}],
-        [{"op": "directory", "port": "out", "path": "sample", "files": {"data.txt": "two"}}],
+        [{"op": "file", "port": "out", "path": "first.txt", "text": "one"}],
+        [{"op": "directory", "port": "out", "path": "second", "files": {"data.txt": "two"}}],
     ])
-    graph.card("work", {"type": "code", "sandbox": {"filesystem": False}},
-               outputs=DIRECTORY, plan=mock_plan(packages, execution_list=True))
+    graph.card("work", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False}},
+               outputs=ARTIFACT_OUTPUT, plan=mock_plan(packages, execution_list=True))
     connect_collect(graph)
-    graph.save(client)
+    graph.card("consumer", {"type": "code", "recordIO": True, "sandbox": {"filesystem": False},
+                            "inputs": [{"name": "in"}]},
+               outputs=NUMBER, plan=mock_plan(numeric_implementations(tmp_path / "consumer", [1])))
+    graph.connect("collect", "out", "consumer", "in").save(client)
 
     run_id = run(client, "work", propagate=True)
     assert wait_run(client, run_id).state == RunState.succeeded
+
+    def record(current, card, invocation=1):
+        return current.call("RunRecordRequest", runId=run_id, card=path(card), invocation=invocation).record
+
     def check(current):
-        first, second = map(Path, collected(current, tmp_path / "decode", run_id))
-        assert first.read_text() == "one"
-        assert (second / "data.txt").read_text() == "two"
+        members = [text(record(current, "work", index).outputs[0].artifacts[0].id)
+                   for index in (1, 2)]
+        assert len(set(members)) == 2
+        value, = record(current, "collect").outputs
+        envelopes = reference_json(tmp_path / "decode", bytes(value.schemaBfbs), bytes(value.inlineBytes),
+                                   root_type="tsugumi.builtin.Collected")["items"]
+        assert [bytes(item["artifacts"][0]["bytes"]).hex() for item in envelopes] == members
+        received, = record(current, "consumer").inputs
+        assert {text(item.id) for item in value.artifacts} == set(members)
+        assert {text(item.id) for item in received.artifacts} == set(members)
 
     check(client)
     daemon.restart()

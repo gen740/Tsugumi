@@ -125,19 +125,18 @@ export function CardNodeView(p: CardNodeProps) {
       {[...data.inputs.map((x) => [x, false] as const), ...data.outputs.map((x) => [x, true] as const)].map(([port, output]) => {
         const pt = g.port(port.name, output)
         const mark = g.shape === 'card' ? Math.max(6, s(8)) : s(8), hit = g.portHitSize(z)
-        const condition = !output && data.kind === 'branch' && port.name === 'condition'
         return (
           <div key={(output ? 'o:' : 'i:') + port.name} className={`cv-port${p.onPortDown ? ' connectable' : ''}`}
             style={{ left: s(pt.x) - hit / 2, top: s(pt.y) - hit / 2, width: hit, height: hit }}
-            title={portHelp(data, port, output) + (p.onPortDown ? (output ? L('（ドラッグして入力ポートへ接続）') : L('（ドラッグして出力ポートへ接続）')) : '')}
+            title={portHelp(port, output) + (p.onPortDown ? (output ? L('（ドラッグして入力ポートへ接続）') : L('（ドラッグして出力ポートへ接続）')) : '')}
             onPointerDown={p.onPortDown ? (e) => {
               if (e.button !== 0) return
               e.stopPropagation()
               p.onPortDown!(port.name, output, e)
             } : undefined}>
             {output ? <span className="cv-port-out" style={{ width: mark, height: mark }} /> : (
-              <span className={`cv-port-in${condition ? ' condition' : ''}`}
-                style={{ width: mark, height: mark, borderRadius: Math.max(1, s(1.5)), transform: condition ? 'rotate(45deg)' : undefined }} />
+              <span className="cv-port-in"
+                style={{ width: mark, height: mark, borderRadius: Math.max(1, s(1.5)) }} />
             )}
           </div>
         )
@@ -315,12 +314,6 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
       for (const p of list) {
         const pt = g.port(p.name, output)
         const w = g.spacing(!output)
-        let text = p.name
-        if (data.kind === 'branch') {
-          // Which output is true / false, and which input is the boolean condition.
-          if (output) text = p.name === 'a' ? 'a (T)' : p.name === 'b' ? 'b (F)' : p.name
-          else if (p.name === 'condition') text = 'bool'
-        }
         let style: CSSProperties
         if (g.shape === 'card') {
           // Inside an ordinary Card: below its input, above its output.
@@ -328,13 +321,13 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
           style = { left: s(pt.x - w / 2), top: s(pt.y + (output ? -half : half)), width: s(w), textAlign: 'center' }
         } else {
           // Beside the port of a routing Card, so the wire (vertical at the port) never runs through the name.
-          const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && (data.kind === 'branch' || g.spacing(!output) < 70)
-          const lw = data.kind === 'branch' ? 40 : Math.max(CardGeometry.minLabel, Math.min(w, 80))
+          const left = pt.x < g.outlineRect.x + g.outlineRect.width / 2 - 1 && g.spacing(!output) < 70
+          const lw = Math.max(CardGeometry.minLabel, Math.min(w, 80))
           const dy = output ? CardGeometry.portRow / 2 : -CardGeometry.portRow / 2
           const x = left ? pt.x - 6 - lw : pt.x + 6
           style = { left: s(x), top: s(pt.y + dy), width: s(lw), textAlign: left ? 'right' : 'left' }
         }
-        out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{text}</span>)
+        out.push(<span key={(output ? 'o:' : 'i:') + p.name} className="cv-port-label secondary" style={{ ...style, fontSize: font(9.5) }}>{p.name}</span>)
       }
     }
   } else if (g.shape === 'card' && !g.collapsed) {
@@ -352,14 +345,8 @@ function PortLabels({ data, g, flow, z }: { data: CardNodeData; g: CardGeometry;
   return <>{out}</>
 }
 
-function portHelp(data: CardNodeData, p: PortData, output: boolean): string {
+function portHelp(p: PortData, output: boolean): string {
   let s = (output ? L('出力 ') : L('入力 ')) + p.name
-  if (data.kind === 'branch') {
-    if (p.name === 'condition') s += L('（bool: true なら a、false なら b へ value を送る）')
-    if (p.name === 'a') s += L('（condition が true のとき）')
-    if (p.name === 'b') s += L('（condition が false のとき）')
-  }
-  if (data.kind === 'fork' && output) s += L('（value をそのまま送る）')
   if (p.typeName) s += ` : ${p.typeName}`
   if (p.note) s += '\n' + p.note
   return s

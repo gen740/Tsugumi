@@ -83,8 +83,6 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
   EXPECT_EQ(json::Text(json::Object(draft.at("_card.json")), "type"), "draft");
   EXPECT_FALSE(draft.contains("README.md"));
   for (const auto& [kind, type] : {std::pair{Kind::Trigger, "trigger"},
-                                  {Kind::Branch, "branch"},
-                                  {Kind::Fork, "fork"},
                                   {Kind::Collect, "collect"},
                                   {Kind::Merge, "merge"},
                                   {Kind::InputValue, "input"},
