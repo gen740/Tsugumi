@@ -5,6 +5,9 @@
 #include <flatbuffers/flatbuffers.h>
 #include <signal.h>
 #include <sys/stat.h>
+#ifdef __linux__
+#include <sys/socket.h>
+#endif
 #include <unistd.h>
 
 #include <algorithm>
@@ -72,6 +75,8 @@ struct ViewQueue {
   size_t outgoing_bytes = 0;
   size_t credit = kViewBudget;
   size_t returned_credit = 0;
+  uint64_t queued_messages = 0;
+  uint64_t forwarded_messages = 0;
 };
 
 struct Host {
@@ -82,6 +87,7 @@ struct Host {
   bool stopping = false;
   std::mutex artifact_mutex;
   std::string artifact_directory;
+  bool artifact_broker = false;
   std::map<ArtifactId, std::string> granted;
   std::map<ArtifactId, std::string> created;
   std::atomic<uint64_t> cancelled_id{0};
@@ -138,6 +144,7 @@ auto send_display(void* context, const char* view, const uint8_t* bytes,
     queue.outgoing.emplace_back(bytes ? reinterpret_cast<const char*>(bytes)
                                       : "", size);
     queue.outgoing_bytes += message_cost(size);
+    ++queue.queued_messages;
     host.view_ready.notify_all();
     return 0;
   } catch (const std::exception&) {
@@ -165,8 +172,9 @@ auto receive_display(void* context, const char* view, tsugumi_bytes* out,
       host.view_ready.wait(lock, ready);
     } else {
       const auto now = Clock::now();
-      const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               Clock::time_point::max() - now).count();
+      const int64_t maximum =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              Clock::time_point::max() - now).count();
       if (!host.view_ready.wait_until(
               lock, now + std::chrono::milliseconds(std::min(timeout_ms, maximum)),
               ready))
@@ -191,15 +199,21 @@ auto display_loop(Host& host) -> void {
     return queue.returned_credit != 0 ||
            (!queue.outgoing.empty() && queue.credit >= TSUGUMI_MESSAGE_MAX);
   };
+  std::string previous;
   for (;;) {
     flatbuffers::FlatBufferBuilder b;
+    ViewQueue* forwarded = nullptr;
     {
       std::unique_lock lock(host.view_mutex);
       host.view_ready.wait(lock, [&] {
         return host.stopping || std::ranges::any_of(host.views, ready);
       });
       if (host.stopping) return;
-      auto& [view, queue] = *std::ranges::find_if(host.views, ready);
+      const auto end = host.views.end();
+      auto next = std::find_if(host.views.upper_bound(previous), end, ready);
+      if (next == end) next = std::find_if(host.views.begin(), end, ready);
+      auto& [view, queue] = *next;
+      previous = view;
       const auto name = b.CreateString(view);
       if (queue.returned_credit) {
         const auto update = W::CreateWorkerDisplayCredit(
@@ -215,18 +229,37 @@ auto display_loop(Host& host) -> void {
         queue.credit -= message_cost(bytes.size());
         queue.outgoing_bytes -= message_cost(bytes.size());
         queue.outgoing.pop_front();
+        forwarded = &queue;
         W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(
             b, 0, W::WorkerPayload::WorkerDisplay, update.Union()));
       }
       host.view_ready.notify_all();
     }
-    if (!send_frame(host, b)) {
+    const bool sent = send_frame(host, b);
+    {
       std::lock_guard lock(host.view_mutex);
-      host.stopping = true;
+      if (!sent) host.stopping = true;
+      if (sent && forwarded) ++forwarded->forwarded_messages;
       host.view_ready.notify_all();
-      return;
     }
+    if (!sent) return;
   }
+}
+
+// The result can retire a non-resident worker. Put all messages already
+// submitted by this call onto the data channel before it returns its result.
+auto flush_display(Host& host, uint64_t call) -> void {
+  std::unique_lock lock(host.view_mutex);
+  std::vector<std::pair<const ViewQueue*, uint64_t>> pending;
+  for (const auto& [name, queue] : host.views)
+    if (queue.forwarded_messages < queue.queued_messages)
+      pending.emplace_back(&queue, queue.queued_messages);
+  host.view_ready.wait(lock, [&] {
+    return interrupted(host, call) ||
+           std::ranges::all_of(pending, [](const auto& entry) {
+             return entry.first->forwarded_messages >= entry.second;
+           });
+  });
 }
 
 auto cancelled(void* context) -> int {
@@ -276,6 +309,54 @@ auto create_artifact(void* context, tsugumi_artifact_id* out,
   }
 }
 
+#ifdef __linux__
+auto connect_artifact_broker() -> void {
+  constexpr int socket = tsugumi::workerd::kArtifactSocket;
+  constexpr int host_proc = tsugumi::workerd::kHostProc;
+  // Discover the sandbox's mount namespace before loading any Card code.
+  // The host's proc directory is never made available to the Card.
+  const int ns = ::openat(host_proc, "self/ns/mnt", O_RDONLY | O_CLOEXEC);
+  ::close(host_proc);
+  if (ns < 0) {
+    ::shutdown(socket, SHUT_WR);
+    return;
+  }
+  char setup = 1;
+  iovec data{&setup, sizeof(setup)};
+  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(ns))]{};
+  msghdr message{};
+  message.msg_iov = &data;
+  message.msg_iovlen = 1;
+  message.msg_control = control;
+  message.msg_controllen = sizeof(control);
+  auto* header = CMSG_FIRSTHDR(&message);
+  header->cmsg_level = SOL_SOCKET;
+  header->cmsg_type = SCM_RIGHTS;
+  header->cmsg_len = CMSG_LEN(sizeof(ns));
+  std::memcpy(CMSG_DATA(header), &ns, sizeof(ns));
+  ssize_t sent;
+  do {
+    sent = ::sendmsg(socket, &message, MSG_NOSIGNAL);
+  } while (sent < 0 && errno == EINTR);
+  if (sent != sizeof(setup)) ::shutdown(socket, SHUT_WR);
+  ::close(ns);
+}
+
+auto request_artifact(const ArtifactId& id) -> int {
+  constexpr int socket = tsugumi::workerd::kArtifactSocket;
+  ssize_t size;
+  do {
+    size = ::send(socket, id.data(), id.size(), MSG_NOSIGNAL);
+  } while (size < 0 && errno == EINTR);
+  if (size != static_cast<ssize_t>(id.size())) return EIO;
+  int error;
+  do {
+    size = ::recv(socket, &error, sizeof(error), MSG_TRUNC);
+  } while (size < 0 && errno == EINTR);
+  return size == sizeof(error) ? error : EIO;
+}
+#endif
+
 auto open_artifact(void* context, const tsugumi_artifact_id* id,
                    tsugumi_bytes* path) -> int {
   if (!id || !path) return -1;
@@ -286,9 +367,23 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
   std::ranges::copy(id->bytes, key.begin());
   const auto found = host.granted.find(key);
   if (found == host.granted.end()) return -1;
+#ifdef __linux__
+  if (!host.call_id) return -1;
+  const int error =
+      host.artifact_broker ? request_artifact(key) : ENOTSUP;
+  if (error) {
+    const auto* reason =
+        error == ENOSYS
+            ? "the Linux kernel lacks open_tree, mount_setattr or move_mount"
+            : std::strerror(error);
+    std::fprintf(stderr, "artifact_open: %s\n", reason);
+    return -error;
+  }
+#else
   struct stat info{};
   if (::lstat(found->second.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
     return -1;
+#endif
   *path = path_bytes(found->second);
   return 0;
 }
@@ -523,10 +618,11 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      host, id, reply);
 }
 
-auto serve(const std::string& package) -> int {
-  // A process-lifetime host context. serve exits the process without running
-  // static destructors while Card threads can still enter send.
+auto serve(const std::string& package, bool artifact_broker) -> int {
+  // This context lives as long as the process, including when Card threads
+  // enter send or recv after a call returns.
   Host host;
+  host.artifact_broker = artifact_broker;
   std::thread(control_loop, std::ref(host)).detach();
   std::thread(display_loop, std::ref(host)).detach();
   Main entry = nullptr;
@@ -572,6 +668,7 @@ auto serve(const std::string& package) -> int {
       reply.Clear();
       failure_frame(reply, last_call, *failure, created_ids(host));
     }
+    if (call->drain_display()) flush_display(host, last_call);
     host.call_id = 0;
     std::fflush(stdout);
     std::fflush(stderr);
@@ -583,10 +680,20 @@ auto serve(const std::string& package) -> int {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc != 3 || std::string_view(argv[1]) != "--package") return 2;
+  if (argc < 3 || std::string_view(argv[1]) != "--package") return 2;
+  bool artifact_broker = false;
+#ifdef __linux__
+  if (argc == 4 && std::string_view(argv[3]) == "--artifact-broker") {
+    artifact_broker = true;
+    ::fcntl(tsugumi::workerd::kArtifactSocket, F_SETFD, FD_CLOEXEC);
+    connect_artifact_broker();
+  } else
+#endif
+      if (argc != 3)
+    return 2;
   ::signal(SIGPIPE, SIG_IGN);
   // Card subprocesses use stdout/stderr but do not inherit the ABI sockets.
   ::fcntl(kData, F_SETFD, FD_CLOEXEC);
   ::fcntl(kControl, F_SETFD, FD_CLOEXEC);
-  return serve(argv[2]);
+  return serve(argv[2], artifact_broker);
 }

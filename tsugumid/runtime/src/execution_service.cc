@@ -222,8 +222,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   for (const auto& artifact : artifacts)
     sp.binds.push_back({artifact.path, artifact.path, false, ""});
 #else
-  if (!artifacts.empty())
-    throw Failed(FailureKind::unsupported, "lazy artifact mounts are unavailable");
+  sp.grants = artifacts;
 #endif
 
   // The resident worker of this Card, if it runs the same build under the same
@@ -239,7 +238,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-  const bool reuse = node.settings.reuse_worker;
+  // Open mounts are scoped to the invocation that granted them.
+  const bool reuse = node.settings.reuse_worker && sp.grants.empty();
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);

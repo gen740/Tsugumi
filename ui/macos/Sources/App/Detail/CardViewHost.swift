@@ -167,15 +167,35 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   <style>html,body{margin:0;height:100%;overflow:hidden}iframe{border:0;display:block;width:100%;height:100%}</style>
   </head><body><script>
   'use strict'
-  let frame, port, acknowledge, reverseBytes = 0
+  let frame, port, admission, forwardBytes = 0, reverseBytes = 0
+  const sent = []
   const max = 1 << 24
   const credit = `<script>
     addEventListener('message', event => {
       if (event.source !== parent || event.data?.tsugumi !== 1) return
       const port = event.data.port
+      const max = 1 << 24
+      const post = port.postMessage.bind(port)
+      let used = 0, reportedDrop = false
+      port.postMessage = (message, options) => {
+        if (message?.type !== 'data' || !(message.bytes instanceof ArrayBuffer)) return
+        const size = message.bytes.byteLength
+        if (size > max || used > max) {
+          if (!reportedDrop) post({ type: 'dropped' })
+          reportedDrop = true
+          return
+        }
+        post(message, options)
+        used += Math.max(1, size)
+      }
       port.addEventListener('message', message => {
-        if (message.data?.type === 'data')
-          setTimeout(() => port.postMessage({ type: 'credit' }), 0)
+        if (message.data?.type === 'reverseCredit') {
+          message.stopImmediatePropagation()
+          used -= Math.max(1, message.data.size)
+          reportedDrop = false
+        } else if (message.data?.type === 'data') {
+          setTimeout(() => post({ type: 'credit' }), 0)
+        }
       })
       port.start()
     }, { once: true })
@@ -190,12 +210,15 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
       port = channel.port1
       port.onmessage = ({ data }) => {
         if (data?.type === 'credit') {
-          acknowledge?.()
-          acknowledge = undefined
+          forwardBytes -= sent.shift() ?? 0
+          flush()
+        } else if (data?.type === 'dropped') {
+          webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
         } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer) {
           const bytes = new Uint8Array(data.bytes)
           if (bytes.length > max || reverseBytes > max) {
             webkit.messageHandlers.tsugumiViewInput.postMessage({ dropped: true })
+            port.postMessage({ type: 'reverseCredit', size: bytes.length })
             return
           }
           const parts = []
@@ -213,17 +236,30 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     frame.srcdoc = html.slice(0, end) + credit + html.slice(end)
     document.body.append(frame)
   })
-  window.tsugumiData = text => new Promise(resolve => {
-    if (!port) return resolve()
+  function flush() {
+    if (!port || !admission || forwardBytes > max) return
+    const { text, resolve } = admission
+    admission = undefined
     const raw = atob(text), bytes = new Uint8Array(raw.length)
     for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i)
-    acknowledge = resolve
+    const size = Math.max(1, bytes.length)
+    forwardBytes += size
+    sent.push(size)
     port.postMessage({ type: 'data', bytes: bytes.buffer }, [bytes.buffer])
+    resolve()
+  }
+  window.tsugumiData = text => new Promise(resolve => {
+    if (!port) return resolve()
+    admission = { text, resolve }
+    flush()
   })
-  window.tsugumiReverseCredit = size => { reverseBytes -= Math.max(1, size) }
+  window.tsugumiReverseCredit = size => {
+    reverseBytes -= Math.max(1, size)
+    port?.postMessage({ type: 'reverseCredit', size })
+  }
   window.tsugumiClose = () => {
-    acknowledge?.()
-    port?.close(); frame?.remove(); port = frame = acknowledge = undefined
+    admission?.resolve()
+    port?.close(); frame?.remove(); port = frame = admission = undefined
   }
   </script></body></html>
   """
@@ -250,6 +286,7 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
   @ObservationIgnored private let sendToCard: ((Data) async throws -> Void)?
   @ObservationIgnored private var reverse: [Data] = []
   @ObservationIgnored private var sendingReverse = false
+  @ObservationIgnored private var reverseBytes = 0
   private(set) var error: String?
   @ObservationIgnored private var outbox = CardViewOutbox()
   @ObservationIgnored private var mounted = false
@@ -330,8 +367,14 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
       error = String(localized: "ビューのメッセージを送信できませんでした")
     } else if let text = message["bytes"] as? String, let bytes = Data(base64Encoded: text),
               bytes.count <= 1 << 24 {
-      reverse.append(bytes)
-      flushReverse()
+      if reverseBytes <= 1 << 24 {
+        reverseBytes += max(1, bytes.count)
+        reverse.append(bytes)
+        flushReverse()
+      } else {
+        error = String(localized: "ビューのメッセージを送信できませんでした")
+      }
+      web.evaluateJavaScript("tsugumiReverseCredit(\(bytes.count))", completionHandler: nil)
     }
   }
 
@@ -340,16 +383,16 @@ private struct HTMLViewRepresentable: NSViewRepresentable {
     let bytes = reverse.removeFirst()
     sendingReverse = true
     Task {
-      defer { sendingReverse = false; flushReverse() }
+      defer {
+        reverseBytes -= max(1, bytes.count)
+        sendingReverse = false
+        flushReverse()
+      }
       do {
         guard let sendToCard else { throw CardViewFileError.unavailable }
         try await sendToCard(bytes)
       } catch {
         if !closed { self.error = error.localizedDescription }
-      }
-      if !closed {
-        _ = try? await web.callAsyncJavaScript("tsugumiReverseCredit(size)",
-          arguments: ["size": bytes.count], contentWorld: .page)
       }
     }
   }

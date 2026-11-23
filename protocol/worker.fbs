@@ -36,6 +36,8 @@ table WorkerCall {
   deadline_ms:uint64 = null (id: 2);
   artifact_directory:string (id: 3);
   grants:[ArtifactGrant] (id: 4);
+  // Before replying, forward displays queued before a one-shot call returned.
+  drain_display:bool (id: 5);
 }
 
 table WorkerOutput {

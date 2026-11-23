@@ -10,9 +10,28 @@ const creditScript = `<script>
 addEventListener('message', event => {
   if (event.source !== parent || event.data?.tsugumi !== 1) return
   const port = event.data.port
+  const max = 1 << 24
+  const post = port.postMessage.bind(port)
+  let used = 0, reportedDrop = false
+  port.postMessage = (message, options) => {
+    if (message?.type !== 'data' || !(message.bytes instanceof ArrayBuffer)) return
+    const size = message.bytes.byteLength
+    if (size > max || used > max) {
+      if (!reportedDrop) post({ type: 'dropped' })
+      reportedDrop = true
+      return
+    }
+    post(message, options)
+    used += Math.max(1, size)
+  }
   port.addEventListener('message', message => {
-    if (message.data?.type === 'data')
-      setTimeout(() => port.postMessage({ type: 'credit' }), 0)
+    if (message.data?.type === 'reverseCredit') {
+      message.stopImmediatePropagation()
+      used -= Math.max(1, message.data.size)
+      reportedDrop = false
+    } else if (message.data?.type === 'data') {
+      setTimeout(() => post({ type: 'credit' }), 0)
+    }
   })
   port.start()
 }, { once: true })
@@ -36,8 +55,9 @@ function flush(view) {
     const { bytes, ticket } = view.pending.shift()
     const size = Math.max(1, bytes.byteLength)
     view.outBytes += size
-    view.out.push({ ticket, size })
+    view.out.push(size)
     view.port.postMessage({ type: 'data', bytes }, [bytes])
+    notify({ tsugumi: 'credit', ticket })
   }
 }
 
@@ -58,12 +78,14 @@ function mount(html) {
       if (data?.type === 'credit') {
         const sent = view.out.shift()
         if (!sent) return
-        view.outBytes -= sent.size
-        notify({ tsugumi: 'credit', ticket: sent.ticket })
+        view.outBytes -= sent
         flush(view)
+      } else if (data?.type === 'dropped') {
+        notify({ tsugumi: 'messageDropped' })
       } else if (data?.type === 'data' && data.bytes instanceof ArrayBuffer) {
         if (data.bytes.byteLength > messageMax || view.reverseBytes > budget - messageMax) {
           notify({ tsugumi: 'messageDropped' })
+          view.port.postMessage({ type: 'reverseCredit', size: data.bytes.byteLength })
           return
         }
         view.reverseBytes += Math.max(1, data.bytes.byteLength)
@@ -90,8 +112,10 @@ window.tsugumiView = message => {
       flush(current)
       return
     case 'reverseCredit':
-      if (current && Number.isInteger(message.size) && message.size >= 0)
+      if (current && Number.isInteger(message.size) && message.size >= 0) {
         current.reverseBytes = Math.max(0, current.reverseBytes - Math.max(1, message.size))
+        current.port?.postMessage({ type: 'reverseCredit', size: message.size })
+      }
   }
 }
 

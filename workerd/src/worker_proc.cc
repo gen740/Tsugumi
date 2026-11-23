@@ -18,6 +18,11 @@
 #ifdef __APPLE__
 #include <libproc.h>
 #else
+#include <linux/mount.h>
+#include <linux/nsfs.h>
+#include <sched.h>
+#include <sys/ioctl.h>
+#include <sys/syscall.h>
 #include <sys/vfs.h>
 #endif
 
@@ -93,6 +98,136 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
     trace::Observe(link, "project core", "Card worker", true, frame,
                    &trace::kFlatBufferCodec);
 }
+
+#ifdef __linux__
+struct ScopedFd {
+  int fd;
+  ~ScopedFd() { close_fd(fd); }
+};
+
+auto attach_artifact(int user_ns, int mount_ns, const std::string& source,
+                     const std::string& destination) -> int {
+  int result[2];
+  if (::pipe2(result, O_CLOEXEC) != 0) return errno;
+  const ScopedFd receiver{result[0]};
+  ScopedFd sender{result[1]};
+  const auto child = ::fork();
+  if (child < 0) return errno;
+  if (child == 0) {
+    ::close(receiver.fd);
+    const auto mount_artifact = [&] {
+      // Copy the launcher's mount namespace while still looking at the host
+      // filesystem, but under the sandbox mount namespace's owning user
+      // namespace. This gives an unprivileged launcher may_mount() without
+      // granting the Card any additional capabilities.
+      if (::setns(user_ns, CLONE_NEWUSER) != 0 || ::unshare(CLONE_NEWNS) != 0)
+        return errno;
+      const int directory =
+          ::open(source.c_str(), O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      if (directory < 0) return errno;
+      const int tree = ::syscall(
+          SYS_open_tree, directory, "",
+          OPEN_TREE_CLONE | OPEN_TREE_CLOEXEC | AT_RECURSIVE | AT_EMPTY_PATH);
+      if (tree < 0) return errno;
+      struct mount_attr attrs{};
+      attrs.attr_set = MOUNT_ATTR_RDONLY | MOUNT_ATTR_NOSUID | MOUNT_ATTR_NODEV;
+      if (::syscall(SYS_mount_setattr, tree, "", AT_EMPTY_PATH | AT_RECURSIVE,
+                    &attrs, sizeof(attrs)) != 0 ||
+          ::setns(mount_ns, CLONE_NEWNS) != 0)
+        return errno;
+      const int target = ::open(destination.c_str(),
+                                O_PATH | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC);
+      if (target < 0) return errno;
+      if (::syscall(SYS_move_mount, tree, "", target, "",
+                    MOVE_MOUNT_F_EMPTY_PATH | MOVE_MOUNT_T_EMPTY_PATH) != 0)
+        return errno;
+      return 0;
+    };
+    const int error = mount_artifact();
+    ssize_t written;
+    do {
+      written = ::write(sender.fd, &error, sizeof(error));
+    } while (written < 0 && errno == EINTR);
+    ::_exit(0);
+  }
+  close_fd(sender.fd);
+  int error;
+  ssize_t size;
+  do {
+    size = ::read(receiver.fd, &error, sizeof(error));
+  } while (size < 0 && errno == EINTR);
+  while (::waitpid(child, nullptr, 0) < 0 && errno == EINTR) {
+  }
+  return size == sizeof(error) ? error : EIO;
+}
+
+auto receive_mount_namespace(int socket) -> int {
+  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(int))]{};
+  char setup = 0;
+  iovec data{&setup, sizeof(setup)};
+  msghdr message{};
+  message.msg_iov = &data;
+  message.msg_iovlen = 1;
+  message.msg_control = control;
+  message.msg_controllen = sizeof(control);
+  ssize_t size;
+  do {
+    size = ::recvmsg(socket, &message, MSG_CMSG_CLOEXEC);
+  } while (size < 0 && errno == EINTR);
+  const auto* header = CMSG_FIRSTHDR(&message);
+  if (!header || header->cmsg_level != SOL_SOCKET ||
+      header->cmsg_type != SCM_RIGHTS ||
+      header->cmsg_len != CMSG_LEN(sizeof(int)))
+    return -1;
+  int ns;
+  std::memcpy(&ns, CMSG_DATA(header), sizeof(ns));
+  if (size == 1 && setup == 1 &&
+      !(message.msg_flags & (MSG_CTRUNC | MSG_TRUNC)) &&
+      ::ioctl(ns, NS_GET_NSTYPE) == CLONE_NEWNS)
+    return ns;
+  ::close(ns);
+  return -1;
+}
+
+auto artifact_mountpoint(const std::string& scratch, const ArtifactGrant& grant)
+    -> std::string {
+  if (grant.path.starts_with("/nix/store/")) return grant.path;
+  return scratch + "/opened-artifacts/" +
+         crypto::hex(grant.id.data(), grant.id.size());
+}
+
+auto broker_artifacts(int socket, const std::string& scratch,
+                      const std::vector<ArtifactGrant>& grants) -> void {
+  const ScopedFd mount_ns{receive_mount_namespace(socket)};
+  const ScopedFd user_ns{mount_ns.fd < 0 ? -1
+                                         : ::ioctl(mount_ns.fd, NS_GET_USERNS)};
+  std::set<ArtifactKey> opened;
+  ArtifactKey id(16, '\0');
+  for (;;) {
+    const auto size = ::recv(socket, id.data(), id.size(), MSG_TRUNC);
+    if (size < 0 && errno == EINTR) continue;
+    if (size != static_cast<ssize_t>(id.size())) break;
+    const auto grant = std::ranges::find(grants, id, &ArtifactGrant::id);
+    int error = ENOENT;
+    if (grant != grants.end()) {
+      if (opened.contains(id)) {
+        error = 0;
+      } else if (user_ns.fd < 0) {
+        error = ENOTSUP;
+      } else {
+        error = attach_artifact(user_ns.fd, mount_ns.fd, grant->path,
+                                artifact_mountpoint(scratch, *grant));
+        if (!error) opened.insert(id);
+      }
+    }
+    ssize_t sent;
+    do {
+      sent = ::send(socket, &error, sizeof(error), MSG_NOSIGNAL);
+    } while (sent < 0 && errno == EINTR);
+    if (sent != sizeof(error)) break;
+  }
+}
+#endif
 
 #ifdef __APPLE__
 // Seatbelt profile for sandbox: true Cards when tsugumid runs directly on a
@@ -344,6 +479,9 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
   std::string certificate = TSUGUMI_CACERT;
   std::string temporary = tmp_dir();
   std::vector<std::string> gui_env;
+#ifdef __linux__
+  const auto artifact_root = scratch_ + "/opened-artifacts";
+#endif
 #ifdef __APPLE__
   if (sp.gui || sp.sandbox.limits.limited())
     throw Failed(FailureKind::unsupported,
@@ -464,6 +602,23 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
         argv.insert(argv.end(), {"--dev-bind-try", "/dev/dri", "/dev/dri"});
       gui_env.push_back(socket->variable + "=" + value);
     }
+    if (!sp.grants.empty()) {
+      for (const auto& grant : sp.grants)
+        std::filesystem::create_directories(
+            artifact_root + "/" +
+            crypto::hex(grant.id.data(), grant.id.size()));
+      argv.insert(argv.end(), {"--ro-bind", artifact_root, artifact_root});
+      if (!sp.sandbox.identity) argv.insert(argv.end(), {"--cap-drop", "ALL"});
+      // A store artifact keeps its store path in the sandbox. Hide its
+      // contents even when its containing store item is in the Card closure.
+      for (const auto& grant : sp.grants)
+        if (grant.path.starts_with("/nix/store/")) {
+          const auto placeholder =
+              artifact_root + "/" +
+              crypto::hex(grant.id.data(), grant.id.size());
+          argv.insert(argv.end(), {"--ro-bind", placeholder, grant.path});
+        }
+    }
     argv.insert(argv.end(), {"--chdir", work_dir(), "--", sp.worker_binary});
   } else {
     spec.argv = {sp.worker_binary};
@@ -545,6 +700,27 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     throw Failed(FailureKind::worker_failed, "cannot create worker channels");
   }
   spec.fds = {{3, data[1]}, {4, control[1]}};
+#ifdef __linux__
+  std::array<int, 2> artifacts{-1, -1};
+  ScopedFd host_proc{-1};
+  ScopedFd artifact_client{-1};
+  ScopedFd artifact_server{-1};
+  if (bwrap && !sp.grants.empty()) {
+    host_proc.fd = ::open("/proc", O_PATH | O_DIRECTORY | O_CLOEXEC);
+    if (host_proc.fd < 0 || ::socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC,
+                                         0, artifacts.data()) != 0) {
+      close_channels();
+      remove_card_cgroup(cgroup_);
+      throw Failed(FailureKind::worker_failed,
+                   "cannot create artifact broker channels");
+    }
+    artifact_server.fd = artifacts[0];
+    artifact_client.fd = artifacts[1];
+    spec.fds.emplace_back(workerd::kArtifactSocket, artifact_client.fd);
+    spec.fds.emplace_back(workerd::kHostProc, host_proc.fd);
+    spec.argv.push_back("--artifact-broker");
+  }
+#endif
   spec.stdout_fd = out[1];
   spec.stderr_fd = err[1];
   try {
@@ -577,6 +753,15 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
 #endif
   alive_ = true;
   try {
+#ifdef __linux__
+    if (artifact_server.fd >= 0) {
+      close_fd(artifact_client.fd);
+      close_fd(host_proc.fd);
+      artifact_socket_ = std::exchange(artifact_server.fd, -1);
+      artifact_broker_ =
+          std::thread(broker_artifacts, artifact_socket_, scratch_, sp.grants);
+    }
+#endif
     if (sp.secrets) {
       flatbuffers::FlatBufferBuilder builder;
       std::vector<flatbuffers::Offset<W::EnvVar>> environment;
@@ -745,6 +930,15 @@ void WorkerProc::set_logs(LogSink logs) {
   logs_ = std::move(logs);
 }
 
+auto WorkerProc::artifact_path(const ArtifactGrant& grant) const
+    -> std::string {
+#ifdef __linux__
+  return artifact_mountpoint(scratch_, grant);
+#else
+  return grant.path;
+#endif
+}
+
 void WorkerProc::clear_scratch() {
   if (borrowed_) {
     borrowed_clear_();
@@ -804,6 +998,13 @@ void WorkerProc::terminate(bool force) {
     }
     return;
   }
+#ifdef __linux__
+  if (artifact_socket_ >= 0) {
+    ::shutdown(artifact_socket_, SHUT_RDWR);
+    if (artifact_broker_.joinable()) artifact_broker_.join();
+    close_fd(artifact_socket_);
+  }
+#endif
   if (pid_ > 0) {
     if (force) proc::kill_group(pid_, SIGTERM);
     ::shutdown(data_fd_, SHUT_RDWR);
@@ -857,11 +1058,18 @@ auto WorkerProc::start_data_reader() -> void {
   if (::pipe(data_wake_.data()) != 0)
     throw std::runtime_error("cannot create worker data wake pipe");
   for (const int fd : data_wake_) ::fcntl(fd, F_SETFD, FD_CLOEXEC);
+  view_receiver();
+  display_writer_ = std::thread([this] { write_display(); });
   data_thread_ = std::thread([this] { read_data(); });
 }
 
 auto WorkerProc::stop_data_reader() -> void {
-  data_stop_.request_stop();
+  {
+    std::lock_guard lock(display_mutex_);
+    data_stop_.request_stop();
+  }
+  display_ready_.notify_all();
+  if (display_writer_.joinable()) display_writer_.join();
   if (data_thread_.joinable()) {
     const char wake = 0;
     ssize_t written;
@@ -880,9 +1088,11 @@ auto WorkerProc::set_display(DisplaySink display) -> void {
   display_ = std::move(sink);
 }
 
-auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message) -> bool {
+auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message,
+                                    DisplayCredit complete) -> bool {
   std::lock_guard lock(mutex);
-  return remote ? remote(message) : worker && worker->send_display(message);
+  return remote ? remote(message)
+                : worker && worker->send_display(message, std::move(complete));
 }
 
 auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
@@ -893,31 +1103,96 @@ auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
   return view_receiver_;
 }
 
-auto WorkerProc::send_display(const WorkerDisplayData& display) -> bool {
+auto WorkerProc::send_display(const WorkerDisplayData& display,
+                              DisplayCredit complete) -> bool {
   if (display.bytes.size() > TSUGUMI_MESSAGE_MAX || display.view.empty())
     return false;
-  std::lock_guard lock(control_mutex_);
-  auto& credit = reverse_credit_.try_emplace(display.view, workerd::kViewBudget)
-                     .first->second;
-  if (credit < TSUGUMI_MESSAGE_MAX) return false;
-  flatbuffers::FlatBufferBuilder b;
-  const auto data = W::CreateWorkerDisplay(
-      b, b.CreateString(display.view),
-      b.CreateVector(reinterpret_cast<const uint8_t*>(display.bytes.data()),
-                     display.bytes.size()));
-  W::FinishWorkerMessageBuffer(
-      b, W::CreateWorkerMessage(b, 0, W::WorkerPayload::WorkerDisplay,
-                                data.Union()));
-  if (b.GetSize() > workerd::kMaxWorkerFrameBytes) return false;
-  try {
-    send(control_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                       b.GetSize()}, false);
-  } catch (const Failed&) {
-    ::shutdown(control_fd_, SHUT_RDWR);
+  std::lock_guard lock(display_mutex_);
+  if (data_stop_.stop_requested()) return false;
+  auto& view = control_views_[display.view];
+  if (view.pending_bytes > workerd::kViewBudget - TSUGUMI_MESSAGE_MAX)
     return false;
-  }
-  credit -= workerd::message_cost(display.bytes.size());
+  view.pending.emplace_back(display.bytes, std::move(complete));
+  view.pending_bytes += workerd::message_cost(display.bytes.size());
+  display_ready_.notify_one();
   return true;
+}
+
+auto WorkerProc::return_display_credit(const std::string& view, size_t bytes)
+    -> void {
+  std::lock_guard lock(display_mutex_);
+  if (data_stop_.stop_requested()) return;
+  control_views_[view].forward_credit += bytes;
+  display_ready_.notify_one();
+}
+
+auto WorkerProc::write_display() -> void {
+  std::string previous;
+  try {
+    for (;;) {
+      std::unique_lock lock(display_mutex_);
+      const auto ready = [](const auto& entry) {
+        const auto& view = entry.second;
+        return view.forward_credit ||
+               (!view.pending.empty() &&
+                view.reverse_credit <=
+                    workerd::kViewBudget - TSUGUMI_MESSAGE_MAX);
+      };
+      display_ready_.wait(lock, [&] {
+        return data_stop_.stop_requested() ||
+               std::ranges::any_of(control_views_, ready);
+      });
+      if (data_stop_.stop_requested()) return;
+      const auto end = control_views_.end();
+      auto next =
+          std::find_if(control_views_.upper_bound(previous), end, ready);
+      if (next == end) next = std::find_if(control_views_.begin(), end, ready);
+      previous = next->first;
+      auto& view = next->second;
+      const auto credit = std::exchange(view.forward_credit, 0);
+      std::string bytes;
+      DisplayCredit complete;
+      if (!credit) {
+        std::tie(bytes, complete) = std::move(view.pending.front());
+        view.pending.pop_front();
+        const auto charge = workerd::message_cost(bytes.size());
+        view.pending_bytes -= charge;
+        view.reverse_credit += charge;
+      }
+      lock.unlock();
+
+      flatbuffers::FlatBufferBuilder b;
+      const auto name = b.CreateString(previous);
+      auto type = W::WorkerPayload::WorkerDisplay;
+      flatbuffers::Offset<void> body;
+      if (credit) {
+        type = W::WorkerPayload::WorkerDisplayCredit;
+        body = W::CreateWorkerDisplayCredit(b, name, credit).Union();
+      } else {
+        body =
+            W::CreateWorkerDisplay(
+                b, name,
+                b.CreateVector(reinterpret_cast<const uint8_t*>(bytes.data()),
+                               bytes.size()))
+                .Union();
+      }
+      W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 0, type, body));
+      {
+        std::lock_guard write(control_mutex_);
+        send(control_fd_,
+             {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
+             false);
+      }
+      if (complete) complete();
+    }
+  } catch (const std::exception&) {
+    {
+      std::lock_guard lock(display_mutex_);
+      data_stop_.request_stop();
+    }
+    ::shutdown(control_fd_, SHUT_RDWR);
+    ::shutdown(data_fd_, SHUT_RDWR);
+  }
 }
 
 auto WorkerProc::read_data() -> void {
@@ -963,37 +1238,31 @@ auto WorkerProc::read_data() -> void {
           std::lock_guard lock(data_mutex_);
           sink = display_;
         }
-        if (sink) {
-          try {
-            (*sink)(
-                {update->view()->str(), std::string(update->bytes()->begin(),
-                                                    update->bytes()->end())},
-                data_stop_.get_token());
-          } catch (const std::exception&) {
-            // Presentation must not fail the invocation.
+        auto credit = [receiver = std::weak_ptr(view_receiver_),
+                       view = update->view()->str(),
+                       cost = workerd::message_cost(update->bytes()->size())] {
+          if (const auto target = receiver.lock()) {
+            std::lock_guard lock(target->mutex);
+            if (target->worker)
+              target->worker->return_display_credit(view, cost);
           }
-        }
-        flatbuffers::FlatBufferBuilder b;
-        const auto credit = W::CreateWorkerDisplayCredit(
-            b, b.CreateString(update->view()->string_view()),
-            static_cast<uint32_t>(workerd::message_cost(update->bytes()->size())));
-        W::FinishWorkerMessageBuffer(
-            b, W::CreateWorkerMessage(b, 0, W::WorkerPayload::WorkerDisplayCredit,
-                                      credit.Union()));
-        {
-          std::lock_guard lock(control_mutex_);
-          send(control_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                             b.GetSize()}, false);
-        }
+        };
+        if (!sink)
+          credit();
+        else
+          (*sink)({update->view()->str(), std::string(update->bytes()->begin(),
+                                                      update->bytes()->end())},
+                  std::move(credit));
         continue;
       }
       if (const auto* update = message->value_as_WorkerDisplayCredit()) {
-        std::lock_guard lock(control_mutex_);
-        const auto found = reverse_credit_.find(update->view()->str());
-        if (message->call_id() != 0 || found == reverse_credit_.end() ||
-            update->bytes() > workerd::kViewBudget - found->second)
+        std::lock_guard lock(display_mutex_);
+        const auto found = control_views_.find(update->view()->str());
+        if (message->call_id() != 0 || found == control_views_.end() ||
+            update->bytes() > found->second.reverse_credit)
           throw Failed(FailureKind::worker_failed, "invalid worker display credit");
-        found->second += update->bytes();
+        found->second.reverse_credit -= update->bytes();
+        display_ready_.notify_one();
         continue;
       }
       std::lock_guard lock(data_mutex_);
@@ -1037,6 +1306,11 @@ auto WorkerProc::read_data() -> void {
           FailureData::make(FailureKind::worker_failed, diagnostic);
     }
   }
+  {
+    std::lock_guard lock(display_mutex_);
+    data_stop_.request_stop();
+  }
+  display_ready_.notify_all();
   data_ready_.notify_one();
 }
 
@@ -1125,7 +1399,8 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
                               const std::vector<types::PortType>& outputs,
                               std::optional<uint64_t> deadline_ms,
                               const std::filesystem::path& artifact_directory,
-                              std::span<const ArtifactGrant> grants) {
+                              std::span<const ArtifactGrant> grants,
+                              bool drain_display) {
   flatbuffers::FlatBufferBuilder b(64 * 1024);
   // The Card reads each nested message in place.
   auto message = [&](const std::string& s) {
@@ -1158,6 +1433,7 @@ std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
   cb.add_inputs(insv);
   cb.add_grants(grant_vector);
   cb.add_artifact_directory(artifact_root);
+  cb.add_drain_display(drain_display);
   cb.add_outputs(outsv);
   if (deadline_ms) cb.add_deadline_ms(*deadline_ms);
   auto call = cb.Finish();

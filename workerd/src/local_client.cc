@@ -6,6 +6,7 @@
 #include "tsugumi/rpc/trace.hh"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/local.hh"
+#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi::workerd {
 namespace L = Tsugumi::LocalWorker;
@@ -120,6 +121,13 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
   target->gui = spawn.gui;
   target->network = spawn.network;
   target->ro_paths = spawn.ro_paths;
+  for (const auto& grant : spawn.grants) {
+    auto entry = std::make_unique<Tsugumi::Worker::ArtifactGrantT>();
+    entry->id = std::make_unique<::tsugumi::ArtifactId>(
+        wire::artifact_struct(grant.id));
+    entry->path = grant.path;
+    target->grants.push_back(std::move(entry));
+  }
   target->hidden_paths = spawn.hidden_paths;
   if (spawn.uid) target->uid = *spawn.uid;
   if (spawn.gid) target->gid = *spawn.gid;
