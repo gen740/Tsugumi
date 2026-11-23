@@ -561,7 +561,6 @@ struct EvaluationState {
   using SearchPath = std::map<std::string, std::string>;
   std::string entry_text;
   std::string system;
-  std::vector<std::string> allowed;
   std::vector<NixDefinitionScope> definitions;
   std::map<std::string, SearchPath> projects;
   // Settings outlive each state's own values, positions and caches.
@@ -771,7 +770,6 @@ struct EvaluationState {
                                      out.boolean());
     };
     install(exists, std::move(tracked_exists));
-    for (const auto& p : allowed) state->allowPathLegacy(p);
     for (const auto& def : definitions) state->allowPathLegacy(def.directory);
     for (const auto& [_, entries] : projects)
       for (const auto& [__, path] : entries) state->allowPathLegacy(path);
@@ -1122,7 +1120,6 @@ auto unpack_source(const Tsugumi::Document::LockEntryT& source) -> NixSource {
 
 auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
   auto result = std::make_unique<E::ScopeT>();
-  result->generated = call.generated;
   for (const auto& definition : call.definitions) {
     auto entry = std::make_unique<E::DefinitionScopeT>();
     entry->directory = definition.directory;
@@ -1142,7 +1139,6 @@ auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
 }
 
 auto unpack_scope(const E::ScopeT& data, NixCall& call) -> void {
-  call.generated = data.generated;
   for (const auto& def : data.definitions)
     call.definitions.push_back({def->directory, def->card, def->project});
   for (const auto& project : data.projects) {
@@ -1177,12 +1173,10 @@ auto evaluator_main() -> void {
   uint64_t epoch = settings->epoch - 1;
   std::map<std::string, int64_t> times;
   using ScopeKey = std::tuple<std::string, std::vector<NixDefinitionScope>,
-                              std::vector<std::string>,
                               std::map<std::string, LockedNixPath>>;
   std::list<std::pair<ScopeKey, std::unique_ptr<EvaluationState>>> warm;
   auto evaluator = [&](const NixCall& call) -> EvaluationState& {
-    auto key =
-        ScopeKey{call.system, call.definitions, call.generated, call.projects};
+    auto key = ScopeKey{call.system, call.definitions, call.projects};
     auto cached =
         std::ranges::find(warm, key, &decltype(warm)::value_type::first);
     if (cached != warm.end()) {
@@ -1193,7 +1187,6 @@ auto evaluator_main() -> void {
                                                   epoch, times);
     eval->entry_text = settings->entry;
     eval->system = call.system;
-    eval->allowed = call.generated;
     eval->definitions = call.definitions;
     // Fetch (and verify) everything before opening the restricted state.
     for (const auto& [project, entries] : call.projects) {
@@ -1205,7 +1198,7 @@ auto evaluator_main() -> void {
     warm.emplace_front(std::move(key), std::move(eval));
     return *warm.front().second;
   };
-  std::map<std::pair<std::string, std::string>, std::string> params;
+  std::map<std::string, std::string> params;
   auto evaluate = [&](const E::RequestT& request) {
     NixCall call;
     call.system = request.system;
@@ -1258,10 +1251,9 @@ auto evaluator_main() -> void {
       auto& eval = evaluator(call);
       auto result = eval.expression(call, op->text, op->build);
       send<E::Reply>(sink, std::move(result));
-    } else if (const auto* op = request.body.AsParamsDeclaration()) {
+    } else if (const auto* op = request.body.AsCheckParamsValue()) {
       const auto hash = nix::hashString(nix::HashAlgorithm::SHA256, op->text);
-      const auto key = std::pair{
-          call.system, hash.to_string(nix::HashFormat::Base16, false)};
+      const auto key = hash.to_string(nix::HashFormat::Base16, false);
       auto found = params.find(key);
       if (found == params.end()) {
         bool read_only = true;
@@ -1274,11 +1266,11 @@ auto evaluator_main() -> void {
         settings.currentSystem = call.system;
         nix::EvalState state(nix::LookupPath{}, fetch.store, fetch.settings,
                              settings);
-        auto declaration = read_params_nix(state, op->text, op->origin);
-        if (declaration.size() > kExpressionBytes)
-          throw std::runtime_error("params.nix declarations exceed 8 MiB");
+        auto values = read_params_nix(state, op->text, op->origin);
+        if (values.size() > kExpressionBytes)
+          throw std::runtime_error("params.nix values exceed 8 MiB");
         if (params.size() >= 256) params.erase(params.begin());
-        found = params.emplace(key, std::move(declaration)).first;
+        found = params.emplace(key, std::move(values)).first;
       }
       E::ParamsValueT result;
       result.json = found->second;
@@ -1539,11 +1531,11 @@ auto NixEvaluator::lock_source(const std::string& url) -> NixSource {
   });
 }
 
-auto NixEvaluator::params_declaration(const NixCall& call,
+auto NixEvaluator::check_params_value(const NixCall& call,
                                       std::string_view text,
                                       const std::string& origin)
     -> std::string {
-  E::ParamsDeclarationT request;
+  E::CheckParamsValueT request;
   request.text = text;
   request.origin = origin;
   return impl_->exchange(call, std::move(request), [](auto& reply) {

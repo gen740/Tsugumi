@@ -247,7 +247,7 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      "the Card exceeded timeoutSeconds"};
     return std::nullopt;
   };
-  // The input and params bytes belong to the Card's SDK: they are copied
+  // Input bytes belong to the Card's SDK: they are copied
   // aligned, never opened.
   flatbuffers::FlatBufferBuilder b;
   std::vector<flatbuffers::Offset<C::CardPort>> inputs;
@@ -274,8 +274,7 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
         b, b.CreateString(input->name()->string_view()), input->kind(), bytes,
         path));
   }
-  const auto payload = aligned_payload(b, *call.params());
-  b.Finish(C::CreateCardInput(b, b.CreateVector(inputs), payload));
+  b.Finish(C::CreateCardInput(b, b.CreateVector(inputs)));
 
   if (auto failure = stop()) return failure;
   if (!entry && load_error.empty()) entry = load_card(package, load_error);

@@ -49,19 +49,12 @@ enum class ParamType {
 };
 std::optional<ParamType> parse_param_type(const std::string& s);
 const char* param_type_name(ParamType t);
-std::string param_fbs_type(ParamType t);
 
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
   std::optional<std::string> data;  // value as canonical JSON
-  std::optional<std::vector<std::string>> sweep;
 };
-
-auto normalize_param_value(ParamType type, std::string_view json)
-    -> std::string;
-auto params_json(const std::vector<ParamDef>& params) -> std::string;
-auto params_buffer(const std::vector<ParamDef>& params) -> std::string;
 
 struct HostFolder {
   std::string path;  // on the Mac
@@ -106,25 +99,9 @@ struct InputDef {
   std::string name;
 };
 
-// An Input Card's value sweep. Members follow the param order, with the last
-// swept param varying fastest; a Card without a sweep has one member.
-inline constexpr uint64_t kMaxValueSweepSize = 256;
-bool has_value_sweep(const Settings& settings);
-uint64_t value_sweep_size(const Settings& settings);
-struct ValueSweepMember {
-  std::vector<ParamDef> params;  // every param, with this member's data
-  std::string label;  // "name=value, ..." of the swept params; "" without
-};
-ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index);
-
 struct NixPathEntry {
   std::string name;
   std::string url;
-};
-
-struct NixInput {
-  types::PortType type;
-  std::optional<size_t> exports_node;
 };
 
 struct CardNixReference {
@@ -143,9 +120,6 @@ struct Node {
   std::vector<NixPathEntry> nix_path;  // declarations in project_dir
   std::vector<CardNixReference> nix_references;
   std::optional<std::string> generated_inputs;
-  std::map<std::string, NixInput> nix_ports;
-  std::string params_nix_json = "{}";
-  std::string run_params_buffer;
   std::optional<Tsugumi::Document::BoundaryT>
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)
@@ -183,13 +157,6 @@ struct Resolution {
   auto endpoint(const CardPath& card, const std::string& port,
                 bool output) const
       -> std::optional<std::pair<size_t, std::string>>;
-  // Per node: the nodes that have always run before it fires, whichever path
-  // its inputs arrived on (sorted). The basis for Nix upstream references.
-  std::vector<std::vector<size_t>> guaranteed;
-  // Code Cards a node's default.nix may reference: guaranteed upstream Code
-  // Cards whose own guarantees do not include the node (no cycles).
-  std::vector<size_t> nix_upstream(size_t node) const;
-
   const Node* find(const CardPath& p) const;
   std::vector<Diag> all_diagnostics(bool executable) const;
 };

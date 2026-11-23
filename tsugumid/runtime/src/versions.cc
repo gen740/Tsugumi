@@ -393,29 +393,6 @@ auto project_document(const std::optional<std::string>& text,
   return out;
 }
 
-// Classify sweep edits separately from the rest of a Card's settings.
-auto card_document(const std::optional<std::string>& text,
-                   const std::string& path)
-    -> std::pair<std::string, std::string> {
-  if (!text) return {};
-  D::CardT card;
-  try {
-    document_text::root<D::Card>(
-        document_text::parse(document_text::Schema::Card, path, *text))
-        .UnPackTo(&card);
-  } catch (const DocumentError& error) {
-    throw Failed(FailureKind::invalid_document, error.what());
-  }
-  D::CardT params;
-  params.sweeps = std::move(card.sweeps);
-  card.sweeps.clear();
-  const auto print = [](const D::CardT& c) {
-    return document_text::print(document_text::Schema::Card,
-                                document_text::pack<D::Card>(c));
-  };
-  return {print(params), print(card)};
-}
-
 // What a Card is in this version and, for a Merge or a Fork, how many ports
 // it fans over: the same answers graph.cc gives from the same files.
 void read_definition(git_repository* r, git_tree* tree,
@@ -1166,10 +1143,9 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
     } else if (!source && filename == "_card.json") {
       const auto old_text = file_at(r.get(), theirs.get(), path.c_str());
       const auto new_text = file_at(r.get(), mine.get(), path.c_str());
-      const auto before = card_document(old_text, path),
-                 after = card_document(new_text, path);
-      if (before.first != after.first) changed[*card].insert("parameters");
-      if (before.second != after.second || !old_text || !new_text)
+      if (!old_text || !new_text ||
+          document_text::canonical(document_text::Schema::Card, path, *old_text) !=
+              document_text::canonical(document_text::Schema::Card, path, *new_text))
         changed[*card].insert("definition");
     } else if (!source && filename == "params.nix") {
       changed[*card].insert("parameters");

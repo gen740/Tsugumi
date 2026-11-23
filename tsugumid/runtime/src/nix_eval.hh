@@ -53,7 +53,6 @@ struct NixCall {
   std::string definition_key;  // content, project scopes and build arguments
   std::string card;
   std::vector<NixDefinitionScope> definitions;
-  std::vector<std::string> generated;
   std::map<std::string, LockedNixPath> projects;
   std::string system;
   bool needs_worker = false;
@@ -128,7 +127,7 @@ class NixEvaluator {
   auto expression(const NixCall& call, const std::string& expression,
                   bool build) -> ExpressionResult;
   auto lock_source(const std::string& url) -> NixSource;
-  auto params_declaration(const NixCall& call, std::string_view text,
+  auto check_params_value(const NixCall& call, std::string_view text,
                           const std::string& origin) -> std::string;
 
  private:

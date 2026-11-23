@@ -53,6 +53,9 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
+// Artifact IDs are the 16 binary bytes carried by the Card envelope.
+using ArtifactKey = std::string;
+
 // A value travelling on a port. A FlatBuffer value carries `bytes` of the
 // port message `type`; the core never opens them. A Path value carries `path`
 // (a regular file or a directory, decided from lstat when needed) and no bytes.
@@ -65,6 +68,8 @@ struct Value {
   // Project state-relative history path, carried independently of staging.
   std::optional<std::string> recorded_path = std::nullopt;
   std::string path = {};
+  std::string schema = {};
+  std::vector<ArtifactKey> artifacts = {};
 };
 
 struct WorkerDisplayData {

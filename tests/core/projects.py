@@ -22,6 +22,24 @@ table Outputs { msg:Msg (required); cond:Cond; }
 root_type Outputs;
 """
 
+# Independent producer fixture: build the two FlatBuffers with flatc using
+# evaluated Nix params, then expose exactly the Input Card output layout.
+MSG_INPUT_NIX = """{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  msg = pkgs.writeText "msg.json" (builtins.toJSON { inherit (params) text; });
+  cond = pkgs.writeText "cond.json" (builtins.toJSON { inherit (params) value; });
+in {
+  run = pkgs.runCommand "message-input" { nativeBuildInputs = [ pkgs.flatbuffers ]; } ''
+    mkdir -p "$out/share/tsugumi/input/ports"
+    flatc --binary --strict-json --root-type demo.Msg ${./_outputs.fbs} ${msg}
+    flatc --binary --strict-json --root-type demo.Cond ${./_outputs.fbs} ${cond}
+    mv *-msg.bin "$out/share/tsugumi/input/ports/msg"
+    mv *-cond.bin "$out/share/tsugumi/input/ports/cond"
+  '';
+}
+"""
+
 FILE_FBS = """
 table Outputs { doc:string (required, tsugumi: "path"); }
 root_type Outputs;
@@ -122,7 +140,7 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
     defs = {
         "trigger": {"type": "trigger"},
         "source": {"type": "input", "params": {"text": "x", "value": True},
-                   "_outputs": MSG_FBS},
+                   "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
         "sink": SINK,
         "branch": {"type": "branch"},
         "fork": {"type": "fork"},
@@ -131,7 +149,8 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
     # The input Card is a start Card (no inputs).
     write(root, defs, [card("start", "trigger"), card("src", "source", params={"text": text}), card("out", "sink"),
                        *extra_cards],
-          [conn("src", "msg", "out", "in"), *extra_conns], name="builtin")
+          [conn("src", "msg", "out", "in"), *extra_conns], name="builtin",
+          locked=[entry for entry in test_lock_entries() if entry["name"] == "nixpkgs"])
 
 
 def start_run(c, card_path, propagate: bool = True, concurrency: int | None = 4) -> str:

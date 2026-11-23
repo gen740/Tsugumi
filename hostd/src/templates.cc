@@ -171,15 +171,24 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
       const bool boolean = kind == H::BuiltinCard::BooleanInput;
       const std::string type = boolean ? "bool" : "double";
       const std::string value = boolean ? "false" : "0.0";
-      auto ns = id;
-      std::ranges::replace(ns, '-', '_');
-      std::ranges::replace(ns, '.', '_');
+      const std::string table = boolean ? "Boolean" : "Number";
       return {{"_card.json", R"({"type":"input"})"},
               {"params.nix", "{ value = " + value + "; }\n"},
-              {"_outputs.fbs", "namespace " + ns +
-                                   ";\ntable Value { value:" + type +
-                                   "; }\ntable Outputs { value:Value "
-                                   "(required); }\nroot_type Outputs;\n"}};
+              {"_outputs.fbs", "namespace input;\ntable " + table +
+                                   " { value:" + type +
+                                   "; }\ntable Outputs { value:" + table +
+                                   " (required); }\nroot_type Outputs;\n"},
+              {"default.nix", R"nix({ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.value.value = params.value;
+  };
+}
+)nix"}};
     }
   }
   throw Failure("invalid_request", "Unknown built-in Card kind");

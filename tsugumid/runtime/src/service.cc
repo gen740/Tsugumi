@@ -260,7 +260,7 @@ void Service::open() {
       StoreOptions{opts_.root, opts_.fault, [&](const auto& dir, auto text) {
                      if (!opts_.prepared_cards.empty())
                        return evaluate_literal_params(dir, text);
-                     return nix_->params_declaration(dir, text);
+                     return nix_->check_params_value(dir, text);
                    }});
   stdfs::path scratch;
   store_->open([&] {

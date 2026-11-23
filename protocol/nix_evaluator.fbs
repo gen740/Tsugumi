@@ -19,7 +19,6 @@ table DefinitionScope {
 }
 table Scope {
   definitions:[DefinitionScope];
-  generated:[string];
   projects:[ProjectScope];
 }
 table Evaluate {
@@ -48,9 +47,9 @@ table Expression {
 }
 
 table LockSource { url:string (required); }
-table ParamsDeclaration { text:string (required); origin:string (required); }
+table CheckParamsValue { text:string (required); origin:string (required); }
 
-union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, ParamsDeclaration }
+union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, CheckParamsValue }
 
 table Request {
   system:string;

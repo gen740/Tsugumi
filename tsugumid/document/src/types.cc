@@ -715,26 +715,6 @@ auto render_input_candidate(const Type& type, const std::string& prefix,
   return name;
 }
 
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string {
-  const std::string side = inputs ? "inputs" : "outputs";
-  const std::string table = inputs ? "Inputs" : "Outputs";
-  std::string types = "attribute \"tsugumi\";\n";
-  std::string catalog = "namespace " + side + ";\ntable " + table + " {\n";
-  int id = 0;
-  for (const auto& port : ports) {
-    if (!port.resolved()) continue;
-    const bool path = port.kind == PortKind::Path;
-    const auto root =
-        path ? "string"
-             : render_closure(*port.type, side + "." + port.name, types);
-    catalog += "  " + port.name + ":" + root + " (id: " + std::to_string(id++) +
-               (path ? ", tsugumi: \"path\"" : "") +
-               (!inputs && port.required ? ", required" : "") + ");\n";
-  }
-  return types + catalog + "}\nroot_type " + table + ";\n";
-}
-
 TypeRef empty_type() {
   static TypeRef t = make_builtin("namespace tsugumi.builtin; table Empty {}",
                                   "tsugumi.builtin.Empty");
@@ -876,17 +856,6 @@ bool json_to_flatbuffer(const Type& t, const std::string& json,
   out->assign(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()),
               p->builder_.GetSize());
   return true;
-}
-
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields) {
-  std::string text = "namespace parameters;\ntable Params {\n";
-  int id = 0;
-  for (const auto& [name, type] : fields) {
-    text += "  " + name + ":" + type + " (id: " + std::to_string(id++) + ");\n";
-  }
-  text += "}\nroot_type Params;\n";
-  return text;
 }
 
 }  // namespace tsugumi::types

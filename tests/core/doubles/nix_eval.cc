@@ -259,7 +259,7 @@ auto NixEvaluator::expression(const NixCall&, const std::string&, bool)
   throw std::runtime_error("the mock evaluator cannot evaluate expressions");
 }
 
-auto NixEvaluator::params_declaration(const NixCall&, std::string_view text,
+auto NixEvaluator::check_params_value(const NixCall&, std::string_view text,
                                       const std::string& origin) -> std::string {
   return evaluate_literal_params(
       std::filesystem::path(origin).parent_path().generic_string() + '/', text);

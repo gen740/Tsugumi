@@ -1,143 +1,51 @@
-"""File input paths have explicit Card-local and owning-project bases."""
-
-import json
+"""Input Artifact paths and IDs come from the immutable build output."""
 
 import pytest
 
-from projects import FILE_FBS, card, put, run_and_wait, write
-from tsugumi_client import path, text
-from Tsugumi.Data.RunState import RunState
+from harness.fixtures import mock_plan
+from harness.scenario import Project, run, wait_run
+from tsugumi_client import text
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.RunState import RunState
 
 
-def project_with_file(root, value, external=False, record_io=False):
-    owner = root / "externals/child" if external else root
-    write(owner,
-          defs={"load": {"type": "input",
-                         "params": {"value": value}, "_params": '{ value = ""; }',
-                         "recordIO": record_io, "retainArtifact": True, "artifactOutput": "doc", "_outputs": FILE_FBS},
-                "shared": {"type": "trigger"}},
-          cards=[card("load", "load"), card("shared", "shared")], conns=[],
-          files={"definitions/load/data/events.txt": "Card-local contents",
-                 "definitions/shared/data/events.txt": "Owning-project contents",
-                 "data/events.txt": "Unlisted root file"})
-    if external:
-        doc = json.loads((owner / "tsugumi.json").read_text())
-        doc["boundary"] = {"outputs": [{"name": "doc", "card": "load", "port": "doc"}]}
-        put(owner / "tsugumi.json", json.dumps(doc))
-        write(root, defs={"shared": {"type": "trigger"}}, cards=[card("child"), card("shared", "shared")], conns=[],
-              files={"definitions/shared/data/events.txt": "Outer-project contents"})
-        (root / "definitions/child/_card.json").unlink()
-        put(root / "definitions/child/_card.json", '{"type":"subgraph","external":"child"}')
-    return owner, ["child", "load"] if external else ["load"]
+OUTPUTS = """
+include "tsugumi/artifact.fbs";
+table File { payload:tsugumi.Artifact; }
+table Outputs { out:File (required); }
+root_type Outputs;
+"""
+ARTIFACT_ID = "00" * 16
 
 
-def artifact_bytes(client, run_id, segments):
-    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(*segments)).artifacts
-    assert len(artifacts) == 1
-    return bytes(client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=4096).bytes)
-
-
-@pytest.mark.parametrize("value,expected", [("data/events.txt", b"Card-local contents"),
-                                            ("project:definitions/shared/data/events.txt", b"Owning-project contents")])
-def test_input_paths_choose_the_declared_base_and_save_the_file(project, core_factory, value, expected):
-    """File paths select the Card or the owning Project as declared."""
-    owner, segments = project_with_file(project, value, external=True)
-    c = core_factory().connect()
-    rid, status = run_and_wait(c, segments)
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    assert artifact_bytes(c, rid, segments) == expected
-    # The saved run owns a copy, even when both candidate source files change.
-    (owner / "definitions/load/data/events.txt").write_text("changed local")
-    (owner / "definitions/shared/data/events.txt").write_text("changed project")
-    assert artifact_bytes(c, rid, segments) == expected
-
-
-def test_input_path_can_name_a_project_folder(project, core_factory):
-    owner, segments = project_with_file(project, "data", external=True)
-    put(owner / "definitions/load/data/nested/more.txt", "second file")
-    c = core_factory().connect()
-    rid, status = run_and_wait(c, segments)
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    artifact, = c.call("ArtifactListRequest", runId=rid, card=path(*segments)).artifacts
-    assert artifact.directory
-    assert {text(member.path) for member in artifact.members} == {"events.txt", "nested/more.txt"}
-
-
-@pytest.mark.parametrize("value", ["../data/events.txt", "/etc/passwd", "project:../data/events.txt",
-                                   "project:/etc/passwd", "", "definitions/load/data/events.txt"])
-def test_input_paths_reject_escape_and_implicit_project_paths(project, core_factory, value):
-    """A File input cannot escape its declared base or silently use the old project base."""
-    _, segments = project_with_file(project, value, external=True)
-    c = core_factory().connect()
-    _, status = run_and_wait(c, segments)
-    assert status.state == RunState.failed
-    assert status.failure.kind == FailureKind.invalid_path
-
-
-def test_missing_card_local_file_does_not_fall_back_to_project(project, core_factory):
-    """An existing project file cannot change the meaning of a Card-local path."""
-    owner, segments = project_with_file(project, "data/events.txt", external=True)
-    (owner / "definitions/load/data/events.txt").unlink()
-    c = core_factory().connect()
-    _, status = run_and_wait(c, segments)
-    assert status.state == RunState.failed
-    assert status.failure.kind == FailureKind.invalid_path
-
-
-def test_input_file_must_be_in_the_project_source_manifest(project, core_factory, tmp_path):
-    """A symlink to an outside file is not a saved project source."""
-    owner, segments = project_with_file(project, "data/events.txt")
-    outside = tmp_path / "outside.txt"
-    outside.write_text("outside data")
-    local = owner / "definitions/load/data/events.txt"
-    local.unlink()
-    local.symlink_to(outside)
-    from harness.daemon import StartupFailure
-    with pytest.raises(StartupFailure) as failure:
-        core_factory()
-    assert failure.value.kind == "project_open_failed"
-
-
-def test_recorded_file_digest_compares_content_across_runs_and_survives_copy(core_factory, project, tmp_path):
-    """File comparison uses recorded content, independent of run and storage path."""
-    import hashlib
-    import shutil
-
-    from tsugumi_client import change, new_id
-
-    owner, segments = project_with_file(project, "data/events.txt", record_io=True)
-    source = "definitions/load/data/events.txt"
-    data = b"\x00\xff\x80\xc3(\n"
-    (owner / source).write_bytes(data)
-    daemon = core_factory()
-    client = daemon.connect()
-
-    def recorded():
-        rid, status = run_and_wait(client, segments)
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        outputs = client.call("RunRecordRequest", runId=rid, card=path(*segments)).record.outputs
-        assert len(outputs) == 1
-        value = outputs[0]
-        assert text(value.fileContentHash) == hashlib.sha256(data).hexdigest()
-        return rid, value
-
-    first_id, first = recorded()
-    _, equal = recorded()
-    assert text(first.contentHash) != text(equal.contentHash), "the path values belong to different runs"
-    assert text(first.fileContentHash) == text(equal.fileContentHash)
-    data = b"different content"
-    snap = client.call("ProjectInspectRequest")
-    client.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test",
-                changes=[change("PutSource", path=source, bytes=list(data),
-                                baseHash=hashlib.sha256(b"\x00\xff\x80\xc3(\n").hexdigest())])
-    _, other = recorded()
-    assert text(first.fileContentHash) != text(other.fileContentHash)
-    daemon.stop()
-    copied_project = tmp_path / "copied"
-    shutil.copytree(project, copied_project, symlinks=True)
-    copied = core_factory(project_root=copied_project)
-    outputs = copied.connect().call("RunRecordRequest", runId=first_id, card=path(*segments)).record.outputs
-    assert len(outputs) == 1
-    value = outputs[0]
-    assert text(value.fileContentHash) == text(first.fileContentHash)
+@pytest.mark.parametrize("sidecar,folder", [
+    (ARTIFACT_ID, "directory"), (ARTIFACT_ID, "symlink"), (ARTIFACT_ID, "missing"),
+    ("../not-an-id", "missing"), ("A" * 32, "missing"),
+])
+def test_input_artifacts_require_binary_ids_and_contained_directories(
+        core_factory, project, tmp_path, sidecar, folder):
+    store = tmp_path / "store"
+    package = store / "source"
+    prefix = package / "share/tsugumi/input"
+    ports = prefix / "ports"
+    ports.mkdir(parents=True)
+    # The bytes stay opaque to the core, including when a sidecar is present.
+    (ports / "out").write_bytes(b"opaque")
+    (ports / "out.artifacts").write_text(sidecar + "\n")
+    artifact = prefix / "artifacts" / ARTIFACT_ID
+    if folder == "directory":
+        artifact.mkdir(parents=True)
+        (artifact / "payload.txt").write_text("built file")
+    elif folder == "symlink":
+        artifact.parent.mkdir()
+        artifact.symlink_to(tmp_path)
+    client = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)}).connect()
+    Project(project).card("work", {"type": "input"}, outputs=OUTPUTS,
+                          plan=mock_plan([str(package)])).save(client)
+    status = wait_run(client, run(client, "work", propagate=False))
+    if folder == "directory":
+        assert status.state == RunState.succeeded
+    else:
+        assert status.state == RunState.failed
+        assert status.failure.kind == FailureKind.output_invalid
+        assert "artifact" in text(status.failure.diagnostic).lower()

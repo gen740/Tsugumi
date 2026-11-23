@@ -260,7 +260,7 @@ TEST(NixPathOperation, CardCopyDoesNotCarryPinsOrBlockOnNames) {
   const std::string source =
       R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[{"id":"source"}],"connections":[]}})";
   const std::string pin =
-      R"({"nixPath":{"used":"github:org/repo/0123456789012345678901234567890123456789?narHash=sha256-old"}})";
+      R"({"entries":[{"name":"used","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-old"}]})";
   const std::string destination =
       R"({"nixPath":[{"name":"used","url":"github:other/repo"}],"canvas":{"cards":[],"connections":[]}})";
   FakeNixPathCore core;
@@ -503,10 +503,15 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"sweeps":{"k":[3]}})"
+            ? R"({"type":"code","inputs":[{"name":"source"}]})"
             : R"({"type":"code","inputs":[]})");
+    if (std::string_view(scenario) == "unknown_param")
+      doc.sources["definitions/compare/params.nix"] = {};
     const auto resolved = resolve(
-        doc, [](const auto&) -> std::optional<std::string> { return {}; });
+        doc, [](const auto&) -> std::optional<std::string> { return "{ k = []; }"; },
+        [](const auto&, auto) -> std::string {
+          throw std::runtime_error("empty lists are not allowed");
+        });
     bool found = false;
     for (const auto& diagnostic : resolved->all_diagnostics(false)) {
       if (diagnostic.code != (std::string(scenario) == "unknown_param"

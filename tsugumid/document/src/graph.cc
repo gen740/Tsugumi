@@ -1,12 +1,11 @@
 #include "tsugumi/document/graph.hh"
 
 #include <algorithm>
-#include <charconv>
 #include <cmath>
 #include <deque>
-#include <limits>
 #include <map>
 #include <mutex>
+#include <ranges>
 #include <set>
 #include <stdexcept>
 #include <tuple>
@@ -58,77 +57,17 @@ namespace {
 struct ParamTypeInfo {
   ParamType type;
   const char* name;
-  const char* fbs;
 };
 constexpr ParamTypeInfo kParamTypes[] = {
-    {ParamType::Bool, "bool", "bool"},
-    {ParamType::Int64, "int", "long"},
-    {ParamType::Double, "float", "double"},
-    {ParamType::String, "string", "string"},
-    {ParamType::BoolArray, "[bool]", "[bool]"},
-    {ParamType::Int64Array, "[int]", "[long]"},
-    {ParamType::DoubleArray, "[float]", "[double]"},
-    {ParamType::StringArray, "[string]", "[string]"},
+    {ParamType::Bool, "bool"},           {ParamType::Int64, "int"},
+    {ParamType::Double, "float"},        {ParamType::String, "string"},
+    {ParamType::BoolArray, "[bool]"},    {ParamType::Int64Array, "[int]"},
+    {ParamType::DoubleArray, "[float]"}, {ParamType::StringArray, "[string]"},
 };
 
 namespace D = Tsugumi::Document;
 using document_text::str;
 
-auto number_json(double value) -> std::string {
-  char buffer[64];
-  const auto [end, error] =
-      std::to_chars(buffer, buffer + sizeof buffer, value);
-  if (error != std::errc()) throw std::runtime_error("cannot print number");
-  std::string out(buffer, end);
-  if (out.find_first_of(".eE") == std::string::npos) out += ".0";
-  return out;
-}
-
-// Decimal or exponent notation can still denote an exact int64.
-auto integral_json(std::string_view raw) -> std::optional<std::string> {
-  const bool negative = raw.starts_with("-");
-  if (negative) raw.remove_prefix(1);
-  const auto exponent_at = raw.find_first_of("eE");
-  const auto mantissa = raw.substr(0, exponent_at);
-  const auto dot = mantissa.find('.');
-  std::string digits(mantissa);
-  if (dot != std::string_view::npos) digits.erase(dot, 1);
-  const auto first = digits.find_first_not_of('0');
-  if (first == std::string::npos) return "0";
-  digits.erase(0, first);
-
-  int exponent = 0;
-  if (exponent_at != std::string_view::npos) {
-    auto suffix = raw.substr(exponent_at + 1);
-    if (suffix.starts_with("+")) suffix.remove_prefix(1);
-    const auto [end, error] =
-        std::from_chars(suffix.data(), suffix.data() + suffix.size(), exponent);
-    if (error != std::errc() || end != suffix.data() + suffix.size())
-      return std::nullopt;
-  }
-  const auto fraction =
-      dot == std::string_view::npos ? 0 : mantissa.size() - dot - 1;
-  const auto shift =
-      static_cast<int64_t>(exponent) - static_cast<int64_t>(fraction);
-  if (shift < 0) {
-    if (static_cast<uint64_t>(-shift) >= digits.size()) return std::nullopt;
-    const auto end = digits.size() - static_cast<size_t>(-shift);
-    if (digits.find_first_not_of('0', end) != std::string::npos)
-      return std::nullopt;
-    digits.resize(end);
-  } else {
-    if (shift > 19 || digits.size() + static_cast<size_t>(shift) > 19)
-      return std::nullopt;
-    digits.append(static_cast<size_t>(shift), '0');
-  }
-  if (negative) digits.insert(digits.begin(), '-');
-  int64_t value = 0;
-  const auto [end, error] =
-      std::from_chars(digits.data(), digits.data() + digits.size(), value);
-  if (error != std::errc() || end != digits.data() + digits.size())
-    return std::nullopt;
-  return std::to_string(value);
-}
 }  // namespace
 
 auto parse_param_type(const std::string& name) -> std::optional<ParamType> {
@@ -141,114 +80,6 @@ auto param_type_name(ParamType type) -> const char* {
   for (const auto& info : kParamTypes)
     if (type == info.type) return info.name;
   throw std::logic_error("unknown param type");
-}
-
-auto param_fbs_type(ParamType type) -> std::string {
-  for (const auto& info : kParamTypes)
-    if (type == info.type) return info.fbs;
-  throw std::logic_error("unknown param type");
-}
-
-auto normalize_param_value(ParamType type, std::string_view raw)
-    -> std::string {
-  const auto captured = schema::capture(raw);
-  const std::string text = schema::text(captured);
-  const std::string_view value = text;
-  const std::string_view name = param_type_name(type);
-  if (name.starts_with("[")) {
-    const auto element =
-        *parse_param_type(std::string(name.substr(1, name.size() - 2)));
-    std::vector<std::string> values;
-    for (const auto& item : json::Array(value))
-      values.push_back(normalize_param_value(element, item));
-    return json::Encode(values);
-  }
-  switch (type) {
-    case ParamType::Bool:
-      if (value == "true" || value == "false") return text;
-      break;
-    case ParamType::String:
-      if (value.starts_with("\"")) return json::Quote(json::String(value));
-      break;
-    case ParamType::Int64:
-      if (!value.empty() && (value.front() == '-' ||
-                             (value.front() >= '0' && value.front() <= '9')))
-        if (auto result = integral_json(value)) return *result;
-      break;
-    case ParamType::Double: {
-      double number = 0;
-      const auto [end, error] =
-          std::from_chars(value.data(), value.data() + value.size(), number);
-      if (error == std::errc() && end == value.data() + value.size() &&
-          std::isfinite(number))
-        return number_json(number);
-      break;
-    }
-    default:
-      break;
-  }
-  throw std::runtime_error("expected " + std::string(name));
-}
-
-auto params_json(const std::vector<ParamDef>& params) -> std::string {
-  json::Members values;
-  for (const auto& param : params)
-    if (param.data) values[param.name] = *param.data;
-  return json::Encode(values);
-}
-
-auto params_buffer(const std::vector<ParamDef>& params) -> std::string {
-  if (params.empty()) return {};
-  std::vector<std::pair<std::string, std::string>> fields;
-  for (const auto& param : params)
-    fields.emplace_back(param.name, param_fbs_type(param.type));
-  std::ranges::sort(fields);
-  std::string error;
-  const auto type =
-      types::compile(types::params_schema(fields), "parameters.Params", &error);
-  if (!type) throw std::runtime_error("params schema: " + error);
-  std::string bytes;
-  if (!types::json_to_flatbuffer(**type, params_json(params), &bytes, &error,
-                                 /*force_defaults=*/true))
-    throw std::runtime_error("params: " + error);
-  return bytes;
-}
-
-bool has_value_sweep(const Settings& settings) {
-  return std::ranges::any_of(
-      settings.params, [](const ParamDef& p) { return p.sweep.has_value(); });
-}
-
-uint64_t value_sweep_size(const Settings& settings) {
-  // Saturates above the limit, so an oversized sweep cannot overflow.
-  uint64_t size = 1;
-  for (const auto& p : settings.params) {
-    if (!p.sweep) continue;
-    size = std::min<uint64_t>(
-        size * std::min<uint64_t>(p.sweep->size(), kMaxValueSweepSize + 1),
-        kMaxValueSweepSize + 1);
-  }
-  return size;
-}
-
-ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
-  ValueSweepMember member;
-  member.params = settings.params;
-  std::vector<std::string> parts;
-  for (auto it = member.params.rbegin(); it != member.params.rend(); ++it) {
-    if (!it->sweep) continue;
-    const auto& values = *it->sweep;
-    if (values.empty()) throw std::out_of_range("empty value sweep");
-    it->data = values.at(index % values.size());
-    index /= values.size();
-    parts.push_back(
-        it->name + "=" +
-        (it->type == ParamType::String ? json::String(*it->data) : *it->data));
-    it->sweep.reset();
-  }
-  for (auto it = parts.rbegin(); it != parts.rend(); ++it)
-    member.label += (member.label.empty() ? "" : ", ") + *it;
-  return member;
 }
 
 CardType card_type_of(const DefinitionDoc& def) {
@@ -327,8 +158,7 @@ class Builder {
     resolve_execution_shapes();
     resolve_boundary_types();
     finish_checks();
-    compute_guarantees();
-    resolve_nix_inputs();
+    resolve_nix_exports();
     for (auto& node : res_->nodes) {
       if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
       try {
@@ -519,13 +349,11 @@ class Builder {
           diag(n.path, "invalid_setting",
                "external execution requires filesystem and PID isolation "
                "and does not support reuseWorker, GUI or host path grants"));
-    read_params(n, def);
+    read_params(n);
   }
 
-  void read_params(Node& n, const DefinitionDoc* def) {
+  void read_params(Node& n) {
     const auto rel = n.def_dir + "params.nix";
-    auto sweeps = json::Object(
-        def->card().sweeps() ? def->card().sweeps()->string_view() : "{}");
     const auto invalid = [&](const std::string& message) {
       n.diags.push_back(diag(n.path, "invalid_param", message, true, rel));
     };
@@ -543,32 +371,12 @@ class Builder {
           const auto name = json::Text(entry, "name");
           const auto type = parse_param_type(json::Text(entry, "type"));
           if (!type || !valid_id(name)) {
-            invalid("invalid declaration for param " + name);
+            invalid("invalid value for param " + name);
             continue;
           }
-          ParamDef param{name, *type, entry.at("value"), std::nullopt};
-          if (const auto sweep = sweeps.extract(name); !sweep.empty()) {
-            try {
-              if (n.kind != CardType::Input)
-                throw std::runtime_error("a sweep needs an Input Card param");
-              std::vector<std::string> members;
-              for (const auto& member : json::Array(sweep.mapped()))
-                members.push_back(normalize_param_value(*type, member));
-              param.sweep = std::move(members);
-            } catch (const std::exception& error) {
-              invalid("param " + name + ": " + error.what());
-            }
-          }
-          n.settings.params.push_back(std::move(param));
+          n.settings.params.push_back({name, *type, entry.at("value")});
         }
       }
-      for (const auto& [name, _] : sweeps)
-        invalid("undeclared sweep param " + name);
-      n.params_nix_json = params_json(n.settings.params);
-      if (value_sweep_size(n.settings) > kMaxValueSweepSize)
-        invalid("the value sweep exceeds 256 combinations per trigger");
-      if (n.kind == CardType::Code)
-        n.run_params_buffer = params_buffer(n.settings.params);
     } catch (const std::exception& error) {
       invalid(error.what());
     }
@@ -686,6 +494,10 @@ class Builder {
           load_catalog(n);
           break;
         case CardType::Input:
+          if (!doc_.sources.count(n.def_dir + "default.nix"))
+            n.exec_diags.push_back(diag(n.path, "missing_nix",
+                                        "default.nix is missing", true,
+                                        n.def_dir + "default.nix"));
           // Optional start input: connected, the value is produced when the
           // start signal arrives (e.g. from the trigger); unconnected, the
           // Card is a source that fires once per run.
@@ -1001,12 +813,10 @@ class Builder {
         Shape shape = Shape::unspecified;
         if (node.kind == CardType::Collect)
           shape = Shape::single;
-        else if (node.kind == CardType::Input && has_value_sweep(node.settings))
-          shape = Shape::list;
         else if (lists > 0 &&
                  (node.kind != CardType::Merge || lists == connected))
           shape = Shape::list;
-        else if (node.kind != CardType::Code &&
+        else if (node.kind != CardType::Code && node.kind != CardType::Input &&
                  node.kind != CardType::Subgraph && singles == connected)
           shape = Shape::single;
         for (auto& port : node.outputs) {
@@ -1121,106 +931,54 @@ class Builder {
     }
   }
 
-  // Must-analysis over the flattened graph (greatest fixpoint, so feedback
-  // loops converge): a node is guaranteed before n when it lies on every way
-  // n can fire. Most Cards need every connected input. Merge guarantees
-  // only the producers common to all its connected inputs.
-  void compute_guarantees() {
-    size_t n = res_->nodes.size();
-    using Set = std::vector<char>;
-    auto in = res_->incoming;
-    for (size_t i = 0; i < n; ++i)
-      std::erase_if(in[i], [i](const auto& port) { return port.second == i; });
-    // Only nodes that can ever fire take part; others guarantee nothing.
-    std::vector<char> reach(n, 0);
-    std::vector<size_t> stack;
-    for (size_t i = 0; i < n; ++i)
-      if (!res_->nodes[i].is_virtual && in[i].empty()) {
-        reach[i] = 1;
-        stack.push_back(i);
-      }
-    while (!stack.empty()) {
-      size_t i = stack.back();
-      stack.pop_back();
-      for (const auto to : res_->outgoing[i])
-        if (!reach[to]) {
-          reach[to] = 1;
-          stack.push_back(to);
-        }
-    }
-    std::vector<Set> g(n, Set(n, 1));
-    for (size_t i = 0; i < n; ++i)
-      if (!reach[i] || in[i].empty()) g[i].assign(n, 0);
-    for (bool changed = true; changed;) {
-      changed = false;
-      for (size_t i = 0; i < n; ++i) {
-        if (!reach[i] || in[i].empty()) continue;
-        const bool any = res_->nodes[i].kind == CardType::Merge;
-        Set r(n, any ? 1 : 0);
-        for (const auto& [_, from] : in[i]) {
-          if (!reach[from]) continue;
-          for (size_t k = 0; k < n; ++k) {
-            const bool guaranteed = g[from][k] || k == from;
-            if (any)
-              r[k] &= guaranteed;
-            else
-              r[k] |= guaranteed;
-          }
-        }
-        r[i] = 0;
-        if (r != g[i]) {
-          g[i] = std::move(r);
-          changed = true;
-        }
-      }
-    }
-    res_->guaranteed.assign(n, {});
-    for (size_t i = 0; i < n; ++i)
-      for (size_t k = 0; k < n; ++k)
-        if (g[i][k] && !res_->nodes[k].is_virtual)
-          res_->guaranteed[i].push_back(k);
-  }
+  auto resolve_nix_exports() -> void {
+    const size_t count = res_->nodes.size();
+    std::vector<bool> visited(count);
+    std::vector<size_t> order;
+    const auto finish = [&](auto&& self, size_t node) -> void {
+      if (visited[node]) return;
+      visited[node] = true;
+      for (auto next : res_->outgoing[node]) self(self, next);
+      order.push_back(node);
+    };
+    for (size_t node = 0; node < count; ++node) finish(finish, node);
 
-  auto exports_producer(size_t source) const -> std::optional<size_t> {
-    std::set<size_t> visited;
-    while (visited.insert(source).second) {
-      switch (res_->nodes[source].kind) {
-        case CardType::Code:
-          return source;
-        case CardType::Branch:
-        case CardType::Fork:
-        case CardType::Collect: {
-          const auto port =
-              res_->nodes[source].kind == CardType::Collect ? "in" : "value";
-          const auto& incoming = res_->incoming[source];
-          const auto upstream = incoming.find(port);
-          if (upstream == incoming.end()) return std::nullopt;
-          source = upstream->second;
-          break;
-        }
-        default:
-          return std::nullopt;
-      }
-    }
-    return std::nullopt;
-  }
+    // Edges within a strongly connected component are feedback edges.
+    std::vector<size_t> component(count, count);
+    const auto assign = [&](auto&& self, size_t node, size_t group) -> void {
+      if (component[node] != count) return;
+      component[node] = group;
+      for (const auto& [_, source] : res_->incoming[node])
+        self(self, source, group);
+    };
+    for (auto node : order | std::views::reverse) assign(assign, node, node);
 
-  auto resolve_nix_inputs() -> void {
-    for (const auto& edge : res_->edges) {
-      auto& node = res_->nodes[edge.to];
-      if (node.kind != CardType::Code) continue;
-      const auto* port = node.input(edge.to_port);
-      if (!port) continue;
-      auto producer = exports_producer(edge.from);
-      if (producer) {
-        const auto allowed = res_->nix_upstream(edge.to);
-        if (std::ranges::find(allowed, *producer) == allowed.end())
-          producer.reset();
+    const auto normal = [](CardType kind) {
+      // TODO(open): exports across Merge, Collect, and Draft Cards.
+      return kind == CardType::Code || kind == CardType::Input ||
+             kind == CardType::Trigger;
+    };
+    for (auto index : order | std::views::reverse) {
+      auto& node = res_->nodes[index];
+      if (!normal(node.kind)) continue;
+      std::map<std::string, CardPath> exports;
+      for (const auto& [_, source] : res_->incoming[index]) {
+        const auto& producer = res_->nodes[source];
+        if (!normal(producer.kind)) continue;
+        // TODO(open): exports across feedback wires.
+        if (component[index] == component[source]) continue;
+        // TODO(open): exports across nested and external Card boundaries.
+        if (producer.project_dir != node.project_dir ||
+            producer.path.size() != node.path.size() ||
+            !std::equal(producer.path.begin(), producer.path.end() - 1,
+                        node.path.begin()))
+          continue;
+        exports.emplace(producer.path.back(), producer.path);
+        for (const auto& ref : producer.nix_references)
+          exports.emplace(ref.name, ref.target);
       }
-      node.nix_ports.emplace(edge.to_port, NixInput{*port, producer});
-      if (producer)
-        node.nix_references.push_back(
-            {res_->nodes[*producer].path, edge.to_port});
+      for (auto& [id, target] : exports)
+        node.nix_references.push_back({std::move(target), id});
     }
   }
 
@@ -1235,18 +993,6 @@ class Builder {
 };
 
 }  // namespace
-
-std::vector<size_t> Resolution::nix_upstream(size_t node) const {
-  std::vector<size_t> out;
-  if (node >= guaranteed.size()) return out;
-  for (size_t u : guaranteed[node]) {
-    if (nodes[u].kind != CardType::Code) continue;
-    const auto& gu = guaranteed[u];
-    if (std::find(gu.begin(), gu.end(), node) != gu.end()) continue;
-    out.push_back(u);
-  }
-  return out;
-}
 
 std::shared_ptr<const Resolution> resolve(const Document& doc,
                                           const SourceReader& read,

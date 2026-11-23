@@ -74,10 +74,6 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 std::string render_closure(const Type& t, const std::string& prefix,
                            std::string& out, bool nested = false);
 
-// A catalog of the message types used to generate a Card's SDK bindings.
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string;
-
 // Builtin message types.
 TypeRef empty_type();
 
@@ -102,7 +98,4 @@ bool verify(const Type& t, const std::string& bytes);
 
 // Generates a Params schema text (`table Params {...}`) for the given
 // name -> fbs type list.
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields);
-
 }  // namespace tsugumi::types

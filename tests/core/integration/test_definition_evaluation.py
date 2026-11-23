@@ -56,7 +56,7 @@ def definition(**extra):
 
 @pytest.mark.parametrize("changed_input", [
     "entry", "import", "read-file", "file-added", "file-removed", "nix-param",
-    "params-declaration", "output-schema",
+    "param-name", "output-schema",
 ])
 def test_changed_input_replaces_the_recorded_definition(core_factory, project, changed_input):
     """An input edit changes output and identity, and drops the old resident."""
@@ -87,7 +87,7 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
                  "params.nix": '{ message = "first"; }'}
         changed_file = "params.nix"
         replacement = '{ message = "second"; }'
-    elif changed_input == "params-declaration":
+    elif changed_input == "param-name":
         files = {"default.nix": expression(schema_says("./params.nix", "second", "second", "first")),
                  "params.nix": '{ first = "value"; }'}
         changed_file, replacement = "params.nix", '{ second = "value"; }'
@@ -210,8 +210,8 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
     outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
     producer = (ARGUMENTS + '{ exports.message = "first";'
                 ' exports.unused = throw "exports must be lazy"; run = ' + synthetic_run('"producer"') + '; }')
-    value = "inputs.data.exports.message" if dependency_input == "export" else (
-        schema_says("inputs.data.type", "Second", "inputs.data.Second", "inputs.data.First"))
+    value = "inputs.producer.message" if dependency_input == "export" else (
+        schema_says("./_inputs.fbs", "Second", "inputs.data.Second", "inputs.data.First"))
     files = {f"definitions/{name}/{file}": content for name, outputs_ in
              (("producer", [("out", PortKind.FlatBuffer, first_table("token"))]), ("work", []))
              for file, content in synthetic_sources(outputs_).items()}
@@ -350,8 +350,7 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
                 + synthetic_run('"producer"') + "; }")
     consumer = expression(
         'if (builtins.tryEval <root-only>).success then throw "root name leaked" '
-        'else if inputs.data.exports.marker == import ./nested/lookup.nix '
-        'then throw "projects shared a mapping" '
+        'else if inputs ? producer then throw "external Card received root exports" '
         'else if builtins.pathExists <external-only/flake.nix> then "independent" '
         'else throw "external name missing"')
     defs = {
