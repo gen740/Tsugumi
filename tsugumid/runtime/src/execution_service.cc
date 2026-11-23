@@ -13,6 +13,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "tsugumi/workerd/worker_execution.hh"
 
@@ -185,7 +186,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
 #endif
   sp.uid = uid;
   sp.gid = uid;
-  // Project data roots are used by the core to stage inputs, never mounted.
   const std::filesystem::path state_dir = service_.store().state_dir();
   // Another system's binaries run with the emulator the kernel opened when it
   // was registered; Rosetta also reads its own folder while it runs.
@@ -216,14 +216,22 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
-  // TODO(open): artifact isolation guarantees with filesystem isolation disabled.
-#ifdef __APPLE__
-  // TODO(open): macOS dynamic grants.
-  for (const auto& artifact : artifacts)
-    sp.binds.push_back({artifact.path, artifact.path, false, ""});
-#else
-  sp.grants = artifacts;
+  if (sp.sandbox.filesystem) {
+    sp.artifacts_root = (state_dir / "artifacts").string();
+    fs::create_artifact_holders(sp.artifacts_root);
+#ifdef __linux__
+    for (auto& artifact : artifacts) {
+      if (artifact.store_path.empty()) {
+        artifact.path =
+            (std::filesystem::path(kSandboxArtifactsRoot) / artifact.location)
+                .string();
+      } else {
+        // A store artifact may be outside the consuming Card's closure.
+        sp.binds.push_back({artifact.path, artifact.path, false, ""});
+      }
+    }
 #endif
+  }
 
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
@@ -238,8 +246,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-  // Open mounts are scoped to the invocation that granted them.
-  const bool reuse = node.settings.reuse_worker && sp.grants.empty();
+  const bool reuse = node.settings.reuse_worker;
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);

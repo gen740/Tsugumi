@@ -161,8 +161,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   };
   for (auto& grant : grants) {
     const auto root = stdfs::path(grant.path);
-    const auto destination = stdfs::path("artifacts") /
-                             crypto::hex(grant.id.data(), grant.id.size());
+    const auto destination = stdfs::path("artifacts") / grant.location;
     const auto listing = fs::list_beneath(root, "", kMaxInputBlobs * 2);
     if (!listing.links.empty() || !listing.special.empty())
       throw Failed(FailureKind::input_missing,
@@ -173,7 +172,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                          .generic_string());
     for (const auto& name : listing.files)
       stage_file(root, name, destination / name);
-    grant.path = destination.generic_string();
+    grant.path = grant.location.generic_string();
   }
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,

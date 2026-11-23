@@ -65,11 +65,20 @@ envelopes. The SDK opens a granted artifact as a read-only directory.
 The returned path is scoped to the invocation. Forwarding an ID preserves
 the artifact's identity.
 
-The current macOS sandbox grants read access to those directories in its
-Seatbelt profile at process startup. On the merged Linux implementation,
-sandboxed calls that require artifact input grants are unsupported.
+Linux bubblewrap mounts the project's artifact root read-only at
+`/tsugumi-artifacts` when the sandbox starts. macOS Seatbelt allows reads at
+the root's project path from startup and denies all writes there, including
+changes to modes and permissions. The root, run, Card and invocation directories
+allow traversal by exact name and deny listing. Created artifact directories
+have unguessable 128-bit names. A Card with the exact path can read a sealed
+artifact directly. `artifact_open` resolves only IDs granted to the call.
+An offline backup that enumerates the artifact tree needs read permission on
+the holding directories.
 
-TODO(open): macOS dynamic grants and guarantees with filesystem isolation disabled.
+Input Card artifacts use their immutable Nix store paths. Remote workers stage
+granted artifacts in the same directory layout and return newly created
+artifacts with the result. Filesystem isolation must be enabled for these access
+guarantees.
 
 ## Grants
 

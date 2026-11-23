@@ -15,6 +15,7 @@
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/system.hh"
 #include "tsugumi/util/text.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store.hh"
 #include "version_record.hh"
 
@@ -871,6 +872,13 @@ void Service::run_value_read(RequestIn& req) {
 }
 
 namespace {
+auto artifact_holders(const std::string& run, const CardPath& card,
+                      uint64_t invocation) -> stdfs::path {
+  stdfs::path relative = run;
+  for (const auto& segment : card) relative /= segment;
+  return relative / ("@" + std::to_string(invocation));
+}
+
 auto artifact_location(const stdfs::path& project, const ArtifactData& artifact)
     -> stdfs::path {
   if (artifact.origin == "store") {
@@ -917,7 +925,17 @@ auto Service::artifact_grants(std::span<const Value> inputs)
       const auto path = artifact_location(opts_.root, *record);
       if (!stdfs::is_directory(stdfs::symlink_status(path)))
         throw Failed(FailureKind::input_missing, "an input artifact directory is missing");
-      grants.push_back({id, path.string()});
+      if (record->origin == "store") {
+        grants.push_back({id, path.string(),
+                          artifact_holders(record->run_id, record->card,
+                                           record->invocation) /
+                              crypto::hex(id.data(), id.size()),
+                          path.string()});
+      } else {
+        grants.push_back(
+            {id, path.string(),
+             path.lexically_relative(store_->state_dir() / "artifacts")});
+      }
     }
     return grants;
   });
@@ -928,12 +946,12 @@ auto Service::seal_artifacts(const InvocationSummaryData& invocation,
                              std::span<const ArtifactKey> ids) -> void {
   if (ids.empty()) return;
   const auto root = store_->state_dir() / "artifacts";
-  auto destination = root / invocation.run_id;
-  for (const auto& segment : invocation.card) destination /= segment;
-  destination /= "@" + std::to_string(invocation.invocation);
+  const auto relative = artifact_holders(invocation.run_id, invocation.card,
+                                         invocation.invocation);
+  const auto destination = root / relative;
   if (!fs::resolves_inside(store_->state_dir(), destination))
     throw Failed(FailureKind::invalid_path, "artifact destination escapes the project");
-  stdfs::create_directories(destination);
+  fs::create_artifact_holders(root, relative);
   for (const auto& id : ids) {
     if (id.size() != 16)
       throw Failed(FailureKind::output_invalid, "invalid created artifact id");

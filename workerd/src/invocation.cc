@@ -29,6 +29,7 @@
 #include "tsugumi/workerd/log.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/protocol.hh"
+#include "tsugumi/workerd/staging.hh"
 #include "tsugumi/workerd/store_result.hh"
 #include "tsugumi/workerd/value_wire.hh"
 #include "tsugumi/workerd/worker_execution.hh"
@@ -320,17 +321,47 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
     outputs.push_back({port->name()->str(), port->required(), nullptr});
+  const auto artifacts_root = input / "artifacts";
+  fs::create_artifact_holders(artifacts_root);
+  if (spawn.sandbox.filesystem) spawn.artifacts_root = artifacts_root.string();
   std::vector<ArtifactGrant> grants;
   if (const auto* entries = call.grants()) {
     for (const auto* entry : *entries) {
       auto id = wire::artifact_id(*entry->id());
-      const auto relative = stdfs::path("artifacts") / crypto::hex(id.data(), id.size());
-      if (entry->path()->string_view() != relative.generic_string())
+      const auto hex = crypto::hex(id.data(), id.size());
+      const auto relative = remote::relative_path(entry->path()->string_view());
+      const auto holders = relative.parent_path();
+      const auto invocation_name = holders.filename().string();
+      const auto source = artifacts_root / relative;
+      if (relative.filename() != hex ||
+          !crypto::is_run_id(relative.begin()->string()) ||
+          !invocation_name.starts_with('@') || invocation_name.size() == 1 ||
+          invocation_name.find_first_not_of("0123456789", 1) !=
+              std::string::npos ||
+          !stdfs::is_directory(stdfs::symlink_status(source)))
         throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
-      grants.push_back({std::move(id), (input / relative).string()});
+      fs::create_artifact_holders(artifacts_root, holders);
+      auto target = spawn.sandbox.filesystem
+                        ? stdfs::path(kSandboxArtifactsRoot) / relative
+                        : source;
+      if (const auto* store_path = entry->store_path()) {
+        const stdfs::path path(store_path->str());
+        const stdfs::path store_root = "/nix/store";
+        const auto relative_store_path = path.lexically_relative(store_root);
+        if (relative_store_path.empty() ||
+            !fs::valid_relative_path(relative_store_path.begin()->string()) ||
+            path != store_root / *relative_store_path.begin() /
+                        "share/tsugumi/input/artifacts" / hex)
+          throw Failed(FailureKind::input_missing,
+                       "invalid store artifact path");
+        if (spawn.sandbox.filesystem) {
+          spawn.binds.push_back({source.string(), path.string(), false, ""});
+          target = path;
+        }
+      }
+      grants.push_back({std::move(id), target.string()});
     }
   }
-  spawn.grants = grants;
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   InvocationDisplay display;
   auto lease = pool.acquire(spawn.card, "", spawn, false);

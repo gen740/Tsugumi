@@ -24,7 +24,9 @@ from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
+from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Card.CardPort import CardPortT
+from Tsugumi.Worker.ArtifactGrant import ArtifactGrantT
 from Tsugumi.Worker.WorkerPort import WorkerPortT
 from test_worker_loading import card_package
 from Tsugumi.Worker.WorkerCall import WorkerCallT
@@ -237,7 +239,7 @@ def test_rejects_unsafe_options_before_listening(tmp_path):
 
 
 def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files=(),
-              output_budget=None):
+              grants=(), output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
         pytest.skip("needs the installed worker build sources")
@@ -277,7 +279,7 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
             peer.put_chunk(job, archive_digest, total, offset, stream.read(1 << 20))
 
     call = WorkerCallT(
-        inputs=list(inputs), outputs=list(outputs),
+        inputs=list(inputs), outputs=list(outputs), grants=list(grants),
         deadlineMs=deadline_ms,
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
@@ -391,12 +393,38 @@ read -r line < "$TEST_GATE"
 def test_real_remote_artifact_boundary(worker, case):
     job = "9" * 64
     outputs = [WorkerPortT(name="doc", required=True)]
+    inputs = []
+    grants = []
+    files = []
     create = """
       tsugumi_artifact_id id;
       const auto directory = fs::path(create_artifact(call, id));
     """
     if case == "artifact":
+        granted = ArtifactIdT(bytes=[3] * 16)
+        relative = f"1/group/source/@2/{bytes(granted.bytes).hex()}"
+        contents = b"staged"
+        files.append({"path": f"artifacts/{relative}/input.txt",
+                      "sha256": worker.upload(job, contents), "size": len(contents)})
+        inputs.append(CardPortT(name="doc", artifacts=[granted]))
+        grants.append(ArtifactGrantT(id=granted, path=relative))
         body = create + """
+          const fs::path root = "/tsugumi-artifacts";
+          const fs::path granted = open_artifact(call, in);
+          if (granted.lexically_relative(root).generic_string() !=
+              "1/group/source/@2/03030303030303030303030303030303") return 2;
+          for (auto holder = granted.parent_path(); ; holder = holder.parent_path()) {
+            std::error_code error;
+            fs::directory_iterator listing(holder, error);
+            if (error != std::errc::permission_denied ||
+                chmod(holder.c_str(), 0700) == 0) return 3;
+            if (holder == root) break;
+          }
+          std::string contents;
+          std::ifstream(granted / "input.txt") >> contents;
+          if (contents != "staged" ||
+              std::ofstream(granted / "input.txt", std::ios::app) ||
+              chmod((granted / "input.txt").c_str(), 0600) == 0) return 4;
           static const uint8_t first[] = {0, 0};
           static const uint8_t second[] = {0, 255, 128};
           if (call.effects->send(call.host, "data", first, sizeof(first)) ||
@@ -422,7 +450,8 @@ def test_real_remote_artifact_boundary(worker, case):
             std::ofstream(directory / std::to_string(i)).close();
           out.artifact(id);
         """
-    spec = card_spec(worker, job, body, outputs=outputs)
+    spec = card_spec(worker, job, body, outputs=outputs, inputs=inputs,
+                     grants=grants, files=files)
     fingerprint = hashlib.sha256(spec).hexdigest()
     try:
         response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)

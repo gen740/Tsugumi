@@ -47,6 +47,12 @@ directory. Forward a granted ID to pass the same artifact without copying it.
 Listing any ID outside the call's created and granted sets causes
 `output_invalid`. See [storage and retention](RunHistory.md#keep-and-open-artifacts).
 
+The filesystem sandbox exposes the project artifact root read-only at startup.
+The holding directories allow traversal by exact name and deny listing.
+`artifact_open` checks the call's grant and resolves the existing path.
+Input Card artifacts resolve to immutable store paths. See
+[artifact access in the sandbox](SandboxContract.md#artifact-access).
+
 ## Effects and their lifetimes
 
 | Effect | Contract |

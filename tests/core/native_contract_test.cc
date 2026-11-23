@@ -154,16 +154,8 @@ TEST_F(NativeContract, ArtifactsAreNewDirectoriesAndOnlyGrantsCanBeOpened) {
   ArtifactId key;
   std::ranges::copy(first.bytes, key.begin());
   host.granted.emplace(key, created);
-#ifdef __linux__
-  // This fixture runs the ABI without a namespace broker. The integration
-  // test covers opening an actual read-only mount.
-  host.call_id = 1;
-  EXPECT_EQ(open_artifact(&host, &first, &path), -ENOTSUP);
-  EXPECT_EQ(path.size, 0u);
-#else
   ASSERT_EQ(open_artifact(&host, &first, &path), 0);
   EXPECT_EQ(std::string(path.data, path.data + path.size), created);
-#endif
 }
 
 }  // namespace

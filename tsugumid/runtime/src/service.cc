@@ -2240,13 +2240,19 @@ void Service::history_delete(RequestIn& req) {
       if (stdfs::is_symlink(artifacts) || stdfs::is_symlink(dir))
         throw Failed(FailureKind::invalid_path, "artifact storage is a symbolic link");
       if (stdfs::is_directory(dir)) {
-        files += fs::directory_size(dir);
-        // Sealed directories need owner write permission to unlink members.
-        for (const auto& entry : stdfs::recursive_directory_iterator(dir))
+        // Take the run out of the sandbox-visible tree before making any
+        // holding directory readable for deletion.
+        const auto detached =
+            store_->state_dir() / (".artifact-delete-" + crypto::uuid4());
+        stdfs::rename(dir, detached);
+        stdfs::permissions(detached, stdfs::perms::owner_all,
+                           stdfs::perm_options::add);
+        for (const auto& entry : stdfs::recursive_directory_iterator(detached))
           if (stdfs::is_directory(entry.symlink_status()))
-            stdfs::permissions(entry.path(), stdfs::perms::owner_write,
+            stdfs::permissions(entry.path(), stdfs::perms::owner_all,
                                stdfs::perm_options::add);
-        stdfs::remove_all(dir);
+        files += fs::directory_size(detached);
+        stdfs::remove_all(detached);
       }
       stdfs::remove_all(store_->state_dir() / "runs" / id);
     }

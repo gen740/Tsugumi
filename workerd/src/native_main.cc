@@ -5,9 +5,6 @@
 #include <flatbuffers/flatbuffers.h>
 #include <signal.h>
 #include <sys/stat.h>
-#ifdef __linux__
-#include <sys/socket.h>
-#endif
 #include <unistd.h>
 
 #include <algorithm>
@@ -87,7 +84,6 @@ struct Host {
   bool stopping = false;
   std::mutex artifact_mutex;
   std::string artifact_directory;
-  bool artifact_broker = false;
   std::map<ArtifactId, std::string> granted;
   std::map<ArtifactId, std::string> created;
   std::atomic<uint64_t> cancelled_id{0};
@@ -309,54 +305,6 @@ auto create_artifact(void* context, tsugumi_artifact_id* out,
   }
 }
 
-#ifdef __linux__
-auto connect_artifact_broker() -> void {
-  constexpr int socket = tsugumi::workerd::kArtifactSocket;
-  constexpr int host_proc = tsugumi::workerd::kHostProc;
-  // Discover the sandbox's mount namespace before loading any Card code.
-  // The host's proc directory is never made available to the Card.
-  const int ns = ::openat(host_proc, "self/ns/mnt", O_RDONLY | O_CLOEXEC);
-  ::close(host_proc);
-  if (ns < 0) {
-    ::shutdown(socket, SHUT_WR);
-    return;
-  }
-  char setup = 1;
-  iovec data{&setup, sizeof(setup)};
-  alignas(cmsghdr) char control[CMSG_SPACE(sizeof(ns))]{};
-  msghdr message{};
-  message.msg_iov = &data;
-  message.msg_iovlen = 1;
-  message.msg_control = control;
-  message.msg_controllen = sizeof(control);
-  auto* header = CMSG_FIRSTHDR(&message);
-  header->cmsg_level = SOL_SOCKET;
-  header->cmsg_type = SCM_RIGHTS;
-  header->cmsg_len = CMSG_LEN(sizeof(ns));
-  std::memcpy(CMSG_DATA(header), &ns, sizeof(ns));
-  ssize_t sent;
-  do {
-    sent = ::sendmsg(socket, &message, MSG_NOSIGNAL);
-  } while (sent < 0 && errno == EINTR);
-  if (sent != sizeof(setup)) ::shutdown(socket, SHUT_WR);
-  ::close(ns);
-}
-
-auto request_artifact(const ArtifactId& id) -> int {
-  constexpr int socket = tsugumi::workerd::kArtifactSocket;
-  ssize_t size;
-  do {
-    size = ::send(socket, id.data(), id.size(), MSG_NOSIGNAL);
-  } while (size < 0 && errno == EINTR);
-  if (size != static_cast<ssize_t>(id.size())) return EIO;
-  int error;
-  do {
-    size = ::recv(socket, &error, sizeof(error), MSG_TRUNC);
-  } while (size < 0 && errno == EINTR);
-  return size == sizeof(error) ? error : EIO;
-}
-#endif
-
 auto open_artifact(void* context, const tsugumi_artifact_id* id,
                    tsugumi_bytes* path) -> int {
   if (!id || !path) return -1;
@@ -367,23 +315,9 @@ auto open_artifact(void* context, const tsugumi_artifact_id* id,
   std::ranges::copy(id->bytes, key.begin());
   const auto found = host.granted.find(key);
   if (found == host.granted.end()) return -1;
-#ifdef __linux__
-  if (!host.call_id) return -1;
-  const int error =
-      host.artifact_broker ? request_artifact(key) : ENOTSUP;
-  if (error) {
-    const auto* reason =
-        error == ENOSYS
-            ? "the Linux kernel lacks open_tree, mount_setattr or move_mount"
-            : std::strerror(error);
-    std::fprintf(stderr, "artifact_open: %s\n", reason);
-    return -error;
-  }
-#else
   struct stat info{};
   if (::lstat(found->second.c_str(), &info) != 0 || !S_ISDIR(info.st_mode))
     return -1;
-#endif
   *path = path_bytes(found->second);
   return 0;
 }
@@ -618,11 +552,10 @@ auto execute(const W::WorkerCall& call, Host& host, uint64_t id,
                      host, id, reply);
 }
 
-auto serve(const std::string& package, bool artifact_broker) -> int {
+auto serve(const std::string& package) -> int {
   // This context lives as long as the process, including when Card threads
   // enter send or recv after a call returns.
   Host host;
-  host.artifact_broker = artifact_broker;
   std::thread(control_loop, std::ref(host)).detach();
   std::thread(display_loop, std::ref(host)).detach();
   Main entry = nullptr;
@@ -680,20 +613,10 @@ auto serve(const std::string& package, bool artifact_broker) -> int {
 }  // namespace
 
 int main(int argc, char** argv) {
-  if (argc < 3 || std::string_view(argv[1]) != "--package") return 2;
-  bool artifact_broker = false;
-#ifdef __linux__
-  if (argc == 4 && std::string_view(argv[3]) == "--artifact-broker") {
-    artifact_broker = true;
-    ::fcntl(tsugumi::workerd::kArtifactSocket, F_SETFD, FD_CLOEXEC);
-    connect_artifact_broker();
-  } else
-#endif
-      if (argc != 3)
-    return 2;
+  if (argc != 3 || std::string_view(argv[1]) != "--package") return 2;
   ::signal(SIGPIPE, SIG_IGN);
   // Card subprocesses use stdout/stderr but do not inherit the ABI sockets.
   ::fcntl(kData, F_SETFD, FD_CLOEXEC);
   ::fcntl(kControl, F_SETFD, FD_CLOEXEC);
-  return serve(argv[2], artifact_broker);
+  return serve(argv[2]);
 }

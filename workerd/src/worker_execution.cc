@@ -134,11 +134,9 @@ auto run_invocation(const ReleaseWorker& release_worker,
                  std::chrono::milliseconds(*invocation.timeout_ms +
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
-    auto grants = invocation.grants;
-    for (auto& grant : grants) grant.path = worker.artifact_path(grant);
-    auto frame =
-        worker_call_frame(id, invocation.inputs, invocation.outputs,
-                          invocation.timeout_ms, stage_path, grants, !reuse);
+    auto frame = worker_call_frame(id, invocation.inputs, invocation.outputs,
+                                   invocation.timeout_ms, stage_path,
+                                   invocation.grants, !reuse);
     worker.set_logs(invocation.log);
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
