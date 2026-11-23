@@ -49,15 +49,15 @@ def _result_literal(outputs):
     from Tsugumi.Card.CardResult import CardResultT
 
     builder = flatbuffers.Builder(128)
-    result = CardResultT(outputs=[CardPortT(name=name, kind=kind, bytes=list(value))
-                                  for name, kind, value in outputs])
+    result = CardResultT(outputs=[CardPortT(name=name, bytes=list(value))
+                                  for name, value in outputs])
     builder.Finish(result.Pack(builder))
     return ",".join(map(str, builder.Output()))
 
 
 def synthetic_sources(outputs=()):
     """A minimal Card in C, independent of any kit SDK: it prints VALUE
-    (from value.h) and returns `outputs` [(name, kind, bytes)]."""
+    (from value.h) and returns `outputs` [(name, bytes)]."""
     return {
         "card_abi.h": (ROOT / "protocol/include/tsugumi/card_abi.h").read_text(),
         "card.c": ('#include <stdio.h>\n#include "card_abi.h"\n#include "value.h"\n'

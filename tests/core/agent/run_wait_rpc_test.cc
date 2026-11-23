@@ -7,11 +7,6 @@ TEST_F(AgentProjectFixture,
        MissingSavedInputsNamesTheWorkflowTriggerAndKeepsSingleCardRuns) {
   const auto root = directory.path / "project";
   Write(root / "definitions/load/_card.json", R"({"type":"trigger"})");
-  Write(root / "definitions/source/_card.json", R"({"type":"input"})");
-  Write(root / "definitions/source/params.nix", "{ value = 1.0; }");
-  Write(root / "definitions/source/_outputs.fbs",
-        "table Value { value:double; } table Outputs { out:Value (required); } "
-        "root_type Outputs;");
   Write(root / "definitions/knn/_card.json", R"({"type":"collect"})");
   Write(root / "definitions/nested/_card.json", R"({"type":"subgraph","external":"nested"})");
   Write(root / "externals/nested/tsugumi.json",
@@ -20,7 +15,7 @@ TEST_F(AgentProjectFixture,
         R"({"type":"trigger"})");
   StartProject(
       false,
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"load"},{"id":"source"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"source","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"load"},{"id":"knn"},{"id":"nested"}],"connections":[{"from":{"card":"load","port":"out"},"to":{"card":"knn","port":"in"}}]}})");
   const auto conversation = Conversation("missing-inputs");
   for (const auto access :
        {Tsugumi::Service::Access::Read, Tsugumi::Service::Access::Run})

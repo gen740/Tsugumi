@@ -515,6 +515,8 @@ class TransformationProject {
           const auto path = json::Text(v, "path");
           if (path.ends_with("/layout.bin"))
             layouts[path.substr(0, path.size() - 10)] = bytes;
+          else if (path.ends_with("/tsugumi.json") && !files.contains(path))
+            files[path] = bytes;
           else
             files[path] = Canonical(path, bytes);
         }

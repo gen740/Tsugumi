@@ -6,6 +6,7 @@ from contextlib import closing
 import pytest
 
 from harness.fixtures import add_worker, worker_project
+from harness.host import Host, HostConnection, HostFailure
 from harness.observations import read_output, read_pages
 from harness.scenario import FILE_OUTPUT, Gate, Project, run, wait_run
 from tsugumi_client import RpcFailure, new_id, path, text

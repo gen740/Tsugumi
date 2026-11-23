@@ -17,12 +17,12 @@ def make(root: Path) -> None:
     put(root / "tsugumi.json", json.dumps({
         "name": "files", "nixPath": [],
         "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
-            {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": "start"}},
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
     put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
         "type": "input"}))
     put(root / "definitions" / "load" / "params.nix", '{ value = "data/events.txt"; }')
+    put(root / "definitions" / "load" / "default.nix", '{ params, inputs }: { }')
     put(root / "definitions" / "load" / "_outputs.fbs", EVENTS_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
     put(root / "definitions" / "show" / "_card.json", json.dumps(SINK))

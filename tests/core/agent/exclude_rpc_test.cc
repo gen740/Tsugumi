@@ -31,8 +31,6 @@ auto DocumentBytes(const std::string& path, const std::string& text) -> std::str
   using namespace document_text;
   if (path.ends_with("/_card.json"))
     return print(Schema::Card, parse(Schema::Card, path, text));
-  if (path.ends_with("tsugumi.json"))
-    return print(Schema::Project, parse(Schema::Project, path, text));
   return text;
 }
 

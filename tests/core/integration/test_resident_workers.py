@@ -145,8 +145,16 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         reuseWorker=True, recordIO=True)
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
-    payload = {"type": "input", "params": {"value": "x" * (4 << 20)}, "_params": '{ value = ""; }',
-               "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;'}
+    payload = {
+        "type": "input",
+        "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;',
+        "_nix": """{ params, inputs }: let pkgs = import <nixpkgs> { }; in {
+          run = pkgs.runCommand "large-input-fixture" { } ''
+            mkdir -p "$out/share/tsugumi/input/ports"
+            head -c 4194304 /dev/zero > "$out/share/tsugumi/input/ports/data"
+          '';
+        }""",
+    }
     root = tmp_path / "p"
     write(root, {"payload": payload, "resident": definition},
           [card("source", "payload"), card("resident", "resident")],

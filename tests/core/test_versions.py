@@ -14,7 +14,7 @@ import pytest
 
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
-from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
+from projects import SINK, MSG_FBS, MSG_INPUT_NIX, builtin_project, card, conn, run_and_wait, write, write_nix_project
 from harness.document import params_nix, set_param
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
@@ -314,9 +314,10 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     """Every connection reads the same complete, neutral facts."""
     root = tmp_path / "p"
     independent = [f"more{i}" for i in range(7)]
-    write(root,
+    write_nix_project(root,
           defs={"trigger": {"type": "trigger"},
-                "source": {"type": "input", "params": {"text": "first"}, "_params": '{ text = ""; }', "_outputs": MSG_FBS},
+                "source": {"type": "input", "params": {"text": "first", "value": True},
+                           "_outputs": MSG_FBS, "_nix": MSG_INPUT_NIX},
                 "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
