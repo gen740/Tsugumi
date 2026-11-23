@@ -2483,17 +2483,17 @@ export class ProjectSession extends Observable {
 /** What a Card is, for choosing what the canvas and the editor offer.
  *  `invalid`: its _card.json has no type or one this build does not know (or
  *  one that does not match `external`), a definition error the core reports. */
-export type CardKind = 'trigger' | 'input' | 'branch' | 'fork' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
+export type CardKind = 'trigger' | 'input' | 'merge' | 'collect' | 'draft' | 'subgraph' | 'code' | 'invalid'
 /** The _card.json "type" names. */
-const KINDS: CardKind[] = ['trigger', 'input', 'branch', 'fork', 'merge', 'collect', 'draft', 'subgraph', 'code']
+const KINDS: CardKind[] = ['trigger', 'input', 'merge', 'collect', 'draft', 'subgraph', 'code']
 
 export const KIND_LABEL: Record<CardKind, string> = {
-  trigger: L('開始'), input: L('入力'), branch: L('分岐'), fork: L('分配'), merge: L('合流'), collect: L('収集'),
+  trigger: L('開始'), input: L('入力'), merge: L('合流'), collect: L('収集'),
   draft: 'Draft', subgraph: 'Card in Card', code: L('処理'), invalid: L('定義エラー'),
 }
 
 export const KIND_ICON: Record<CardKind, string> = {
-  trigger: 'play.circle', input: 'slider.horizontal.3', branch: 'arrow.triangle.swap', fork: 'arrow.triangle.branch',
+  trigger: 'play.circle', input: 'slider.horizontal.3',
   merge: 'arrow.triangle.merge', collect: 'line.3.horizontal.decrease', draft: 'pencil.and.outline', subgraph: 'link',
   code: 'chevron.left.forwardslash.chevron.right', invalid: 'xmark.octagon',
 }
@@ -2516,8 +2516,6 @@ const BUILTIN_CARDS = {
   trigger: H.BuiltinCard.Trigger,
   input: H.BuiltinCard.InputValue,
   input_bool: H.BuiltinCard.BooleanInput,
-  branch: H.BuiltinCard.Branch,
-  fork: H.BuiltinCard.Fork,
   merge: H.BuiltinCard.Merge,
   collect: H.BuiltinCard.Collect,
 }
@@ -2527,8 +2525,6 @@ export const TEMPLATES: { id: DefinitionTemplate; label: string }[] = [
   { id: 'trigger', label: L('トリガー') },
   { id: 'input', label: L('入力値') },
   { id: 'input_bool', label: L('真偽値の入力') },
-  { id: 'branch', label: L('分岐') },
-  { id: 'fork', label: L('分配') },
   { id: 'merge', label: L('合流') },
   { id: 'collect', label: L('収集') },
 ]

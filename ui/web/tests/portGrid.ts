@@ -47,7 +47,7 @@ for (const c of contract.ports) {
   })
   const edges = [along(c.inputs, false), along(c.outputs, true)]
   // What is drawn has every port on it (a Fork's diamond as a Merge's triangle).
-  if (c.kind === 'merge' || c.kind === 'fork') {
+  if (c.kind === 'merge') {
     const r = g.outlineRect
     for (const z of [1, 0.25]) {
       const pts = flatten(g.outline({ x: r.x * z, y: r.y * z, width: r.width * z, height: r.height * z }))

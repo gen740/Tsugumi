@@ -8,10 +8,10 @@ import TsugumiRPC
 /// `invalid`: its _card.json has no type or one this build does not know (or
 /// one that does not match `external`), a definition error the core reports.
 enum CardKind: String {
-  case trigger, input, branch, fork, merge, collect, draft, subgraph, code, invalid
+  case trigger, input, merge, collect, draft, subgraph, code, invalid
 
   /// The _card.json "type" names.
-  static let types: [CardKind] = [.trigger, .input, .branch, .fork, .merge, .collect, .draft, .subgraph, .code]
+  static let types: [CardKind] = [.trigger, .input, .merge, .collect, .draft, .subgraph, .code]
 
   /// A kind by its _card.json "type" name (also VersionCanvasCard.kind, empty
   /// for a definition the daemon cannot read). Anything else is `invalid`: the
@@ -26,8 +26,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return String(localized: "開始")
     case .input: return String(localized: "入力")
-    case .branch: return String(localized: "分岐")
-    case .fork: return String(localized: "分配")
     case .merge: return String(localized: "合流")
     case .collect: return String(localized: "収集")
     case .draft: return "Draft"
@@ -41,8 +39,6 @@ enum CardKind: String {
     switch self {
     case .trigger: return "play.circle"
     case .input: return "slider.horizontal.3"
-    case .branch: return "arrow.triangle.swap"
-    case .fork: return "arrow.triangle.branch"
     case .merge: return "arrow.triangle.merge"
     case .collect: return "line.3.horizontal.decrease"
     case .draft: return "pencil.and.outline"
@@ -65,7 +61,7 @@ func definitionKind(_ def: JSONValue?) -> CardKind {
 enum DefinitionTemplate: String, CaseIterable, Identifiable {
   case draft, trigger, input
   case booleanInput = "input_bool"
-  case branch, fork, merge, collect
+  case merge, collect
 
   var id: String { rawValue }
   var kind: Tsugumi_Host_BuiltinCard {
@@ -74,8 +70,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .trigger: .trigger
     case .input: .inputvalue
     case .booleanInput: .booleaninput
-    case .branch: .branch
-    case .fork: .fork
     case .merge: .merge
     case .collect: .collect
     }
@@ -86,8 +80,6 @@ enum DefinitionTemplate: String, CaseIterable, Identifiable {
     case .trigger: String(localized: "トリガー")
     case .input: String(localized: "入力値")
     case .booleanInput: String(localized: "真偽値の入力")
-    case .branch: String(localized: "分岐")
-    case .fork: String(localized: "分配")
     case .merge: String(localized: "合流")
     case .collect: String(localized: "収集")
     }

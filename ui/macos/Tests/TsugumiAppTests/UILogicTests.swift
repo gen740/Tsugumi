@@ -164,12 +164,6 @@ import TsugumiTestSupport
   #expect(at["start"]!.outline == outline(start, in: at["start"]!.box, k))
   #expect(abs(at["merge"]!.outline.boundingRect.minX - (at["merge"]!.box.minX + merge.outlineRect.minX * k)) < 1)
 
-  // A branch is a diamond whose corners shrink with it; a merge is a triangle that
-  // grows with its inputs.
-  let diamond = VersionMiniMapLayout([.init(id: "b", x: 0, y: 0, kind: .branch)], flow: .leftToRight, width: 284, height: 132).cards["b"]!
-  #expect(diamond.shape == .branch && abs(diamond.box.width - canvas(.branch).size.width * 0.3) < 1e-9)
-  #expect(diamond.outline == outline(canvas(.branch), in: diamond.box, 0.3))
-  #expect(diamond.outline != outline(canvas(.branch), in: diamond.box, 1))
   func single(_ kind: CardKind, _ fan: Int, _ flow: FlowDirection = .leftToRight) -> VersionMiniMapLayout.Placed {
     VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: kind, fan: fan)], flow: flow, width: 284, height: 132).cards["m"]!
   }
@@ -178,10 +172,10 @@ import TsugumiTestSupport
   #expect(single(.merge, 6, .topToBottom).box.width > single(.merge, 2, .topToBottom).box.width)
   #expect(single(.merge, 2).outline != single(.merge, 2, .topToBottom).outline)
 
-  // A loop is a merge and a branch with a wire back: they keep their shapes and do not overlap.
-  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .branch)],
+  // A loop is a merge and a Collect: they keep their shapes and do not overlap.
+  let loop = VersionMiniMapLayout([.init(id: "m", x: 0, y: 0, kind: .merge, fan: 2), .init(id: "step", x: 140, y: 0), .init(id: "b", x: 400, y: 0, kind: .collect)],
                                   flow: .leftToRight, width: 284, height: 132).cards
-  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .branch)
+  #expect(loop["m"]!.shape == .merge && loop["step"]!.shape == .card && loop["b"]!.shape == .collect)
   #expect(!loop["m"]!.box.intersects(loop["step"]!.box) && !loop["step"]!.box.intersects(loop["b"]!.box))
 
   // A folded Card is its header.
@@ -280,7 +274,7 @@ import TsugumiTestSupport
   #expect(definitionKind(try JSONValue.parse(#"{"type":"invalid"}"#)) == .invalid, "not a type name")
 
   // The core's diagnostic (file and message) is what the Card says.
-  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, branch, fork, merge, collect, subgraph)"#
+  let missing = #"definitions/old/_card.json: "type" is required (one of code, draft, trigger, input, merge, collect, subgraph)"#
   let delta = Tsugumi_RPC_DocumentDeltaT()
   delta.baseRev = 0; delta.rev = 1; delta.origin = "agent"
   delta.resolution = ["old", "future", "loose", "plan", "step"].map { id in
@@ -376,7 +370,7 @@ import TsugumiTestSupport
   func geometry(_ kind: CardKind) -> CardGeometry {
     CardGeometry(CardNodeData(title: "x", kind: kind, summary: "what it does", inputs: [], outputs: []), flow: .topToBottom)
   }
-  for kind in [CardKind.trigger, .merge, .branch] { #expect(!geometry(kind).summary, "\(kind)") }
+  for kind in [CardKind.trigger, .merge, .collect] { #expect(!geometry(kind).summary, "\(kind)") }
   #expect(geometry(.code).summary)
   #expect(geometry(.subgraph).summary)
 }
@@ -398,19 +392,6 @@ import TsugumiTestSupport
 }
 
 @Test func routingCardsHaveTheirShapeAndPorts() {
-  let branch = CardGeometry(CardNodeData(title: "b", kind: .branch, summary: nil,
-                                         inputs: [PortData(name: "value"), PortData(name: "condition")],
-                                         outputs: [PortData(name: "a"), PortData(name: "b")]), flow: .topToBottom)
-  #expect(branch.shape == .branch)
-  let v = branch.port("value", output: false), c = branch.port("condition", output: false)
-  let a = branch.port("a", output: true), b = branch.port("b", output: true)
-  // Data and condition never share a point; a (true) left, b (false) right, below the inputs.
-  #expect(v != c && v.x < c.x && a.x < b.x && a.y > v.y && b.y > c.y)
-  // Every port lies on the diamond's outline.
-  let outline = branch.outline(in: branch.outlineRect)
-  for p in [v, c, a, b] {
-    #expect(outline.strokedPath(StrokeStyle(lineWidth: 2)).contains(p))
-  }
   let merge = CardGeometry(CardNodeData(title: "m", kind: .merge, summary: nil,
                                         inputs: [PortData(name: "a"), PortData(name: "b")], outputs: [PortData(name: "out")]), flow: .topToBottom)
   #expect(abs(merge.port("out", output: true).x - merge.size.width / 2) < 0.5)
@@ -660,7 +641,7 @@ import TsugumiTestSupport
     let g = CardGeometry(d, flow: flow)
     #expect(g.size.width.isFinite && g.size.width > 0 && g.size.height.isFinite && g.size.height > 0)
     let edge = flow == .topToBottom ? g.size.width : g.size.height
-    if d.kind == .merge || d.kind == .fork {
+    if d.kind == .merge {
       let r = g.outlineRect
       for z: CGFloat in [1, 0.25] {
         // What is drawn: every port is on it, and rounding takes only a little off the wide edge.

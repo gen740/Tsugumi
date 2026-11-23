@@ -572,7 +572,7 @@ struct GraphCanvas: View {
   }
 
   /// A wire is colored only when a value really went through it in this run
-  /// (a branch colors only the side it chose), and animated while the value
+  /// and animated while the value
   /// is on its way to a Card that has not finished with it yet.
   private func style(from: CardKey, port: String, to: CardKey?) -> WireDraw.Style {
     // A Card in Card sends what the inner Card behind that output sent.
