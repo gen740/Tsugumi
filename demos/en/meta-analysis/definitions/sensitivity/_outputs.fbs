@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace bcg;
-table Sensitivity { value:string; }
-table Outputs { sensitivity:Sensitivity (required, tsugumi: "file"); }
+table Outputs { sensitivity:tsugumi.Artifact (required); }
 root_type Outputs;

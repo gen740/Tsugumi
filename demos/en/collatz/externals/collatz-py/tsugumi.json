@@ -64,16 +64,6 @@
       },
       {
         "from": {
-          "card": "check",
-          "port": "even"
-        },
-        "to": {
-          "card": "route",
-          "port": "condition"
-        }
-      },
-      {
-        "from": {
           "card": "route",
           "port": "a"
         },

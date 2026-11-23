@@ -2,7 +2,7 @@
 centred on Cas A (its position converted with the event file's own x, y
 coordinate keywords, so every observation is centred the same way). CIAO's
 dmcopy does the binning."""
-from tsugumi import contract
+from card import Artifact, Input, Output, params
 import json
 import math
 import os
@@ -29,18 +29,18 @@ def sky_pixel(columns, ra, dec):
     return cx.coord_ref_point + xi / cx.coord_inc, cy.coord_ref_point + eta / cy.coord_inc
 
 
-def main(inputs, report, run):
-    events = contract.input_object(inputs, "input")
-    source, obsid = events.path.decode(), events.obsid.decode()
-    tool = inputs.ciao
-    root = tool.path.decode()
-    p = inputs.params
+def run(input: Input) -> Output:
+    events = input.require("input")
+    source, = events.file.open().iterdir()
+    obsid = events.obsid.decode()
+    tool = input.require("ciao")
+    root = params.ciaoRoot
+    p = params
     limits = [p.redMinEv, p.greenMinEv, p.blueMinEv, p.maxEv]
     assert all(a < b for a, b in zip(limits, limits[1:])), "energy boundaries must increase"
     step, size = p.binSize, p.pixels
     assert step > 0 and 16 <= size <= 2048
-    dest = Path(run.output_directory) / "bands"
-    dest.mkdir(parents=True, exist_ok=True)
+    artifact, dest = Artifact.dir()
     with fits.open(source, memmap=True) as hd:
         ev = hd["EVENTS"]
         cols = ev.columns
@@ -72,12 +72,10 @@ def main(inputs, report, run):
                 bands.append({"color": color, "min_ev": limits[i], "max_ev": limits[i + 1], "photons": int(counts.sum()), "dmcopy": spec})
         # Counted again without CIAO: what the tool wrote is every selected photon, once.
         assert sum(b["photons"] for b in bands) == selected, "bands overlap or leave a gap"
-        manifest = {"obsid": obsid, "events_file": source, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
+        manifest = {"obsid": obsid, "events_file": source.name, "exposure_s": ev.header.get("EXPOSURE"), "events": len(ev.data),
                     "centre_pixel": [x0 + step * size / 2, y0 + step * size / 2], "grid": {"step": step, "pixels": size},
                     "selected": selected, "bands": bands, "tool": {"name": "CIAO", "version": tool.version.decode(), "path": root}}
     (dest / "provenance.json").write_text(json.dumps(manifest, ensure_ascii=False, indent=2))
-    report.log(json.dumps(manifest, ensure_ascii=False))
-    report.table(["帯域", "エネルギー (eV)", "光子数"],
-                      [[b["color"], f"{b['min_ev']:g}–{b['max_ev']:g}", b["photons"]] for b in bands])
-    s = str(dest)
-    return {'images': {'value': s}}
+    print(json.dumps(manifest, ensure_ascii=False))
+    # TODO(open): Port the demo display.
+    return Output(images=artifact)

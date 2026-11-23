@@ -1,8 +1,14 @@
 { params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = {
+    inherit params;
+    inputs = ./_inputs.fbs;
+    outputs = ./_outputs.fbs;
+  };
+in
 {
-  run = ''
-    test -s "$DIR_RMARKDOWN/index.html"
-    test -s "$DIR_QUARTO/index.html"
-    printf '%s' '{"text":"Both HTML reports are saved. Open each report Card’s Artifacts to preview the table and figure."}' > "$TSUGUMI_REPORT"
-  '';
+  run = sdk.pythonCard (common // { src = ./src; });
+  api = sdk.pythonApi common;
 }

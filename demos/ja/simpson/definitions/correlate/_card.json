@@ -4,7 +4,5 @@
     {
       "name": "penguins"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "correlations"
+  ]
 }

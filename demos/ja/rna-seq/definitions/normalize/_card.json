@@ -4,7 +4,5 @@
     {
       "name": "counts"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "normalized"
+  ]
 }

@@ -1,4 +1,4 @@
 namespace casa;
-table Ciao { path:string; version:string; }
+table Ciao { version:string; }
 table Outputs { tool:Ciao (required); }
 root_type Outputs;

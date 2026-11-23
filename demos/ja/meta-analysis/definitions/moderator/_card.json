@@ -4,7 +4,5 @@
     {
       "name": "trials"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "regression"
+  ]
 }

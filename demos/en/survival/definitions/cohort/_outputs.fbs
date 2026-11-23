@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace lung;
-table Cohort { value:string; }
-table Outputs { cohort:Cohort (required, tsugumi: "file"); }
+table Outputs { cohort:tsugumi.Artifact (required); }
 root_type Outputs;

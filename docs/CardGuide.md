@@ -159,7 +159,7 @@ in
     tools = pkgs.lib.optional params.plot pkgs.gnuplot;
   });
   api = sdk.cppApi common;
-  views = builtins.filter (view: view.name == "text") sdk.views;
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
 }
 ```
 
@@ -228,7 +228,7 @@ reading or forward its ID. The directory is sealed when the creating call ends.
 ## Views
 
 Return `views` at the top level of `default.nix` alongside `run`. The example
-uses the SDK's Text view. A custom declaration has `name`, `type` and `blob`.
+uses the SDK's Markdown view. A custom declaration has `name`, `type` and `blob`.
 The HTML file receives and sends bytes on a MessagePort. Display traffic is
 live, and data saved for later inspection should go through output ports.
 

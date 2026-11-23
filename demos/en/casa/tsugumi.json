@@ -95,6 +95,16 @@
           "card": "spectrum",
           "port": "input"
         }
+      },
+      {
+        "from": {
+          "card": "load",
+          "port": "events"
+        },
+        "to": {
+          "card": "spectrum",
+          "port": "events"
+        }
       }
     ]
   }

@@ -11,7 +11,5 @@
       "name": "histogram"
     }
   ],
-  "recordIO": true,
-  "retainArtifact": true,
-  "artifactOutput": "report"
+  "recordIO": true
 }

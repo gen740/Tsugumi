@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace report;
-table Path { value:string; }
-table Outputs { report:Path (required, tsugumi: "directory"); html:Path (required, tsugumi: "file"); }
+table Outputs { report:tsugumi.Artifact (required); html:tsugumi.Artifact (required); }
 root_type Outputs;

@@ -5,7 +5,5 @@
       "name": "data"
     }
   ],
-  "recordIO": true,
-  "retainArtifact": true,
-  "artifactOutput": "figure"
+  "recordIO": true
 }

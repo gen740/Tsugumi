@@ -1,5 +1,5 @@
-attribute "tsugumi";
+include "tsugumi/artifact.fbs";
+
 namespace mnist;
-table SubsetFile { value:string; }
-table Outputs { subset:SubsetFile (required, tsugumi: "file"); }
+table Outputs { subset:tsugumi.Artifact (required); }
 root_type Outputs;

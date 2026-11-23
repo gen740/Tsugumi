@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import re
 from pathlib import Path
 
 import pytest
@@ -28,24 +27,27 @@ def test_localized_demos_share_executable_definitions(demo):
     for doc in docs:
         del doc["name"]
     assert docs[0] == docs[1]
-    localized_report = Path("definitions/summary/default.nix")
     for file in japanese.joinpath("definitions").rglob("*"):
         if not file.is_file() or file.name in {"README.md", "_comments.json"}:
             continue
         relative = file.relative_to(japanese)
-        other = english / relative
-        if demo == "signal-sweep" and relative == localized_report:
-            # Ignore the translated prose, preserving the jq expressions the
-            # report interpolates as well as the rest of the Card's program.
-            def normalize(source):
-                def report(match):
-                    values = sorted(re.findall(r"\\\(([^)]+)\)", match[1]))
-                    assert values == ["$thresholds", ".out.comparisons", ".out.detections"]
-                    return '{text: "localized"}'
-                normalized, count = re.subn(r'{text: "([^"]*)"}', report, source)
-                assert count == 1
-                return normalized
+        assert file.read_bytes() == (english / relative).read_bytes(), relative
 
-            assert normalize(file.read_text()) == normalize(other.read_text())
-        else:
-            assert file.read_bytes() == other.read_bytes(), relative
+
+@pytest.mark.parametrize("language", ["ja", "en"])
+def test_demo_locks_and_input_definitions(language):
+    for manifest in (ROOT / "demos" / language).rglob("tsugumi.json"):
+        declarations = {entry["name"]: entry["url"] for entry in json.loads(manifest.read_text())["nixPath"]}
+        lock = json.loads(manifest.with_name("tsugumi.lock").read_text())
+        entries = lock["entries"]
+        assert [entry["name"] for entry in entries] == sorted(declarations), manifest
+        assert {entry["name"]: entry["url"] for entry in entries} == declarations, manifest
+        assert all(entry["narHash"].startswith("sha256-") for entry in entries), manifest
+
+        for definition in manifest.parent.glob("definitions/*/_card.json"):
+            card = json.loads(definition.read_text())
+            assert not {"sweeps", "retainArtifact", "artifactOutput"} & card.keys(), definition
+            assert card["type"] in {"code", "draft", "trigger", "input", "merge", "collect", "subgraph"}, definition
+            if card["type"] == "input":
+                for name in ("default.nix", "params.nix", "_outputs.fbs"):
+                    assert definition.with_name(name).is_file(), (definition, name)

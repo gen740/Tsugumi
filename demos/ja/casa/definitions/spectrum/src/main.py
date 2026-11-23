@@ -2,8 +2,8 @@
 
 Same events and sky grid as bands; its three bands are shaded in
 their colours and the emission lines of the ejecta are marked.
-Plain matplotlib: report.figure() puts the figure in the Card's display."""
-from tsugumi import contract
+The histogram and band overlays use Matplotlib."""
+from card import Input, Output, params
 import json
 from pathlib import Path
 
@@ -20,17 +20,18 @@ LINES = [
 SHADE = {"red": "#e5484d", "green": "#30a46c", "blue": "#3e7bfa"}
 
 
-def main(inputs, report):
-    source = Path(contract.input_object(inputs, "input").value.decode())
+def run(input: Input) -> Output:
+    source = input.require("input").open()
     manifest = json.loads((source / "provenance.json").read_text())
-    p = inputs.params
+    p = params
     lo, hi, width = p.minEv, p.maxEv, p.binEv
     assert 0 <= lo < hi and width > 0, "bad energy range or bin"
 
     # The photons in the same square of sky as the bands' grid.
     (cx, cy), grid = manifest["centre_pixel"], manifest["grid"]
     half = grid["step"] * grid["pixels"] / 2
-    with fits.open(manifest["events_file"], memmap=True) as hd:
+    events = input.require("events")
+    with fits.open(events.file.open() / manifest["events_file"], memmap=True) as hd:
         ev = hd["EVENTS"].data
         x = np.asarray(ev["x"], dtype=float)
         y = np.asarray(ev["y"], dtype=float)
@@ -63,5 +64,7 @@ def main(inputs, report):
         ax.legend(loc="lower left", title="photons", frameon=False,
                   fontsize=11, title_fontsize=11)
         fig.tight_layout()
-        report.figure()
-    report.log(json.dumps({"photons": int(counts.sum()), "bin_ev": width}))
+        plt.close(fig)
+        # TODO(open): Port the demo display.
+    print(json.dumps({"photons": int(counts.sum()), "bin_ev": width}))
+    return Output()

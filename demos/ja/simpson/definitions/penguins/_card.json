@@ -4,7 +4,5 @@
     {
       "name": "start"
     }
-  ],
-  "retainArtifact": true,
-  "artifactOutput": "penguins"
+  ]
 }
