@@ -1500,7 +1500,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     if (!rpc || sdk.building) return
     setSdk({ building: true })
     try {
-      const result = await rpc.evaluateNix(path(model.cardKey), '(import ./. { inherit params inputs; }).api', { build: true, atRev: session.rev })
+      const result = await rpc.evaluateNix(path(model.cardKey), '(import ./. { inherit params inputs; }).api or null', { build: true, atRev: session.rev })
       setSdk(sdkBuild(result))
     } catch (e) {
       setSdk({ building: false, failure: errorText(e) })

@@ -938,6 +938,10 @@ struct EvaluationState {
     E::ExpressionValueT result;
     if (build) {
       state->forceValue(value, nix::noPos);
+      if (value.type() == nix::nNull) {
+        result.json = "null";
+        return result;
+      }
       const auto drv = nix::getDerivation(*state, value, false);
       if (!drv)
         throw std::runtime_error("Nix expression must return a derivation");
@@ -947,7 +951,11 @@ struct EvaluationState {
         throw std::runtime_error(
             "Nix expression must instantiate its derivation");
       result.output_name = drv->queryOutputName();
-      if (!store->readDerivation(path).outputs.contains(result.output_name))
+      const auto derivation = store->readDerivation(path);
+      if (derivation.platform != call.system)
+        throw std::runtime_error("Nix expression must build for " +
+                                 call.system);
+      if (!derivation.outputs.contains(result.output_name))
         throw std::runtime_error(
             "Nix expression returned an unknown derivation output");
       store->addTempRoot(path);
@@ -1559,11 +1567,11 @@ auto NixEvaluator::expression(const NixCall& call,
       impl_->exchange(call, std::move(request), [&](auto& reply) {
         auto* data = reply.AsExpressionValue();
         if (!data) throw std::runtime_error("missing Nix expression reply");
-        if (build) impl_->hold(data->drv);
+        if (build && !data->drv.empty()) impl_->hold(data->drv);
         return std::move(*data);
       });
   ExpressionResult result;
-  if (!build) {
+  if (!build || value.drv.empty()) {
     result.json = value.json;
     return result;
   }
