@@ -252,8 +252,11 @@ def test_stop_ends_locked_source_materialization(core_factory, monkeypatch, tmp_
         revision = uuid4().hex + "cafef00d"
         pin["locked"] = dict(pin["locked"], rev=revision,
                              narHash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
-        write(root, {"fetch": {"type": "code", "_nix": "{ params, inputs }: { run = []; }"}},
-              [card("fetch", "fetch")], [], locked=[pin])
+        write(root, {"fetch": {
+            "type": "code",
+            "_outputs": "table Outputs {} root_type Outputs;",
+            "_nix": "{ params, inputs }: { run = []; }",
+        }}, [card("fetch", "fetch")], [], locked=[pin])
         # This fixture never answers. Its network deadlines must not end the
         # wait on behalf of Stop (the host may configure a short connect timeout).
         monkeypatch.setenv("NIX_CONFIG", os.environ.get("NIX_CONFIG", "")
