@@ -18,7 +18,7 @@ auto output_port() -> types::PortType {
   std::string error;
   auto type = collect_output_type(error);
   EXPECT_TRUE(type) << error;
-  return {"out", PortKind::FlatBuffer, false, std::move(type)};
+  return {.name = "out", .type = std::move(type)};
 }
 
 TEST(CollectValue, EmptyListHasEmptyItems) {

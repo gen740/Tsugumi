@@ -15,11 +15,11 @@ from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState
 
 NUMBER = "table Number { value:long; } table Outputs { out:Number; } root_type Outputs;"
+EMPTY = "table Outputs {} root_type Outputs;"
 TEXT = "table Text { value:string; } table Outputs { out:Text; } root_type Outputs;"
 
 
-def add_code(graph, directory, name, *, inputs=(), outputs=None, values=(), runs=None):
-    package = directory / name
+def card_program(package, values):
     builder = flatbuffers.Builder(128)
     result = CardResultT(outputs=[CardPortT(name=port, bytes=data) for port, data in values])
     builder.Finish(result.Pack(builder))
@@ -32,12 +32,16 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
   return 0;
 }}
 """
-    program = native_card(package, entry)
+    return native_card(package, entry)
+
+
+def add_code(graph, directory, name, *, inputs=(), outputs=None, values=(), runs=None):
+    packages = [card_program(directory / name, values)] if runs is None else runs
     return graph.card(name, {"type": "code", "recordIO": True,
                             "sandbox": {"filesystem": False},
                             "inputs": [{"name": name} for name in inputs]},
-                      outputs=outputs,
-                      plan={"product": {"runs": [program] if runs is None else runs, "views": []},
+                      outputs=outputs or EMPTY,
+                      plan={"product": {"runs": packages, "views": []},
                             "executionList": runs is not None})
 
 
@@ -46,7 +50,7 @@ def records(client, run, card):
 
 
 def record(client, run, card, invocation=1):
-    return client.call("RunRecordRequest", runId=run, card=path(card), invocation=invocation).record
+    return client.call("RunRecordRequest", runId=run, card=path(*card.split("/")), invocation=invocation).record
 
 
 def collected(client, directory, run, card):
@@ -154,3 +158,37 @@ def test_merge_forwards_heterogeneous_arrivals_unchanged(core_factory, project, 
         assert bytes(incoming.inlineBytes) == bytes(outgoing.inlineBytes)
         arrivals.add((text(outgoing.rootType), bytes(outgoing.inlineBytes)))
     assert arrivals == {("Number", b"opaque number"), ("Text", b"opaque text")}
+
+
+def test_collect_keeps_only_members_that_emit_the_port(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    graph = Project(project)
+    packages = [
+        card_program(tmp_path / "present", [("out", b"member")]),
+        card_program(tmp_path / "empty", []),
+    ]
+    graph.card("start", {"type": "trigger"})
+    add_code(graph, tmp_path, "batch", outputs=NUMBER, runs=packages)
+    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.connect("batch", "out", "collect", "in").save(c)
+
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    item, = collected(c, tmp_path / "decoded", run, "collect")
+    assert bytes(item["bytes"]) == b"member"
+    assert len(item["schema"]) == 64
+
+
+def test_merge_still_enforces_max_runs(core_factory, project, tmp_path):
+    c = core_factory(mocked_builds=True).connect()
+    graph = Project(project)
+    add_code(graph, tmp_path, "source", outputs=NUMBER, values=[("out", b"one")])
+    graph.card("merge", {"type": "merge", "maxRuns": 1,
+                         "inputs": [{"name": "a"}, {"name": "b"}]})
+    graph.connect("source", "out", "merge", "a")
+    graph.connect("source", "out", "merge", "b").save(c)
+
+    run, status = run_and_wait(c, "source")
+    assert status.state == RunState.failed
+    assert status.failure.kind == FailureKind.execution_limit
+    assert [row.state for row in records(c, run, "merge")] == [CardState.succeeded, CardState.failed]

@@ -61,10 +61,10 @@ def test_second_source_is_a_wiring_error_regardless_of_type(core_factory, projec
 
 def test_merge_reports_distinct_member_names_on_inherited_ports(core_factory, project):
     _, resolved = inspect_graph(core_factory, project, {
-        "one": code(), "two": code(outputs=FLAG),
+        "one": code(), "duplicate": code(), "two": code(outputs=FLAG),
         "merge": {"type": "merge", "inputs": [{"name": n} for n in ("a", "b", "c", "unused")]},
         "relay": {"type": "merge", "inputs": [{"name": "in"}]}, "sink": code(["in"]),
-    }, [conn("one", "out", "merge", "a"), conn("one", "out", "merge", "b"),
+    }, [conn("one", "out", "merge", "a"), conn("duplicate", "out", "merge", "b"),
         conn("two", "flag", "merge", "c"), conn("merge", "out", "relay", "in"),
         conn("relay", "out", "sink", "in")])
 

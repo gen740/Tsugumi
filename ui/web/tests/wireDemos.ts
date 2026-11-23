@@ -37,7 +37,6 @@ function node(dir: string, id: string): CardNodeData {
     // This fixture tests port routing without an evaluator. Parameter rows
     // from the live resolution are covered in the Input Card behavior tests.
     case 'input': return { ...blank, kind: 'input', inputs: [{ name: 'start' }], outputs: typed }
-    case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }
     case 'code': return { ...blank, kind: 'code', inputs: declared, outputs: typed }

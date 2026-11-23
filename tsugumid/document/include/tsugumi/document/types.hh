@@ -70,7 +70,7 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 // Renders the closure of `t` into fbs declarations under namespace `prefix`
 // and returns the new fully qualified root name.
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested = false);
+                           std::string& out);
 
 // A catalog of the message types used to generate a Card's SDK bindings.
 auto card_catalog(const std::vector<PortType>& ports, bool inputs)

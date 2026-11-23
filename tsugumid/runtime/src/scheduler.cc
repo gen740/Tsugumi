@@ -1111,7 +1111,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                    const std::vector<Produced>& members, uint64_t first,
                    bool partial_result) -> void {
     for (const auto& output : batch.outputs) {
-      if (!output.execution_list && output.count == 0) continue;
       const auto edge = out_edges_.find({rt.idx, output.port});
       if (edge == out_edges_.end()) continue;
       TokenGroup group{output.port, output.execution_list, {}};

@@ -690,9 +690,8 @@ class Builder {
           load_catalog(n);
           break;
         case CardType::Input:
-          // Optional start input: connected, the value is produced when the
-          // start signal arrives (e.g. from the trigger); unconnected, the
-          // Card is a source that fires once per run.
+          // A connected start input triggers the Card on arrival.
+          // An unconnected Input Card is a source that fires once per run.
           n.input_defs = {{"start"}};
           load_catalog(n);
           break;
@@ -909,8 +908,7 @@ class Builder {
     return nullptr;
   }
   void resolve_types() {
-    const types::PortType draft{"", PortKind::FlatBuffer, false,
-                                types::empty_type()};
+    const types::PortType draft{.name = "", .type = types::empty_type()};
     for (auto& node : res_->nodes) {
       if (node.kind != CardType::Collect) continue;
       std::string error;
@@ -945,7 +943,6 @@ class Builder {
       auto* to = in_port(target, edge.to_port);
       if (!from || !to) continue;
       to->type = from->type;
-      to->kind = from->kind;
       to->merge_member_types = from->merge_member_types;
     }
   }

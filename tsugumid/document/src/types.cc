@@ -114,23 +114,11 @@ bool is_float(BaseType t) {
 // Renders reachable declarations of a schema under a namespace prefix.
 class Renderer {
  public:
-  // `nested`: the closure becomes a member of a merged type. A member that is
-  // itself a merged type has its own tsugumi.merge namespaces renamed to
-  // "nested", so no dotted name of one level can be read as another level's
-  // (FlatBuffers also tries shorter namespace prefixes when it resolves a
-  // name). Member types that are not merged keep their names.
-  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false)
-      : s_(s), prefix_(std::move(prefix)), nested_(nested) {}
-
-  std::string original(const std::string& full) const {
-    static const std::string merge = "tsugumi.merge";
-    if (nested_ && (full == merge || full.rfind(merge + ".", 0) == 0))
-      return "nested" + full.substr(merge.size());
-    return full;
-  }
+  Renderer(const reflection::Schema& s, std::string prefix)
+      : s_(s), prefix_(std::move(prefix)) {}
 
   std::string qualified(const std::string& name) const {
-    return prefix_.empty() ? original(name) : prefix_ + "." + original(name);
+    return prefix_.empty() ? name : prefix_ + "." + name;
   }
 
   void object(int index) {
@@ -295,7 +283,6 @@ class Renderer {
 
   const reflection::Schema& s_;
   std::string prefix_;
-  bool nested_ = false;
   std::set<int> objs_;
   std::set<int> enums_;
   std::vector<std::pair<bool, int>> order_;
@@ -618,12 +605,12 @@ CatalogResult parse_catalog(const std::string& fbs_text,
 }
 
 std::string render_closure(const Type& t, const std::string& prefix,
-                           std::string& out, bool nested) {
+                           std::string& out) {
   const auto* s = t.schema();
   int root = -1;
   for (flatbuffers::uoffset_t i = 0; i < s->objects()->size(); ++i)
     if (s->objects()->Get(i) == s->root_table()) root = static_cast<int>(i);
-  Renderer r(*s, prefix, nested);
+  Renderer r(*s, prefix);
   r.object(root);
   r.emit(out);
   return r.qualified(s->root_table()->name()->str());

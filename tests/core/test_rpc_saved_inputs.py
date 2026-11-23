@@ -1,106 +1,48 @@
-"""File inputs of a child Workflow remain usable for repeated partial runs."""
+"""A child Workflow can reuse saved arrivals across partial runs."""
 
-import pytest
-
-from projects import FILE_FBS, card, card_in_card, conn, run_and_wait, write
-from test_rpc_scheduler import FLAG_FBS
-from tsugumi_client import path, text
-from Tsugumi.Data.RunState import RunState
+from harness.scenario import Project
+from projects import card, card_in_card, conn, run_and_wait, write
+from test_rpc_scheduler import NUMBER, add_code, record
+from tsugumi_client import text
 from Tsugumi.Data.FailureKind import FailureKind
+from Tsugumi.Data.RunState import RunState
 
 
-CONTENTS = "the saved input must remain readable\n"
-
-
-@pytest.fixture
-def saved_file_subgraph(project, core_factory):
+def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
+    fixture = Project(project)
+    payload = b"opaque saved arrival"
+    add_code(fixture, tmp_path, "source", outputs=NUMBER, values=[("out", payload)])
+    source, files = fixture.cards["source"]
     write(
         project,
         defs={
             "start": {"type": "trigger"},
-            "source": {
-                "type": "input",
-                "params": {"value": "report.txt"}, "_params": '{ value = ""; }',
-                "_outputs": FILE_FBS,
-            },
-            "flag": {
-                "type": "input",
-                "params": {"value": True}, "_params": '{ value = false; }',
-                "_outputs": FLAG_FBS,
-            },
-            "forward": {
-                "type": "branch",
-                "recordIO": True,
-                "retainArtifact": True,
-                "artifactOutput": "a",
-            },
+            "source": source,
+            "relay": {"type": "merge", "inputs": [{"name": "in"}], "recordIO": True},
         },
         cards=[
             card("start", "start"),
             card("source", "source"),
-            card_in_card(
-                "child", [card("inner", "forward"), card("flag", "flag")],
-                [conn("flag", "flag", "inner", "condition")],
-                {"inputs": {"in": {"card": "inner", "port": "value"}},
-                 "outputs": {"out": {"card": "inner", "port": "a"}}},
-            ),
+            card_in_card("child", [card("relay", "relay")], [],
+                         {"inputs": {"in": {"card": "relay", "port": "in"}},
+                          "outputs": {"out": {"card": "relay", "port": "out"}}}),
         ],
-        conns=[conn("source", "doc", "child", "in")],
-        files={"definitions/source/report.txt": CONTENTS},
+        conns=[conn("source", "out", "child", "in")],
+        files={f"definitions/source/{name}": content for name, content in files.items()},
     )
-    client = core_factory().connect()
-    _, missing = run_and_wait(client, "child", propagate=False)
-    assert missing.state == RunState.failed
-    assert missing.failure.kind == FailureKind.input_missing
-    run_id, status = run_and_wait(client, "start")
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    return client, run_id
+    daemon = core_factory(mocked_builds=True)
+    client = daemon.connect()
+    _, status = run_and_wait(client, "child", propagate=False)
+    assert status.state == RunState.failed and status.failure.kind == FailureKind.input_missing
+    run, status = run_and_wait(client, "start")
+    assert status.state == RunState.succeeded, status.failure
+    assert bytes(record(client, run, "child/relay").outputs[0].inlineBytes) == payload
 
-
-def artifact_contents(client, run_id):
-    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path("child", "inner")).artifacts
-    artifact, = artifacts
-    assert text(artifact.output) == "a"
-    assert text(artifact.name) == "report.txt"
-    content = client.call("ArtifactReadRequest", artifactId=text(artifact.artifactId), limitBytes=4096)
-    assert content.eof is True
-    return bytes(content.bytes).decode()
-
-
-def test_child_branch_forwards_saved_files_across_partial_runs(saved_file_subgraph):
-    """Repeated partial runs can reuse a nested Workflow's saved file input."""
-    client, first_run = saved_file_subgraph
-    assert artifact_contents(client, first_run) == CONTENTS
+    daemon.restart()
+    client = daemon.connect()
     for _ in range(2):
-        run_id, status = run_and_wait(client, "child", propagate=False)
-        assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-        assert status.partialRun
-        assert artifact_contents(client, run_id) == CONTENTS
-        record = client.call("RunRecordRequest", runId=run_id, card=path("child", "inner"))
-        assert record.run.status.partialRun
-        assert record.record.outputs  # Explicit Record I/O and Retain artifact are both obeyed.
-
-
-def test_description_changes_preserve_saved_file_inputs_and_evidence(saved_file_subgraph):
-    """README edits leave saved paths and run evidence intact."""
-    from test_definitions import edit_description
-    client, first_run = saved_file_subgraph
-    record = client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))
-    import flatbuffers
-    def packed(value):
-        builder = flatbuffers.Builder(1024)
-        builder.Finish(value.Pack(builder))
-        return bytes(builder.Output())
-    before = packed(record)
-    edit_description(client, "source", "Shared description")
-    edit_description(client, "child", "Shared description")
-    edit_description(client, "inner", "Shared description", "externals/child/")
-    assert packed(client.call("RunRecordRequest", runId=first_run, card=path("child", "inner"))) == before
-    assert artifact_contents(client, first_run) == CONTENTS
-    run_id, status = run_and_wait(client, "child", propagate=False)
-    assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
-    assert status.partialRun
-    assert artifact_contents(client, run_id) == CONTENTS
-    record = client.call("RunRecordRequest", runId=run_id, card=path("child", "inner"))
-    assert record.run.status.partialRun
-    assert record.record.outputs  # Explicit Record I/O and Retain artifact are both obeyed.
+        run, status = run_and_wait(client, "child", propagate=False)
+        assert status.state == RunState.succeeded, status.failure
+        value, = record(client, run, "child/relay").outputs
+        assert text(value.rootType) == "Number"
+        assert bytes(value.inlineBytes) == payload

@@ -36,10 +36,10 @@ assert.ok(preset)
 const card = await session.addCard(preset.id, [], { x: 0, y: 0 }, 'calibrate')
 const merge = await session.addCard('merge', [], { x: 0, y: 100 })
 assert.equal(definitionKind(session.cardDefinition(card)), 'input')
-await session.connect([card, 'value'], [merge, 'in1'], [])
+await session.connect([card, 'value'], [merge, 'a'], [])
 assert.ok(session.connections([]).some(wire =>
   get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
-  get(wire, 'to', 'card') === merge && get(wire, 'to', 'port') === 'in1'))
+  get(wire, 'to', 'card') === merge && get(wire, 'to', 'port') === 'a'))
 
 session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', value: false }]
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
