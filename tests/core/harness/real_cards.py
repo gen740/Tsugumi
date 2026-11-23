@@ -62,11 +62,13 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     """The Nix expression of a run whose main.py is `main`, built with
     the kit's pythonCard. `values` binds Python names to Nix string expressions
     (store paths, evaluated names); their string context builds them into the
-    Card's closure. `tools` is a Nix list of packages for subprocesses."""
+    Card's closure. The core writes the input catalog only for wired Cards.
+    `tools` is a Nix list of packages for subprocesses."""
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return ("(sdk.pythonCard { inherit inputs params; outputs = ./_outputs.fbs;"
+    return ("(sdk.pythonCard { inherit params; outputs = ./_outputs.fbs;"
+            " inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;"
             " src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })")
 
 

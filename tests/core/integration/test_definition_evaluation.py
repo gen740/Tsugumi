@@ -166,12 +166,12 @@ def test_explicit_lock_returns_a_revision_and_hash(core_factory, project):
 def test_kit_derivation_is_independent_of_unused_parameter_values(core_factory, project):
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
-        "params.nix": "{ unused = 7; }",
+        "params.nix": "{ used = 1; unused = 7; }",
         "default.nix": ARGUMENTS + """
           let sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
           in {
             run = sdk.pythonCard {
-              inherit params inputs;
+              params = { inherit (params) used; };
               outputs = ./_outputs.fbs;
               src = ./src;
             };
@@ -187,9 +187,12 @@ def test_kit_derivation_is_independent_of_unused_parameter_values(core_factory, 
         return json.loads(text(result.json))
 
     before = drv()
-    (project / "definitions/work/params.nix").write_text("{ unused = 42; }")
+    (project / "definitions/work/params.nix").write_text("{ used = 1; unused = 42; }")
     reload_project(client)
     assert drv() == before
+    (project / "definitions/work/params.nix").write_text("{ used = 2; unused = 42; }")
+    reload_project(client)
+    assert drv() != before
 
 
 def test_undeclared_search_path_reports_the_project_names(core_factory, project, monkeypatch):
