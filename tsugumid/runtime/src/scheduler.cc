@@ -655,8 +655,12 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       changed = false;
       for (auto& node : nodes_) {
         if (!node.in_targets || node.running || node.closed) continue;
-        if (!node.halted && node.start && !node.start_fired) continue;
-        if (node.empty_collect_ready) continue;
+        const auto kind = node.node->kind;
+        const bool starts_without_input =
+            node.start && !node.start_fired &&
+            (kind != CardType::Merge || !node.queues.empty());
+        if ((!node.halted && starts_without_input) || node.empty_collect_ready)
+          continue;
         size_t exhausted = 0;
         bool failed = false;
         for (const auto& [port, queue] : node.queues) {
@@ -668,7 +672,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                     producer.last == CardState::cancelled ||
                     producer.blocked_input;
         }
-        const auto kind = node.node->kind;
         if (!node.halted) {
           if (kind == CardType::Merge ? exhausted != node.queues.size()
                                      : exhausted == 0 && !node.queues.empty())
@@ -701,10 +704,6 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       return w;
     }
     if (n.start && !n.start_fired) {
-      if (n.node->kind == CardType::Merge && n.queues.empty()) {
-        n.start_fired = true;
-        return std::nullopt;
-      }
       if (!downstream_has_space(n)) return std::nullopt;
       n.start_fired = true;
       if (!n.queues.empty()) {

@@ -195,3 +195,16 @@ def test_merge_still_enforces_max_runs(core_factory, project, tmp_path):
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.execution_limit
     assert [row.state for row in records(c, run, "merge")] == [CardState.succeeded, CardState.failed]
+
+
+def test_unwired_merge_skips_and_collect_emits_an_empty_value(core_factory, project, tmp_path):
+    c = core_factory().connect()
+    graph = Project(project).card("start", {"type": "trigger"})
+    graph.card("merge", {"type": "merge", "inputs": [{"name": "unused"}]})
+    graph.card("collect", {"type": "collect", "recordIO": True})
+    graph.connect("merge", "out", "collect", "in").save(c)
+
+    run, status = run_and_wait(c, "start")
+    assert status.state == RunState.succeeded, status.failure
+    assert [row.state for row in records(c, run, "merge")] == [CardState.skipped]
+    assert collected(c, tmp_path / "decoded", run, "collect") == []
