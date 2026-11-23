@@ -1,4 +1,4 @@
-// Enums of the Card ABI. card.fbs includes only this file.
+// Enums of the Card ABI.
 // Values are explicit and never reused. Value 0 is a reserved "invalid"
 // marker, so an omitted field is detected instead of silently meaning something.
 
@@ -41,7 +41,3 @@ enum FailureKind : ushort {
   value_conflict = 32,
   source_changed = 33,
 }
-
-/// Path: a regular file or a directory, decided at run time. FlatBuffer: one
-/// buffer whose root is the port's type.
-enum PortKind : ubyte { unspecified = 0, Path = 1, FlatBuffer = 2 }

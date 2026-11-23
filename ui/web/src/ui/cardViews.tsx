@@ -33,6 +33,7 @@ export function CardViewsPanel({ card, read }: { card?: CardLiveViews; read: Rea
       return <section className={type === 'html' ? 'card-view card-view-html' : 'card-view'} key={JSON.stringify([view.index, name, type, blob])}>
         <h3>{name}</h3>
         {type === 'html' ? <HtmlViewFrame view={view} card={card} read={read} />
+          // TODO(open): dawn host
           : type === 'dawn' ? <p className="caption secondary">{L('Dawn ビューはまだ利用できません。')}</p>
           : <p className="caption" role="alert">{L('未対応のビュー形式: {0}', type)}</p>}
       </section>
