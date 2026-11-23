@@ -16,7 +16,7 @@ For example, plan starts with _card.json {"type":"draft"} and a README.md with
 start:out -> plan:"", and its outgoing wire is plan:"" -> next:"" (next remains a Draft). An end on a Card that stays a Draft keeps port "": only the implemented Card's own ends get real ports. These project_edit
 arguments implement plan and retain its intent text and every unrelated project field.
 
-The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. With approval, `nix_path_lock_update` writes one name or all names to `tsugumi.lock`, which maps names to locked URLs. Each external uses its own declarations and lock. If an import names an undeclared source, add the name to the owning project's `nixPath` and lock it.
+The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPath` as `{name, url}` entries. With approval, `nix_path_lock_update` writes one name or all names to `tsugumi.lock`, whose entries list stores each name, declared URL, optional revision and NAR hash. Each external uses its own declarations and lock. If an import names an undeclared source, add the name to the owning project's `nixPath` and lock it.
 
 ```json
 {
@@ -49,12 +49,12 @@ The project declares `nixpkgs` and `tsugumi-kit` in `tsugumi.json` under `nixPat
     },
     {
       "file_path": "definitions/plan/default.nix",
-      "put": "{ params, inputs }:\nlet\n  pkgs = import <nixpkgs> { };\n  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };\n  common = { inherit inputs; outputs = ./_outputs.fbs; };\nin { run = sdk.pythonCard (common // { src = ./src; }); api = sdk.pythonApi common; }\n",
+      "put": "{ params, inputs }:\nlet\n  pkgs = import <nixpkgs> { };\n  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };\n  common = { inherit params; inputs = ./_inputs.fbs; outputs = ./_outputs.fbs; };\nin { run = sdk.pythonCard (common // { src = ./src; }); api = sdk.pythonApi common; }\n",
       "expect_missing": true
     },
     {
       "file_path": "definitions/plan/src/main.py",
-      "put": "from card import Output\nfrom outputs.result.greeting.Greeting import GreetingT\n\ndef run(input):\n    return Output(result=GreetingT(value=\"hello\"))\n",
+      "put": "from card import Output\nfrom greeting.Greeting import GreetingT\n\ndef run(input):\n    return Output(result=GreetingT(value=\"hello\"))\n",
       "expect_missing": true
     },
     {
@@ -139,24 +139,25 @@ The returned diagnostics and project_validate check the saved graph; run_record 
 
 ## Code Cards
 
-A Code Card has a `_card.json` with `"type": "code"`, an `_outputs.fbs` catalog,
-a `default.nix`, and sources. Declare each input by name, for example
-`"inputs": [{"name": "config"}]`. Connect one wire per input. The type comes
-from the upstream output. Use a Merge Card to join several sources. A Code
-Card waits for its connected inputs, and its SDK reports `input_missing`
-with the port name when the code requires an absent input.
+Declare input names in _card.json and add one wire per input. Use Merge when joining sources.
+Each output is a table field in the root of _outputs.fbs. Mark outputs every call must emit with
+(required). Omitted outputs can cause downstream Cards to skip. Tsugumi generates _inputs.fbs
+from wiring and upstream schemas. Pass that schema to the SDK builder.
 
-Each output is a field in the root table of `_outputs.fbs`. A FlatBuffer
-port uses a table type, and a file or folder uses
-`path:string (tsugumi: "path")` with `attribute "tsugumi";`. Return the path of
-a file or folder created under the working directory, or an input Path
-unchanged to forward it. An Input Card can publish a saved project file or
-folder. Its string `value` parameter names the path relative to the Card's
-definition, or uses `project:<path>` relative to its project root.
+Edit values in params.nix, a flat literal attrset such as `{ seed = 7; tariff = "spot"; }`.
+The SDK embeds the evaluated params at build time. In `default.nix { params, inputs }`,
+`inputs.<card_id>` is the upstream Card's Nix exports. See the [Card guide](https://github.com/gen740/Tsugumi/blob/main/docs/CardGuide.md)
+and the [SDK contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
-`params.nix` holds current values in a flat set of literals like `{ seed = 7; tariff = "spot"; }`. Every value reaches `CardInput.params` and `default.nix`. The UI edits the selected literal in place. In `default.nix { params, inputs }`, pass `common = { inherit inputs params; outputs = ./_outputs.fbs; }` to the SDK builders. Each connected port provides `inputs.<port>.type`, and a port with a unique Code producer can read `inputs.<port>.exports`.
+Use `include "tsugumi/artifact.fbs";` and `tsugumi.Artifact` for files or directories. Create or upload
+artifacts through the SDK. Open granted inputs via the SDK for a read-only directory.
 
-`run` names the built Card or an ordered list of implementations. `views` declares live displays and `exports` provides Nix values to connected Cards. `api` is a separate code-generation derivation. Use `evaluate_nix` to evaluate in the Card's directory on the local system with `params` and `inputs` in scope. Evaluate `(import ./. { inherit params inputs; }).api` with `build: true` to read `share/tsugumi/api/`. The [SDK guides](https://github.com/gen740/tsugumi-kit/tree/main/docs) describe their types and views.
+Return `run` as a derivation or a list of `{ label; run; }`. Declare live views through `views`.
+Use `evaluate_nix` to evaluate in the saved Card's directory on the local system with locked Nix
+imports, `params` and `inputs` in scope. Set `build: true` to realise a derivation and read its
+bounded output. Evaluate `(import ./. { inherit params inputs; }).api` with that option to read
+the generated SDK files in `share/tsugumi/api/`.
+
 Each call starts a fresh worker by default. Set `reuseWorker: true` when
 the Card intentionally carries process state across calls.
 

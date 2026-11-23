@@ -8,7 +8,7 @@ import subprocess
 import sys
 import tempfile
 
-from inspect_fixture import SNAPSHOT, TOOLS
+from inspect_fixture import PARAM_BYTES, PARAM_PATH, TOOLS
 
 ROOT = Path(__file__).resolve().parents[2]
 CASES = {
@@ -17,21 +17,18 @@ CASES = {
 }
 
 
-def received_snapshot(result):
+def received_parameter(result):
     for block in result.get("content", []):
-        if block.get("type") == "text":
-            try:
-                value = json.loads(block["text"])
-                expected = SNAPSHOT['value']
-                snapshot = value['value']
-                wanted = next(d for d in expected['definitions'] if d['id'] == 'initial')
-                actual = next(d for d in snapshot['definitions'] if d['id'] == 'initial')
-                wanted_params = {p['name']: p['data'] for p in json.loads(wanted['card_json'])['params']}
-                actual_params = {p['name']: p['data'] for p in json.loads(actual['card_json'])['params']}
-                if value['reply'] == SNAPSHOT['reply'] and wanted_params.items() <= actual_params.items():
-                    return True
-            except (KeyError, ValueError, StopIteration, TypeError):
-                continue
+        if block.get("type") != "text":
+            continue
+        try:
+            response = json.loads(block["text"])
+            value = response["value"]
+            if (response["reply"] == "FileContent" and value["name"] == PARAM_PATH
+                    and value["eof"] and bytes(value["bytes"]) == PARAM_BYTES):
+                return True
+        except (KeyError, ValueError, TypeError):
+            continue
     return False
 
 
@@ -68,8 +65,8 @@ def summarize(case, stdout, process_error=None):
             result = item.get("result") or {}
             call = {"server": item["server"], "tool": item["tool"], "arguments": item.get("arguments"),
                     "status": item.get("status"), "error": item.get("error") or result.get("isError", False)}
-            if call["server"] == "tsugumi" and call["tool"] == "project_inspect":
-                call["snapshot_received"] = received_snapshot(result)
+            if call["server"] == "tsugumi" and call["tool"] == "project_file_read":
+                call["parameter_received"] = received_parameter(result)
             calls.append(call)
         elif kind in ("command_execution", "file_change", "web_search", "collab_tool_call", "dynamic_tool_call"):
             calls.append({"tool": kind, "status": item.get("status")})
@@ -81,15 +78,19 @@ def summarize(case, stdout, process_error=None):
     if case == "concept" and calls:
         return dict(report, outcome="fail", reason="General question attempted a tool")
     if case == "project":
-        if any(c.get("server") != "tsugumi" or c["tool"] != "project_inspect" or c["arguments"] != {} for c in calls):
-            return dict(report, outcome="fail", reason="Unexpected tool, server, or inspection arguments")
+        allowed = {"project_file_read": {"path": PARAM_PATH}, "project_inspect": {}}
+        if any(c.get("server") != "tsugumi" or c["tool"] not in allowed
+               or c["arguments"] != allowed[c["tool"]] for c in calls):
+            return dict(report, outcome="fail", reason="Unexpected tool, server, or arguments")
         if not calls:
             return dict(report, outcome="fail", reason="Project-specific answer has no observed evidence")
-        successes = sum(c["status"] == "completed" and not c["error"] and c["snapshot_received"] for c in calls)
-        report["failed_inspections"] = len(calls) - successes
-        report["extra_inspections"] = len(calls) - 1
+        reads = [c for c in calls if c["tool"] == "project_file_read"]
+        successes = sum(c["status"] == "completed" and not c["error"] and c["parameter_received"]
+                        for c in reads)
+        report["failed_reads"] = len(reads) - successes
+        report["extra_reads"] = max(0, len(reads) - 1)
         if not successes:
-            return dict(report, outcome="invalid", reason="The requested fixture inspection did not succeed")
+            return dict(report, outcome="invalid", reason="The params.nix literal was not read")
     if not any(text.strip() for text in answers):
         return dict(report, outcome="fail", reason="No assistant reply")
     return dict(report, outcome="needs_review", reason="Check the reply and any unclassified items against the rubric")
