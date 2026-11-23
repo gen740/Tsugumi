@@ -145,7 +145,7 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         outputs=FILE_FBS, reuseWorker=True, recordIO=True)
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
-    payload = {"type": "input", "params": {"value": "x" * (4 << 20)}, "_params": '{ run.value = ""; }',
+    payload = {"type": "input", "params": {"value": "x" * (4 << 20)}, "_params": '{ run = { value = ""; }; }',
                "_outputs": 'table Text { value:string; } table Outputs { data:Text (required); } root_type Outputs;'}
     root = tmp_path / "p"
     write(root, {"payload": payload, "resident": definition},

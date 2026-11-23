@@ -263,7 +263,7 @@ def stage_project(root, scenario):
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
-                       "input": {"type": "input", "_params": "{ run.value = 1; }",
+                       "input": {"type": "input", "_params": "{ run = { value = 1; }; }",
                                  "_outputs": "table Value { value:ulong; } "
                                              "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]

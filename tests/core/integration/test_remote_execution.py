@@ -303,7 +303,7 @@ def run(input):
     copyfile(input.in_, output)
     return Output(doc=output)
 """
-    source = {"type": "input", "_params": '{ run.value = "payload.txt"; }',
+    source = {"type": "input", "_params": '{ run = { value = "payload.txt"; }; }',
               "_outputs": FILE_FBS}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
