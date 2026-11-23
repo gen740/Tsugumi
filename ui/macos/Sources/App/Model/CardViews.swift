@@ -21,40 +21,36 @@ extension CardViewDeclaration {
 enum CardViewMessage: Equatable {
   /// Opaque bytes the Card sent to this view.
   case data(Data)
-  /// A run of the Card started (true) or ended (false).
-  case run(started: Bool)
 }
 
-/// Messages waiting for a view that is still busy with an earlier one. Only
-/// pending data is replaced by newer data; run state changes keep their order.
+/// Messages waiting for a view that is still busy with an earlier one.
 struct CardViewOutbox {
-  private(set) var pending: [CardViewMessage] = []
+  private var deliveries: [(CardViewMessage, () -> Void)] = []
+  var pending: [CardViewMessage] { deliveries.map { $0.0 } }
 
-  mutating func put(_ message: CardViewMessage) {
-    if case .data = message, case .data? = pending.last {
-      pending[pending.count - 1] = message
-    } else {
-      pending.append(message)
-    }
+  mutating func put(_ message: CardViewMessage, complete: @escaping () -> Void = {}) {
+    deliveries.append((message, complete))
   }
 
-  mutating func take() -> CardViewMessage? {
-    pending.isEmpty ? nil : pending.removeFirst()
+  mutating func take() -> (CardViewMessage, () -> Void)? {
+    deliveries.isEmpty ? nil : deliveries.removeFirst()
   }
+
+  mutating func discard() {
+    let pending = deliveries
+    deliveries.removeAll()
+    for (_, complete) in pending { complete() }
+  }
+
 }
 
 /// Live view traffic for the Cards whose view windows are open. It lives in
 /// memory only while a window shows the Card. Nothing of it is recorded.
 @MainActor @Observable final class CardViewRelay {
-  struct RunMark: Equatable {
-    let runId: String
-    let started: Bool
-  }
-
   private struct Host {
     let card: CardKey
     let view: String
-    let deliver: (CardViewMessage) -> Void
+    let deliver: (CardViewMessage, @escaping () -> Void) -> Void
   }
 
   /// The declarations of each Card, absent until the core has sent them.
@@ -63,8 +59,6 @@ struct CardViewOutbox {
   private(set) var failures: [CardKey: String] = [:]
   /// The view names data arrived for, per Card.
   private(set) var received: [CardKey: Set<String>] = [:]
-  private(set) var runs: [CardKey: RunMark] = [:]
-  @ObservationIgnored private var latest: [CardKey: [String: Data]] = [:]
   @ObservationIgnored private var hosts: [UUID: Host] = [:]
 
   /// Names the Card sent data to without declaring them. Empty until the declarations are known.
@@ -86,26 +80,24 @@ struct CardViewOutbox {
     if failures[card] != failure { failures[card] = failure }
   }
 
-  func receive(_ card: CardKey, view: String, bytes: Data) {
+  func receive(_ card: CardKey, view: String, bytes: Data, complete: @escaping () -> Void = {}) {
     if received[card]?.contains(view) != true { received[card, default: []].insert(view) }
-    guard declarations[card]?.filter({ $0.name == view }).count ?? 0 <= 1 else { return }
-    latest[card, default: [:]][view] = bytes
-    for host in hosts.values where host.card == card && host.view == view { host.deliver(.data(bytes)) }
+    guard declarations[card]?.filter({ $0.name == view }).count == 1 else { complete(); return }
+    let listeners = hosts.values.filter { $0.card == card && $0.view == view }
+    var remaining = listeners.count
+    if remaining == 0 { complete() }
+    for host in listeners {
+      host.deliver(.data(bytes)) {
+        remaining -= 1
+        if remaining == 0 { complete() }
+      }
+    }
   }
 
-  func runState(_ card: CardKey, runId: String, started: Bool) {
-    runs[card] = RunMark(runId: runId, started: started)
-    for host in hosts.values where host.card == card { host.deliver(.run(started: started)) }
-  }
-
-  /// A new host starts from the state so far: the run that started, its latest data, and whether the run ended.
-  func attach(_ card: CardKey, view: String, deliver: @escaping (CardViewMessage) -> Void) -> UUID {
+  func attach(_ card: CardKey, view: String,
+              deliver: @escaping (CardViewMessage, @escaping () -> Void) -> Void) -> UUID {
     let id = UUID()
     hosts[id] = Host(card: card, view: view, deliver: deliver)
-    let run = runs[card]
-    if run != nil { deliver(.run(started: true)) }
-    if let bytes = latest[card]?[view] { deliver(.data(bytes)) }
-    if run?.started == false { deliver(.run(started: false)) }
     return id
   }
 
@@ -119,12 +111,10 @@ struct CardViewOutbox {
     declarations[card] = nil
     failures[card] = nil
     received[card] = nil
-    runs[card] = nil
-    latest[card] = nil
   }
 
   var cards: Set<CardKey> {
-    Set(declarations.keys).union(received.keys).union(runs.keys).union(latest.keys)
+    Set(declarations.keys).union(received.keys)
   }
 }
 

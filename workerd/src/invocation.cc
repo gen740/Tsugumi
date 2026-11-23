@@ -10,6 +10,8 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <sys/socket.h>
+#include <thread>
 
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
@@ -131,32 +133,19 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   if (outcome.failure) {
     kind = W::WorkerPayload::WorkerFailure;
     body =
-        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure)).Union();
+        W::CreateWorkerFailure(b, wire::failure(b, *outcome.failure),
+                               wire::artifact_ids(b, outcome.created)).Union();
   } else {
-    // Paths are job-relative: out/... for new outputs, inputs/... for an
-    // input returned unchanged, which forwarded_from names as on the
-    // local path.
     std::vector<flatbuffers::Offset<W::WorkerOutput>> outputs;
-    for (const auto& value : outcome.outputs) {
-      const bool path = value.kind == PortKind::Path;
-      auto data =
-          path ? flatbuffers::Offset<flatbuffers::Vector<uint8_t>>()
-               : b.CreateVector(
-                     reinterpret_cast<const uint8_t*>(value.bytes.data()),
-                     value.bytes.size());
-      auto location = path ? b.CreateString(value.path)
-                           : flatbuffers::Offset<flatbuffers::String>();
-      const auto forward =
-          std::ranges::find(outcome.forwards, value.name,
-                            &std::pair<std::string, std::string>::first);
-      auto forwarded = forward == outcome.forwards.end()
-                           ? flatbuffers::Offset<flatbuffers::String>()
-                           : b.CreateString(forward->second);
-      outputs.push_back(W::CreateWorkerOutput(b, b.CreateString(value.name),
-                                              data, location, forwarded));
-    }
+    for (const auto& value : outcome.outputs)
+      outputs.push_back(W::CreateWorkerOutput(
+          b, b.CreateString(value.name),
+          b.CreateVector(reinterpret_cast<const uint8_t*>(value.bytes.data()),
+                         value.bytes.size()),
+          wire::artifact_ids(b, value.artifacts)));
     kind = W::WorkerPayload::WorkerResult;
-    body = W::CreateWorkerResult(b, b.CreateVector(outputs)).Union();
+    body = W::CreateWorkerResult(b, b.CreateVector(outputs),
+                                 wire::artifact_ids(b, outcome.created)).Union();
   }
   W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(b, 1, kind, body));
   if (b.GetSize() > kWorkerLimit)
@@ -164,7 +153,7 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto relay_display(const WorkerDisplayData& display) -> void {
+auto relay_display(const WorkerDisplayData& display, std::stop_token) -> void {
   if (display.view.size() > workerd::kRemoteDisplayBytes ||
       display.bytes.size() > workerd::kRemoteDisplayBytes - display.view.size())
     return;
@@ -182,6 +171,26 @@ auto relay_display(const WorkerDisplayData& display) -> void {
   } catch (const rpc::frame::Error&) {
     // A lost listener drops live data and leaves the invocation running.
   }
+}
+
+auto receive_view(std::weak_ptr<WorkerProc::ViewReceiver> target) -> void {
+  const char ready = 1;
+  if (::write(workerd::kViewInputFd, &ready, 1) != 1) return;
+  try {
+    while (auto frame = rpc::frame::Read(workerd::kViewInputFd,
+                                         workerd::kRemoteDisplayBytes)) {
+      flatbuffers::Verifier verifier(
+          reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
+      if (!verifier.VerifyBuffer<W::WorkerDisplay>(nullptr)) break;
+      const auto* message = flatbuffers::GetRoot<W::WorkerDisplay>(frame->data());
+      auto worker = target.lock();
+      const char accepted = worker && worker->send(
+          {message->view()->str(), bytes(message->bytes())});
+      if (::write(workerd::kViewInputFd, &accepted, 1) != 1) break;
+    }
+  } catch (const rpc::frame::Error&) {
+  }
+  ::shutdown(workerd::kViewInputFd, SHUT_RDWR);
 }
 
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
@@ -217,39 +226,42 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                    {static_cast<uint32_t>(job.cpu_millis), job.memory_bytes}};
   spawn.network = job.network;
   if (spawn.sandbox.identity) spawn.uid = spawn.gid = 65534;
-  spawn.ro_paths = {input.string()};
   spawn.card = "remote";
 
   std::vector<Value> values;
-  for (const auto* port : *call.inputs()) {
-    Value value{port->name()->str(), port->kind(), nullptr, {}, {}};
-    if (value.kind == PortKind::Path) {
-      if (!port->path())
-        throw std::runtime_error("remote Path input lacks a path");
-      const auto rel = remote::relative_path(port->path()->str());
-      if (*rel.begin() != "inputs")
-        throw std::runtime_error("remote input path is outside staging");
-      value.path = (input / rel).string();
-    } else if (const auto* data = port->bytes()) {
-      value.bytes = bytes(data);
-    }
-    values.push_back(std::move(value));
-  }
+  for (const auto* port : *call.inputs())
+    values.push_back({port->name()->str(), nullptr,
+                      port->bytes() ? bytes(port->bytes()) : "",
+                      port->schema() ? port->schema()->str() : "",
+                      wire::artifact_ids(port->artifacts())});
   std::vector<types::PortType> outputs;
   for (const auto* port : *call.outputs())
-    outputs.push_back(
-        {port->name()->str(), port->kind(), port->required(), nullptr});
+    outputs.push_back({port->name()->str(), port->required(), nullptr});
+  std::vector<ArtifactGrant> grants;
+  if (const auto* entries = call.grants()) {
+    for (const auto* entry : *entries) {
+      auto id = wire::artifact_id(*entry->id());
+      const auto relative = stdfs::path("artifacts") / crypto::hex(id.data(), id.size());
+      if (entry->path()->string_view() != relative.generic_string())
+        throw Failed(FailureKind::input_missing, "invalid remote artifact grant");
+      grants.push_back({std::move(id), (input / relative).string()});
+    }
+  }
+  if (!grants.empty())
+    throw Failed(FailureKind::unsupported, "lazy artifact mounts are unavailable");
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
+  struct InputLoop {
+    std::jthread thread;
+    ~InputLoop() { ::shutdown(workerd::kViewInputFd, SHUT_RDWR); }
+  } input_loop{std::jthread(receive_view, lease.worker->view_receiver())};
   spawn.secrets.reset();
   workerd::Invocation request;
   request.inputs = values;
   request.outputs = std::move(outputs);
-  request.params = bytes(call.params());
-  request.output_directory = directory / "result/files/out";
+  request.artifact_directory = directory / "result/files/artifacts";
+  request.grants = std::move(grants);
   request.output_budget = {job.output_limit_bytes, job.output_limit_entries};
-  request.input_directory = input;
-  request.delivery = workerd::OutputDelivery::transferred_files;
   if (call.deadline_ms()) request.timeout_ms = *call.deadline_ms();
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
@@ -270,7 +282,8 @@ namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
-  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0)
+  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0 ||
+      ::fcntl(kViewInputFd, F_SETFD, FD_CLOEXEC) != 0)
     throw std::runtime_error("the job's live display channel is missing");
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&
@@ -378,7 +391,6 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   info.built = environment.built;
   info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
-  if (outcome.failure) stdfs::remove_all(files);
   if (stdfs::is_directory(files)) {
     for (const auto& entry : stdfs::recursive_directory_iterator(files))
       if (stdfs::is_directory(entry.symlink_status()))

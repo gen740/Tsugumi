@@ -31,6 +31,9 @@ TEST(CollectValue, EmptyListHasEmptyItems) {
   EXPECT_EQ(value.type, output.type);
   EXPECT_EQ(value.schema, schema_id(*output.type));
   EXPECT_TRUE(value.artifacts.empty());
+  flatbuffers::Verifier verifier(
+      reinterpret_cast<const uint8_t*>(value.bytes.data()), value.bytes.size());
+  ASSERT_TRUE(verifier.VerifyBuffer<builtin::Collected>());
   const auto* collected = flatbuffers::GetRoot<builtin::Collected>(value.bytes.data());
   ASSERT_NE(collected->items(), nullptr);
   EXPECT_EQ(collected->items()->size(), 0u);
@@ -43,10 +46,14 @@ TEST(CollectValue, PreservesOpaqueSchemaBytesAndArtifactIds) {
   const std::vector<Value> members{
       {"left", nullptr, std::string("opaque\0", 7), "first", {b, a}},
       {"right", nullptr, std::string("\xff\0", 2), "second", {a}},
+      {"empty", nullptr, {}, "third", {}},
   };
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, members, cancel);
   EXPECT_EQ(value.artifacts, (std::vector<ArtifactKey>{a, b}));
+  flatbuffers::Verifier verifier(
+      reinterpret_cast<const uint8_t*>(value.bytes.data()), value.bytes.size());
+  ASSERT_TRUE(verifier.VerifyBuffer<builtin::Collected>());
   const auto* collected = flatbuffers::GetRoot<builtin::Collected>(value.bytes.data());
   const auto* items = collected->items();
   ASSERT_NE(items, nullptr);
@@ -59,6 +66,8 @@ TEST(CollectValue, PreservesOpaqueSchemaBytesAndArtifactIds) {
     ASSERT_NE(item->bytes(), nullptr);
     const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
     EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
+    if (!member.bytes.empty())
+      EXPECT_EQ((data - value.bytes.data()) % FLATBUFFERS_MAX_ALIGNMENT, 0);
   }
 }
 

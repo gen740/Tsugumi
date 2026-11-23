@@ -507,7 +507,7 @@ auto catalog_fields(std::string_view text, const std::vector<Tok>& tok,
 std::optional<std::string> set_catalog_port(const std::string& fbs_text,
                                             const std::string& port,
                                             const std::string& type_name,
-                                            PortKind kind, std::string* error) {
+                                            std::string* error) {
   auto parser = make_parser();
   if (!parse_schema(*parser, fbs_text, "_outputs.fbs", {})) {
     *error = parser->error_;
@@ -518,26 +518,23 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     *error = "root_type (the port catalog) is required";
     return std::nullopt;
   }
-  std::string written = "string";
-  if (kind != PortKind::Path) {
-    // Use the short name for a type in the catalog's namespace.
-    const flatbuffers::StructDef* type = nullptr;
-    for (const auto* sd : parser->structs_.vec) {
-      auto full = sd->defined_namespace->GetFullyQualifiedName(sd->name);
-      if (!sd->fixed && sd != catalog &&
-          (full == type_name || sd->name == type_name)) {
-        type = sd;
-        if (full == type_name) break;
-      }
+  // Use the short name for a type in the catalog's namespace.
+  const flatbuffers::StructDef* type = nullptr;
+  for (const auto* sd : parser->structs_.vec) {
+    auto full = sd->defined_namespace->GetFullyQualifiedName(sd->name);
+    if (!sd->fixed && sd != catalog &&
+        (full == type_name || sd->name == type_name)) {
+      type = sd;
+      if (full == type_name) break;
     }
-    if (!type) {
-      *error = "no table " + type_name + " in the schema";
-      return std::nullopt;
-    }
-    written = type->defined_namespace == catalog->defined_namespace
-                  ? type->name
-                  : type->defined_namespace->GetFullyQualifiedName(type->name);
   }
+  if (!type) {
+    *error = "no table " + type_name + " in the schema";
+    return std::nullopt;
+  }
+  const auto written = type->defined_namespace == catalog->defined_namespace
+                ? type->name
+                : type->defined_namespace->GetFullyQualifiedName(type->name);
   const auto& s = fbs_text;
   const auto t = tokens(s);
   const auto fields = catalog_fields(s, t, *catalog);
@@ -549,10 +546,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
   }
   const auto field = declaration->field;
   const auto semi = declaration->semi;
-  auto text_of = [&](const Tok& k) {
-    return std::string_view(s).substr(k.begin, k.end - k.begin);
-  };
-  // Attributes kept as written, except tsugumi.
+  // Preserve the field attributes as written.
   std::vector<std::string> attrs;
   for (size_t i = field; i < semi; ++i) {
     if (t[i].punct != '(') continue;
@@ -560,8 +554,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     for (size_t k = start; k < semi; ++k) {
       if (t[k].punct == ',' || t[k].punct == ')') {
         if (k > start) {
-          auto item = s.substr(t[start].begin, t[k - 1].end - t[start].begin);
-          if (text_of(t[start]) != "tsugumi") attrs.push_back(item);
+          attrs.push_back(s.substr(t[start].begin, t[k - 1].end - t[start].begin));
         }
         start = k + 1;
         if (t[k].punct == ')') break;
@@ -569,7 +562,6 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
     }
     break;
   }
-  if (kind == PortKind::Path) attrs.push_back("tsugumi: \"path\"");
   std::string decl = port + ":" + written;
   if (!attrs.empty()) {
     decl += " (";
@@ -579,10 +571,6 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
   }
   std::string out =
       s.substr(0, t[field].begin) + decl + s.substr(t[semi].begin);
-  // The tsugumi attribute needs its declaration.
-  if (kind != PortKind::FlatBuffer &&
-      out.find("attribute \"tsugumi\"") == std::string::npos)
-    out += "attribute \"tsugumi\";\n";
   auto check = parse_catalog(out, "_outputs.fbs");
   if (!check.errors.empty()) {
     *error = check.errors.front();
@@ -631,19 +619,6 @@ CatalogResult parse_catalog(const std::string& fbs_text,
     PortType port;
     port.name = field->name;
     port.required = field->IsRequired();
-    if (const auto* attr = field->attributes.Lookup("tsugumi")) {
-      if (attr->constant != "path") {
-        r.errors.push_back(filename + ": unknown tsugumi attribute \"" +
-                           attr->constant + "\"");
-      } else if (field->value.type.base_type != flatbuffers::BASE_TYPE_STRING) {
-        r.errors.push_back(filename + ": Path port " + field->name +
-                           " must have type string");
-      } else {
-        port.kind = PortKind::Path;
-        r.ports.push_back(std::move(port));
-        continue;
-      }
-    }
     if (field->value.type.base_type != flatbuffers::BASE_TYPE_STRUCT ||
         field->value.type.struct_def->fixed) {
       r.errors.push_back(filename + ": port " + field->name +

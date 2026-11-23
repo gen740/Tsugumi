@@ -9,10 +9,12 @@
 #include <condition_variable>
 #include <filesystem>
 #include <functional>
+#include <map>
 #include <memory>
 #include <mutex>
 #include <optional>
 #include <span>
+#include <stop_token>
 #include <string>
 #include <thread>
 #include <vector>
@@ -37,13 +39,13 @@ struct WorkerSpawn {
   std::filesystem::path cgroup;
   bool shared_vm = false;
   std::shared_ptr<WorkerSecrets> secrets;
-  // The worker's work/, tmp/, and input staging live with the process.
+  // The worker's work/ and tmp/ live with the process.
   // Local workerd retains process ownership while the core reads the channel.
   bool channels_borrowed = false;
   std::string scratch;
   SandboxOptions sandbox;
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
-  // never project data roots. Local inputs use inputs_dir().
+  // never project data roots.
   std::vector<std::string> ro_paths;
   // The Card's key, used by the remote invocation launcher.
   std::string card;
@@ -66,18 +68,17 @@ struct WorkerSpawn {
   std::optional<gid_t> gid;
 };
 
-// One output as the worker reported it: bytes of a FlatBuffer output, or the
-// path of a Path output and the input it forwards unchanged, if any.
+// The opaque output envelope the worker reported.
 struct RawOutput {
   std::string name;
   std::string bytes;
-  std::string path;
-  std::string forwarded_from;
+  std::vector<ArtifactKey> artifacts;
 };
 
 struct WorkerOutcome {
   std::vector<RawOutput> outputs;
   std::optional<FailureData> failure;
+  std::vector<ArtifactKey> created = {};
 };
 
 // Whether a Card worker runs as its own uid on the host (folders it writes are
@@ -95,7 +96,13 @@ class WorkerProc {
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;
-  using DisplaySink = std::function<void(const WorkerDisplayData&)>;
+  using DisplaySink = std::function<void(const WorkerDisplayData&, std::stop_token)>;
+  struct ViewReceiver {
+    std::mutex mutex;
+    WorkerProc* worker = nullptr;
+    std::function<bool(const WorkerDisplayData&)> remote;
+    auto send(const WorkerDisplayData& display) -> bool;
+  };
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
   explicit WorkerProc(const WorkerSpawn& spawn);
@@ -106,7 +113,6 @@ class WorkerProc {
     std::string scratch;
     uint64_t call_id = 0;
     uint64_t lease = 0;
-    bool read_only_inputs = false;
     std::function<void()> clear;
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
@@ -134,6 +140,9 @@ class WorkerProc {
   // The sink may run on the reader thread between invocations. It must own
   // its captures and return promptly.
   auto set_display(DisplaySink display) -> void;
+  // Queues one reverse message if the process has credit for a max-size frame.
+  auto send_display(const WorkerDisplayData& display) -> bool;
+  auto view_receiver() -> std::weak_ptr<ViewReceiver>;
   auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.
   void set_logs(LogSink logs);
@@ -142,10 +151,8 @@ class WorkerProc {
   void terminate(bool force = false);
   std::string work_dir() const { return scratch_ + "/work"; }
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
-  std::string inputs_dir() const { return scratch_ + "/inputs"; }
-  // Empties tmp/ and the invocation input staging area.
+  // Empties the temporary directory between calls.
   void clear_scratch();
-  auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
@@ -155,7 +162,7 @@ class WorkerProc {
   auto read_data() -> void;
   auto stop_log_reader() -> void;
   void read_logs(bool drain);
-  void send(int fd, const std::string& frame);
+  void send(int fd, const std::string& frame, bool observe = true);
 
   pid_t pid_ = -1;
   int data_fd_ = -1;
@@ -165,14 +172,17 @@ class WorkerProc {
   bool alive_ = false;
   std::string scratch_;
   std::filesystem::path cgroup_;
-  bool read_only_inputs_ = false;
   bool x11_mounted_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;
   std::mutex data_mutex_;
+  std::mutex control_mutex_;
+  std::map<std::string, size_t> reverse_credit_;
   std::condition_variable data_ready_;
   std::thread data_thread_;
+  std::stop_source data_stop_;
+  std::shared_ptr<ViewReceiver> view_receiver_;
   std::array<int, 2> data_wake_{-1, -1};
   uint64_t awaiting_ = 0;
   bool data_closed_ = false;
@@ -194,8 +204,9 @@ class WorkerProc {
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
 std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::string& params,
                               const std::vector<types::PortType>& outputs,
-                              std::optional<uint64_t> deadline_ms);
+                              std::optional<uint64_t> deadline_ms,
+                              const std::filesystem::path& artifact_directory = {},
+                              std::span<const ArtifactGrant> grants = {});
 
 }  // namespace tsugumi

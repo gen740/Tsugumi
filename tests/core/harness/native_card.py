@@ -11,13 +11,6 @@ from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
 
 
-def port(name, kind, value):
-    """A FlatBuffer output carries bytes; a Path output (a str value) a path."""
-    if isinstance(value, str):
-        return CardPortT(name=name, kind=kind, path=value)
-    return CardPortT(name=name, kind=kind, bytes=value)
-
-
 STATIC_RESULT_ENTRY = """
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
   if (call->abi_version != TSUGUMI_ABI_VERSION) return 1;
@@ -29,7 +22,7 @@ int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
 
 def card_source(source, outputs):
     builder = flatbuffers.Builder(128)
-    result = CardResultT(outputs=[port(name, kind, value) for name, kind, value in outputs])
+    result = CardResultT(outputs=[CardPortT(name=name, bytes=value) for name, value in outputs])
     builder.Finish(result.Pack(builder))
     result_literal = "static const uint8_t result_bytes[] = {" + ",".join(map(str, builder.Output())) + "};\n"
     return "#include <tsugumi/card_abi.h>\n" + result_literal + source

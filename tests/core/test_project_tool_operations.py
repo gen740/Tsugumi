@@ -1,7 +1,4 @@
-"""What the in-app Agent relies on: reads without at_rev use the latest
-revision, "" names the project folder, project_validate checks proposed
-changes without saving them, and an input Card hands a project file to the
-next Card on a Path port."""
+"""Project reads and proposed changes through the Agent-facing RPCs."""
 
 from __future__ import annotations
 
@@ -10,13 +7,10 @@ from pathlib import Path
 
 import pytest
 
-from projects import SINK, put, run_and_wait
+from projects import SINK, put
 from tsugumi_client import RpcFailure, change, new_id, path, text
-from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.RunState import RunState
 
-FILE_FBS = 'attribute "tsugumi";\n' \
-           'table Outputs { events:string (required, tsugumi: "path"); }\nroot_type Outputs;\n'
+EVENTS_FBS = "table Events { value:string; }\ntable Outputs { events:Events (required); }\nroot_type Outputs;\n"
 
 
 def make(root: Path) -> None:
@@ -27,11 +21,11 @@ def make(root: Path) -> None:
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
     put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "type": "input", "retainArtifact": True}))
+        "type": "input"}))
     put(root / "definitions" / "load" / "params.nix", '{ value = "data/events.txt"; }')
-    put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
+    put(root / "definitions" / "load" / "_outputs.fbs", EVENTS_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
-    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, retainArtifact=True)))
+    put(root / "definitions" / "show" / "_card.json", json.dumps(SINK))
 
 
 def test_reads_without_at_rev_and_the_root_as_empty_path(tmp_path, core_factory):
@@ -56,25 +50,9 @@ def test_validate_checks_proposed_changes_without_saving(tmp_path, core_factory)
     assert not v.valid and v.diagnostics, "a broken _outputs.fbs is reported"
     after = c.call("ProjectInspectRequest")
     assert after.rev == before.rev, "nothing was saved"
-    assert bytes(c.call("ProjectFileReadRequest", path="definitions/load/_outputs.fbs").bytes).decode() == FILE_FBS
+    assert bytes(c.call("ProjectFileReadRequest", path="definitions/load/_outputs.fbs").bytes).decode() == EVENTS_FBS
     # The current document itself is valid.
     assert c.call("ProjectValidateRequest").valid
-
-
-def test_input_card_hands_a_project_file_on(tmp_path, core_factory):
-    root = tmp_path / "p"
-    make(root)
-    c = core_factory(project_root=root, mocked_builds=True).connect()
-    # A single Card run before any run says how to get its inputs.
-    _, st = run_and_wait(c, "show", propagate=False)
-    assert st.state == RunState.failed
-    assert st.failure.kind == FailureKind.input_missing
-    rid, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, st.failure and text(st.failure.diagnostic)
-    record = c.call("RunRecordRequest", runId=rid, card=path("show"), invocation=1).record
-    event, = record.inputs
-    shown = text(event.filePath)
-    assert shown.endswith("/events.txt") and "definitions/load/data" not in shown, shown
 
 
 def test_put_definition_can_keep_the_readme(tmp_path, core_factory):

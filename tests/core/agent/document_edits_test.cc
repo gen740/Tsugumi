@@ -91,14 +91,19 @@ TEST(BuiltinCard, CreatesOnlyTheLanguageIndependentKinds) {
     const auto card = json::Object(files.at("_card.json"));
     EXPECT_EQ(json::Text(card, "type"), type);
     if (kind == Kind::Merge) EXPECT_EQ(json::Array(card.at("inputs")).size(), 2);
-    if (kind == Kind::Fork) EXPECT_EQ(json::Array(card.at("outputs")).size(), 2);
     if (kind == Kind::BooleanInput || kind == Kind::InputValue) {
       const auto schema = files.at("_outputs.fbs");
-      EXPECT_NE(schema.find("namespace new_card_2;"), std::string::npos);
-      EXPECT_NE(schema.find(kind == Kind::BooleanInput ? "value:bool" : "value:double"),
+      const bool boolean = kind == Kind::BooleanInput;
+      EXPECT_NE(schema.find(boolean ? "table Boolean { value:bool; }"
+                                    : "table Number { value:double; }"),
                 std::string::npos);
+      EXPECT_EQ(files.at("params.nix"),
+                boolean ? "{ value = false; }\n" : "{ value = 0.0; }\n");
+      EXPECT_NE(files.at("default.nix").find("run = sdk.input"),
+                std::string::npos);
+    } else {
+      EXPECT_FALSE(files.contains("default.nix"));
     }
-    EXPECT_FALSE(files.contains("default.nix"));
   }
 }
 

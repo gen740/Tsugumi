@@ -92,6 +92,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   // Only a salted digest participates in residency. The values are sent
   // through the local launch channel when the process is first started.
   const auto card_key = path_key(node.path);
+  auto artifacts = service_.artifact_grants(request.inputs);
   auto secrets = std::make_shared<WorkerSecrets>();
   try {
     secrets->values = service_.card_secrets(node, request.stop);
@@ -215,6 +216,16 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
+  // TODO(open): artifact isolation guarantees with filesystem isolation disabled.
+#ifdef __APPLE__
+  // TODO(open): macOS dynamic grants.
+  for (const auto& artifact : artifacts)
+    sp.binds.push_back({artifact.path, artifact.path, false, ""});
+#else
+  if (!artifacts.empty())
+    throw Failed(FailureKind::unsupported, "lazy artifact mounts are unavailable");
+#endif
+
   // The resident worker of this Card, if it runs the same build under the same
   // conditions.
   std::string key =
@@ -233,6 +244,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
   sp.secrets.reset();
+  service_.set_view_receiver(node.path, lease.worker->view_receiver());
   s.worker_reused = lease.reused;
   if (!lease.replaced.empty() && request.log)
     request.log(
@@ -242,7 +254,8 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   workerd::Invocation invocation;
   invocation.inputs = request.inputs;
   invocation.outputs = node.outputs;
-  invocation.output_directory = request.directory / "out";
+  invocation.artifact_directory = request.directory / "artifacts";
+  invocation.grants = std::move(artifacts);
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};
   invocation.cancel = &request.cancel;
@@ -253,28 +266,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.display = request.display;
   invocation.on_timing = [&](int64_t begin, int64_t end) {
     request.on_timing(begin, end);
-  };
-  // The mount stays fixed while each invocation replaces its entries.
-  invocation.stage_inputs = [&](WorkerProc& worker) {
-    auto inputs = request.inputs;
-    const auto roots = service_.file_roots();
-    for (size_t i = 0; i < inputs.size(); ++i) {
-      if (request.cancel.load())
-        throw Failed(FailureKind::cancelled, "staging inputs cancelled");
-      if (inputs[i].kind == PortKind::FlatBuffer) continue;
-      const auto destination =
-          std::filesystem::path(worker.inputs_dir()) / std::to_string(i);
-      std::filesystem::create_directories(destination);
-      inputs[i] = workerd::stage_input(
-          inputs[i], roots, destination, worker.read_only_inputs(),
-          request.cancel,
-          [&](const std::filesystem::path& name, uint64_t done,
-              uint64_t total) {
-            if (request.transfer)
-              request.transfer("copy", name.generic_string(), done, total);
-          });
-    }
-    return inputs;
   };
   invocation.validate = request.validate;
   invocation.transfer = [&](const std::filesystem::path& name, uint64_t done,
@@ -287,6 +278,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
         workers_.release(std::move(worker), keep, reason);
       },
       lease, reuse, invocation);
+  service_.seal_artifacts(s, invocation.artifact_directory, completed.created);
   return {std::move(completed.outputs), std::move(completed.failure)};
 }
 

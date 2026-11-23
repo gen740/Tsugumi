@@ -936,9 +936,6 @@ private struct ParamRow: View {
 
   var body: some View {
     let value = parameter.effectiveValue
-    let folder = session.definitionDir(model.cardKey)
-    let pathInput = model.kind == .input && name == "value" && parameter.type == "string" &&
-      (session.resolution[model.cardKey]?.outputs.contains { $0.kind == .path } ?? false)
     VStack(alignment: .leading, spacing: 4) {
       HStack {
         if let sweep {
@@ -958,14 +955,6 @@ private struct ParamRow: View {
             draft = $0
           }))
           .onSubmit { if draft != nil { save() } }
-          if pathInput, let folder {
-            Menu("ファイルかフォルダを選択…") {
-              ForEach(pathChoices(session.sourcePaths, definitionDir: folder), id: \.self) { path in
-                Button(path) { begin(); draft = path; save() }
-              }
-            }
-            .help("プロジェクトのファイルかフォルダを選びます。")
-          }
           if draft != nil { Button("保存") { save() } }
         }
         Text(verbatim: parameter.type).font(.caption2).foregroundStyle(.secondary)
@@ -987,14 +976,6 @@ private struct ParamRow: View {
         } else {
           Text("\(sweep.count) 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。").font(.caption).foregroundStyle(.secondary)
         }
-      } else if pathInput, let folder, let id = model.definitionId {
-        let entered = draft ?? value.string ?? ""
-        let target = entered.hasPrefix("project:")
-          ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
-          : folder + entered
-        Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
-          .font(.caption).foregroundStyle(.secondary)
-        Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       }
       RevisionEditNotice(edit: edit.revision, text: { draft ?? "" },
                          overwrite: { save(overwrite: true) }, reload: clear)
@@ -1074,24 +1055,6 @@ private struct PortsCategory: View {
         Section("記録と成果物") {
           recordingOverride("recordLogs", label: "標準出力と標準エラーを記録")
           recordingOverride("recordIO", label: "入出力の値を記録")
-          recordingOverride("retainArtifact", label: "出力ファイルと成果物を保持")
-          // Only Path outputs can be kept as artifacts.
-          let keepable = (r?.outputs ?? []).filter { $0.kind == .path }
-          if keepable.isEmpty {
-            LabeledContent("成果物にする出力") {
-              Text(r == nil ? "出力の型がまだ解決されていません" : "Path の出力がないため、保持できる出力はありません")
-                .font(.callout).foregroundStyle(.secondary)
-            }
-          } else {
-            Picker("成果物にする出力", selection: Binding(
-              get: { model.definition?["artifactOutput"]?.string ?? "" },
-              set: { model.definition?["artifactOutput"] = $0.isEmpty ? nil : .string($0) })) {
-              Text("なし").tag("")
-              ForEach(keepable, id: \.name) { p in
-                Text(p.name).tag(p.name)
-              }
-            }
-          }
         }
       }
     }
@@ -1129,19 +1092,18 @@ private struct OutputPortsSection: View {
       ForEach(ports(r), id: \.name) { p in
         HStack {
           Text(p.name).font(.body.monospaced()).frame(maxWidth: 120, alignment: .leading)
-          let selection = p.kind == .path ? "string" : p.rootType ?? ""
+          let selection = p.rootType ?? ""
           if model.outputsPath == nil {
             Text(p.typeName ?? String(localized: "未解決"))
               .font(.caption).foregroundStyle(.secondary)
           } else {
             Picker("型", selection: Binding(get: { selection }, set: {
-              set(p.name, type: $0, kind: $0 == "string" ? .path : .flatbuffer)
+              set(p.name, type: $0)
             })) {
               if selection.isEmpty { Text("未解決").tag("").disabled(true) }
-              if p.kind != .path, let type = p.rootType, !types.contains(type) {
+              if let type = p.rootType, !types.contains(type) {
                 Text(short(type)).tag(type)
               }
-              Text("Path").tag("string").help("Path の出力は、ファイルかフォルダ 1 つを渡します")
               ForEach(types, id: \.self) { Text(short($0)).tag($0).help($0) }
             }
             .labelsHidden().frame(maxWidth: 150)
@@ -1175,12 +1137,12 @@ private struct OutputPortsSection: View {
   }
 
   /// Rewrites the port in the working copy of _outputs.fbs (applied with the rest).
-  private func set(_ port: String, type: String, kind: Tsugumi_Data_PortKind) {
+  private func set(_ port: String, type: String) {
     guard !type.isEmpty, let p = model.outputsPath, let rpc = model.session.rpc else { return }
     Task {
       do {
         let text = try await model.text(p)
-        let res = try await rpc.outputTypes(text: text, port: port, typeName: type, kind: kind)
+        let res = try await rpc.outputTypes(text: text, port: port, typeName: type)
         if let changed = res.text {
           model.texts[p] = changed
           error = nil

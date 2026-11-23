@@ -76,8 +76,6 @@ struct Settings {
   uint64_t output_limit_bytes = kDefaultOutputLimitBytes;
   uint64_t output_limit_entries = kDefaultOutputLimitEntries;
   bool record_io = false;
-  bool retain_artifact = false;
-  std::optional<std::string> artifact_output;
   SandboxOptions sandbox;
   CardGrants grants;
   bool reuse_worker = false;

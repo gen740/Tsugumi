@@ -6,15 +6,11 @@ import pytest
 
 from harness.fixtures import worker_project
 from harness.observations import read_pages
-from harness.scenario import Project, run, wait_run
+from harness.scenario import FILE_OUTPUT, Project, run, wait_run
 from projects import builtin_project, put
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from harness.document import layout_bytes
 from Tsugumi.Data.RunState import RunState
-
-DIRECTORY_OUTPUT = ('attribute "tsugumi"; '
-                    'table Outputs { doc:string (tsugumi: "path"); } root_type Outputs;')
-
 
 @pytest.mark.parametrize("target,kind", [
     ("../outside.txt", "invalid_path"),
@@ -37,7 +33,9 @@ def test_a_source_save_cannot_write_outside_the_project(core_factory, project, t
     assert failure.value.kind == kind
     after = client.call("ProjectInspectRequest")
     assert after.rev == before.rev
-    assert bytes(after.layout or []) == bytes(before.layout or [])
+    assert bytes(after.layout if after.layout is not None else []) == bytes(
+        before.layout if before.layout is not None else []
+    )
     assert read_pages(client, "ProjectFileReadRequest", path="definitions/work/keep.txt") == b"original"
 
 
@@ -76,8 +74,8 @@ def test_artifact_paths_and_history_cleanup_stay_inside_the_project(core_factory
     daemon = core_factory(mocked_builds=True, mocked_worker=True)
     client = daemon.connect()
     worker_project(client, project, tmp_path, [
-        {"op": "directory", "port": "doc", "path": "result", "files": {"keep.txt": "retained"}},
-    ], outputs=DIRECTORY_OUTPUT, retainArtifact=True, artifactOutput="doc")
+        {"op": "directory", "port": "doc", "path": ".", "files": {"keep.txt": "retained"}},
+    ], outputs=FILE_OUTPUT)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded
     artifact = client.call("ArtifactListRequest", runId=run_id, card=path("work")).artifacts[0]

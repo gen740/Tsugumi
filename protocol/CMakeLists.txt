@@ -21,3 +21,4 @@ target_include_directories(tsugumi_trace_codec PUBLIC ${CMAKE_CURRENT_SOURCE_DIR
 target_link_libraries(tsugumi_trace_codec PUBLIC tsugumi_protocol tsugumi_trace_store
   PRIVATE tsugumi_rpc_schema flatbuffers::flatbuffers)
 install(DIRECTORY include/ DESTINATION include)
+install(FILES artifact.fbs DESTINATION include/tsugumi)

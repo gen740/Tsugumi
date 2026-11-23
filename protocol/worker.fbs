@@ -1,5 +1,5 @@
 // core <-> Card worker protocol. Independent from the external RPC.
-// Frames: 4 byte little-endian length + FlatBuffer (max 16 MiB).
+// Frames: 4 byte little-endian length + FlatBuffer.
 //
 // One call at a time per worker. call_id >= 1 and never reused by a worker.
 // A call ends with exactly one WorkerResult or WorkerFailure. WorkerDisplay
@@ -16,34 +16,43 @@ table EnvVar {
   value:string (id: 1, required, trace_secret);
 }
 
-// A declared output: the worker checks only names, kinds and presence.
+// A declared output: the worker checks names and required presence.
 table WorkerPort {
   name:string (id: 0, required);
-  kind:Tsugumi.Data.PortKind (id: 1);
-  required:bool (id: 2);
+  required:bool (id: 1);
 }
 
-// The worker never opens input, params or output bytes.
+// Private filesystem information for an artifact already granted by core.
+table ArtifactGrant {
+  id:tsugumi.ArtifactId (required);
+  path:string (required);
+}
+
+// The worker never opens input or output bytes.
 table WorkerCall {
   inputs:[Tsugumi.Card.CardPort] (id: 0, required);
-  params:[ubyte] (id: 1, required);
-  outputs:[WorkerPort] (id: 2, required);
+  outputs:[WorkerPort] (id: 1, required);
   // Remaining time in milliseconds. Omitted means no deadline.
-  deadline_ms:uint64 = null (id: 3);
+  deadline_ms:uint64 = null (id: 2);
+  artifact_directory:string (id: 3);
+  grants:[ArtifactGrant] (id: 4);
 }
 
-// bytes for a FlatBuffer output, path for a Path output. forwarded_from names
-// the input whose path the Card returned unchanged.
 table WorkerOutput {
   name:string (id: 0, required);
   bytes:[ubyte] (id: 1);
-  path:string (id: 2);
-  forwarded_from:string (id: 3);
+  artifacts:[tsugumi.ArtifactId] (id: 2);
 }
 
-table WorkerResult { outputs:[WorkerOutput] (id: 0, required); }
+table WorkerResult {
+  outputs:[WorkerOutput] (id: 0, required);
+  created:[tsugumi.ArtifactId] (id: 1);
+}
 
-table WorkerFailure { failure:Tsugumi.Data.Failure (id: 0, required); }
+table WorkerFailure {
+  failure:Tsugumi.Data.Failure (id: 0, required);
+  created:[tsugumi.ArtifactId] (id: 1);
+}
 
 table WorkerCancel {}
 
@@ -55,6 +64,12 @@ table WorkerDisplay {
   bytes:[ubyte] (id: 1, required);
 }
 
+// Incremental credit: bytes the receiver has freed for this view.
+table WorkerDisplayCredit {
+  view:string (required);
+  bytes:uint32;
+}
+
 union WorkerPayload {
   WorkerCall = 1,
   WorkerResult = 2,
@@ -62,6 +77,7 @@ union WorkerPayload {
   WorkerCancel = 4,
   WorkerDisplay = 5,
   WorkerStart = 6,
+  WorkerDisplayCredit = 7,
 }
 
 table WorkerMessage {

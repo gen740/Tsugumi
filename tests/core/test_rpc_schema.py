@@ -72,7 +72,7 @@ def test_card_settings_round_trip(client):
         "type": "code", "inputs": [{"name": "data"}],
         "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,
-        "recordIO": True, "retainArtifact": True, "artifactOutput": "report",
+        "recordIO": True,
         "sandbox": {"pid": False, "ipc": True, "identity": False, "filesystem": True,
                     "limits": {"cpu": 0.5}},
         "grants": {"network": False, "gui": False, "hostPaths": []},

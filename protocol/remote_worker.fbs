@@ -60,7 +60,9 @@ table CardSecretsRequest { names:[string] (required); }
 // through memory and keeps no copy; nothing writes them to the journal or any
 // file. A listener restart before delivery fails the job, and nothing resends.
 table JobSecretsRequest { fingerprint:string (required); secrets:[CardSecret] (required); }
-union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest }
+// Transient bytes sent to a running Card in the submitting core life.
+table ViewSendRequest { display:Tsugumi.Worker.WorkerDisplay (required); }
+union RequestBody { ProbeRequest, PutBlobRequest, GetBlobRequest, SubmitRequest, StatusRequest, CancelRequest, ReleaseRequest, CatalogRequest, CardSecretsRequest, JobSecretsRequest, ViewSendRequest }
 table Request {
   service:string; instance_id:string;
   project_scope:string; job_id:string;
@@ -89,7 +91,8 @@ table JobStatus { state:JobState; fingerprint:string; result_sha256:string; diag
   secrets_wanted:bool;
   // Transient view bytes sent since the previous status, in order. Never
   // stored with the job or its result, and never traced by the broker.
-  displays:[Tsugumi.Worker.WorkerDisplay]; }
+  displays:[Tsugumi.Worker.WorkerDisplay];
+  display_pending:bool; }
 table Ack {}
 table Failure { code:ErrorCode; message:string (required); }
 table CardSecrets { secrets:[CardSecret] (required); }

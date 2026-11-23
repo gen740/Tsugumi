@@ -309,7 +309,7 @@ def test_plots_draw_into_the_displays(plots_demo):
     frames = []
     while True:
         note = c.wait_notification(lambda n: (
-            n.valueType == NotificationPayload.DisplayUpdated and text(n.value.display.runId) == rid
+            n.valueType == NotificationPayload.DisplayUpdated
         ) or (
             n.valueType == NotificationPayload.RunEvent and text(n.value.runId) == rid
             and n.value.valueType == RunEventValue.RunFinished

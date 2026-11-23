@@ -39,20 +39,6 @@ class StagingHandle {
   int fd_;
 };
 
-auto copy_output(int source, const stdfs::path& relative,
-                 const stdfs::path& destination,
-                 const std::atomic<bool>& cancel, OutputDelivery delivery,
-                 const fs::TransferProgress& progress, fs::OutputBudget& budget)
-    -> void {
-  try {
-    fs::copy_staging_output(source, relative, destination, cancel, progress,
-                            &budget);
-  } catch (const std::exception& error) {
-    if (delivery == OutputDelivery::local_paths && cancel.load())
-      throw Failed(FailureKind::cancelled, "output transfer cancelled");
-    throw Failed(FailureKind::output_invalid, error.what());
-  }
-}
 }  // namespace
 
 auto worker_disposition(bool reuse, bool alive, bool between_calls,
@@ -74,55 +60,17 @@ auto worker_disposition(bool reuse, bool alive, bool between_calls,
   return {reuse && alive, {}};
 }
 
-auto stage_input(const Value& value, std::span<const stdfs::path> roots,
-                 const stdfs::path& directory, bool read_only,
-                 const std::atomic<bool>& cancel,
-                 const fs::TransferProgress& progress) -> Value {
-  if (value.path.empty())
-    throw Failed(FailureKind::output_invalid,
-                 "Path input " + value.name + " has no path");
-  for (const auto& root : roots) {
-    const auto relative =
-        stdfs::path(value.path).lexically_normal().lexically_relative(root);
-    if (!fs::valid_relative_path(relative.generic_string())) continue;
-    const auto check_cancel = [&] {
-      if (cancel.load())
-        throw Failed(FailureKind::cancelled, "staging inputs cancelled");
-    };
-    const auto stage = [&](const stdfs::path& from, const stdfs::path& to) {
-      check_cancel();
-      if (read_only)
-        if (const auto size = fs::link_beneath(root, from, to)) {
-          if (progress) progress(from, *size, *size);
-          return;
-        }
-      const auto total = stdfs::file_size(root / from);
-      uint64_t done = 0;
-      if (progress) progress(from, 0, total);
-      fs::copy_beneath(root, from, to, [&](std::string_view chunk) {
-        check_cancel();
-        done += chunk.size();
-        if (progress) progress(from, done, total);
-      });
-    };
-    const auto destination = directory / relative.filename();
-    try {
-      fs::copy_path_beneath(root, relative, destination, stage);
-    } catch (const fs::Error& error) {
-      throw Failed(FailureKind::output_invalid, error.what());
-    }
-    check_cancel();
-    auto staged = value;
-    staged.path = destination.string();
-    return staged;
-  }
-  throw Failed(FailureKind::output_invalid,
-               "Path input is outside the run's folders: " + value.path);
-}
-
 auto accept_outputs(std::vector<RawOutput> raw,
-                    std::span<const types::PortType> ports)
+                    std::span<const types::PortType> ports,
+                    std::span<const Value> inputs,
+                    std::span<const ArtifactKey> created)
     -> std::vector<Value> {
+  std::set<ArtifactKey> allowed;
+  for (const auto& value : inputs)
+    allowed.insert(value.artifacts.begin(), value.artifacts.end());
+  for (const auto& id : created)
+    if (id.size() != 16 || !allowed.insert(id).second)
+      throw Failed(FailureKind::output_invalid, "invalid created artifact id");
   std::set<std::string_view> seen;
   std::vector<Value> outputs;
   outputs.reserve(raw.size());
@@ -135,20 +83,12 @@ auto accept_outputs(std::vector<RawOutput> raw,
     if (!seen.insert(name).second)
       throw Failed(FailureKind::output_invalid,
                    "output " + name + " produced twice", {{"port", name}});
-    Value value{name, port->kind, port->type, {}, {}};
-    if (port->kind == PortKind::Path) {
-      if (!output.bytes.empty() || output.path.empty())
+    for (const auto& id : output.artifacts)
+      if (!allowed.contains(id))
         throw Failed(FailureKind::output_invalid,
-                     "Path output must carry only a path", {{"port", name}});
-      value.path = std::move(output.path);
-    } else {
-      if (!output.path.empty() || !output.forwarded_from.empty())
-        throw Failed(FailureKind::output_invalid,
-                     "FlatBuffer output cannot carry or forward a path",
-                     {{"port", name}});
-      value.bytes = std::move(output.bytes);
-    }
-    outputs.push_back(std::move(value));
+                     "output references an ungranted artifact", {{"port", name}});
+    outputs.push_back({name, port->type, std::move(output.bytes), {},
+                       std::move(output.artifacts)});
   }
   for (const auto& port : ports)
     if (port.required && !seen.contains(port.name))
@@ -156,90 +96,6 @@ auto accept_outputs(std::vector<RawOutput> raw,
                    "required output " + port.name + " is missing",
                    {{"port", port.name}});
   return outputs;
-}
-
-auto stage_outputs(std::span<Value> outputs, std::span<const Value> inputs,
-                   std::span<const Value> original_inputs,
-                   std::span<const std::pair<std::string, std::string>> forwards,
-                   int work_root, const stdfs::path& work_path,
-                   const stdfs::path& input_directory,
-                   const stdfs::path& destination, OutputDelivery delivery,
-                   const std::atomic<bool>& cancel,
-                   const fs::TransferProgress& progress,
-                   fs::OutputBudget budget) -> void {
-  const auto local = delivery == OutputDelivery::local_paths;
-  for (auto& value : outputs) {
-    const auto forward = std::ranges::find_if(
-        forwards, [&](const auto& entry) { return entry.first == value.name; });
-    if (value.kind == PortKind::FlatBuffer && forward == forwards.end())
-      continue;
-    const auto invalid = [&](std::string message) {
-      return Failed(FailureKind::output_invalid, std::move(message),
-                    {{"port", value.name}});
-    };
-    if (value.kind == PortKind::FlatBuffer)
-      throw invalid("a FlatBuffer output cannot forward a path");
-    const auto& actual = value.path;
-    if (actual.empty() || actual.find('\0') != std::string::npos)
-      throw invalid("output has no valid path");
-    if (forward != forwards.end()) {
-      // Only an input path returned exactly as it was staged.
-      const auto input =
-          std::ranges::find(inputs, forward->second, &Value::name);
-      if (input == inputs.end() || input->kind != PortKind::Path ||
-          input->path != actual)
-        throw invalid("output does not match the forwarded input");
-      if (local) {
-        const auto index = static_cast<size_t>(input - inputs.begin());
-        const auto& original = original_inputs[index].path;
-        if (original.empty())
-          throw invalid("forwarded input has no original path");
-        value.path = original;
-      } else {
-        const auto relative =
-            remote::relative_path(stdfs::path(actual)
-                                      .lexically_relative(input_directory)
-                                      .generic_string());
-        if (*relative.begin() != "inputs")
-          throw invalid("remote forward is outside input staging");
-        value.path = relative.generic_string();
-      }
-      continue;
-    }
-
-    const stdfs::path path(actual);
-    auto relative = path;
-    if (path.is_absolute()) {
-      relative = path.lexically_relative(work_path);
-#ifdef __APPLE__
-      if ((relative.empty() || *relative.begin() == "..") &&
-          (actual.starts_with("/tmp/") || actual.starts_with("/var/")))
-        relative =
-            stdfs::path("/private" + actual).lexically_relative(work_path);
-#endif
-    }
-    if (relative.empty() || relative.is_absolute() ||
-        std::ranges::any_of(relative,
-                            [](const auto& part) { return part == ".."; }))
-      throw invalid("output path is outside the worker's working directory");
-
-    relative = relative.lexically_normal();
-    if (!relative.has_filename()) relative = relative.parent_path();
-    const auto root = local ? destination : stdfs::path("out");
-    const auto delivered = relative == "." ? root : root / relative;
-    if (!local) {
-      try {
-        remote::relative_path(delivered.generic_string());
-      } catch (const std::exception& error) {
-        throw invalid(error.what());
-      }
-    }
-    const auto snapshot =
-        relative == "." ? destination : destination / relative;
-    copy_output(work_root, relative, snapshot, cancel, delivery, progress,
-                budget);
-    value.path = delivered.generic_string();
-  }
 }
 
 auto run_invocation(const ReleaseWorker& release_worker,
@@ -261,42 +117,28 @@ auto run_invocation(const ReleaseWorker& release_worker,
     release_worker(std::move(lease.worker), disposition.keep,
                    disposition.reason);
   };
-  const auto discard_outputs = [&] {
-    result.outputs.clear();
-    result.forwards.clear();
-    if (invocation.output_directory.empty()) return;
-    std::error_code error;
-    stdfs::remove_all(invocation.output_directory, error);
-  };
   try {
     worker.set_display(invocation.display);
-    const bool needs_work = std::ranges::any_of(
-        invocation.outputs,
-        [](const auto& port) { return port.kind != PortKind::FlatBuffer; });
-    std::optional<StagingHandle> work;
-    stdfs::path work_path;
-    if (needs_work) {
-      work.emplace(worker.work_dir(), "worker working");
-      // getcwd can return a physical /private path on Darwin.
-      work_path = stdfs::canonical(worker.work_dir());
+    std::optional<StagingHandle> stage;
+    stdfs::path stage_path;
+    if (!invocation.artifact_directory.empty()) {
+      // Pin the trusted staging directory before Card code can change it.
+      stage_path = stdfs::path(worker.tmp_dir()) / ("artifacts-" + crypto::uuid4());
+      stdfs::create_directory(stage_path);
+      stdfs::permissions(stage_path,
+                         stdfs::perms::owner_all | stdfs::perms::group_all |
+                             stdfs::perms::others_all);
+      stage.emplace(stage_path, "artifact");
     }
-    // Borrow unchanged inputs; only the local storage adapter makes a staged
-    // vector. Large value buffers need no extra copy at this boundary.
-    const auto staged = invocation.stage_inputs
-                            ? invocation.stage_inputs(worker)
-                            : std::vector<Value>{};
-    const std::span<const Value> inputs =
-        invocation.stage_inputs ? staged : invocation.inputs;
-    const auto params = invocation.prepare_params ? invocation.prepare_params()
-                                                  : invocation.params;
     std::optional<std::chrono::steady_clock::time_point> deadline;
     if (invocation.timeout_ms)
       deadline = std::chrono::steady_clock::now() +
                  std::chrono::milliseconds(*invocation.timeout_ms +
                                            invocation.deadline_grace.count());
     const auto id = worker.next_call_id();
-    auto frame = worker_call_frame(id, inputs, params, invocation.outputs,
-                                   invocation.timeout_ms);
+    auto frame = worker_call_frame(id, invocation.inputs, invocation.outputs,
+                                   invocation.timeout_ms, stage_path,
+                                   invocation.grants);
     worker.set_logs(invocation.log);
     const auto begin = invocation.on_timing ? now_ms() : 0;
     between_calls = false;
@@ -306,40 +148,42 @@ auto run_invocation(const ReleaseWorker& release_worker,
     between_calls = true;
     worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
-    if (!result.failure) {
-      for (const auto& output : outcome.outputs)
-        if (!output.forwarded_from.empty())
-          result.forwards.emplace_back(output.name, output.forwarded_from);
-      try {
-        result.outputs =
-            accept_outputs(std::move(outcome.outputs), invocation.outputs);
-      } catch (const Failed& error) {
-        result.failure = error.failure;
-      } catch (...) {
-        validation_rejected = true;
-        throw;
-      }
-    }
-    if (!result.failure) {
-      const std::atomic<bool> no_cancel{false};
-      stage_outputs(result.outputs, inputs, invocation.inputs, result.forwards,
-                    work ? work->get() : -1, work_path,
-                    invocation.input_directory, invocation.output_directory,
-                    invocation.delivery,
-                    invocation.cancel ? *invocation.cancel : no_cancel,
-                    invocation.transfer, invocation.output_budget);
-      if (invocation.validate) {
+    try {
+      if (!outcome.created.empty() && !stage)
+        throw Failed(FailureKind::output_invalid, "unexpected artifact creation");
+      auto budget = invocation.output_budget;
+      // Once a call has returned, even artifacts omitted from its result
+      // belong to the run. Preserve artifacts from a reported Card failure.
+      const std::atomic<bool> persist{false};
+      std::set<ArtifactKey> seen;
+      for (const auto& id : outcome.created) {
+        if (id.size() != 16 || !seen.insert(id).second)
+          throw Failed(FailureKind::output_invalid, "invalid created artifact id");
+        const auto name = crypto::hex(id.data(), id.size());
+        const auto destination = invocation.artifact_directory / name;
         try {
-          invocation.validate(result);
-        } catch (const Failed& error) {
-          result.failure = error.failure;
+          fs::copy_staging_output(stage->get(), name, destination,
+                                  persist, invocation.transfer, &budget);
+          if (!stdfs::is_directory(stdfs::symlink_status(destination)))
+            throw Failed(FailureKind::output_invalid, "artifact must be a directory");
         } catch (...) {
-          validation_rejected = true;
+          std::error_code error;
+          stdfs::remove_all(destination, error);
           throw;
         }
+        result.created.push_back(id);
       }
+      if (!result.failure)
+        result.outputs = accept_outputs(std::move(outcome.outputs),
+                                        invocation.outputs, invocation.inputs,
+                                        outcome.created);
+      if (!result.failure && invocation.validate) invocation.validate(result);
+    } catch (const Failed& error) {
+      result.failure = error.failure;
+    } catch (const fs::Error& error) {
+      result.failure = FailureData::make(FailureKind::output_invalid, error.what());
     }
-    if (result.failure) discard_outputs();
+    if (result.failure) result.outputs.clear();
     try {
       release();
     } catch (...) {
@@ -347,7 +191,6 @@ auto run_invocation(const ReleaseWorker& release_worker,
       return result;
     }
   } catch (...) {
-    discard_outputs();
     try {
       if (lease.worker) release();
     } catch (...) {

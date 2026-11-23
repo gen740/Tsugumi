@@ -35,7 +35,7 @@ struct TransportOptions {
   // unix:/absolute/path, ws://host:port/rpc, or wss://host:port/rpc.
   std::string endpoint;
   std::string subprotocol;
-  size_t max_frame_bytes = 16u << 20;
+  size_t max_frame_bytes = (16u << 20) + 65536;
 };
 
 struct TransportEvents {

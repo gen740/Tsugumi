@@ -19,15 +19,13 @@ table Failure {
   retry_after_ms:uint32 = null (id: 4);
 }
 
-// A resolved port. FlatBuffer ports carry a schema and root type when known.
+// A resolved port carries a schema and root type when known.
 table Port {
   name:string (id: 0, required);
-  kind:PortKind (id: 1);
-  schema_bfbs:[ubyte] (id: 2);
-  root_type:string (id: 3);
-  path:string (id: 4);
+  schema_bfbs:[ubyte] (id: 1);
+  root_type:string (id: 2);
   /// Static execution shape when known without evaluating Nix.
-  execution_shape:ExecutionShape (id: 5);
+  execution_shape:ExecutionShape (id: 3);
   /// Member type names for the UI when a port carries a Merge union.
-  merge_member_types:[string] (id: 6);
+  merge_member_types:[string] (id: 4);
 }

@@ -16,7 +16,6 @@ using CardState = Tsugumi::Data::CardState;
 using Phase = Tsugumi::Data::Phase;
 using StageOutcome = Tsugumi::Data::StageOutcome;
 using LogStream = Tsugumi::Data::LogStream;
-using PortKind = Tsugumi::Data::PortKind;
 using RemoteExecutionState = Tsugumi::Data::RemoteExecutionState;
 
 int64_t now_ms();
@@ -53,22 +52,19 @@ class Failed : public std::exception {
   FailureData failure;
 };
 
-// Artifact IDs are the 16 binary bytes carried by the Card envelope.
+// Artifact ids in C++ are binary (exactly 16 bytes). Paths travel only
+// in private grant messages.
 using ArtifactKey = std::string;
+struct ArtifactGrant {
+  ArtifactKey id;
+  std::string path;
+};
 
-// A value travelling on a port. A FlatBuffer value carries `bytes` of the
-// port message `type`; the core never opens them. A Path value carries `path`
-// (a regular file or a directory, decided from lstat when needed) and no bytes.
 struct Value {
-  std::string name;  // port name
-  PortKind kind = PortKind::FlatBuffer;
+  std::string name;
   types::TypeRef type;
   std::string bytes;
-  std::optional<std::string> artifact_id;
-  // Project state-relative history path, carried independently of staging.
-  std::optional<std::string> recorded_path = std::nullopt;
-  std::string path = {};
-  std::string schema = {};
+  std::string schema;
   std::vector<ArtifactKey> artifacts = {};
 };
 

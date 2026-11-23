@@ -59,16 +59,16 @@ function viewHtml(name: string) {
       const element = document.getElementById('content')
       report('empty', element.textContent)
       port.onmessage = ({ data }) => {
-        if (data.type === 'run') report('run', data.state)
-        else {
-          if (!(data.bytes instanceof ArrayBuffer)) return report('wrong-type', typeof data.bytes)
-          const bytes = Array.from(new Uint8Array(data.bytes))
-          element.textContent = bytes.join(',')
-          report('data', bytes)
-        }
+        if (data.type !== 'data' || !(data.bytes instanceof ArrayBuffer))
+          return report('unexpected', data.type)
+        const bytes = Array.from(new Uint8Array(data.bytes))
+        element.textContent = bytes.join(',')
+        report('data', bytes)
       }
       port.start()
       if (name === 'first') {
+        const reply = new Uint8Array([12, 0, 255]).buffer
+        port.postMessage({ type: 'data', bytes: reply }, [reply])
         fetch('https://example.invalid/forbidden').then(() => report('network-open'), () => report('fetch-rejected'))
         const image = new Image()
         image.src = 'https://example.invalid/forbidden.png'
@@ -81,13 +81,19 @@ function viewHtml(name: string) {
 }
 
 const have = (kind: string, view?: string) => reports.some(r => r.kind === kind && (!view || r.name === view))
-const traffic = (name: string) => reports.filter(r => r.name === name && ['data', 'run'].includes(r.kind)).map(r => [r.kind, r.value])
+const traffic = (name: string) => reports.filter(r => r.name === name && r.kind === 'data').map(r => [r.kind, r.value])
 const equal = (actual: unknown, expected: unknown, message: string) => assert(JSON.stringify(actual) === JSON.stringify(expected), message)
-const render = () => flushSync(() => root.render(<CardViewsPanel card={card} read={read} />))
+const replies: [string, number[]][] = []
+const send = async (view: LiveView, bytes: Uint8Array) => {
+  replies.push([view.declaration.name, [...bytes]])
+}
+const render = () => flushSync(() => root.render(<CardViewsPanel card={card} read={read} send={send} />))
 
 async function test() {
   render()
   await until(() => have('empty', 'first') && have('fetch-rejected'))
+  await until(() => replies.length === 1)
+  equal(replies, [['first', [12, 0, 255]]], 'View messages reach the session in reverse')
   equal(traffic('first'), [], 'An idle frame starts empty')
   assert(reports.find(r => r.kind === 'empty')?.value === 'empty', 'The Card owns its empty state')
   equal(requested, ['first', 'second'], 'The UI reads only declared HTML views')
@@ -99,19 +105,17 @@ async function test() {
   await until(() => ['connect-src', 'img-src', 'frame-src'].every(d => reports.some(r => r.kind === 'blocked' && r.value === d)))
   assert(!have('network-open'), 'The view could not make a network request')
 
-  card.run('r', 'started')
   card.data('first', Uint8Array.of(99))
   card.data('first', Uint8Array.of(0, 255, 0, 128))
   card.data('second', Uint8Array.of(8, 0, 9))
-  card.run('r', 'ended')
   resolveSecond(viewHtml('second'))
-  await until(() => traffic('first').length === 3 && traffic('second').length === 3)
-  equal(traffic('first'), [['run', 'started'], ['data', [0, 255, 0, 128]], ['run', 'ended']], 'First view routes its latest bytes between controls')
-  equal(traffic('second'), [['run', 'started'], ['data', [8, 0, 9]], ['run', 'ended']], 'Control order survives a slow view load')
+  await until(() => traffic('first').length === 2 && traffic('second').length === 1)
+  equal(traffic('first'), [['data', [99]], ['data', [0, 255, 0, 128]]], 'First view receives both messages in order')
+  equal(traffic('second'), [['data', [8, 0, 9]]], 'A slow view receives queued data')
   card.data('second', new Uint8Array())
-  await until(() => traffic('second').length === 4)
+  await until(() => traffic('second').length === 2)
   equal(traffic('second').at(-1), ['data', []], 'A post-run empty message still arrives')
-  equal(traffic('first').length, 3, 'Post-run data stays with its addressed view')
+  equal(traffic('first').length, 2, 'Post-run data stays with its addressed view')
 
   const first = document.querySelector<HTMLIFrameElement>('iframe[title=first]')!
   card.declare([{ name: 'waiting', type: 'html', blob: '/nix/store/waiting' }])

@@ -17,7 +17,6 @@
 
 namespace tsugumi {
 
-using types::PortKind;
 using types::PortType;
 using types::TypeRef;
 
@@ -177,7 +176,6 @@ class Builder {
     resolve_types();
     resolve_execution_shapes();
     resolve_boundary_types();
-    finish_checks();
     resolve_nix_exports();
     for (auto& node : res_->nodes) {
       if (node.kind != CardType::Code && node.kind != CardType::Input) continue;
@@ -247,7 +245,6 @@ class Builder {
             s.build_timeout_seconds);
     boolean(d.recordLogs(), s.record_logs);
     boolean(d.recordIO(), s.record_io);
-    boolean(d.retainArtifact(), s.retain_artifact);
     if (const auto* sandbox = d.sandbox()) {
       boolean(sandbox->filesystem(), s.sandbox.filesystem);
       boolean(sandbox->pid(), s.sandbox.pid);
@@ -339,7 +336,6 @@ class Builder {
             n.path, "invalid_setting",
             "system must be the native system, x86_64-linux or aarch64-linux"));
     }
-    if (const auto* v = d.artifactOutput()) s.artifact_output = v->str();
     const auto* folders = grants ? grants->hostPaths() : nullptr;
     if (folders) {
       std::set<std::string> names;
@@ -497,7 +493,6 @@ class Builder {
       // runs.
       n.settings.record_logs = project.recordLogs().value_or(true);
       n.settings.record_io = project.recordIO().value_or(false);
-      n.settings.retain_artifact = project.retainArtifact().value_or(false);
       n.settings.log_limit_bytes =
           project.logLimitBytes().value_or(kDefaultLogLimitBytes);
       n.settings.output_limit_bytes =
@@ -525,17 +520,17 @@ class Builder {
           break;
         case CardType::Trigger:
           n.outputs.push_back(
-              {"out", PortKind::FlatBuffer, false, types::empty_type()});
+              {"out", false, types::empty_type()});
           break;
         case CardType::Merge:
-          n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
+          n.outputs = {{"out", false, nullptr}};
           if (n.input_defs.empty())
             n.diags.push_back(
                 diag(n.path, "invalid_setting", "merge needs declared inputs"));
           break;
         case CardType::Collect:
           n.input_defs = {{"in"}};
-          n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
+          n.outputs = {{"out", false, nullptr}};
           break;
         case CardType::Draft:
           // Draft wires end on the Card itself. Neither metadata nor a schema
@@ -550,7 +545,7 @@ class Builder {
           break;
       }
       for (const auto& in : n.input_defs)
-        n.inputs.push_back({in.name, PortKind::FlatBuffer, false, nullptr});
+        n.inputs.push_back({in.name, false, nullptr});
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
@@ -644,10 +639,10 @@ class Builder {
       if (n.kind != CardType::Subgraph) continue;
       if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
         for (const auto& port : b->inputs)
-          n.inputs.push_back({port->name, PortKind::FlatBuffer, false, nullptr});
+          n.inputs.push_back({port->name, false, nullptr});
         for (const auto& port : b->outputs)
           n.outputs.push_back(
-              {port->name, PortKind::FlatBuffer, false, nullptr});
+              {port->name, false, nullptr});
       }
     }
     for (const auto& node : res_->nodes) {
@@ -832,7 +827,6 @@ class Builder {
           const auto* resolved =
               output ? leaf.output(end->second) : leaf.input(end->second);
           if (!resolved) continue;
-          port.kind = resolved->kind;
           port.type = resolved->type;
           port.execution_shape = resolved->execution_shape;
           port.merge_member_types = resolved->merge_member_types;
@@ -840,24 +834,6 @@ class Builder {
       };
       inherit(node.inputs, false);
       inherit(node.outputs, true);
-    }
-  }
-
-  void finish_checks() {
-    for (size_t i = 0; i < res_->nodes.size(); ++i) {
-      Node& n = res_->nodes[i];
-      if (n.is_virtual) continue;
-      if (n.settings.retain_artifact && n.settings.artifact_output) {
-        const auto* o = n.output(*n.settings.artifact_output);
-        if (!o)
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "artifactOutput " +
-                                     *n.settings.artifact_output +
-                                     " is not an output"));
-        else if (o->kind == PortKind::FlatBuffer)
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "artifactOutput must be a Path port"));
-      }
     }
   }
 

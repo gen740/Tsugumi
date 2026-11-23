@@ -69,8 +69,6 @@ table Card {
   buildTimeoutSeconds:ulong = null;
   recordLogs:bool = null;
   recordIO:bool = null;
-  retainArtifact:bool = null;
-  artifactOutput:string;
   sandbox:Sandbox;
   grants:Grants;
   /// Keep worker state across invocations and runs. Default false.

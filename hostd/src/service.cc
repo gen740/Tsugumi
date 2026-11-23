@@ -880,24 +880,19 @@ struct Service::State {
         tools->AddHostTemplate(*input, shutdown.get_token());
         return wire::HostReply(request.request_id, S::AcknowledgementT{});
       }
-      case H::RequestPayload::RunFileReferencesRequest:
       case H::RequestPayload::RunCategoryDeleteRequest: {
         Human(human);
         const auto* deletion = r->value_as_RunCategoryDeleteRequest();
-        const auto* preview = r->value_as_RunFileReferencesRequest();
-        const auto project = (deletion ? deletion->project_id() : preview->project_id())->str();
-        const auto run = (deletion ? deletion->run_id() : preview->run_id())->str();
-        json::Members args{{"run_id", json::Quote(run)}};
-        if (deletion) {
-          const auto* category = R::EnumNameRunRecordCategory(deletion->category());
-          if (!*category) throw Failure("invalid_request", "Unknown run record category");
-          args["category"] = json::Quote(category);
-          args["op_id"] = json::Quote(deletion->op_id()->str());
-        }
+        const auto project = deletion->project_id()->str();
+        const auto* category = R::EnumNameRunRecordCategory(deletion->category());
+        if (!*category) throw Failure("invalid_request", "Unknown run record category");
+        json::Members args{{"run_id", json::Quote(deletion->run_id()->str())},
+                           {"category", json::Quote(category)},
+                           {"op_id", json::Quote(deletion->op_id()->str())}};
         lock.unlock();
         std::string bytes;
         const auto envelope = json::Object(tools->RawProjectCall(
-            project, deletion ? "run_category_delete" : "run_file_references",
+            project, "run_category_delete",
             json::Encode(args), shutdown.get_token(), &bytes));
         if (json::Text(envelope, "reply") == "Failure") {
           const auto failure = json::Object(json::Get(envelope, "value"));
@@ -909,10 +904,7 @@ struct Service::State {
             auto value = std::unique_ptr<R::RunCategoryDeleteResultT>(result->UnPack());
             return wire::HostReply(request.request_id, std::move(*value));
           }
-          if (const auto* result = reply->value_as_RunFileReferences()) {
-            auto value = std::unique_ptr<R::RunFileReferencesT>(result->UnPack());
-            return wire::HostReply(request.request_id, std::move(*value));
-          }
+
         }
         throw Failure("unavailable", "Unexpected project history reply");
       }

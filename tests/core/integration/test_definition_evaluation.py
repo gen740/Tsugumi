@@ -20,7 +20,6 @@ from harness.scenario import Project, run, wait_run
 from projects import card, card_in_card, conn, write_nix_project as write
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 
@@ -213,7 +212,7 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
     value = "inputs.producer.message" if dependency_input == "export" else (
         schema_says("./_inputs.fbs", "Second", "inputs.data.Second", "inputs.data.First"))
     files = {f"definitions/{name}/{file}": content for name, outputs_ in
-             (("producer", [("out", PortKind.FlatBuffer, first_table("token"))]), ("work", []))
+             (("producer", [("out", first_table("token"))]), ("work", []))
              for file, content in synthetic_sources(outputs_).items()}
     write(project, {
         "producer": {**definition(), "_outputs": outputs, "_nix": producer},
@@ -359,7 +358,7 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
     }
     files = {
         f"definitions/{name}/{file}": content
-        for name, ports in (("producer", [("out", PortKind.FlatBuffer, first_table("token"))]), ("work", []))
+        for name, ports in (("producer", [("out", first_table("token"))]), ("work", []))
         for file, content in {**synthetic_sources(ports), "nested/lookup.nix": lookup}.items()
     }
     outer = card_in_card("outer", [card("work", "work")], [],

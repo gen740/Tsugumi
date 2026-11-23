@@ -17,7 +17,7 @@ table Spawn {
 table Message {
   action:Action; card:string; key:string (trace_secret); spawn:Spawn; reuse:bool;
   lease:ulong; keep:bool; force:bool; reason:string;
-  reused:bool; read_only_inputs:bool; replaced:string; scratch:string; call_id:ulong; error:string;
+  reused:bool; replaced:string; scratch:string; call_id:ulong; error:string;
   error_kind:Tsugumi.Data.FailureKind = worker_failed;
 }
 root_type Message;

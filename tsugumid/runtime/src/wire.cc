@@ -63,7 +63,7 @@ auto resolved_port(FBB& b, const types::PortType& port) -> Off<D::Port> {
   auto members = port.merge_member_types.empty()
                      ? Off<flatbuffers::Vector<Off<flatbuffers::String>>>()
                      : b.CreateVectorOfStrings(port.merge_member_types);
-  return D::CreatePort(b, name, port.kind, bfbs, root, 0,
+  return D::CreatePort(b, name, bfbs, root,
                        port.execution_shape, members);
 }
 

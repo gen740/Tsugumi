@@ -22,25 +22,19 @@ export function FailureSourceLink({ failure, onOpenSource }: { failure: D.Failur
 }
 
 function DeleteRunCategory({ session, runId }: { session: ProjectSession; runId: string }) {
-  const [pending, setPending] = useState<{ target: string; category: R.RunRecordCategory; label: string; refs: string[] }>()
+  const [pending, setPending] = useState<{ target: string; category: R.RunRecordCategory; label: string }>()
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState<string>()
-  const prepare = async (category: R.RunRecordCategory, label: string) => {
-    setBusy(true); setError(undefined)
-    try {
-      const refs = category === R.RunRecordCategory.Files ? await session.runFileReferences(runId) : []
-      setPending({ target: runId, category, label, refs })
-    } catch (e) { setError(errorText(e)) }
-    finally { setBusy(false) }
+  const prepare = (category: R.RunRecordCategory, label: string) => {
+    setError(undefined)
+    setPending({ target: runId, category, label })
   }
   return <>
     <MenuButton label={L('記録を削除…')} disabled={busy || session.runActive || !session.connected} items={() =>
       ([[R.RunRecordCategory.Logs, L('標準出力と標準エラー')],
-        [R.RunRecordCategory.Values, L('値')],
-        [R.RunRecordCategory.Files, L('ファイルと成果物')]] as const)
+        [R.RunRecordCategory.Values, L('値')]] as const)
         .map(([category, label]) => ({ label, destructive: true, action: () => void prepare(category, label) }))} />
     {pending && <Confirm title={L('実行 {0} の「{1}」を削除しますか？', pending.target, pending.label)}
-      message={pending.refs.length ? L('参照している実行: {0}。削除後、それらの参照は削除済みと表示されます。', pending.refs.join(', ')) : undefined}
       confirm={L('削除')} onCancel={() => setPending(undefined)} onConfirm={() => {
         setBusy(true)
         void session.deleteRunCategory(pending.target, pending.category).catch(e => setError(errorText(e)))
@@ -294,8 +288,7 @@ export function CardExecutionView({ session, model }: { session: ProjectSession;
 /** A recorded input/output value as pretty JSON (decoded with its own BFBS). */
 function ValueBox({ v }: { v: D.NamedValueT }) {
   const text = useMemo(() => describeValue({
-    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifactId: v.artifactId === null ? null : s(v.artifactId),
-    filePath: v.filePath === null ? null : s(v.filePath), fileMissing: v.fileMissing, fileDeleted: v.fileDeleted, inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
+    name: s(v.name), rootType: s(v.rootType), sizeBytes: v.sizeBytes, artifacts: v.artifacts.map(a => ({ id: s(a.id), sizeBytes: a.sizeBytes })), inlineBytes: v.inlineBytes, schemaBfbs: v.schemaBfbs,
   }), [v])
   return <pre className="value-box selectable">{text}</pre>
 }
@@ -352,7 +345,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       alive = false
     }
   }, [runId, cardKey, session.recordingRevision])
-  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), a.directory ? m : null)
+  const read = (a: R.ArtifactInfoT, m: string) => session.rpc!.readArtifact(s(a.artifactId), m)
   useEffect(() => {
     setPreview(undefined)
     if (!session.rpc || !selected || !member) return
@@ -417,8 +410,8 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
                 <div key={s(a.artifactId)} role="option" aria-selected={s(a.artifactId) === artifactId}
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}
                   onClick={() => { setArtifactId(s(a.artifactId)); setMember(a.members[0] ? s(a.members[0].path) : undefined) }}>
-                  <b className="callout">{s(a.output)}</b>
-                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {a.directory ? 'directory' : 'file'} · {a.members.length} 件</span>
+                  <b className="callout">{s(a.artifactId)}</b>
+                  <span className="caption secondary">#{String(a.invocation ?? 0n)} · {String(a.sizeBytes ?? 0n)} bytes · {a.members.length} 件</span>
                 </div>
               ))}
             </div>,

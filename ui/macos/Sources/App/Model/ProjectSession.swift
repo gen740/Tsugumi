@@ -31,12 +31,11 @@ struct Diagnostic: Identifiable, Hashable {
 
 struct PortInfo: Hashable {
   let name: String
-  let kind: Tsugumi_Data_PortKind
   let rootType: String?
   var mergeMemberTypes: [String] = []
   var typeName: String? {
     if !mergeMemberTypes.isEmpty { return mergeMemberTypes.joined(separator: " | ") }
-    return kind == .path ? "Path" : rootType
+    return rootType
   }
   var executionShape: Tsugumi_Data_ExecutionShape = .unspecified
 }
@@ -648,7 +647,7 @@ final class ProjectSession {
       if let d = (e.payload.value as? Tsugumi_RPC_DocPatchedT)?.delta { applyDelta(d) }
     case .runevent:
       if let r = e.payload.value as? Tsugumi_RPC_RunEventT { applyRunEvent(r) }
-    case .cardviewsupdated, .displayupdated, .displayrunstatechanged:
+    case .cardviewsupdated, .displayupdated:
       applyViewNotification(e.payload)
     case .runcategorydeleteresult:
       recordingRevision += 1
@@ -662,7 +661,7 @@ final class ProjectSession {
     return true
   }
 
-  /// Declarations, data and run state of Card views, kept only while a window shows the Card.
+  /// Declarations and data of Card views, kept only while a window shows the Card.
   func applyViewNotification(_ payload: Tsugumi_RPC_NotificationPayloadUnion) {
     switch payload.type {
     case .cardviewsupdated:
@@ -671,12 +670,20 @@ final class ProjectSession {
                           failure: u.failure.map { $0.diagnostic ?? "\($0.kind)" })
       }
     case .displayupdated:
-      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display, viewing(key(d.card.path)) {
-        cardViews.receive(key(d.card.path), view: d.view, bytes: Data(d.bytes))
-      }
-    case .displayrunstatechanged:
-      if let r = payload.value as? Tsugumi_RPC_DisplayRunStateChangedT, viewing(key(r.card.path)), r.state != .unspecified {
-        cardViews.runState(key(r.card.path), runId: r.runId, started: r.state == .started)
+      if let d = (payload.value as? Tsugumi_RPC_DisplayUpdatedT)?.display {
+        let card = d.card.path
+        let view = d.view
+        let size = UInt32(d.bytes.count)
+        let complete = { [client, subscription, credit = d.creditId] in
+          guard let client, let subscription, let credit else { return }
+          Task { try? await client.returnViewCredit(subscription: subscription, card: card,
+                                                    view: view, bytes: size, creditId: credit) }
+        }
+        if viewing(key(card)) {
+          cardViews.receive(key(card), view: view, bytes: Data(d.bytes), complete: complete)
+        } else {
+          complete()
+        }
       }
     default:
       break
@@ -734,7 +741,7 @@ final class ProjectSession {
     for rc in res {
       let p = rc.card.path
       let port = { (x: Tsugumi_Data_PortT) -> PortInfo in
-        PortInfo(name: x.name, kind: x.kind, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 }, executionShape: x.executionShape)
+        PortInfo(name: x.name, rootType: x.rootType, mergeMemberTypes: x.mergeMemberTypes.compactMap { $0 }, executionShape: x.executionShape)
       }
       let d = rc.diagnostics.compactMap { $0 }.map(Diagnostic.init)
       r[key(p)] = ResolvedCard(path: p, inputs: rc.inputs.compactMap { $0 }.map(port),

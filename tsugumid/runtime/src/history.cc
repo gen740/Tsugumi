@@ -7,6 +7,7 @@
 #include <cerrno>
 #include <cstdio>
 #include <functional>
+#include <set>
 #include <system_error>
 
 #include "tsugumi/protocol/runtime_state_generated.h"
@@ -510,8 +511,8 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(ivalues(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL, side INTEGER NOT NULL,
-  port TEXT NOT NULL, kind INTEGER NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
-  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifact_id TEXT, file_content_hash TEXT,
+  port TEXT NOT NULL, schema_hash TEXT NOT NULL, root_type TEXT NOT NULL,
+  size INTEGER NOT NULL, bytes BLOB, hash TEXT NOT NULL, artifacts BLOB,
   PRIMARY KEY(run_id, card, invocation, side, port));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(log_truncations(
@@ -541,19 +542,17 @@ CREATE TABLE IF NOT EXISTS )SQL" +
   PRIMARY KEY (run_id, card, invocation, stream, tile)) WITHOUT ROWID;
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
-  artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
-  invocation INTEGER NOT NULL, output TEXT NOT NULL, directory INTEGER NOT NULL, name TEXT NOT NULL,
-  members BLOB NOT NULL);
+  id BLOB NOT NULL, run_id TEXT NOT NULL, card TEXT NOT NULL,
+  invocation INTEGER NOT NULL, origin TEXT NOT NULL, location TEXT NOT NULL,
+  created_ms INTEGER NOT NULL, sealed_ms INTEGER, size_bytes INTEGER, tree_hash TEXT,
+  PRIMARY KEY (run_id, id)) WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS )SQL" +
-         p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
+         p + R"SQL(artifacts_id ON artifacts(id);
 )SQL";
 }
 
 // Version of the local history's tables (PRAGMA user_version).
-// Includes the definition paths recorded when a run is accepted, the log line
-// index, Path values recorded as their path text, and FlatBuffers values
-// (protocol/runtime_state.fbs) in place of JSON text.
-constexpr int kHistoryVersion = 19;
+constexpr int kHistoryVersion = 21;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -991,44 +990,24 @@ void History::complete_invocation(sql::Db& db,
       .bind(2, key(s.card))
       .run();
   {
-    // A FlatBuffer row keeps its bytes and schema. A Path row keeps the
-    // recorded state-relative path as UTF-8 bytes and no schema; its content
-    // hash is the file's, or the tree's for a directory.
     auto put = [&](const Value& v, int side) {
-      const bool path = v.kind == PortKind::Path;
-      std::string h = !path && v.type ? put_schema(db, *v.type) : "";
-      std::optional<std::string> file_content_hash;
-      if (path && v.recorded_path) {
-        const auto root = path_.parent_path();
-        const auto content = root / *v.recorded_path;
-        std::error_code error;
-        const auto status = std::filesystem::symlink_status(content, error);
-        if (fs::resolves_inside(root, content)) {
-          if (std::filesystem::is_regular_file(status))
-            file_content_hash = fs::sha256_file(content);
-          else if (std::filesystem::is_directory(status))
-            file_content_hash = "tree:" + fs::sha256_tree(content);
-        }
-      }
-      const auto& stored = path ? v.recorded_path.value_or("") : v.bytes;
-      auto ins = db.prepare(
-          "INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
-          "side, port, kind, schema_hash, "
-          "root_type, size, bytes, hash, artifact_id, "
-          "file_content_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)");
-      ins.bind(1, s.run_id)
+      const auto schema = v.type ? put_schema(db, *v.type) : "";
+      std::string artifacts;
+      for (const auto& id : v.artifacts) artifacts += id;
+      db.prepare("INSERT OR REPLACE INTO ivalues(run_id, card, invocation, "
+                 "side, port, schema_hash, root_type, size, bytes, hash, artifacts) "
+                 "VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+          .bind(1, s.run_id)
           .bind(2, key(s.card))
           .bind(3, s.invocation)
           .bind(4, side)
           .bind(5, v.name)
-          .bind(6, static_cast<int>(v.kind))
-          .bind(7, h)
-          .bind(8, !path && v.type ? v.type->root_type : std::string())
-          .bind(9, static_cast<uint64_t>(stored.size()))
-          .bind_blob(10, stored)
-          .bind(11, crypto::sha256_hex(stored))
-          .bind(12, v.artifact_id)
-          .bind(13, file_content_hash)
+          .bind(6, schema)
+          .bind(7, v.type ? v.type->root_type : std::string())
+          .bind(8, static_cast<uint64_t>(v.bytes.size()))
+          .bind_blob(9, v.bytes)
+          .bind(10, crypto::sha256_hex(v.bytes))
+          .bind_blob(11, artifacts)
           .run();
     };
     for (const auto& v : r.inputs) put(v, 0);
@@ -1048,13 +1027,12 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
     entry->partial_result = group.partial_result;
     for (const auto& v : group.values) {
       auto j = std::make_unique<S::SavedInputT>();
-      const bool path = v.kind == PortKind::Path;
-      const auto& data = path ? v.path : v.bytes;
-      j->kind = static_cast<int>(v.kind);
-      j->schema = !path && v.type ? put_schema(db, *v.type) : "";
-      j->root_type = !path && v.type ? v.type->root_type : "";
-      j->data.assign(data.begin(), data.end());
-      j->recorded_path = v.recorded_path.value_or("");
+      j->schema = v.type ? put_schema(db, *v.type) : "";
+      j->root_type = v.type ? v.type->root_type : "";
+      j->data.assign(v.bytes.begin(), v.bytes.end());
+      j->schema_id = v.schema;
+      for (const auto& id : v.artifacts)
+        j->artifacts.push_back(wire::artifact_struct(id));
       entry->values.push_back(std::move(j));
     }
     list.groups.push_back(std::move(entry));
@@ -1070,26 +1048,19 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
 }
 
 void History::put_artifact(sql::Db& db, const ArtifactData& a) {
-  S::ArtifactMembersT m;
-  for (const auto& x : a.members) {
-    auto j = std::make_unique<S::ArtifactMemberT>();
-    j->path = x.path;
-    j->size = x.size_bytes;
-    j->hash = x.hash;
-    m.members.push_back(std::move(j));
-  }
-  db.prepare(
-        "INSERT INTO artifacts(artifact_id, run_id, card, invocation, "
-        "output, directory, name, members) "
-        "VALUES(?,?,?,?,?,?,?,?)")
-      .bind(1, a.artifact_id)
+  auto insert = db.prepare(
+      "INSERT INTO artifacts(id, run_id, card, invocation, origin, location, "
+      "created_ms, sealed_ms, size_bytes, tree_hash) VALUES(?,?,?,?,?,?,?,?,?,?)");
+  insert.bind_blob(1, a.id)
       .bind(2, a.run_id)
       .bind(3, key(a.card))
       .bind(4, a.invocation)
-      .bind(5, a.output)
-      .bind(6, a.directory)
-      .bind(7, a.name)
-      .bind_blob(8, flat::encode<S::ArtifactMembers>(m))
+      .bind(5, a.origin)
+      .bind(6, a.location)
+      .bind(7, a.created_ms)
+      .bind(8, a.sealed_ms)
+      .bind(9, a.size_bytes)
+      .bind(10, a.tree_hash)
       .run();
   db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
       .bind(1, a.run_id)
@@ -1422,8 +1393,8 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
                                                   const CardPath& card,
                                                   uint64_t n, bool input) {
   auto st = db.prepare(
-      "SELECT v.port, v.kind, s.bfbs, v.root_type, v.size, "
-      "v.artifact_id, v.hash, v.file_content_hash FROM ivalues v "
+      "SELECT v.port, s.bfbs, v.root_type, v.size, v.artifacts, v.hash "
+      "FROM ivalues v "
       "LEFT JOIN schemas s ON s.hash=v.schema_hash WHERE run_id=? AND "
       "card=? AND invocation=? AND side=? "
       "ORDER BY v.port");
@@ -1432,13 +1403,22 @@ std::vector<StoredValueMeta> History::value_metas(sql::Db& db,
   while (st.step()) {
     StoredValueMeta m;
     m.name = st.text(0);
-    m.kind = static_cast<PortKind>(st.i64(1));
-    if (!st.is_null(2)) m.bfbs = st.blob(2);
-    m.root_type = st.text(3);
-    m.size_bytes = st.u64(4);
-    if (!st.is_null(5)) m.artifact_id = st.text(5);
-    if (!st.is_null(6)) m.hash = st.text(6);
-    if (!st.is_null(7)) m.file_content_hash = st.text(7);
+    if (!st.is_null(1)) m.bfbs = st.blob(1);
+    m.root_type = st.text(2);
+    m.size_bytes = st.u64(3);
+    const auto ids = st.blob(4);
+    if (ids.size() % 16 != 0) throw sql::Error("invalid value artifact ids");
+    auto size = db.prepare("SELECT size_bytes FROM artifacts WHERE id=?");
+    for (size_t offset = 0; offset < ids.size(); offset += 16) {
+      auto id = ids.substr(offset, 16);
+      size.reset();
+      size.bind_blob(1, id);
+      const auto value = size.step() && !size.is_null(0)
+                             ? std::optional(size.u64(0))
+                             : std::nullopt;
+      m.artifacts.emplace_back(std::move(id), value);
+    }
+    m.hash = st.text(5);
     out.push_back(std::move(m));
   }
   return out;
@@ -1563,11 +1543,11 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
     for (const auto& value : entry->values) {
       Value v;
       v.name = group.port;
-      v.kind = static_cast<PortKind>(value->kind);
-      const std::string data(value->data.begin(), value->data.end());
-      if (!value->recorded_path.empty()) v.recorded_path = value->recorded_path;
-      if (v.kind == PortKind::Path) {
-        v.path = data;
+      v.schema = value->schema_id;
+      v.bytes.assign(value->data.begin(), value->data.end());
+      for (const auto& id : value->artifacts)
+        v.artifacts.push_back(wire::artifact_id(id));
+      if (value->schema.empty()) {
         group.values.push_back(std::move(v));
         continue;
       }
@@ -1583,7 +1563,6 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
         decoded->root_type = value->root_type;
         type->second = std::move(decoded);
       }
-      v.bytes = data;
       v.type = type->second;
       group.values.push_back(std::move(v));
     }
@@ -1595,27 +1574,32 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
 namespace {
 ArtifactData artifact_row(const sql::Stmt& st) {
   ArtifactData a;
-  a.artifact_id = st.text(0);
+  a.id = st.blob(0);
   a.run_id = st.text(1);
   a.card = unkey(st.text(2));
   a.invocation = st.u64(3);
-  a.output = st.text(4);
-  a.directory = st.i64(5) != 0;
-  a.name = st.text(6);
-  if (const auto list = flat::decode<S::ArtifactMembers>(st.blob(7)))
-    for (const auto& m : list->members)
-      a.members.push_back({m->path, m->size, m->hash});
+  a.origin = st.text(4);
+  a.location = st.text(5);
+  a.created_ms = st.i64(6);
+  if (!st.is_null(7)) a.sealed_ms = st.i64(7);
+  if (!st.is_null(8)) a.size_bytes = st.u64(8);
+  if (!st.is_null(9)) a.tree_hash = st.text(9);
   return a;
 }
 }  // namespace
 
 std::optional<ArtifactData> History::artifact(sql::Db& db,
-                                              const std::string& artifact_id) {
+                                              const std::string& artifact_id,
+                                              std::optional<std::string_view> run_id) {
   auto st = db.prepare(
-      "SELECT artifact_id, run_id, card, invocation, output, "
-      "directory, name, members "
-      "FROM artifacts WHERE artifact_id=?");
-  st.bind(1, artifact_id);
+      "SELECT id, run_id, card, invocation, origin, location, created_ms, "
+      "sealed_ms, size_bytes, tree_hash FROM artifacts WHERE id=?1 "
+      "AND (?2 IS NULL OR run_id=?2) ORDER BY run_id LIMIT 1");
+  st.bind_blob(1, artifact_id);
+  if (run_id)
+    st.bind(2, *run_id);
+  else
+    st.bind_null(2);
   if (!st.step()) return std::nullopt;
   return artifact_row(st);
 }
@@ -1625,13 +1609,13 @@ std::vector<ArtifactData> History::artifacts(
     std::optional<uint64_t> invocation, const std::string& after,
     uint64_t limit) {
   std::string q =
-      "SELECT artifact_id, run_id, card, invocation, output, directory, "
-      "name, members FROM artifacts "
+      "SELECT id, run_id, card, invocation, origin, location, created_ms, "
+      "sealed_ms, size_bytes, tree_hash FROM artifacts "
       "WHERE run_id=?1 AND (?2 IS NULL OR card=?2) AND (?3 IS NULL "
       "OR invocation=?3) AND "
       "(card || '\x1f' || printf('%020d', invocation) || '\x1f' || "
-      "output || '\x1f' || artifact_id) > ?4 "
-      "ORDER BY card, invocation, output, artifact_id LIMIT ?5";
+      "lower(hex(id))) > ?4 "
+      "ORDER BY card, invocation, id LIMIT ?5";
   auto st = db.prepare(q);
   st.bind(1, run_id);
   if (card)
@@ -1817,32 +1801,6 @@ std::pair<int64_t, std::string> History::open_cursor(
   return {c->hi, c->after};
 }
 
-auto History::file_referencing_runs(sql::Db& db, const std::string& run_id)
-    -> std::vector<std::string> {
-  const auto prefix = "runs/" + run_id + "/";
-  auto st = db.prepare(
-      "SELECT DISTINCT run_id FROM ivalues WHERE run_id<>? AND kind=? "
-      "AND substr(bytes, 1, ?)=? ORDER BY run_id");
-  st.bind(1, run_id)
-      .bind(2, static_cast<int>(PortKind::Path))
-      .bind(3, static_cast<int64_t>(prefix.size()))
-      .bind_blob(4, prefix);
-  std::vector<std::string> runs;
-  while (st.step()) runs.push_back(st.text(0));
-  return runs;
-}
-
-auto History::owns_recorded_file(sql::Db& db, const std::string& run_id,
-                                 const std::string& path) -> bool {
-  auto st = db.prepare(
-      "SELECT 1 FROM ivalues WHERE run_id=? AND side=1 AND kind=? "
-      "AND bytes=? LIMIT 1");
-  st.bind(1, run_id)
-      .bind(2, static_cast<int>(PortKind::Path))
-      .bind_blob(3, path);
-  return st.step();
-}
-
 auto History::delete_category(sql::Db& db, const std::string& run_id,
                               R::RunRecordCategory category) -> void {
   switch (category) {
@@ -1858,18 +1816,9 @@ auto History::delete_category(sql::Db& db, const std::string& run_id,
           .bind(1, run_id).run();
       break;
     case R::RunRecordCategory::Values:
-      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind=?")
-          .bind(1, run_id).bind(2, static_cast<int>(PortKind::FlatBuffer)).run();
+      db.prepare("DELETE FROM ivalues WHERE run_id=?").bind(1, run_id).run();
       break;
-    case R::RunRecordCategory::Files:
-      db.prepare("DELETE FROM ivalues WHERE run_id=? AND kind=?")
-          .bind(1, run_id)
-          .bind(2, static_cast<int>(PortKind::Path))
-          .run();
-      db.prepare("DELETE FROM artifacts WHERE run_id=?").bind(1, run_id).run();
-      db.prepare("UPDATE runs SET has_artifacts=0 WHERE run_id=?")
-          .bind(1, run_id).run();
-      break;
+    // TODO(open): the former files recording category does not yet apply to artifacts.
     default:
       throw sql::Error("invalid run record category");
   }
