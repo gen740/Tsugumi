@@ -1051,6 +1051,7 @@ enum Shared {
   "modelTools": {
     "core": [
       "project_edit",
+      "nix_path_lock_update",
       "project_copy",
       "project_connect",
       "project_make_subgraph",
@@ -1081,8 +1082,7 @@ enum Shared {
       },
       "sdk": {
         "api": "card_api",
-        "output_types": "output_types",
-        "lock_update": "nix_path_lock_update"
+        "output_types": "output_types"
       },
       "runs": {
         "status": "run_status",
