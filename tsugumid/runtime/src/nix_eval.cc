@@ -421,8 +421,16 @@ struct SourceFetcher {
   }
 
   auto materialize(const NixSource& source) -> std::string {
-    auto attrs = nix::fetchers::Input::fromURL(settings, source.url).toAttrs();
-    if (!source.rev.empty()) attrs.insert_or_assign("rev", source.rev);
+    auto input = nix::fetchers::Input::fromURL(settings, source.url);
+    if (!source.rev.empty()) {
+      const auto algorithm = source.rev.size() == 64
+                                 ? nix::HashAlgorithm::SHA256
+                                 : nix::HashAlgorithm::SHA1;
+      input = input.applyOverrides(
+          std::nullopt,
+          nix::Hash::parseNonSRIUnprefixed(source.rev, algorithm));
+    }
+    auto attrs = input.toAttrs();
     attrs.insert_or_assign("narHash", source.nar_hash);
     return materialize(
         nix::fetchers::Input::fromAttrs(settings, std::move(attrs)));
