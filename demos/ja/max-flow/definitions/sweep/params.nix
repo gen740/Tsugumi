@@ -1,5 +1,3 @@
 {
-  run = {
-    raise_by = 10;
-  };
+  raise_by = 10;
 }

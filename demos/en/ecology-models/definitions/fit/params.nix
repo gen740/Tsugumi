@@ -1,8 +1,6 @@
 {
-  run = {
-    fit_until = 1920;
-    restarts = 24;
-    seed = 11;
-    dt = 0.05;
-  };
+  dt = 0.05;
+  fit_until = 1920;
+  restarts = 24;
+  seed = 11;
 }

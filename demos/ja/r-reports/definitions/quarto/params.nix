@@ -1,5 +1,3 @@
 {
-  run = {
-    title = "Analysis report";
-  };
+  title = "Analysis report";
 }

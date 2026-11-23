@@ -1,5 +1,3 @@
 {
-  run = {
-    shown_runs = 8;
-  };
+  shown_runs = 8;
 }

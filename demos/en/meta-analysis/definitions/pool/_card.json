@@ -6,8 +6,5 @@
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "pooled",
-  "params": {
-    "exclude": []
-  }
+  "artifactOutput": "pooled"
 }

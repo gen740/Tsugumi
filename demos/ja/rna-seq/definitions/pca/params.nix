@@ -1,5 +1,3 @@
 {
-  run = {
-    top_genes = 500;
-  };
+  top_genes = 500;
 }

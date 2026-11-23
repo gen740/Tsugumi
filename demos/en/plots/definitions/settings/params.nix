@@ -1,7 +1,5 @@
 {
-  run = {
-    seed = 7;
-    walkers = 400;
-    steps = 200;
-  };
+  seed = 7;
+  steps = 200;
+  walkers = 400;
 }

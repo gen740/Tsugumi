@@ -1,5 +1,3 @@
 {
-  run = {
-    group = "sex";
-  };
+  group = "sex";
 }

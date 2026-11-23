@@ -1,5 +1,3 @@
 {
-  run = {
-    nperseg = 256;
-  };
+  nperseg = 256;
 }

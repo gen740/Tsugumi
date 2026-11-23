@@ -1,6 +1,4 @@
 {
-  run = {
-    moderator = "ablat";
-    method = "REML";
-  };
+  method = "REML";
+  moderator = "ablat";
 }

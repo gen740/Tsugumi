@@ -1,5 +1,3 @@
 {
-  run = {
-    stratify = "species";
-  };
+  stratify = "species";
 }

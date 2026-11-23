@@ -1,5 +1,3 @@
 {
-  run = {
-    value = 8;
-  };
+  value = 8;
 }

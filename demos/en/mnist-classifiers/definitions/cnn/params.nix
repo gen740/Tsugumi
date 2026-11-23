@@ -1,7 +1,5 @@
 {
-  run = {
-    channels = 16;
-    epochs = 8;
-    seed = 0;
-  };
+  channels = 16;
+  epochs = 8;
+  seed = 0;
 }

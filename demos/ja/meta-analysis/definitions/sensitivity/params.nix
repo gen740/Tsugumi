@@ -1,5 +1,3 @@
 {
-  run = {
-    estimators = [ "DL" "HE" "HS" "SJ" "ML" "REML" "PM" ];
-  };
+  estimators = [ "DL" "HE" "HS" "SJ" "ML" "REML" "PM" ];
 }

@@ -1,6 +1,4 @@
 {
-  build = {
-    url = "https://gitlab.com/scikit-image/data/-/raw/2cdc5ce89b334d28f06a58c9f0ca21aa6992a5ba/AS_09125_050116030001_D03f00d0.tif";
-    hash = "sha256-J1G6ZnxAZ8XTCBfP8ASqBvb2KH8c27W4ycalADCMtFY=";
-  };
+  hash = "sha256-J1G6ZnxAZ8XTCBfP8ASqBvb2KH8c27W4ycalADCMtFY=";
+  url = "https://gitlab.com/scikit-image/data/-/raw/2cdc5ce89b334d28f06a58c9f0ca21aa6992a5ba/AS_09125_050116030001_D03f00d0.tif";
 }

@@ -1,6 +1,4 @@
 {
-  run = {
-    paired = true;
-    fdr = 0.05;
-  };
+  fdr = 0.05;
+  paired = true;
 }

@@ -1,6 +1,4 @@
 {
-  run = {
-    radius = 2;
-    bits = 2048;
-  };
+  bits = 2048;
+  radius = 2;
 }

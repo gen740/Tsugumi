@@ -1,8 +1,6 @@
 {
-  run = {
-    rounds = 60;
-    max_depth = 4;
-    eta = 0.3;
-    seed = 0;
-  };
+  eta = 0.3;
+  max_depth = 4;
+  rounds = 60;
+  seed = 0;
 }

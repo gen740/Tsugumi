@@ -1,5 +1,3 @@
 {
-  run = {
-    ligand_chain = "C";
-  };
+  ligand_chain = "C";
 }

@@ -1,5 +1,3 @@
 {
-  run = {
-    frames = 60;
-  };
+  frames = 60;
 }

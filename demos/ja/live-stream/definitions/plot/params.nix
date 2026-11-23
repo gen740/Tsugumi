@@ -1,5 +1,3 @@
 {
-  run = {
-    window = 60;
-  };
+  window = 60;
 }

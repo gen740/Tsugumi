@@ -1,6 +1,4 @@
 {
-  run = {
-    n_boot = 500;
-    seed = 7;
-  };
+  n_boot = 500;
+  seed = 7;
 }

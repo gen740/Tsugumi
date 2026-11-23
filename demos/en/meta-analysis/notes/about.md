@@ -10,6 +10,6 @@ $\tau^2=0$ is the fixed effect; allowing for heterogeneity between trials, $\tau
 
 **moderator** is the known explanation, a meta-regression on the latitude of the trial sites (the further from the equator, the larger the effect). It is an observational association at the level of trials, though, and latitude itself cannot be called the cause.
 
-Change `method` (DL, REML, ...) and `exclude` (trial numbers to leave out) of **pool** and rerun just that Card. **sensitivity** lays out the change when one trial is left out and when the estimator changes.
+Change `method` (DL, REML, ...) in **pool** to compare estimators. To leave out trials, add an `exclude` list of their numbers to the Card's `params.nix`. Rerun just **pool** after either edit. **sensitivity** shows the effects of leaving out one trial at a time and changing the estimator.
 
 An example of statistical methods for old trials, not advice about vaccination.

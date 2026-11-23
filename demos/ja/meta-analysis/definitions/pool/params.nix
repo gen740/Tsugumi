@@ -1,6 +1,3 @@
 {
-  run = {
-    method = "DL";
-    exclude = [ 0 ];
-  };
+  method = "DL";
 }
