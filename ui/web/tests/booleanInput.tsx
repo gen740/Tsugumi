@@ -1,5 +1,6 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
+import { setImmediate } from 'node:timers/promises'
 import { Builder } from 'flatbuffers'
 import TestRenderer from 'react-test-renderer'
 import { L } from '../src/i18n'
@@ -93,10 +94,13 @@ const row = settings.root.findByProps({ 'data-guide': 'param:values' })
 const input = row.findByType('input')
 assert.equal(input.props.value, '[ 1.0 (-2.5) ]')
 TestRenderer.act(() => input.props.onChange({ target: { value: list } }))
-await TestRenderer.act(async () => input.props.onKeyDown({
-  key: 'Enter', nativeEvent: { isComposing: false }, stopPropagation() {},
-}))
+// Bundled React's async act leaves a referenced MessagePort open in Node.
+TestRenderer.act(() => {
+  input.props.onKeyDown({ key: 'Enter', nativeEvent: { isComposing: false }, stopPropagation() {} })
+})
+await setImmediate() // Let the mocked save and its UI updates finish.
 assert.equal(listWrites, 1)
+assert.equal(input.props.disabled, false, 'the editor is enabled again after the save')
 assert.deepEqual(session.cardDefinition(card), definition)
 settings.unmount()
 session.operateProject = operateBeforeList
