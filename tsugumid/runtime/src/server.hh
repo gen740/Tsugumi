@@ -42,8 +42,8 @@ class Server {
                            Tsugumi::RPC::NotificationPayload type,
                            flatbuffers::Offset<void> value) -> std::string;
   void broadcast(Note note);
-  auto display(const CardPath& card, std::string_view view,
-               std::string_view bytes, std::stop_token stop) -> void;
+  auto display(const CardPath& card, std::string view, std::string bytes,
+               std::function<void()> credit) -> void;
   auto return_view_credit(ConnId conn, const std::string& subscription,
                           const CardPath& card, const std::string& view,
                           uint64_t id, size_t bytes) -> void;

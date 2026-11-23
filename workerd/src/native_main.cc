@@ -75,6 +75,8 @@ struct ViewQueue {
   size_t outgoing_bytes = 0;
   size_t credit = kViewBudget;
   size_t returned_credit = 0;
+  uint64_t queued_messages = 0;
+  uint64_t forwarded_messages = 0;
 };
 
 struct Host {
@@ -142,6 +144,7 @@ auto send_display(void* context, const char* view, const uint8_t* bytes,
     queue.outgoing.emplace_back(bytes ? reinterpret_cast<const char*>(bytes)
                                       : "", size);
     queue.outgoing_bytes += message_cost(size);
+    ++queue.queued_messages;
     host.view_ready.notify_all();
     return 0;
   } catch (const std::exception&) {
@@ -195,15 +198,21 @@ auto display_loop(Host& host) -> void {
     return queue.returned_credit != 0 ||
            (!queue.outgoing.empty() && queue.credit >= TSUGUMI_MESSAGE_MAX);
   };
+  std::string previous;
   for (;;) {
     flatbuffers::FlatBufferBuilder b;
+    ViewQueue* forwarded = nullptr;
     {
       std::unique_lock lock(host.view_mutex);
       host.view_ready.wait(lock, [&] {
         return host.stopping || std::ranges::any_of(host.views, ready);
       });
       if (host.stopping) return;
-      auto& [view, queue] = *std::ranges::find_if(host.views, ready);
+      const auto end = host.views.end();
+      auto next = std::find_if(host.views.upper_bound(previous), end, ready);
+      if (next == end) next = std::find_if(host.views.begin(), end, ready);
+      auto& [view, queue] = *next;
+      previous = view;
       const auto name = b.CreateString(view);
       if (queue.returned_credit) {
         const auto update = W::CreateWorkerDisplayCredit(
@@ -219,18 +228,37 @@ auto display_loop(Host& host) -> void {
         queue.credit -= message_cost(bytes.size());
         queue.outgoing_bytes -= message_cost(bytes.size());
         queue.outgoing.pop_front();
+        forwarded = &queue;
         W::FinishWorkerMessageBuffer(b, W::CreateWorkerMessage(
             b, 0, W::WorkerPayload::WorkerDisplay, update.Union()));
       }
       host.view_ready.notify_all();
     }
-    if (!send_frame(host, b)) {
+    const bool sent = send_frame(host, b);
+    {
       std::lock_guard lock(host.view_mutex);
-      host.stopping = true;
+      if (!sent) host.stopping = true;
+      if (sent && forwarded) ++forwarded->forwarded_messages;
       host.view_ready.notify_all();
-      return;
     }
+    if (!sent) return;
   }
+}
+
+// The result can retire a non-resident worker. Put all messages already
+// submitted by this call onto the data channel before it returns its result.
+auto flush_display(Host& host, uint64_t call) -> void {
+  std::unique_lock lock(host.view_mutex);
+  std::vector<std::pair<const ViewQueue*, uint64_t>> pending;
+  for (const auto& [name, queue] : host.views)
+    if (queue.forwarded_messages < queue.queued_messages)
+      pending.emplace_back(&queue, queue.queued_messages);
+  host.view_ready.wait(lock, [&] {
+    return interrupted(host, call) ||
+           std::ranges::all_of(pending, [](const auto& entry) {
+             return entry.first->forwarded_messages >= entry.second;
+           });
+  });
 }
 
 auto cancelled(void* context) -> int {
@@ -639,6 +667,7 @@ auto serve(const std::string& package, bool artifact_broker) -> int {
       reply.Clear();
       failure_frame(reply, last_call, *failure, created_ids(host));
     }
+    if (call->drain_display()) flush_display(host, last_call);
     host.call_id = 0;
     std::fflush(stdout);
     std::fflush(stderr);

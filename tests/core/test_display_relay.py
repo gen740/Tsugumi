@@ -256,3 +256,106 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     release(echoed)
     assert bytes(echoed.bytes) == payload
     assert wait_run(ui, run_id).state == RunState.succeeded
+
+
+# Eight full-size messages fill the four windows while the UI holds credit.
+# The ninth waits for a credit. A separate thread drives the slow view.
+BURST = r"""
+#include <pthread.h>
+#include <stdatomic.h>
+#include <unistd.h>
+
+static atomic_uint sent;
+static atomic_int failed;
+static const uint8_t bytes[TSUGUMI_MESSAGE_MAX];
+
+static void *burst(void *arg) {
+    const tsugumi_call *call = arg;
+    for (unsigned i = 0; i < 9; ++i) {
+        if (call->effects->send(call->host, "notes", bytes, sizeof(bytes))) {
+            atomic_store(&failed, 1);
+            return NULL;
+        }
+        atomic_fetch_add(&sent, 1);
+    }
+    return NULL;
+}
+
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    pthread_t thread;
+    if (pthread_create(&thread, NULL, burst, (void *)call)) return 1;
+    while (atomic_load(&sent) < 8 && !atomic_load(&failed)) usleep(1000);
+    const uint8_t count = atomic_load(&sent);
+    if (call->effects->send(call->host, "plot", &count, 1)) return 2;
+    pthread_join(thread, NULL);
+    if (atomic_load(&failed)) return 3;
+    const uint8_t done = atomic_load(&sent);
+    if (call->effects->send(call->host, "plot", &done, 1)) return 4;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+"""
+
+UNISOLATED = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
+
+
+def test_full_view_does_not_block_other_traffic(project, tmp_path, core_factory):
+    from Tsugumi.Trace.Client import Client
+
+    slow = native_card(tmp_path / "slow", BURST)
+    fast = native_card(tmp_path / "fast", r"""
+int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
+    if (call->effects->send(call->host, "plot", (const uint8_t *)"fast", 4)) return 1;
+    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
+    return 0;
+}
+""")
+    client = core_factory(mocked_builds=True).connect(client=Client.Web)
+    graph = Project(project).card("start", {"type": "trigger"})
+    for name, package in (("slow", slow), ("fast", fast)):
+        graph.card(name, {"type": "code", "inputs": [{"name": "trigger"}], "sandbox": UNISOLATED,
+                          "reuseWorker": True, "timeoutSeconds": 30},
+                   outputs=OUTPUTS, plan=mock_plan([package], views=VIEWS))
+        graph.connect("start", "out", name, "trigger")
+    graph.save(client)
+    sub = text(client.open().subscriptionId)
+    client.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("slow"), path("fast")])
+    await_views(client)
+    await_views(client)
+
+    def receive(card, view, timeout=15):
+        def matches(note):
+            if note.valueType != NotificationPayload.DisplayUpdated:
+                return False
+            display = note.value.display
+            return display.card.segments == [card.encode()] and text(display.view) == view
+        return client.wait_notification(matches, timeout=timeout).value.display
+
+    def release(display):
+        client.call("ViewCreditRequest", subscriptionId=sub, card=display.card,
+                    view=text(display.view), bytes=len(display.bytes), creditId=display.creditId)
+
+    run_id = run(client, "start")
+    first, second = receive("slow", "notes"), receive("slow", "notes")
+    assert len(first.bytes) == len(second.bytes) == 1 << 24
+    assert bytes(receive("slow", "plot").bytes) == b"\x08"
+    assert bytes(receive("fast", "plot").bytes) == b"fast"
+    with pytest.raises(TimeoutError):
+        receive("slow", "plot", timeout=0.25)
+    release(first)
+    assert bytes(receive("slow", "plot").bytes) == b"\x09"
+    release(second)
+    for _ in range(7):
+        release(receive("slow", "notes"))
+    assert wait_run(client, run_id).state == RunState.succeeded
+
+
+def test_full_burst_is_discarded_without_ui(project, tmp_path, core_factory):
+    package = native_card(tmp_path / "burst", BURST)
+    client = core_factory(mocked_builds=True).connect()
+    Project(project).card("work", {"type": "code", "sandbox": UNISOLATED,
+                                   "timeoutSeconds": 20}, outputs=OUTPUTS,
+                          plan=mock_plan([package], views=VIEWS)).save(client)
+    assert wait_run(client, run(client)).state == RunState.succeeded
+    assert not any(note.valueType == NotificationPayload.DisplayUpdated
+                   for note in client.notifications.copy())

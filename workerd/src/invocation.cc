@@ -3,16 +3,21 @@
 
 #include <fcntl.h>
 #include <poll.h>
+#include <sys/socket.h>
 #include <unistd.h>
 
 #include <algorithm>
 #include <chrono>
+#include <condition_variable>
+#include <deque>
 #include <fstream>
 #include <iostream>
+#include <map>
+#include <mutex>
 #include <set>
-#include <sys/socket.h>
 #include <thread>
 
+#include "display_channel.hh"
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
 #include "tsugumi/rpc/frame.hh"
@@ -153,42 +158,120 @@ auto make_result(const workerd::InvocationResult& outcome) -> std::string {
   return {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()};
 }
 
-auto relay_display(const WorkerDisplayData& display, std::stop_token) -> void {
-  if (display.view.size() > workerd::kRemoteDisplayBytes ||
-      display.bytes.size() > workerd::kRemoteDisplayBytes - display.view.size())
-    return;
-  flatbuffers::FlatBufferBuilder b;
-  const auto message = W::CreateWorkerDisplay(
-      b, b.CreateString(display.view),
-      b.CreateVector(reinterpret_cast<const uint8_t*>(display.bytes.data()),
-                     display.bytes.size()));
-  b.Finish(message);
-  try {
-    rpc::frame::Write(
-        workerd::kDisplayChannelFd,
-        {reinterpret_cast<const char*>(b.GetBufferPointer()), b.GetSize()},
-        workerd::kRemoteDisplayBytes);
-  } catch (const rpc::frame::Error&) {
-    // A lost listener drops live data and leaves the invocation running.
+// The native worker's credit is held until the remote listener forwards the
+// message. Its socket reader never waits for a slow view or a network poll.
+class InvocationDisplay {
+ public:
+  InvocationDisplay()
+      : writer_([this] { write(); }), reader_([this] { read(); }) {}
+  ~InvocationDisplay() {
+    {
+      std::lock_guard lock(mutex_);
+      stopping_ = true;
+    }
+    ready_.notify_all();
+    writer_.join();
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    reader_.join();
   }
-}
+
+  auto push(WorkerDisplayData display, WorkerProc::DisplayCredit complete)
+      -> void {
+    std::unique_lock lock(mutex_);
+    if (closed_) {
+      lock.unlock();
+      complete();
+      return;
+    }
+    pending_.emplace_back(std::move(display), std::move(complete));
+    ready_.notify_one();
+  }
+
+ private:
+  auto write() -> void {
+    try {
+      for (;;) {
+        std::unique_lock lock(mutex_);
+        ready_.wait(lock,
+                    [&] { return stopping_ || closed_ || !pending_.empty(); });
+        if (closed_ || (stopping_ && pending_.empty())) return;
+        auto [display, complete] = std::move(pending_.front());
+        pending_.pop_front();
+        in_flight_[display.view].emplace_back(
+            workerd::message_cost(display.bytes.size()), std::move(complete));
+        lock.unlock();
+        workerd::write_display(workerd::kDisplayChannelFd, display.view,
+                               display.bytes);
+      }
+    } catch (const std::exception&) {
+      ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    }
+  }
+
+  auto read() -> void {
+    try {
+      while (auto frame = workerd::read_display(workerd::kDisplayChannelFd)) {
+        const auto* credit =
+            W::GetWorkerMessage(frame->data())->value_as_WorkerDisplayCredit();
+        if (!credit) break;
+        size_t bytes = credit->bytes();
+        std::unique_lock lock(mutex_);
+        auto& view = in_flight_[credit->view()->str()];
+        while (bytes) {
+          if (view.empty() || bytes < view.front().first)
+            throw std::runtime_error("invalid remote display credit");
+          auto [cost, complete] = std::move(view.front());
+          view.pop_front();
+          bytes -= cost;
+          lock.unlock();
+          complete();
+          lock.lock();
+        }
+      }
+    } catch (const std::exception&) {
+    }
+    ::shutdown(workerd::kDisplayChannelFd, SHUT_RDWR);
+    std::lock_guard lock(mutex_);
+    closed_ = true;
+    for (auto& [name, view] : in_flight_)
+      for (auto& [cost, complete] : view) complete();
+    in_flight_.clear();
+    for (auto& [display, complete] : pending_) complete();
+    pending_.clear();
+    ready_.notify_all();
+  }
+
+  std::mutex mutex_;
+  std::condition_variable ready_;
+  std::deque<std::pair<WorkerDisplayData, WorkerProc::DisplayCredit>> pending_;
+  std::map<std::string,
+           std::deque<std::pair<size_t, WorkerProc::DisplayCredit>>>
+      in_flight_;
+  bool stopping_ = false;
+  bool closed_ = false;
+  std::thread writer_;
+  std::thread reader_;
+};
 
 auto receive_view(std::weak_ptr<WorkerProc::ViewReceiver> target) -> void {
   const char ready = 1;
   if (::write(workerd::kViewInputFd, &ready, 1) != 1) return;
   try {
-    while (auto frame = rpc::frame::Read(workerd::kViewInputFd,
-                                         workerd::kRemoteDisplayBytes)) {
-      flatbuffers::Verifier verifier(
-          reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
-      if (!verifier.VerifyBuffer<W::WorkerDisplay>(nullptr)) break;
-      const auto* message = flatbuffers::GetRoot<W::WorkerDisplay>(frame->data());
+    while (auto frame = workerd::read_display(workerd::kViewInputFd)) {
+      const auto* message =
+          W::GetWorkerMessage(frame->data())->value_as_WorkerDisplay();
+      if (!message) break;
       auto worker = target.lock();
-      const char accepted = worker && worker->send(
-          {message->view()->str(), bytes(message->bytes())});
-      if (::write(workerd::kViewInputFd, &accepted, 1) != 1) break;
+      WorkerDisplayData display{message->view()->str(),
+                                bytes(message->bytes())};
+      if (!worker || !worker->send(display, [view = display.view,
+                                             cost = workerd::message_cost(
+                                                 display.bytes.size())] {
+            workerd::write_display_credit(workerd::kViewInputFd, view, cost);
+          }))
+        break;
     }
-  } catch (const rpc::frame::Error&) {
+  } catch (const std::exception&) {
   }
   ::shutdown(workerd::kViewInputFd, SHUT_RDWR);
 }
@@ -249,6 +332,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   }
   spawn.grants = grants;
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
+  InvocationDisplay display;
   auto lease = pool.acquire(spawn.card, "", spawn, false);
   struct InputLoop {
     std::jthread thread;
@@ -265,7 +349,9 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   // Allow the worker to report its own budget failure before escalation.
   request.deadline_grace = std::chrono::milliseconds(500);
   request.log = log;
-  request.display = relay_display;
+  request.display = [&display](auto message, auto complete) {
+    display.push(std::move(message), std::move(complete));
+  };
   request.transfer = progress;
   return workerd::run_invocation(
       [&](auto worker, bool keep, const auto& reason) {

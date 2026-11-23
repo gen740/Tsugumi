@@ -61,6 +61,8 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.probe_overrides = {}
         self.receipts = {}
         self.view_messages = []
+        self.hold_view = None
+        self.view_stalled = threading.Event()
         self.submit_count = 0
         self.download_count = 0
         self.released = set()
@@ -177,7 +179,11 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         job = R.string(q.jobId)
         if kind == R.RequestBody.ViewSendRequest:
             assert self.receipts[job]["state"] == "running"
-            self.view_messages.append((job, R.string(body.display.view), bytes(body.display.bytes)))
+            view = R.string(body.display.view)
+            self.view_messages.append((job, view, bytes(body.display.bytes)))
+            if view == self.hold_view:
+                self.view_stalled.set()
+                self.resume.wait(10)
             return R.reply(R.ReplyBody.Ack, R.AckT())
         if kind == R.RequestBody.ReleaseRequest:
             self.released.add(job)
@@ -208,6 +214,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             state=getattr(R.JobState, state["state"].capitalize()), fingerprint=state.get("fingerprint"),
             resultSha256=state.get("result_sha256"), diagnostic=state.get("diagnostic"),
             logTruncated=state.get("log_truncated", False))
+        status.viewInputReady = state["state"] == "running"
         log = self.live_logs.get(job, b"")
         # Status and Cancel replies carry a slice of the log from the cursor.
         if body.logLimit and log and (
@@ -216,8 +223,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             status.logOffset = body.logOffset
             status.logSize = len(log)
             status.logBytes = list(log[body.logOffset:body.logOffset + min(body.logLimit, 7)])
-        if body.logLimit:
+        if kind == R.RequestBody.StatusRequest:
             status.displays = self.live_displays.pop(job, None)
+            if status.displays:
+                status.displaySequence = body.displayAfter + 1
         return R.reply(R.ReplyBody.JobStatus, status)
 
 
@@ -479,7 +488,7 @@ def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remo
     assert saved.outputs and not hasattr(saved, "display")
 
 
-def test_view_message_is_forwarded_to_the_remote_job(project, remote_gateway, core_factory, tmp_path):
+def test_remote_view_messages_do_not_wait_for_another_views_reply(project, remote_gateway, core_factory, tmp_path):
     from Tsugumi.Trace.Client import Client
 
     daemon = core_factory(mocked_builds=True)
@@ -487,6 +496,7 @@ def test_view_message_is_forwarded_to_the_remote_job(project, remote_gateway, co
     worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster", views=[
                        {"blob": "/nix/store/example-notes", "name": "notes", "type": "html"},
+                       {"blob": "/nix/store/example-plot", "name": "plot", "type": "html"},
                    ])
     subscription = text(ui.open().subscriptionId)
     ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
@@ -500,8 +510,17 @@ def test_view_message_is_forwarded_to_the_remote_job(project, remote_gateway, co
         raise
     job = text(live.executionJobId)
     payload = b"reply\0\xff"
+    remote_gateway.hold_view = "notes"
     ui.call("ViewSendRequest", card=path("work"), view="notes", bytes=list(payload))
-    assert remote_gateway.view_messages == [(job, "notes", payload)]
+    assert remote_gateway.view_stalled.wait(5)
+    try:
+        ui.call("ViewSendRequest", card=path("work"), view="plot", bytes=list(payload))
+        deadline = time.monotonic() + 5
+        while len(remote_gateway.view_messages) < 2 and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert remote_gateway.view_messages == [(job, "notes", payload), (job, "plot", payload)]
+    finally:
+        remote_gateway.resume.set()
     remote_gateway.finish(job)
     assert wait_run(ui, run_id).state == RunState.succeeded
 

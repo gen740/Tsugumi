@@ -7,6 +7,7 @@
 #include <atomic>
 #include <chrono>
 #include <condition_variable>
+#include <deque>
 #include <filesystem>
 #include <functional>
 #include <map>
@@ -97,12 +98,14 @@ class WorkerProc {
  public:
   using LogSink =
       std::function<void(LogStream stream, const std::string& text)>;
-  using DisplaySink = std::function<void(const WorkerDisplayData&, std::stop_token)>;
+  using DisplayCredit = std::function<void()>;
+  using DisplaySink = std::function<void(WorkerDisplayData, DisplayCredit)>;
   struct ViewReceiver {
     std::mutex mutex;
     WorkerProc* worker = nullptr;
     std::function<bool(const WorkerDisplayData&)> remote;
-    auto send(const WorkerDisplayData& display) -> bool;
+    auto send(const WorkerDisplayData& display, DisplayCredit complete = {})
+        -> bool;
   };
 
   // Throws Failed(permission_denied) when the sandbox cannot be applied.
@@ -142,8 +145,9 @@ class WorkerProc {
   // The sink may run on the reader thread between invocations. It must own
   // its captures and return promptly.
   auto set_display(DisplaySink display) -> void;
-  // Queues one reverse message if the process has credit for a max-size frame.
-  auto send_display(const WorkerDisplayData& display) -> bool;
+  // Admits one reverse message; returns its credit after forwarding.
+  auto send_display(const WorkerDisplayData& display,
+                    DisplayCredit complete = {}) -> bool;
   auto view_receiver() -> std::weak_ptr<ViewReceiver>;
   auto resume_logs() -> void;
   // Where the worker's output goes while it serves the current call.
@@ -162,6 +166,8 @@ class WorkerProc {
   auto start_data_reader() -> void;
   auto stop_data_reader() -> void;
   auto read_data() -> void;
+  auto write_display() -> void;
+  auto return_display_credit(const std::string& view, size_t bytes) -> void;
   auto stop_log_reader() -> void;
   void read_logs(bool drain);
   void send(int fd, const std::string& frame, bool observe = true);
@@ -184,7 +190,16 @@ class WorkerProc {
   uint64_t call_id_ = 0;
   std::mutex data_mutex_;
   std::mutex control_mutex_;
-  std::map<std::string, size_t> reverse_credit_;
+  struct ControlView {
+    std::deque<std::pair<std::string, DisplayCredit>> pending;
+    size_t pending_bytes = 0;
+    size_t reverse_credit = 0;
+    size_t forward_credit = 0;
+  };
+  std::mutex display_mutex_;
+  std::condition_variable display_ready_;
+  std::map<std::string, ControlView> control_views_;
+  std::thread display_writer_;
   std::condition_variable data_ready_;
   std::thread data_thread_;
   std::stop_source data_stop_;
@@ -209,10 +224,11 @@ class WorkerProc {
 };
 
 // Builds a WorkerMessage{call_id, WorkerCall} frame.
-std::string worker_call_frame(uint64_t call_id, std::span<const Value> inputs,
-                              const std::vector<types::PortType>& outputs,
-                              std::optional<uint64_t> deadline_ms,
-                              const std::filesystem::path& artifact_directory = {},
-                              std::span<const ArtifactGrant> grants = {});
+std::string worker_call_frame(
+    uint64_t call_id, std::span<const Value> inputs,
+    const std::vector<types::PortType>& outputs,
+    std::optional<uint64_t> deadline_ms,
+    const std::filesystem::path& artifact_directory = {},
+    std::span<const ArtifactGrant> grants = {}, bool drain_display = false);
 
 }  // namespace tsugumi
