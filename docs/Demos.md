@@ -9,7 +9,7 @@ Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of ex
 
 ## Demo status
 
-The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `tsugumi.json` and pin them in `tsugumi.lock`. TODO(open): Port the demo displays. Demo execution stays skipped in tests. The site player uses recorded material where available.
+The demos and Drafts in `demos/en` and `demos/ja` declare their Nix sources in `tsugumi.json` and pin them in `tsugumi.lock`. The project files use the current contracts. TODO(open): Port the demo displays and finish exercising Card bodies against the pinned SDKs. Demo execution stays skipped in tests. The site player uses recorded material where available.
 
 | Demo | Subject | What it shows |
 | --- | --- | --- |
@@ -49,8 +49,7 @@ Every Card has a summary in `README.md`, readable on the Canvas (by hovering, fo
 Python emits the `value` parameter (21). Ruby multiplies it by `factor` (2), displays
 input / factor / result in a table, and sends the typed result to C++. Its display
 reads `C++ received 42`. Change Ruby's factor and rerun it to reuse the saved Python
-input. Ruby's `on_run_start` counts Runs in its resident Card instance and writes that
-count to the log; turn off worker reuse to start with fresh state.
+input. A resident worker can keep state across invocations. Turn off worker reuse to start with fresh state.
 
 ### Data to report (`report`)
 

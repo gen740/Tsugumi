@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 53 requests.
+There are 54 requests.
 
 ## Connection
 
@@ -241,7 +241,6 @@ No fields.
 | `text` | `string` | yes |  |
 | `port` | `string` |  |  |
 | `type_name` | `string` |  |  |
-| `kind` | `PortKind` |  |  |
 
 ## Running
 
@@ -295,7 +294,6 @@ No fields.
 | [`RunRecord`](#runrecord) | RecordResult | Read a Card's invocation record; choose invocation or follow_latest=true. |
 | [`RunValueRead`](#runvalueread) | FileContent | Read a recorded port value page; offset defaults to 0. |
 | [`RunCategoryDelete`](#runcategorydelete) | RunCategoryDeleteResult | Delete one category from a finished run. |
-| [`RunFileReferences`](#runfilereferences) | RunFileReferences | Find runs that refer to a run's retained files. |
 | [`RunHistoryDelete`](#runhistorydelete) | RunHistoryDeleteResult | Delete finished runs and their records, values, logs and files. ended_before is a Unix-millisecond cutoff; omitted means all finished runs. |
 | [`RunDefinitionPaths`](#rundefinitionpaths) | RunDefinitionPaths | Accepted definition files for the recorded Card and its enclosing Cards, or for the whole run if card is absent. |
 | [`ArtifactList`](#artifactlist) | ArtifactPage | List run artifacts; invocation requires card. |
@@ -357,12 +355,6 @@ No fields.
 | `op_id` | `string` | yes |  |
 | `run_id` | `string` | yes |  |
 | `category` | `RunRecordCategory` |  |  |
-
-### RunFileReferences
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `run_id` | `string` | yes |  |
 
 ### RunHistoryDelete
 
@@ -451,6 +443,8 @@ No fields.
 | [`ViewSetVisible`](#viewsetvisible) | Ack | Replaces the subscription's Display targets. enabled = true. |
 | [`ViewSave`](#viewsave) | ViewSaveResult | CAS on view_rev only. |
 | [`CardViewRead`](#cardviewread) | FileContent | Read a page of the file of one view declaration: entry `index` (required) of the Card's views list, as CardViewsUpdated last sent it. `name` must be that entry's name, so a read made against a list that has since changed fails with not_found instead of serving another declaration. Names may repeat; the core never chooses between declarations by name. Only declared regular files that resolve inside the Nix store are served, read from one open descriptor, and their bytes are relayed without being interpreted. Neither RPC trace records these requests or their replies. FileContent.name is the view name and hash is the declared store path, which names immutable content. offset defaults to 0 and limit_bytes to 1 MiB (1..1048576). |
+| [`ViewSend`](#viewsend) | Ack | Send opaque bytes from an open view to its Card process. |
+| [`ViewCredit`](#viewcredit) | Ack | Return display capacity after the UI forwards or discards a message. |
 
 ### ViewSetVisible
 
@@ -477,6 +471,24 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 | `index` | `uint32` |  |  |
+
+### ViewSend
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes |  |
+| `view` | `string` | yes |  |
+| `bytes` | `[ubyte]` | yes |  |
+
+### ViewCredit
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `subscription_id` | `string` | yes |  |
+| `card` | `CardPath` | yes |  |
+| `view` | `string` | yes |  |
+| `bytes` | `uint32` |  |  |
+| `credit_id` | `uint64` |  |  |
 
 ## Versions
 
@@ -559,7 +571,6 @@ Sent from `tsugumid` to connected clients.
 - `TraceChanged`
 - `RunCategoryDeleteResult`
 - `CardViewsUpdated`
-- `DisplayRunStateChanged`
 
 ### Run events
 
@@ -677,8 +688,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `CardSecretListRequest` | `project_id: string` (required) |
 | `CardSecretSetRequest` | `project_id: string` (required), `name: string` (required), `value: string`, `remove: bool` |
 | `RunCategoryDeleteRequest` | `project_id: string` (required), `run_id: string` (required), `category: Tsugumi.RPC.RunRecordCategory`, `op_id: string` (required) |
-| `RunFileReferencesRequest` | `project_id: string` (required), `run_id: string` (required) |
 | `TemplateListRequest` | `project_id: string` (required) |
 | `HostTemplateAddRequest` | `addition: TemplateAdd` (required) |
 
-Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `RunFileReferences`, `TemplateList`.
+Reply variants: `ProjectOperationResult`, `ProjectPermissionList`, `VersionComments`, `HelloResult`, `Acknowledgement`, `BinaryCaches`, `GuideState`, `EnvironmentState`, `AttachedFolders`, `HostRuntime`, `HostTerminal`, `ExecutionServices`, `ExecutionAuthorization`, `Settings`, `ProviderStatus`, `SignInBegin`, `SignInStatus`, `ProjectDefaults`, `ProjectInfo`, `ProjectLocation`, `RecentProject`, `RecentList`, `DemoList`, `SkillsList`, `ProjectTrust`, `ModelList`, `Failure`, `LayoutValidated`, `VersionCanvas`, `FileFormatResult`, `VersionDiff`, `VersionGraph`, `PermissionKinds`, `ModelSelection`, `DemoPaths`, `TextResult`, `Identifier`, `InputTypes`, `HostActivity`, `HostTrace`, `EnvironmentList`, `HostHome`, `FolderListing`, `CardSecretList`, `RunCategoryDeleteResult`, `TemplateList`.

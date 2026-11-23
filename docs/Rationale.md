@@ -86,11 +86,13 @@ In Tsugumi you can run only the Cards you choose, or from there downstream, with
 
 Processing is split into small Cards so that people can understand the decisions along the way and work on them. To run repeatedly at that granularity, the cost of preparing, starting and saving, and the handling of inputs in partial runs, are designed in too.
 
-### Not rebuilding the same code every time a condition changes
+### Rebuilding the derivations affected by a parameter change
 
-In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
-
-`params.nix` holds the Card's current parameter values for both `default.nix` and each invocation. The editor changes a literal in place. The SDK generates the interface from parameter names and types, so a value edit changes the build only if the Nix definition uses that value in a derivation. This lets a person try different conditions with the same build when the calculation reads them at runtime.
+`params.nix` holds the Card's current values. The editor rewrites a literal
+in place. The SDK generates the interface from parameter names and types and
+embeds the evaluated values when it builds the Card. Nix reuses derivations
+whose inputs stayed the same. Changing a value sent along a wire need only
+rerun the receiving Card against the new data.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
