@@ -32,12 +32,12 @@ def external(root: Path, name: str, text_value: str) -> None:
     """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
     put(ext / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default",
+        "name": name, "nixPath": [],
         "canvas": {"cards": [{"id": "say"}], "connections": []},
         "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
     put(ext / "definitions" / "say" / "_card.json", json.dumps(
-        {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": text_value}},
-                                         {"name": "value", "type": "bool", "data": {"bool": True}}]}))
+        {"type": "input", "params": {"text": text_value, "value": True}}))
+    put(ext / "definitions" / "say" / "params.nix", '{ run = { text = ""; value = true; }; }')
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
 
 
@@ -317,7 +317,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
     source = "externals/greeting/definitions/say/_card.json"
     body = json.loads((root / source).read_text())
-    body["params"][0]["data"] = {"string": "changed on disk"}
+    body["params"]["text"] = "changed on disk"
     put(root / source, json.dumps(body))
     with pytest.raises(RpcFailure) as error:
         c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="test", card=path("greet"))
@@ -331,7 +331,7 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     committed = subprocess.check_output(
         ["git", "-C", root, "show", f"{text(st.commit)}:{source}"], text=True)
     result = recorded_input_json(c, tmp_path / "decode", run_id, "show")
-    assert result["text"] == json.loads(committed)["params"][0]["data"]["string"] == "changed on disk"
+    assert result["text"] == json.loads(committed)["params"]["text"] == "changed on disk"
     # The external is this project's copy: its files change here like any other.
     rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",

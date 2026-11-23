@@ -2,12 +2,17 @@
 
 #include <flatbuffers/idl.h>
 
+#include <algorithm>
 #include <memory>
+#include <set>
 
 #include "tsugumi/document/document.hh"
+#include "tsugumi/util/json_object.hh"
 
 extern const unsigned char tsugumi_project_document_fbs[];
 extern const unsigned long tsugumi_project_document_fbs_size;
+extern const unsigned char tsugumi_project_lock_fbs[];
+extern const unsigned long tsugumi_project_lock_fbs_size;
 extern const unsigned char tsugumi_card_document_fbs[];
 extern const unsigned long tsugumi_card_document_fbs_size;
 extern const unsigned char tsugumi_comments_document_fbs[];
@@ -34,6 +39,8 @@ auto source(Schema schema) -> std::string_view {
     case Schema::Layout:
       return view(tsugumi_layout_document_fbs,
                   tsugumi_layout_document_fbs_size);
+    case Schema::Lock:
+      return view(tsugumi_project_lock_fbs, tsugumi_project_lock_fbs_size);
   }
   return {};
 }
@@ -41,7 +48,7 @@ auto source(Schema schema) -> std::string_view {
 // One parser per schema and thread: a parser is not shared between threads,
 // and it is reused for every document it reads.
 auto parser(Schema schema) -> flatbuffers::Parser& {
-  thread_local std::unique_ptr<flatbuffers::Parser> parsers[4];
+  thread_local std::unique_ptr<flatbuffers::Parser> parsers[5];
   auto& p = parsers[static_cast<int>(schema)];
   if (!p) {
     flatbuffers::IDLOptions o;
@@ -49,6 +56,7 @@ auto parser(Schema schema) -> flatbuffers::Parser& {
     o.natural_utf8 = true;
     o.indent_step = 2;
     o.no_warnings = true;
+    o.output_default_scalars_in_json = schema == Schema::Lock;
     p = std::make_unique<flatbuffers::Parser>(o);
     if (!p->Parse(std::string(source(schema)).c_str()))
       throw std::logic_error("document schema: " + p->error_);
@@ -81,6 +89,34 @@ auto describe(const std::string& error) -> std::string {
 // GenText writes an empty vector as "[\n\n  ]" and an empty table as
 // "{\n  }". Strings never hold a raw newline (it is escaped), so every
 // newline here is structure.
+auto compact_json(std::string_view text) -> std::string {
+  std::string result;
+  bool quoted = false;
+  for (size_t index = 0; index < text.size(); ++index) {
+    const char c = text[index];
+    if (quoted && c == '\\') {
+      result += c;
+      result += text[++index];
+      continue;
+    }
+    if (c == '"') quoted = !quoted;
+    if (quoted || std::string_view(" \r\n\t").find(c) == std::string_view::npos)
+      result += c;
+  }
+  return result;
+}
+
+auto strict_object(std::string_view text, std::string path) -> json::Members {
+  schema::v::Mapping<schema::v::String, schema::Json> object;
+  if (const auto error = schema::decode(text, object))
+    throw json::DecodeFailure(std::move(path), "object", error->message);
+  json::Members members;
+  for (const auto& [name, value] : object.value())
+    if (!members.emplace(name, compact_json(schema::text(value))).second)
+      throw std::runtime_error(path + ": duplicate field " + name);
+  return members;
+}
+
 auto collapse_empty(const std::string& text) -> std::string {
   std::string out;
   out.reserve(text.size());
@@ -114,7 +150,22 @@ auto collapse_empty(const std::string& text) -> std::string {
 auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
-  const std::string owned(text);
+  std::string owned(text);
+  if (schema == Schema::Card) {
+    try {
+      auto card = strict_object(text, std::string(path));
+      for (const auto* key : {"params", "sweeps"}) {
+        if (auto it = card.find(key); it != card.end())
+          it->second =
+              json::Quote(json::Encode(strict_object(it->second, key)));
+      }
+      owned = json::Encode(card);
+    } catch (const std::exception& e) {
+      throw DocumentError("invalid_document",
+                          std::string(path) + ": " + e.what(),
+                          {{"path", std::string(path)}});
+    }
+  }
   if (owned.find('\0') != std::string::npos || !p.ParseJson(owned.c_str()))
     throw DocumentError("invalid_document",
                         std::string(path) + ": " + describe(p.error_),
@@ -132,6 +183,25 @@ auto print(Schema schema, std::string_view buffer) -> std::string {
     throw DocumentError("invalid_document",
                         std::string("cannot print document: ") + error);
   text = collapse_empty(text);
+  if (schema == Schema::Card) {
+    const auto& card = root<D::Card>(buffer);
+    for (const auto& [key, value] : {std::pair{"params", card.params()},
+                                     std::pair{"sweeps", card.sweeps()}}) {
+      if (!value) continue;
+      const auto prefix = std::string("\n  \"") + key + "\": ";
+      const auto start = text.find(prefix) + prefix.size();
+      const auto end = text.find('\n', start);
+      const auto quoted_end = text[end - 1] == ',' ? end - 1 : end;
+      auto pretty = schema::pretty_text(value->string_view());
+      if (!pretty.empty() && pretty.back() == '\n') pretty.pop_back();
+      size_t newline = 0;
+      while ((newline = pretty.find('\n', newline)) != std::string::npos) {
+        pretty.insert(newline + 1, "  ");
+        newline += 3;
+      }
+      text.replace(start, quoted_end - start, pretty);
+    }
+  }
   if (text.empty() || text.back() != '\n') text += '\n';
   return text;
 }
@@ -156,6 +226,8 @@ auto verify(Schema schema, std::string_view buffer) -> bool {
       return v.VerifyBuffer<D::Comments>(nullptr);
     case Schema::Layout:
       return Tsugumi::Layout::VerifyLayoutBuffer(v);
+    case Schema::Lock:
+      return v.VerifyBuffer<D::ProjectLock>(nullptr);
   }
   return false;
 }

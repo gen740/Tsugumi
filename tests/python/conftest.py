@@ -30,7 +30,7 @@ WEB_ROOT = WEB_DIST / "public"
 
 EMPTY_PROJECT = {
     "name": "test",
-    "pkgsPath": "tsugumi:default",
+    "nixPath": [],
     "canvas": {"cards": [], "connections": []},
 }
 

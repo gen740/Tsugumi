@@ -184,7 +184,7 @@ class RealEnvironmentFixture : public EnvironmentFixture {
 TEST_F(RealEnvironmentFixture, AuthenticatesTheRealProjectServiceBeforeReady) {
   Write(
       project / "tsugumi.json",
-      R"({"name":"Environment","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"name":"Environment","nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   struct Startup {
     std::mutex mutex;
     std::condition_variable changed;

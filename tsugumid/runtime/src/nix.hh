@@ -87,12 +87,12 @@ class NixRunner {
   // and _params.fbs.
   static std::map<std::string, std::string> generate(const Node& node);
   // Builds JSON for all effective params and for nix:true params (Nix).
-  static std::string params_json(const Node& node, bool nix_only);
-  static std::string params_json(const std::vector<ParamDef>& params,
-                                 bool nix_only);
-  // FlatBuffer of all effective params (table Params).
-  static std::string params_buffer(const Node& node);
-  static types::TypeRef params_type(const Node& node);
+  // NIXPATH-CONTRACT: lane A supplies the locker and resolution records.
+  auto lock_source(const std::string& url) -> LockedSource;
+  auto params_declaration(const std::filesystem::path& def_dir,
+                          std::string_view text) -> std::string;
+  auto resolved_names(const CardPath& path) const
+      -> std::optional<std::vector<std::string>>;
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
   // Build only the declared view files on the UI's native store.

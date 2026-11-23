@@ -23,6 +23,12 @@
 
 namespace tsugumi {
 
+// NIXPATH-CONTRACT: use lane A's definition at integration.
+struct LockedSource {
+  std::string type, owner, repo, rev, nar_hash;
+  int64_t last_modified = 0;
+};
+
 inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 
 // Settings and entry source belong to one evaluator epoch; observed reads are

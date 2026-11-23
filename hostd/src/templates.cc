@@ -170,13 +170,12 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
     case H::BuiltinCard::BooleanInput: {
       const bool boolean = kind == H::BuiltinCard::BooleanInput;
       const std::string type = boolean ? "bool" : "double";
-      const std::string value = boolean ? R"({"bool":false})" : R"({"double":0})";
+      const std::string value = boolean ? "false" : "0.0";
       auto ns = id;
       std::ranges::replace(ns, '-', '_');
       std::ranges::replace(ns, '.', '_');
-      return {{"_card.json",
-               R"({"type":"input","params":[{"name":"value","type":")" + type +
-                   R"(","data":)" + value + "}]}"},
+      return {{"_card.json", R"({"type":"input"})"},
+              {"params.nix", "{ run = { value = " + value + "; }; }\n"},
               {"_outputs.fbs", "namespace " + ns +
                                    ";\ntable Value { value:" + type +
                                    "; }\ntable Outputs { value:Value "

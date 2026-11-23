@@ -55,8 +55,21 @@ table PreparedCard {
   closure:[string];
 }
 
+table PreparedParameter {
+  name:string (required);
+  type:string (required);
+  build:bool;
+  effective_json:string (required);
+}
+
+table PreparedCardSettings {
+  card:string (required);
+  parameters:[PreparedParameter];
+}
+
 table PreparedCards {
   cards:[PreparedCard];
+  settings:[PreparedCardSettings];
 }
 
 // ---- State folder ---------------------------------------------------------------

@@ -22,6 +22,7 @@
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/log.hh"
 #include "wire.hh"
@@ -180,9 +181,7 @@ auto recorded_params(const std::vector<ParamDef>& params)
     -> std::vector<std::pair<std::string, std::string>> {
   std::vector<std::pair<std::string, std::string>> result;
   for (const auto& param : params)
-    if (param.data)
-      result.emplace_back(param.name,
-                          param_value_json(param.type, *param.data));
+    if (param.data) result.emplace_back(param.name, *param.data);
   return result;
 }
 
@@ -1833,7 +1832,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
         parameter->type != ParamType::String)
       throw Failed(FailureKind::invalid_path,
                    "input " + port.name + " needs a path string `value`");
-    const std::string& relv = parameter->data->string;
+    const auto relv = json::String(*parameter->data);
     // Card-local by default; project: explicitly selects the Card's own
     // project, including when that project is an external.
     const bool project_relative = relv.starts_with("project:");
@@ -1913,9 +1912,8 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
               fields.push_back(prm);
           std::string bytes;
           std::string err;
-          if (!types::json_to_flatbuffer(
-                  *port.type, NixRunner::params_json(fields, false), &bytes,
-                  &err))
+          if (!types::json_to_flatbuffer(*port.type, params_json(fields),
+                                         &bytes, &err))
             throw Failed(FailureKind::output_invalid,
                          "input " + port.name + ": " + err);
           p.outputs.push_back(

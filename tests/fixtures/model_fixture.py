@@ -406,7 +406,7 @@ def decide_comments(messages, text, start):
                 "id": def_id, "card_json": json.dumps(card), "comments_json": json.dumps(meta), "keep_readme": True}})
         for cid in added:
             changes.append({"value_type": "PutDefinition", "value": {"id": cid, "card_json": json.dumps(
-                {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "x"}}]})}})
+                {"type": "input", "params": {"text": "x"}})}})
             changes.append({"value_type": "PutSource", "value": {
                 "path": f"definitions/{cid}/_outputs.fbs",
                 "bytes": "namespace added;\ntable Msg { text:string; }\ntable Outputs { msg:Msg (required); }\nroot_type Outputs;\n"}})
@@ -576,8 +576,7 @@ def decide(messages, system="", tools=()):
             v = json.loads(value)
         except ValueError:
             v = value
-        parameter = next(p for p in card["params"] if p["name"] == param)
-        parameter["data"] = {parameter["type"].replace("[]", "s"): v}
+        card.setdefault("params", {})[param] = v
         change = {"id": d["id"], "card_json": json.dumps(card), "keep_readme": True, "keep_comments": True}
         return ("tool", "project_save", {
             "base_rev": str(value_obj["rev"]),

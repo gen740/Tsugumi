@@ -83,10 +83,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [7, 8]))
-    graph.card("values", {"type": "input", "recordIO": True, "params": [
-        {"name": "left", "type": "uint64", "sweep": [{"uint64": 1}, {"uint64": 2}]},
-        {"name": "right", "type": "uint64", "sweep": [{"uint64": 10}, {"uint64": 20}, {"uint64": 30}]},
-    ]}, outputs=PAIR)
+    graph.card("values", {"type": "input", "recordIO": True, "_params": "{ run = { left = 0; right = 0; }; }", "sweeps": {"left": [1, 2], "right": [10, 20, 30]}}, outputs=PAIR)
     graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("starts", "out", "values", "start").connect("values", "out", "collect", "in")
     graph.save(client)
@@ -112,11 +109,11 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("one", {"type": "input", "recordIO": True,
-                       "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 5}]}]}, outputs=NUMBER)
+                       "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [5]}}, outputs=NUMBER)
     graph.card("vector", {"type": "input", "recordIO": True,
-                          "params": [{"name": "items", "type": "uint64[]", "data": {"uint64s": [1, 2, 3]}}]}, outputs=VECTOR)
+                          "_params": "{ run = { items = [ 0 ]; }; }", "params": {"items": [1, 2, 3]}}, outputs=VECTOR)
     graph.card("lists", {"type": "input", "recordIO": True,
-                         "params": [{"name": "items", "type": "uint64[]", "sweep": [{"uint64s": [1, 2]}, {"uint64s": []}, {"uint64s": [3]}]}]},
+                         "_params": "{ run = { items = [ 0 ]; }; }", "sweeps": {"items": [[1, 2], [], [3]]}},
                outputs=VECTOR)
     for name in ("one", "vector", "lists"):
         graph.card(f"collect-{name}", {"type": "collect", "recordIO": True})
@@ -144,7 +141,7 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
 def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
-    graph.card("values", {"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": []}]},
+    graph.card("values", {"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": []}},
                outputs=NUMBER)
     graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("values", "out", "collect", "in").save(client)
@@ -162,8 +159,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [0, 1]))
-    graph.card("values", {"type": "input", "params": [
-        {"name": "value", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(200))]}]}, outputs=NUMBER)
+    graph.card("values", {"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": list(range(200))}}, outputs=NUMBER)
     graph.connect("starts", "out", "values", "start").save(client)
 
     run_id = run(client, "starts", propagate=True)
@@ -175,16 +171,15 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
 
 
 @pytest.mark.parametrize("definition,message", [
-    ({"type": "input", "params": [{"name": "value", "type": "uint64", "data": {"uint64": 1}, "sweep": [{"uint64": 1}]}]},
-     "not both"),
-    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"int64": -2}]}]},
-     'sweep[1]: a uint64 value is written as {"uint64": ...}'),
-    ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(17))]},
-                                      {"name": "right", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(16))]}]},
-     "at most 256"),
-    ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"uint64": 2}]}],
+    ({"type": "input", "_params": "{ run = { value = 0; }; }", "params": {"value": 1}, "sweeps": {"value": [1]}},
+     "without an override"),
+    ({"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [1, "wrong"]}},
+     "expected int"),
+    ({"type": "input", "_params": "{ run = { left = 0; right = 0; }; }", "sweeps": {"left": list(range(17)), "right": list(range(16))}},
+     "exceeds 256"),
+    ({"type": "code", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [1, 2]},
       "_nix": "{ pkgs, inputs, params, ... }: { run = pkgs.emptyDirectory; }"},
-     "sweep is for Input Cards"),
+     "a sweep needs an Input Card"),
 ])
 def test_invalid_sweeps_are_definition_errors(core_factory, project, definition, message):
     write(project, {"values": {**definition, "_outputs": NUMBER}}, [{"id": "values", "definition": "values"}], [])

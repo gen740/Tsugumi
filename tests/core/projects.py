@@ -11,7 +11,6 @@ from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
-from harness.document import set_param
 
 MSG_FBS = """
 namespace demo;
@@ -78,18 +77,19 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
             continue
         d = c.get("definition")
         body = copy.deepcopy(defs[d]) if d else {"type": "draft"}
+        # NIXPATH-CONTRACT: lane A owns this fixture helper; carry declarations.
+        params = body.pop("_params", None)
         outputs, nix = body.pop("_outputs", None), body.pop("_nix", None)
         for k, v in c.items():
             if k not in ("id", "definition", "params"):
                 body[k] = v
         for pname, value in (c.get("params") or {}).items():
-            match = [p for p in body.get("params", []) if p["name"] == pname]
-            if not match:
-                raise ValueError(f"card {cid}: param {pname} is not defined")
-            set_param(body, pname, value)
+            body.setdefault("params", {})[pname] = value
         # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
         put(folder / "_card.json", json.dumps(body))
+        if params is not None:
+            put(folder / "params.nix", params)
         if outputs:
             put(folder / "_outputs.fbs", outputs)
         if nix:
@@ -102,7 +102,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         if not any(rel.startswith(p) for p in defs_names):
             put(root / rel, data)
     put(root / "tsugumi.json", json.dumps({
-        "name": name, "pkgsPath": "tsugumi:default",
+        "name": name, "nixPath": [],
         "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
 
 
@@ -110,8 +110,7 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
     """An input Card wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"type": "trigger"},
-        "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "x"}},
-                                                   {"name": "value", "type": "bool", "data": {"bool": True}}],
+        "source": {"type": "input", "_params": '{ run = { text = "x"; value = true; }; }',
                    "_outputs": MSG_FBS},
         "sink": SINK,
         "branch": {"type": "branch"},

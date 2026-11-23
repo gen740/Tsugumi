@@ -22,7 +22,10 @@ add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough
 
 function(tsugumi_use_nix_double target)
   set_property(TARGET ${target} PROPERTY TSUGUMI_MOCK_NIX ON)
-  target_sources(${target} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/doubles/nix_eval.cc")
+  target_sources(${target} PRIVATE "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/doubles/nix_eval.cc"
+    "${CMAKE_CURRENT_FUNCTION_LIST_DIR}/../../tsugumid/runtime/src/nix_params.cc")
+  target_compile_features(${target} PRIVATE cxx_std_23)
+  target_link_libraries(${target} PRIVATE PkgConfig::NIX)
   target_include_directories(${target} PRIVATE
     "$<TARGET_PROPERTY:tsugumi_nix_store,INTERFACE_INCLUDE_DIRECTORIES>")
 endfunction()

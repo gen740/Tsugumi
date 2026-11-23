@@ -259,7 +259,6 @@ auto Projects::Handle(const A::Request& request, uint64_t id) -> std::string {
     case A::RequestPayload::HostProjectDefaultsRequest: {
       A::ProjectDefaultsT value;
       value.agent_exclude = AgentExclude::Defaults();
-      value.nixpkgs_pin = json::Text(json::Object(raw), "nixpkgsPin");
       return reply(std::move(value));
     }
     case A::RequestPayload::HostProjectInfoRequest: {
@@ -310,15 +309,9 @@ auto Projects::Handle(const A::Request& request, uint64_t id) -> std::string {
 auto Projects::Apply(const A::Request& request) -> std::string {
   try {
     switch (request.value_type()) {
-      case A::RequestPayload::HostProjectDefaultsRequest: {
-        const auto document = parse_project_json(initial_project_json(""));
-        return json::Encode(json::Members{
-            {"nixpkgsPin",
-             json::Quote(document_text::root<Tsugumi::Document::Project>(
-                             document.buffer)
-                             .pkgsPath()
-                             ->str())}});
-      }
+      case A::RequestPayload::HostProjectDefaultsRequest:
+        return "{}";
+
       case A::RequestPayload::HostProjectInfoRequest:
         return Info(
             Path(request.value_as_HostProjectInfoRequest()->path()->str()));

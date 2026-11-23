@@ -28,6 +28,7 @@ struct SourcePatchIn {
 struct ChangeIn {
   enum class Kind {
     SetProject,
+    SetProjectLock,
     SetLayout,
     PutDefinition,
     RemoveDefinition,
@@ -44,7 +45,8 @@ struct ChangeIn {
   bool keep_readme = false;
   std::optional<std::string> comments_json;
   bool keep_comments = false;
-  std::string path;   // sources
+  std::optional<std::string> lock_json;
+  std::string path;   // sources and lock documents
   std::string bytes;  // PutSource
   std::optional<std::string> base_hash;
   std::vector<SourcePatchIn> patches;
@@ -79,6 +81,7 @@ struct StoreOptions {
   // Fault injection for tests ("" disables): after_prepare, partial_apply,
   // before_commit.
   std::string fault;
+  ParamsReader read_params = {};
 };
 
 class Store {
@@ -88,7 +91,7 @@ class Store {
   Store& operator=(const Store&) = delete;
 
   // Recovers pending writes and loads the document. Throws on failure.
-  void open();
+  void open(const std::function<void()>& before_resolve = {});
 
   DocumentPtr current() const;
   auto allocate_card_id(const std::string& stem,

@@ -40,6 +40,9 @@ struct OperationContext {
   std::function<std::string(const std::string&,
                             const std::function<std::string()>&)>
       reserve_template_id = {};
+  std::function<std::optional<std::vector<std::string>>(
+      const std::filesystem::path&, const std::string&)>
+      copy_resolution_names = {};
 };
 class ProjectOperations {
  public:

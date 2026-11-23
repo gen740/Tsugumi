@@ -278,7 +278,7 @@ inline auto View(const Tsugumi::Service::TextResult* value) -> std::string {
 }
 inline auto View(const H::ProjectDefaults* value) -> std::string {
   if (!value) return "null";
-  return Object({{"nixpkgsPin", View(value->nixpkgs_pin())}});
+  return Object({{"agentExclude", View(value->agent_exclude())}});
 }
 inline auto View(const H::ProjectInfo* value) -> std::string {
   if (!value) return "null";

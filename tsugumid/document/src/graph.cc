@@ -53,215 +53,164 @@ std::optional<CardType> parse_card_type(std::string_view name) {
   return std::nullopt;
 }
 
-std::optional<ParamType> parse_param_type(const std::string& s) {
-  static const std::map<std::string, ParamType> m = {
-      {"bool", ParamType::Bool},
-      {"int64", ParamType::Int64},
-      {"uint64", ParamType::UInt64},
-      {"double", ParamType::Double},
-      {"string", ParamType::String},
-      {"bool[]", ParamType::BoolArray},
-      {"int64[]", ParamType::Int64Array},
-      {"uint64[]", ParamType::UInt64Array},
-      {"double[]", ParamType::DoubleArray},
-      {"string[]", ParamType::StringArray},
-  };
-  auto it = m.find(s);
-  if (it == m.end()) return std::nullopt;
-  return it->second;
-}
-
-const char* param_type_name(ParamType t) {
-  switch (t) {
-    case ParamType::Bool:
-      return "bool";
-    case ParamType::Int64:
-      return "int64";
-    case ParamType::UInt64:
-      return "uint64";
-    case ParamType::Double:
-      return "double";
-    case ParamType::String:
-      return "string";
-    case ParamType::BoolArray:
-      return "bool[]";
-    case ParamType::Int64Array:
-      return "int64[]";
-    case ParamType::UInt64Array:
-      return "uint64[]";
-    case ParamType::DoubleArray:
-      return "double[]";
-    case ParamType::StringArray:
-      return "string[]";
-  }
-  return "string";
-}
-
-std::string param_fbs_type(ParamType t) {
-  switch (t) {
-    case ParamType::Bool:
-      return "bool";
-    case ParamType::Int64:
-      return "long";
-    case ParamType::UInt64:
-      return "ulong";
-    case ParamType::Double:
-      return "double";
-    case ParamType::String:
-      return "string";
-    case ParamType::BoolArray:
-      return "[bool]";
-    case ParamType::Int64Array:
-      return "[long]";
-    case ParamType::UInt64Array:
-      return "[ulong]";
-    case ParamType::DoubleArray:
-      return "[double]";
-    case ParamType::StringArray:
-      return "[string]";
-  }
-  return "string";
-}
-
 namespace {
+struct ParamTypeInfo {
+  ParamType type;
+  const char* name;
+  const char* fbs;
+};
+constexpr ParamTypeInfo kParamTypes[] = {
+    {ParamType::Bool, "bool", "bool"},
+    {ParamType::Int64, "int", "long"},
+    {ParamType::Double, "float", "double"},
+    {ParamType::String, "string", "string"},
+    {ParamType::BoolArray, "[bool]", "[bool]"},
+    {ParamType::Int64Array, "[int]", "[long]"},
+    {ParamType::DoubleArray, "[float]", "[double]"},
+    {ParamType::StringArray, "[string]", "[string]"},
+};
 
 namespace D = Tsugumi::Document;
 using document_text::str;
 
-// The ParamValue field of each param type.
-auto param_field(ParamType t) -> const char* {
-  switch (t) {
-    case ParamType::Bool:
-      return "bool";
-    case ParamType::Int64:
-      return "int64";
-    case ParamType::UInt64:
-      return "uint64";
-    case ParamType::Double:
-      return "double";
-    case ParamType::String:
-      return "string";
-    case ParamType::BoolArray:
-      return "bools";
-    case ParamType::Int64Array:
-      return "int64s";
-    case ParamType::UInt64Array:
-      return "uint64s";
-    case ParamType::DoubleArray:
-      return "doubles";
-    case ParamType::StringArray:
-      return "strings";
-  }
-  return "string";
-}
-
-auto number_json(double v) -> std::string {
+auto number_json(double value) -> std::string {
   char buffer[64];
-  const auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, v);
-  std::string out(buffer, ec == std::errc() ? end : buffer);
+  const auto [end, error] =
+      std::to_chars(buffer, buffer + sizeof buffer, value);
+  if (error != std::errc()) throw std::runtime_error("cannot print number");
+  std::string out(buffer, end);
   if (out.find_first_of(".eE") == std::string::npos) out += ".0";
   return out;
 }
 
-template <class T, class F>
-auto list_json(const std::vector<T>& values, F each) -> std::string {
-  std::string out = "[";
-  for (size_t i = 0; i < values.size(); ++i) {
-    if (i) out += ',';
-    out += each(values[i]);
-  }
-  return out + ']';
-}
+// Decimal or exponent notation can still denote an exact int64.
+auto integral_json(std::string_view raw) -> std::optional<std::string> {
+  const bool negative = raw.starts_with("-");
+  if (negative) raw.remove_prefix(1);
+  const auto exponent_at = raw.find_first_of("eE");
+  const auto mantissa = raw.substr(0, exponent_at);
+  const auto dot = mantissa.find('.');
+  std::string digits(mantissa);
+  if (dot != std::string_view::npos) digits.erase(dot, 1);
+  const auto first = digits.find_first_not_of('0');
+  if (first == std::string::npos) return "0";
+  digits.erase(0, first);
 
+  int exponent = 0;
+  if (exponent_at != std::string_view::npos) {
+    auto suffix = raw.substr(exponent_at + 1);
+    if (suffix.starts_with("+")) suffix.remove_prefix(1);
+    const auto [end, error] =
+        std::from_chars(suffix.data(), suffix.data() + suffix.size(), exponent);
+    if (error != std::errc() || end != suffix.data() + suffix.size())
+      return std::nullopt;
+  }
+  const auto fraction =
+      dot == std::string_view::npos ? 0 : mantissa.size() - dot - 1;
+  const auto shift =
+      static_cast<int64_t>(exponent) - static_cast<int64_t>(fraction);
+  if (shift < 0) {
+    if (static_cast<uint64_t>(-shift) >= digits.size()) return std::nullopt;
+    const auto end = digits.size() - static_cast<size_t>(-shift);
+    if (digits.find_first_not_of('0', end) != std::string::npos)
+      return std::nullopt;
+    digits.resize(end);
+  } else {
+    if (shift > 19 || digits.size() + static_cast<size_t>(shift) > 19)
+      return std::nullopt;
+    digits.append(static_cast<size_t>(shift), '0');
+  }
+  if (negative) digits.insert(digits.begin(), '-');
+  int64_t value = 0;
+  const auto [end, error] =
+      std::from_chars(digits.data(), digits.data() + digits.size(), value);
+  if (error != std::errc() || end != digits.data() + digits.size())
+    return std::nullopt;
+  return std::to_string(value);
+}
 }  // namespace
 
-std::optional<std::string> check_param_value(ParamType t,
-                                             const D::ParamValue& v) {
-  const std::pair<const char*, bool> set[] = {
-      {"bool", v.bool_().has_value()},
-      {"int64", v.int64().has_value()},
-      {"uint64", v.uint64().has_value()},
-      {"double", v.double_().has_value()},
-      {"string", v.string() != nullptr},
-      {"bools", v.bools() != nullptr},
-      {"int64s", v.int64s() != nullptr},
-      {"uint64s", v.uint64s() != nullptr},
-      {"doubles", v.doubles() != nullptr},
-      {"strings", v.strings() != nullptr},
-  };
-  const std::string field = param_field(t);
-  for (const auto& [name, present] : set) {
-    if (name == field && !present)
-      return "expected the " + field + " field for type " +
-             param_type_name(t);
-    if (name != field && present)
-      return std::string("a ") + param_type_name(t) + " value is written as {\"" +
-             field + "\": ...}, not " + name;
-  }
-  const auto finite = [](double d) { return std::isfinite(d); };
-  if ((v.double_() && !finite(*v.double_())) ||
-      (v.doubles() && !std::all_of(v.doubles()->begin(), v.doubles()->end(),
-                                   finite)))
-    return "doubles must be finite";
+auto parse_param_type(const std::string& name) -> std::optional<ParamType> {
+  for (const auto& info : kParamTypes)
+    if (name == info.name) return info.type;
   return std::nullopt;
 }
 
-auto param_value_json(ParamType t, const ParamValue& v) -> std::string {
-  const auto boolean = [](bool b) -> std::string { return b ? "true" : "false"; };
-  switch (t) {
-    case ParamType::Bool:
-      return boolean(v.bool_.value_or(false));
-    case ParamType::Int64:
-      return std::to_string(v.int64.value_or(0));
-    case ParamType::UInt64:
-      return std::to_string(v.uint64.value_or(0));
-    case ParamType::Double:
-      return number_json(v.double_.value_or(0));
-    case ParamType::String:
-      return json::Quote(v.string);
-    case ParamType::BoolArray: {
-      std::vector<bool> values(v.bools.begin(), v.bools.end());
-      return list_json(values, boolean);
-    }
-    case ParamType::Int64Array:
-      return list_json(v.int64s, [](int64_t x) { return std::to_string(x); });
-    case ParamType::UInt64Array:
-      return list_json(v.uint64s, [](uint64_t x) { return std::to_string(x); });
-    case ParamType::DoubleArray:
-      return list_json(v.doubles, number_json);
-    case ParamType::StringArray:
-      return list_json(v.strings,
-                       [](const std::string& x) { return json::Quote(x); });
+auto param_type_name(ParamType type) -> const char* {
+  for (const auto& info : kParamTypes)
+    if (type == info.type) return info.name;
+  throw std::logic_error("unknown param type");
+}
+
+auto param_fbs_type(ParamType type) -> std::string {
+  for (const auto& info : kParamTypes)
+    if (type == info.type) return info.fbs;
+  throw std::logic_error("unknown param type");
+}
+
+auto normalize_param_value(ParamType type, std::string_view raw)
+    -> std::string {
+  const auto captured = schema::capture(raw);
+  const std::string text = schema::text(captured);
+  const std::string_view value = text;
+  const std::string_view name = param_type_name(type);
+  if (name.starts_with("[")) {
+    const auto element =
+        *parse_param_type(std::string(name.substr(1, name.size() - 2)));
+    std::vector<std::string> values;
+    for (const auto& item : json::Array(value))
+      values.push_back(normalize_param_value(element, item));
+    return json::Encode(values);
   }
-  return "null";
-}
-
-namespace {
-// A Nix source's package overrides as the attribute set default.nix reads:
-// package -> {override, overrideAttrs}.
-auto overrides_json(const D::NixSource& source) -> std::string {
-  json::Members packages;
-  if (const auto* list = source.overrides())
-    for (const auto* o : *list) {
-      json::Members entry;
-      std::string text;
-      if (o->override()) {
-        o->override_flexbuffer_root().ToString(true, true, text);
-        entry["override"] = text;
-      }
-      if (o->overrideAttrs()) {
-        text.clear();
-        o->overrideAttrs_flexbuffer_root().ToString(true, true, text);
-        entry["overrideAttrs"] = text;
-      }
-      packages[o->package()->str()] = json::Encode(entry);
+  switch (type) {
+    case ParamType::Bool:
+      if (value == "true" || value == "false") return text;
+      break;
+    case ParamType::String:
+      if (value.starts_with("\"")) return json::Quote(json::String(value));
+      break;
+    case ParamType::Int64:
+      if (!value.empty() && (value.front() == '-' ||
+                             (value.front() >= '0' && value.front() <= '9')))
+        if (auto result = integral_json(value)) return *result;
+      break;
+    case ParamType::Double: {
+      double number = 0;
+      const auto [end, error] =
+          std::from_chars(value.data(), value.data() + value.size(), number);
+      if (error == std::errc() && end == value.data() + value.size() &&
+          std::isfinite(number))
+        return number_json(number);
+      break;
     }
-  return json::Encode(packages);
+    default:
+      break;
+  }
+  throw std::runtime_error("expected " + std::string(name));
 }
-}  // namespace
 
-auto param_value_label(ParamType t, const ParamValue& v) -> std::string {
-  return t == ParamType::String ? v.string : param_value_json(t, v);
+auto params_json(const std::vector<ParamDef>& params) -> std::string {
+  json::Members values;
+  for (const auto& param : params)
+    if (param.data) values[param.name] = *param.data;
+  return json::Encode(values);
+}
+
+auto params_buffer(const std::vector<ParamDef>& params) -> std::string {
+  if (params.empty()) return {};
+  std::vector<std::pair<std::string, std::string>> fields;
+  for (const auto& param : params)
+    fields.emplace_back(param.name, param_fbs_type(param.type));
+  std::ranges::sort(fields);
+  std::string error;
+  const auto type =
+      types::compile(types::params_schema(fields), "parameters.Params", &error);
+  if (!type) throw std::runtime_error("params schema: " + error);
+  std::string bytes;
+  if (!types::json_to_flatbuffer(**type, params_json(params), &bytes, &error,
+                                 /*force_defaults=*/true))
+    throw std::runtime_error("params: " + error);
+  return bytes;
 }
 
 bool has_value_sweep(const Settings& settings) {
@@ -291,7 +240,9 @@ ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
     if (values.empty()) throw std::out_of_range("empty value sweep");
     it->data = values.at(index % values.size());
     index /= values.size();
-    parts.push_back(it->name + "=" + param_value_label(it->type, *it->data));
+    parts.push_back(
+        it->name + "=" +
+        (it->type == ParamType::String ? json::String(*it->data) : *it->data));
     it->sweep.reset();
   }
   for (auto it = parts.rbegin(); it != parts.rend(); ++it)
@@ -357,8 +308,9 @@ Diag diag(const CardPath& card, std::string code, std::string message,
 
 class Builder {
  public:
-  Builder(const Document& doc, const SourceReader& read)
-      : doc_(doc), read_(read) {}
+  Builder(const Document& doc, const SourceReader& read,
+          const ParamsReader& read_params)
+      : doc_(doc), read_(read), read_params_(read_params) {}
 
   std::shared_ptr<Resolution> run() {
     res_ = std::make_shared<Resolution>();
@@ -561,85 +513,81 @@ class Builder {
   }
 
   void read_params(Node& n, const DefinitionDoc* def) {
-    std::set<std::string> names;
-    if (const auto* list = def->card().params()) {
-      for (const auto* p : *list) {
-        const auto name = p->name()->str();
-        const auto type = p->type()->str();
-        if (!valid_id(name)) {
-          n.diags.push_back(
-              diag(n.path, "invalid_param", "params need a valid name"));
-          continue;
-        }
-        auto pt = parse_param_type(type);
-        if (!pt) {
-          n.diags.push_back(diag(n.path, "invalid_param",
-                                 "Card " + path_key(n.path) + ": param " +
-                                     name + " has unknown type " + type +
-                                     "; write params[].type as bool, int64, "
-                                     "uint64, double, string, "
-                                     "or one of these with [] for a list"));
-          continue;
-        }
-        if (!names.insert(name).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_param", "duplicate param " + name));
-          continue;
-        }
-        ParamDef d;
-        d.name = name;
-        d.type = *pt;
-        d.nix = p->nix().value_or(false);
-        if (const auto* sweep = p->sweep()) {
-          if (n.kind != CardType::Input) {
-            n.diags.push_back(
-                diag(n.path, "invalid_param",
-                     "param " + d.name +
-                         ": sweep is for Input Cards; a Code Card lists its "
-                         "implementations in the run list of default.nix"));
-          } else if (p->data()) {
-            n.diags.push_back(
-                diag(n.path, "invalid_param",
-                     "param " + d.name +
-                         ": write data for one value or sweep for one "
-                         "invocation per value, not both"));
-          } else {
-            std::vector<ParamValue> values;
-            std::optional<std::string> error;
-            for (size_t i = 0; i < sweep->size() && !error; ++i) {
-              error = check_param_value(d.type, *sweep->Get(i));
-              if (error)
-                error = "sweep[" + std::to_string(i) + "]: " + *error;
-              else
-                values.push_back(*std::unique_ptr<ParamValue>(sweep->Get(i)->UnPack()));
-            }
-            if (error)
-              n.diags.push_back(diag(n.path, "invalid_param",
-                                     "param " + d.name + ": " + *error));
-            else
-              d.sweep = std::move(values);
-          }
-        }
-        if (const auto* data = p->data()) {
-          if (auto err = check_param_value(d.type, *data))
-            n.diags.push_back(
-                diag(n.path, "invalid_param", "param " + d.name + ": " + *err));
-          else
-            d.data = *std::unique_ptr<ParamValue>(data->UnPack());
-        }
-        n.settings.params.push_back(std::move(d));
+    const auto rel = n.def_dir + "params.nix";
+    auto values = json::Object(
+        def->card().params() ? def->card().params()->string_view() : "{}");
+    auto sweeps = json::Object(
+        def->card().sweeps() ? def->card().sweeps()->string_view() : "{}");
+    const auto invalid = [&](const std::string& message) {
+      n.diags.push_back(diag(n.path, "invalid_param", message, true, rel));
+    };
+    if (doc_.sources.contains(rel) && !read_params_) return;
+    try {
+      json::Members declarations;
+      if (doc_.sources.contains(rel)) {
+        if (doc_.sources.at(rel).size > kMaxDocumentJsonBytes)
+          throw std::runtime_error(rel + ": exceeds the 8 MiB document limit");
+        auto bytes = read_(rel);
+        if (!bytes)
+          throw std::runtime_error(rel +
+                                   " differs from the confirmed document");
+        declarations = json::Object(read_params_(n.def_dir, *bytes));
       }
+      json::Members build;
+      for (const std::string key : {"run", "build"}) {
+        for (const auto& raw :
+             json::Array(json::Get(declarations, key, "[]"))) {
+          const auto entry = json::Object(raw);
+          const auto name = json::Text(entry, "name");
+          const auto type = parse_param_type(json::Text(entry, "type"));
+          if (!type || !valid_id(name)) {
+            invalid("invalid declaration for param " + name);
+            continue;
+          }
+          ParamSetting setting{name, key == "build", *type, entry.at("default"),
+                               std::nullopt};
+          ParamDef param{name, *type, setting.default_json, std::nullopt};
+          if (const auto value = values.extract(name); !value.empty()) {
+            setting.value_json = value.mapped();
+            try {
+              param.data = normalize_param_value(*type, value.mapped());
+            } catch (const std::exception& error) {
+              invalid("param " + name + ": " + error.what());
+            }
+          }
+          if (const auto sweep = sweeps.extract(name); !sweep.empty()) {
+            try {
+              if (n.kind != CardType::Input || setting.build ||
+                  setting.value_json)
+                throw std::runtime_error(
+                    "a sweep needs an Input Card run param without an "
+                    "override");
+              std::vector<std::string> members;
+              for (const auto& member : json::Array(sweep.mapped()))
+                members.push_back(normalize_param_value(*type, member));
+              param.sweep = std::move(members);
+            } catch (const std::exception& error) {
+              invalid("param " + name + ": " + error.what());
+            }
+          }
+          if (setting.build)
+            build.emplace(name, *param.data);
+          else
+            n.settings.params.push_back(std::move(param));
+          n.param_settings.push_back(std::move(setting));
+        }
+      }
+      for (const auto& [name, _] : values) invalid("undeclared param " + name);
+      for (const auto& [name, _] : sweeps)
+        invalid("undeclared sweep param " + name);
+      n.build_params_json = json::Encode(build);
+      if (value_sweep_size(n.settings) > kMaxValueSweepSize)
+        invalid("the value sweep exceeds 256 combinations per trigger");
+      if (n.kind == CardType::Code)
+        n.run_params_buffer = params_buffer(n.settings.params);
+    } catch (const std::exception& error) {
+      invalid(error.what());
     }
-    for (const auto& p : n.settings.params)
-      if (!p.data && !p.sweep)
-        n.exec_diags.push_back(
-            diag(n.path, "missing_param", "param " + p.name + " has no value"));
-    if (const auto size = value_sweep_size(n.settings);
-        size > kMaxValueSweepSize)
-      n.diags.push_back(
-          diag(n.path, "invalid_param",
-               "the value sweep makes " + std::to_string(size) +
-                   " combinations; at most 256 are allowed per trigger"));
   }
 
   void load_catalog(Node& n) {
@@ -704,13 +652,11 @@ class Builder {
   // ("externals/<p>/", nested further inside its own externals).
   void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
-    std::string pkgs =
-        project.pkgsPath() ? project.pkgsPath()->str() : "tsugumi:default";
-    std::vector<NixSourceRef> sources;
-    if (const auto* list = project.nixSources())
-      for (const auto* s : *list)
-        sources.push_back({s->name()->str(), s->type()->str(),
-                           s->ref()->str(), overrides_json(*s)});
+    std::vector<NixPathEntry> sources;
+    if (const auto* list = project.nixPath())
+      for (const auto* entry : *list)
+        sources.push_back({entry->name()->str(), entry->url()->str()});
+
     for (const auto* card : *project.canvas()->cards()) {
       const auto id = card->id()->str();
       Node n;
@@ -718,8 +664,7 @@ class Builder {
       n.path.push_back(id);
       n.def_dir = prefix + "definitions/" + id + "/";
       n.project_dir = prefix;
-      n.pkgs_path = pkgs;
-      n.nix_sources = sources;
+      n.nix_path = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
         auto it = doc_.definitions.find(id);
@@ -1246,60 +1191,52 @@ class Builder {
           res_->guaranteed[i].push_back(k);
   }
 
-  // Follow transparent built-ins to the producers of declared inputs.
-  auto trace_nix_producers(size_t source, std::set<size_t>& visiting,
-                           std::set<size_t>& result) const -> void {
-    const auto kind = res_->nodes[source].kind;
-    if (kind != CardType::Collect && kind != CardType::Branch &&
-        kind != CardType::Fork && kind != CardType::Merge) {
-      result.insert(source);
-      return;
+  auto exports_producer(size_t source) const -> std::optional<size_t> {
+    std::set<size_t> visited;
+    while (visited.insert(source).second) {
+      switch (res_->nodes[source].kind) {
+        case CardType::Code:
+          return source;
+        case CardType::Branch:
+        case CardType::Fork:
+        case CardType::Collect: {
+          const auto port =
+              res_->nodes[source].kind == CardType::Collect ? "in" : "value";
+          const auto& incoming = res_->incoming[source];
+          const auto upstream = incoming.find(port);
+          if (upstream == incoming.end()) return std::nullopt;
+          source = upstream->second;
+          break;
+        }
+        default:
+          return std::nullopt;
+      }
     }
-    if (!visiting.insert(source).second) {
-      result.insert(source);
-      return;
-    }
-    bool found = false;
-    for (const auto& edge : res_->edges) {
-      if (edge.to != source) continue;
-      if (kind == CardType::Branch && edge.to_port != "value") continue;
-      found = true;
-      trace_nix_producers(edge.from, visiting, result);
-    }
-    if (!found) result.insert(source);
-    visiting.erase(source);
+    return std::nullopt;
   }
 
   auto resolve_nix_inputs() -> void {
-    for (size_t i = 0; i < res_->nodes.size(); ++i) {
-      auto& node = res_->nodes[i];
+    for (const auto& edge : res_->edges) {
+      auto& node = res_->nodes[edge.to];
       if (node.kind != CardType::Code) continue;
-      const auto allowed = res_->nix_upstream(i);
-      std::map<std::string, std::set<size_t>> producers;
-      for (const auto& edge : res_->edges) {
-        if (edge.to != i) continue;
-        std::set<size_t> visiting;
-        trace_nix_producers(edge.from, visiting, producers[edge.to_port]);
+      const auto* port = node.input(edge.to_port);
+      if (!port) continue;
+      auto producer = exports_producer(edge.from);
+      if (producer) {
+        const auto allowed = res_->nix_upstream(edge.to);
+        if (std::ranges::find(allowed, *producer) == allowed.end())
+          producer.reset();
       }
-      for (const auto& [name, from] : producers) {
-        if (name == "tsugumi" || name == "sources") {
-          node.diags.push_back(
-              diag(node.path, "nix_input_reserved",
-                   "input " + name + " is reserved by the Nix SDK"));
-          continue;
-        }
-        if (from.size() != 1) continue;
-        const size_t producer = *from.begin();
-        if (std::ranges::find(allowed, producer) != allowed.end()) {
-          node.nix_inputs.emplace(name, producer);
-          node.nix_references.push_back({res_->nodes[producer].path, name});
-        }
-      }
+      node.nix_ports.emplace(edge.to_port, NixInput{*port, producer});
+      if (producer)
+        node.nix_references.push_back(
+            {res_->nodes[*producer].path, edge.to_port});
     }
   }
 
   const Document& doc_;
   const SourceReader& read_;
+  const ParamsReader& read_params_;
   std::deque<DefinitionDoc> external_defs_;
   std::deque<std::string> projects_;  // nested tsugumi.json buffers
   std::shared_ptr<Resolution> res_;
@@ -1322,8 +1259,9 @@ std::vector<size_t> Resolution::nix_upstream(size_t node) const {
 }
 
 std::shared_ptr<const Resolution> resolve(const Document& doc,
-                                          const SourceReader& read) {
-  return Builder(doc, read).run();
+                                          const SourceReader& read,
+                                          const ParamsReader& read_params) {
+  return Builder(doc, read, read_params).run();
 }
 
 }  // namespace tsugumi

@@ -148,7 +148,8 @@ struct VersionFiles {
 
   auto includes(const std::string& path) const -> bool {
     if (!Document::valid_version_path(path)) return false;
-    if (Document::is_document_file(path) || Document::is_source_area(path))
+    if (Document::is_document_file(path) || Document::is_source_area(path) ||
+        Document::is_lock_file(path))
       return true;
     return std::any_of(extra.begin(), extra.end(), [&](const auto& p) {
       return Document::valid_version_path(p) &&
@@ -199,8 +200,9 @@ auto stage_project(git_repository* r, const stdfs::path& root,
       if (!files.descends(path)) it.disable_recursion_pending();
     } else if (stdfs::is_regular_file(status) && files.includes(path)) {
       const auto bytes = fs::read_beneath(root, path);
-      if (accepted && (Document::is_document_file(path) ||
-                       Document::is_source_area(path))) {
+      if (accepted &&
+          (Document::is_document_file(path) || Document::is_source_area(path) ||
+           Document::is_lock_file(path))) {
         auto hash = expected.find(path);
         if (hash == expected.end() || hash->second != crypto::sha256_hex(bytes))
           changed(path);
@@ -330,7 +332,7 @@ auto compare_comments(git_repository* repo, git_tree* before, git_tree* after)
 }
 
 auto diff_reads(const std::string& path) -> bool {
-  if (path == "tsugumi.json")
+  if (path == "tsugumi.json" || Document::is_lock_file(path))
     return true;  // layout.bin is where things sit, not what they do
   std::vector<std::string> parts;
   for (const auto& p : stdfs::path(path)) parts.push_back(p.string());
@@ -407,7 +409,9 @@ auto card_document(const std::optional<std::string>& text,
   }
   D::CardT params;
   params.params = std::move(card.params);
+  params.sweeps = std::move(card.sweeps);
   card.params.clear();
+  card.sweeps.clear();
   const auto print = [](const D::CardT& c) {
     return document_text::print(document_text::Schema::Card,
                                 document_text::pack<D::Card>(c));
@@ -530,8 +534,8 @@ auto decode_runs(const std::string& bytes) -> std::vector<VersionRunNote> {
 }  // namespace
 
 std::optional<std::string> Versions::card_of(const std::string& path) {
-  if (path == "tsugumi.json" || path == "layout.bin" ||
-      path.starts_with("notes/"))
+  if (path == "tsugumi.json" || path == "tsugumi.lock" ||
+      path == "layout.bin" || path.starts_with("notes/"))
     return std::string();
   std::vector<std::string> parts;
   for (const auto& p : stdfs::path(path)) parts.push_back(p.string());
@@ -541,7 +545,8 @@ std::optional<std::string> Versions::card_of(const std::string& path) {
     prefix += parts[i + 1] + "/";
     i += 2;
     if (i < parts.size() &&
-        (parts[i] == "tsugumi.json" || parts[i] == "layout.bin"))
+        (parts[i] == "tsugumi.json" || parts[i] == "tsugumi.lock" ||
+         parts[i] == "layout.bin"))
       return prefix.substr(0, prefix.size() - 1);  // the Card in Card itself
   }
   if (i + 2 < parts.size() && parts[i] == "definitions")
@@ -769,8 +774,9 @@ void Versions::checkout(
 
   // Untracked and ignored paths survive an ordinary checkout. Give Git the
   // same input here and install this exact tree after validation.
-  std::set<std::string> roots{"tsugumi.json", "layout.bin", "notes", "definitions",
-                              "externals", "skills", "templates"};
+  std::set<std::string> roots{"tsugumi.json", "tsugumi.lock", "layout.bin",
+                              "notes",        "definitions",  "externals",
+                              "skills",       "templates"};
   for (auto* tree : {baseline.get(), target_tree.get()})
     for (size_t i = 0; i < git_tree_entrycount(tree); ++i) {
       const std::string name =
@@ -1128,11 +1134,12 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
     const auto* delta = git_diff_get_delta(d.get(), i);
     const std::string path =
         delta->new_file.path ? delta->new_file.path : delta->old_file.path;
-    const bool source = source_input(path);
+    const bool source = source_input(path) || Document::is_lock_file(path);
     // Other files are opaque to the run definition (including README.md).
     const auto filename = stdfs::path(path).filename().string();
     if (!source && filename != "tsugumi.json" && filename != "_card.json" &&
-        filename != "_outputs.fbs" && filename != "default.nix")
+        filename != "_outputs.fbs" && filename != "default.nix" &&
+        filename != "params.nix")
       continue;
     auto card = card_of(path);
     if (!card) continue;

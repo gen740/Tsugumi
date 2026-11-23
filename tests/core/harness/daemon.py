@@ -37,8 +37,9 @@ FAULTS = {
 
 def write_project(root: Path) -> None:
     root.mkdir(parents=True, exist_ok=True)
+    # NIXPATH-CONTRACT: lane A owns this fixture helper.
     (root / "tsugumi.json").write_text(json.dumps({
-        "name": "rpc-test", "pkgsPath": "tsugumi:default",
+        "name": "rpc-test", "nixPath": [],
         "canvas": {"cards": [], "connections": []},
     }))
 

@@ -84,7 +84,7 @@ def host(tmp_path):
                 if isinstance(value, bytes): return value.decode()
                 if isinstance(value, list): return [view(item) for item in value]
                 if not hasattr(value, "__dict__"): return value
-                names = {"nixpkgsPin": "nixpkgsPin", "openedAt": "openedAt"}
+                names = {"openedAt": "openedAt"}
                 return {names.get(k, k): view(v) for k, v in vars(value).items() if v is not None}
 
             def call(method, fields=None, *, external=False):

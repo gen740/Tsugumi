@@ -458,7 +458,7 @@ def test_remote_path_forwarding_requires_the_exact_input(project, remote_gateway
                                                        tmp_path, forwarded_path):
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("source", {
-        "type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "report.txt"}}],
+        "type": "input", "params": {"value": "report.txt"}, "_params": '{ run = { value = ""; }; }',
         "retainArtifact": True,
     }, outputs=FILE_FBS, sources={"report.txt": "forwarded bytes"})
     add_worker(graph, "work", tmp_path / "package", [], outputs=FILE_FBS,

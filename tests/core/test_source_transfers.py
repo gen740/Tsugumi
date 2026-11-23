@@ -242,9 +242,7 @@ def test_host_selected_source_root_and_more_than_1000_files(project, core_factor
 def test_transfer_permission_widening_still_requires_explicit_approval(project, core_factory, tmp_path):
     from projects import SINK, card, card_in_card, conn, write
 
-    write(project, {"src": {"type": "input", "params": [
-        {"name": "text", "type": "string", "data": {"string": "x"}},
-        {"name": "value", "type": "bool", "data": {"bool": True}}],
+    write(project, {"src": {"type": "input", "params": {"text": "x", "value": True}, "_params": '{ run = { text = ""; value = false; }; }',
         "_outputs": "table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},
         "sink": SINK}, [card_in_card("inner", [card("src", "src"), card("out", "sink")],
             [conn("src", "msg", "out", "in")], {"inputs": {}, "outputs": {}})], [])

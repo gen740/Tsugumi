@@ -243,7 +243,7 @@ def waiting_plugin(tmp_path):
     wrapper.write_text("#!/bin/sh\nexport TSUGUMI_MOCK_CONTROL=" + shlex.quote(str(control)) +
                        "\nexec " + shlex.quote(str(mock)) + ' "$@"\n')
     wrapper.chmod(0o700)
-    write_project(tmp_path / "proj", {"name": "wait", "pkgsPath": "tsugumi:default",
+    write_project(tmp_path / "proj", {"name": "wait", "nixPath": [],
                                       "canvas": {"cards": [{"id": "work"}], "connections": []}})
     definition = tmp_path / "proj/definitions/work"
     definition.mkdir(parents=True)

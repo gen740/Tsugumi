@@ -18,34 +18,6 @@ enum CardType:ubyte {
   subgraph,
 }
 
-/// One param value, in the field named after the param's declared type
-/// (`bool`, `int64`, `uint64`, `double`, `string`; `bools`, `int64s`,
-/// `uint64s`, `doubles`, `strings` for the list types). The core checks that
-/// exactly that field is set.
-table ParamValue {
-  bool:bool = null;
-  int64:long = null;
-  uint64:ulong = null;
-  double:double = null;
-  string:string;
-  bools:[bool];
-  int64s:[long];
-  uint64s:[ulong];
-  doubles:[double];
-  strings:[string];
-}
-
-table Param {
-  name:string (required);
-  /// bool, int64, uint64, double, string, or one of those followed by [].
-  type:string (required);
-  data:ParamValue;
-  /// An Input Card's direct value sweep: one invocation per value, instead
-  /// of data. A list-typed param sweeps lists.
-  sweep:[ParamValue];
-  nix:bool = null;
-}
-
 table Input {
   name:string (required);
 }
@@ -97,7 +69,11 @@ table Card {
   /// externals/<external>/ for a subgraph (Card in Card).
   external:string;
   symbol:string;
-  params:[Param];
+  /// JSON object of person-set values. Carried losslessly as JSON text in
+  /// the buffer and represented as an object in the document.
+  params:string;
+  /// Input Card sweeps, name to array of values. Types come from params.nix.
+  sweeps:string;
   inputs:[Input];
   /// A Fork's.
   outputs:[Output];

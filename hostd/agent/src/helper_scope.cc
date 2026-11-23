@@ -394,7 +394,7 @@ auto HelperScope::Graph(const std::string& text,
                         const std::string& prefix) const -> std::string {
   const auto project = json::Object(text);
   json::Members visible;
-  for (const auto* key : {"name", "pkgsPath"})
+  for (const auto* key : {"name", "nixPath"})
     if (project.contains(key)) visible[key] = project.at(key);
   const auto canvas = json::Object(json::Get(project, "canvas", "{}"));
   visible["canvas"] = json::Encode(

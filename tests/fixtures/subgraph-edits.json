@@ -24,27 +24,27 @@
     }
   },
   {
-    "projectJson": "{\n  \"name\": \"p\",\n  \"pkgsPath\": \"https://example.test/pinned#sha256-pin\",\n  \"nixSources\": [\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"a\"\n      },\n      {\n        \"id\": \"b\"\n      }\n    ],\n    \"connections\": []\n  }\n}\n",
+    "projectJson": "{\n  \"name\": \"p\",\n  \"nixPath\": [{\"name\":\"science\",\"url\":\"github:science/science\"}],\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"a\"\n      },\n      {\n        \"id\": \"b\"\n      }\n    ],\n    \"connections\": []\n  }\n}\n",
     "cards": [
       "a",
       "b"
     ],
     "id": "sub",
     "reply": {
-      "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      },{\n        \"id\": \"b\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
-      "projectJson": "{\"canvas\":{\"cards\":[{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
+      "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      },{\n        \"id\": \"b\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixPath\":[{\"name\":\"science\",\"url\":\"github:science/science\"}]}",
+      "projectJson": "{\"canvas\":{\"cards\":[{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixPath\":[{\"name\":\"science\",\"url\":\"github:science/science\"}]}",
       "cardJson": "{\"type\":\"subgraph\",\"external\":\"sub\"}"
     }
   },
   {
-    "projectJson": "{\n  \"name\": \"p\",\n  \"pkgsPath\": \"https://example.test/pinned#sha256-pin\",\n  \"nixSources\": [\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"a\"\n      },\n      {\n        \"id\": \"b\"\n      },\n      {\n        \"id\": \"a-2\"\n      }\n    ],\n    \"connections\": []\n  }\n}\n",
+    "projectJson": "{\n  \"name\": \"p\",\n  \"nixPath\": [{\"name\":\"science\",\"url\":\"github:science/science\"}],\n  \"canvas\": {\n    \"cards\": [\n      {\n        \"id\": \"a\"\n      },\n      {\n        \"id\": \"b\"\n      },\n      {\n        \"id\": \"a-2\"\n      }\n    ],\n    \"connections\": []\n  }\n}\n",
     "cards": [
       "a"
     ],
     "id": "sub",
     "reply": {
-      "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
-      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"b\"\n      },{\n        \"id\": \"a-2\"\n      },{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixSources\":[\n    {\n      \"name\": \"science\",\n      \"type\": \"flake\",\n      \"ref\": \"github:org/science/revision?narHash=sha256-pin\",\n      \"overrides\": {\n        \"tool\": {\n          \"override\": {\n            \"flag\": true\n          }\n        }\n      }\n    }\n  ],\"pkgsPath\":\"https://example.test/pinned#sha256-pin\"}",
+      "externalJson": "{\"boundary\":{\"inputs\":{},\"outputs\":{}},\"canvas\":{\"cards\":[{\n        \"id\": \"a\"\n      }],\"connections\":[]},\"name\":\"sub\",\"nixPath\":[{\"name\":\"science\",\"url\":\"github:science/science\"}]}",
+      "projectJson": "{\"canvas\":{\"cards\":[{\n        \"id\": \"b\"\n      },{\n        \"id\": \"a-2\"\n      },{\"id\":\"sub\"}],\"connections\":[]},\"name\":\"p\",\"nixPath\":[{\"name\":\"science\",\"url\":\"github:science/science\"}]}",
       "cardJson": "{\"type\":\"subgraph\",\"external\":\"sub\"}"
     }
   }

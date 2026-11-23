@@ -51,7 +51,7 @@ def set_text(c, value: str):
 def src_text(c) -> str:
     snap = c.call("ProjectInspectRequest")
     body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == "src")
-    return next(p for p in body["params"] if p["name"] == "text")["data"]["string"]
+    return body["params"]["text"]
 
 
 def test_runs_commit_note_and_branch(tmp_path, core_factory):
@@ -232,7 +232,7 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
     root = tmp_path / "p"
     builtin_project(root, text="final")
     card = json.loads((root / "definitions" / "src" / "_card.json").read_text())
-    tried = dict(card, params=[dict(p, data="tried") if p["name"] == "text" else p for p in card["params"]])
+    tried = dict(card, params={**card.get("params", {}), "text": "tried"})
     history = {
         "commits": [
             {"id": "plan", "message": "計画", "time": 1793700000, "files": {"definitions/src/_card.json": json.dumps(tried)}},
@@ -321,7 +321,7 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     independent = [f"more{i}" for i in range(7)]
     write(root,
           defs={"trigger": {"type": "trigger"},
-                "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "first"}}], "_outputs": MSG_FBS},
+                "source": {"type": "input", "params": {"text": "first"}, "_params": '{ run = { text = ""; }; }', "_outputs": MSG_FBS},
                 "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],

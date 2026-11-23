@@ -91,7 +91,8 @@ auto merged_type(const std::vector<const PortType*>& inputs, std::string* error)
 
 // Builds a FlatBuffer of `t` from JSON text. Returns false with error text.
 bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error);
+                        std::string* out, std::string* error,
+                        bool force_defaults = false);
 // Writes the core-owned union box without decoding the nested buffer.
 auto wrap_in_union(uint8_t tag, const std::string& bytes) -> std::string;
 // Verifies `bytes` as a buffer of `t`.

@@ -28,6 +28,245 @@ auto Field(std::vector<std::string> fields, std::string old_value,
   edit.new_value->json = std::move(new_value);
   return edit;
 }
+TEST(NixPathDocument, ValidatesNamesAndUrlsAndSortsLockLines) {
+  const auto project = [](std::string entries) {
+    return "{\"nixPath\":" + entries +
+           ",\"canvas\":{\"cards\":[],\"connections\":[]}}";
+  };
+  EXPECT_NO_THROW(parse_project_json(
+      project(R"([{"name":"9.compile_x-1","url":"github:org/repo"}])")));
+  for (
+      const auto* entries : {
+          R"([{"name":"_bad","url":"github:org/repo"}])",
+          R"([{"name":"ok","url":"github:org/repo"},{"name":"ok","url":"gitlab:org/repo"}])",
+          R"([{"name":"ok"}])",
+          R"([{"name":"ok","url":"invalid url"}])",
+      })
+    EXPECT_THROW(parse_project_json(project(entries)), DocumentError);
+  const auto lock = parse_project_lock("tsugumi.lock", R"({"nixPath":[
+    {"name":"z","url":"github:org/z","locked":{"type":"github","rev":"z","narHash":"sha256-z"}},
+    {"name":"a","url":"gitlab:org/a","locked":{"type":"gitlab","rev":"a","narHash":"sha256-a"}}
+  ]})");
+  const auto& lines =
+      *document_text::root<Tsugumi::Document::ProjectLock>(lock.buffer)
+           .nixPath();
+  ASSERT_EQ(lines.size(), 2);
+  EXPECT_EQ(lines.Get(0)->name()->str(), "a");
+  EXPECT_EQ(lines.Get(1)->name()->str(), "z");
+  EXPECT_EQ(parse_project_lock("tsugumi.lock", lock.text).text, lock.text);
+}
+
+struct FakeNixPathCore {
+  json::Members snapshot;
+  json::Members save;
+  std::vector<std::string> calls;
+  bool recorded = false;
+  bool fail_lock = false;
+
+  auto Call(const std::string& method, const json::Members& args)
+      -> OperationReply {
+    json::Members value;
+    std::string reply;
+    if (method == "operation_get") {
+      reply = "OperationResult";
+      value = {{"state", "\"unknown\""}};
+    } else if (method == "project_inspect") {
+      reply = "ProjectSnapshot";
+      value = snapshot;
+    } else if (method == "nix_path_lock_source") {
+      const auto url = json::Text(args, "url");
+      calls.push_back(url);
+      if (fail_lock) {
+        reply = "Failure";
+        value = {{"kind", "\"nix_failed\""}, {"diagnostic", "\"lock failed\""}};
+      } else {
+        reply = "NixPathLockedSource";
+        value = json::Object(
+            R"({"type":"github","owner":"org","repo":"repo","rev":"new","nar_hash":"sha256-new","last_modified":"42"})");
+      }
+    } else if (method == "card_nix_path_names") {
+      reply = "CardNixPathNames";
+      value = {{"recorded", recorded ? "true" : "false"},
+               {"names", R"(["used"])"}};
+    } else {
+      EXPECT_EQ(method, "project_save");
+      reply = "SaveResult";
+      value = {{"rev", "\"8\""}};
+      save = args;
+    }
+    return {json::Encode(json::Members{{"reply", json::Quote(reply)},
+                                       {"value", json::Encode(value)}}),
+            {}};
+  }
+
+  auto Execute(const H::ProjectOperateRequestT& operation) -> OperationReply {
+    save.clear();
+    calls.clear();
+    return ProjectOperations().Execute(
+        operation, {"ui", {}, {}, {}},
+        [this](const auto& method, const auto& args) {
+          return Call(method, args);
+        });
+  }
+
+  auto ReadChange(const std::string& kind) const -> json::Members {
+    for (const auto& raw : json::Array(json::Get(save, "changes", "[]"))) {
+      const auto change = json::Object(raw);
+      if (json::Text(change, "value_type") == kind)
+        return json::Object(change.at("value"));
+    }
+    return {};
+  }
+};
+
+auto SourceDoc(const std::string& path, const std::string& bytes)
+    -> std::string {
+  return json::Encode(
+      json::Members{{"path", json::Quote(path)},
+                    {"hash", json::Quote(crypto::sha256_hex(bytes))},
+                    {"document", json::Quote(bytes)}});
+}
+
+TEST(NixPathOperation, RootAndExternalLocksUpdateOneAndAllAtomically) {
+  const std::string project =
+      R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[],"connections":[]}})";
+  const std::string old =
+      R"({"nixPath":[{"name":"stale","url":"github:org/stale",
+    "locked":{"type":"github","rev":"old","narHash":"sha256-old"}}]})";
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json", json::Quote(project)},
+      {"sources", json::Encode(std::vector<std::string>{
+                      SourceDoc("tsugumi.lock", old),
+                      SourceDoc("externals/sub/tsugumi.json", project),
+                      SourceDoc("externals/sub/tsugumi.lock", old)})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "update";
+  H::ProjectUpdateNixPathLockT update;
+  update.name = "used";
+  operation.body.Set(update);
+  core.Execute(operation);
+  auto change = core.ReadChange("SetProjectLock");
+  EXPECT_EQ(json::Text(change, "path"), "tsugumi.lock");
+  EXPECT_EQ(json::Text(change, "base_hash"), crypto::sha256_hex(old));
+  EXPECT_EQ(core.calls, (std::vector<std::string>{"github:org/repo"}));
+  EXPECT_NE(json::Text(change, "json").find("stale"), std::string::npos);
+  update.project_path = "externals/sub";
+  update.name.clear();
+  operation.body.Set(update);
+  core.Execute(operation);
+  change = core.ReadChange("SetProjectLock");
+  EXPECT_EQ(json::Text(change, "path"), "externals/sub/tsugumi.lock");
+  EXPECT_EQ(json::Text(change, "json").find("stale"), std::string::npos);
+  EXPECT_NE(json::Text(change, "json").find("sha256-new"), std::string::npos);
+  core.fail_lock = true;
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+}
+
+TEST(NixPathOperation, ParamOverrideUsesTheConfirmedDeclarationAndRevision) {
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json",
+       R"("{\"canvas\":{\"cards\":[{\"id\":\"a\"}],\"connections\":[]}}")"},
+      {"definitions",
+       R"([{"id":"a","card_json":"{\"type\":\"code\",\"params\":{\"scale\":2,\"keep\":true}}"}])"},
+      {"resolution",
+       R"([{"card":{"segments":["a"]},"parameters":[{"name":"scale","section":"run","type":"float","default_json":"1.0"}]}])"}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "edit";
+  H::ProjectSetParamT set;
+  set.card = std::make_unique<Tsugumi::Data::CardPathT>();
+  set.card->segments = {"a"};
+  set.name = "scale";
+  set.expected_rev = 7;
+  set.value_json = "10";
+  operation.body.Set(set);
+  core.Execute(operation);
+  const auto params = [&] {
+    const auto change = core.ReadChange("PutDefinition");
+    return json::Object(
+        json::Object(json::Text(change, "card_json")).at("params"));
+  };
+  EXPECT_EQ(params().at("scale"), "10.0");
+  set.value_json.clear();
+  operation.body.Set(set);
+  core.Execute(operation);
+  EXPECT_EQ(params(), (json::Members{{"keep", "true"}}));
+  set.value_json = "\"invalid\"";
+  operation.body.Set(set);
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+  set.value_json = "1.0";
+  set.expected_rev = 6;
+  operation.body.Set(set);
+  EXPECT_THROW(core.Execute(operation), Failure);
+  EXPECT_TRUE(core.save.empty());
+}
+
+TEST(NixPathOperation, CopyUsesRecordOrExplicitChoiceAndRefusesCollision) {
+  const std::string source =
+      R"({"nixPath":[{"name":"unused","url":"github:org/unused"},{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[{"id":"source"}],"connections":[]}})";
+  const std::string pin = R"({"nixPath":[{"name":"used","url":"github:org/repo",
+    "locked":{"type":"github","rev":"old","narHash":"sha256-old"}}]})";
+  FakeNixPathCore core;
+  const auto populate = [&](std::string target) {
+    core.snapshot = {
+        {"rev", "\"7\""},
+        {"project_json", json::Quote(source)},
+        {"definitions",
+         R"([{"id":"source","card_json":"{\"type\":\"draft\"}"}])"},
+        {"sources", json::Encode(std::vector<std::string>{
+                        SourceDoc("tsugumi.lock", pin),
+                        SourceDoc("externals/sub/tsugumi.json", target)})}};
+  };
+  populate(R"({"canvas":{"cards":[],"connections":[]}})");
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "copy";
+  H::ProjectCopyT copy;
+  copy.project_path = "externals/sub";
+  auto item = std::make_unique<H::ProjectCopyItemT>();
+  item->from = "definitions/source/";
+  item->id = "copy";
+  copy.items.push_back(std::move(item));
+  operation.body.Set(copy);
+
+  const auto choices = json::Object(core.Execute(operation).json);
+  EXPECT_EQ(json::Text(choices, "reply"), "NixPathCopyChoices");
+  EXPECT_EQ(json::Object(choices.at("value")).at("names"),
+            R"(["unused","used"])");
+  EXPECT_TRUE(core.save.empty());
+
+  copy.items.front()->choose_nix_path_names = true;
+  copy.items.front()->nix_path_names = {"used"};
+  operation.body.Set(copy);
+  core.Execute(operation);
+  auto lock = core.ReadChange("SetProjectLock");
+  EXPECT_EQ(json::Text(lock, "path"), "externals/sub/tsugumi.lock");
+  EXPECT_NE(json::Text(lock, "json").find("sha256-old"), std::string::npos);
+
+  core.recorded = true;
+  copy.items.front()->nix_path_names = {"unused"};
+  operation.body.Set(copy);
+  core.Execute(operation);
+  lock = core.ReadChange("SetProjectLock");
+  EXPECT_NE(json::Text(lock, "json").find("sha256-old"), std::string::npos);
+
+  populate(
+      R"({"nixPath":[{"name":"used","url":"github:other/repo"}],"canvas":{"cards":[],"connections":[]}})");
+  const auto collision = json::Object(core.Execute(operation).json);
+  const auto message =
+      json::Text(json::Object(collision.at("value")), "diagnostic");
+  EXPECT_NE(message.find("github:org/repo"), std::string::npos);
+  EXPECT_NE(message.find("github:other/repo"), std::string::npos);
+  EXPECT_TRUE(core.save.empty());
+}
+
 auto WirePort(const std::string& from, const std::string& to,
               const std::string& from_port, const std::string& to_port,
               const std::string& side, const std::string& value)
@@ -58,7 +297,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   SaveBase base;
   base.snapshot["rev"] = "7";
   const std::string before =
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})";
   base.files["tsugumi.json"] = before;
   base.files["definitions/knn/_card.json"] = R"({"type":"draft"})";
   H::ProjectEditsT edits;
@@ -230,7 +469,7 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     SCOPED_TRACE(scenario);
     Document doc;
     doc.project_json =
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
     doc.project_buffer = parse_project_json(doc.project_json).buffer;
     const auto add = [&](const std::string& id, const std::string& raw) {
       DefinitionDoc definition;
@@ -242,7 +481,7 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":{"double":3}}]})"
+            ? R"({"type":"code","inputs":[{"name":"source"}],"params":{"k":3}})"
             : R"({"type":"code","inputs":[]})");
     const auto resolved = resolve(
         doc, [](const auto&) -> std::optional<std::string> { return {}; });
@@ -260,13 +499,13 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     EXPECT_TRUE(found);
   }
 }
-TEST(ProjectEdit,
-     PreservesEveryUntouchedByteIncludingPinsHashesAndUint64Spelling) {
+TEST(ProjectEdit, PreservesEveryUntouchedByteIncludingNixPath) {
   const std::string before =
-      "{\n  \"name\": \"before\",\n  \"pkgsPath\": \"nixpkgs-stable\",\n"
-      "  \"nixSources\": { \"pin\": {\"hash\": \"sha256-ExactBytes=\", "
-      "\"rev\": 18446744073709551615} },\n"
+      "{\n  \"name\": \"before\",\n"
+      "  \"nixPath\": [ {\"name\": \"science\", \"url\": "
+      "\"github:org/science\"} ],\n"
       "  \"canvas\": {\"cards\":[],\"connections\":[]}\n}\n";
+
   auto edit = Field({"name"}, "\"before\"", "\"after\"");
   auto expected = before;
   expected.replace(expected.find("before"), 6, "after");

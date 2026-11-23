@@ -8,6 +8,7 @@
 #include <sstream>
 
 #include "nix_eval.hh"
+#include "nix_params.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/flat_file.hh"
@@ -249,40 +250,23 @@ static auto nixpkgs_pin(const std::string& pkgs) -> NixpkgsPin {
   return pin;
 }
 
-types::TypeRef NixRunner::params_type(const Node& node) {
-  std::vector<std::pair<std::string, std::string>> fields;
-  for (const auto& p : node.settings.params)
-    fields.emplace_back(p.name, param_fbs_type(p.type));
-  std::string err;
-  auto t =
-      types::compile(types::params_schema(fields), "parameters.Params", &err);
-  if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
-  return *t;
+// NIXPATH-CONTRACT: lane A replaces these adapters with evaluator RPCs and
+// records.
+auto NixRunner::lock_source(const std::string& url) -> LockedSource {
+  throw Failed(FailureKind::nix_failed,
+               "nixPath locker is unavailable for " + url);
 }
 
-std::string NixRunner::params_json(const Node& node, bool nix_only) {
-  return params_json(node.settings.params, nix_only);
+auto NixRunner::params_declaration(const stdfs::path& def_dir,
+                                   std::string_view text) -> std::string {
+  auto origin = def_dir.generic_string();
+  if (!origin.ends_with('/')) origin += '/';
+  return evaluate_literal_params(origin, text);
 }
 
-std::string NixRunner::params_json(const std::vector<ParamDef>& params,
-                                   bool nix_only) {
-  // The params, in their declared order, as the JSON default.nix reads.
-  std::string out = "{";
-  for (const auto& p : params) {
-    if ((nix_only && !p.nix) || !p.data) continue;
-    if (out.size() > 1) out += ',';
-    out += json::Quote(p.name) + ':' + param_value_json(p.type, *p.data);
-  }
-  return out + '}';
-}
-
-std::string NixRunner::params_buffer(const Node& node) {
-  auto t = params_type(node);
-  std::string out;
-  std::string err;
-  if (!types::json_to_flatbuffer(*t, params_json(node, false), &out, &err))
-    throw Failed(FailureKind::validation_failed, "params: " + err);
-  return out;
+auto NixRunner::resolved_names(const CardPath&) const
+    -> std::optional<std::vector<std::string>> {
+  return std::nullopt;
 }
 
 std::map<std::string, std::string> NixRunner::generate(const Node& node) {
@@ -394,29 +378,17 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     }
     return content_dir("gen", h.finish_hex(), [&] { return files; });
   };
-  // The port schemas, the Nix-visible params and the project's declared
-  // nixSources. A source is evaluated only when the Card's evaluation forces
-  // it; the declarations are what the project's permissions approved.
+  // NIXPATH-CONTRACT: lane A replaces this adapter with per-port types and
+  // locked sources.
   auto with_sources = [&](const Node& n) {
     std::map<std::string, std::string> generated;
     for (auto& [name, content] : generate(n))
       generated.emplace("schemas/" + name, std::move(content));
-    generated["params-nix.json"] = params_json(n, true);
-    std::string sources = "[";
-    for (const auto& s : n.nix_sources) {
-      auto name = schema::string_value(s.name);
-      auto type = schema::string_value(s.type);
-      auto ref = schema::string_value(s.ref);
-      auto overrides = schema::string_value(s.overrides);
-      if (sources.size() > 1) sources += ",";
-      sources += schema::object_text({{"name", &name},
-                                      {"type", &type},
-                                      {"ref", &ref},
-                                      {"overrides", &overrides}});
-    }
-    generated["sources.json"] = sources + "]";
+    generated["params-nix.json"] = n.build_params_json;
+    generated["sources.json"] = "[]";
     return generated;
   };
+
   // Another system's binaries run through the kernel's binfmt_misc: without
   // an entry for it, Nix would refuse the build with a less helpful message.
   std::string emulator;
@@ -434,21 +406,23 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
           {{"system", req.target.system}});
   }
   auto files = with_sources(node);
-  const auto pin = nixpkgs_pin(node.pkgs_path);
+  const auto pin = nixpkgs_pin("tsugumi:default");
   files["nixpkgs.json"] = schema::encode(pin);
   // Only wired, guaranteed producers can supply Nix exports.
   const auto& graph = *req.doc->resolution;
   std::set<size_t> allowed;
   auto visit = [&](auto&& walk, const Node& owner) -> void {
-    for (const auto& [_, producer] : owner.nix_inputs)
-      if (allowed.insert(producer).second) walk(walk, graph.nodes[producer]);
+    for (const auto& [_, port] : owner.nix_ports)
+      if (port.exports_node && allowed.insert(*port.exports_node).second)
+        walk(walk, graph.nodes[*port.exports_node]);
   };
   visit(visit, node);
   const auto dependencies = [&](const Node& owner) {
     std::string json = "[";
-    for (const auto& [name, producer] : owner.nix_inputs) {
+    for (const auto& [name, port] : owner.nix_ports) {
+      if (!port.exports_node) continue;
       if (json.size() > 1) json += ",";
-      json += dep_json(graph.nodes[producer].path, name);
+      json += dep_json(graph.nodes[*port.exports_node].path, name);
     }
     return json + "]";
   };

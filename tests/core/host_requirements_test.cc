@@ -15,7 +15,7 @@ class HostRequirements : public ::testing::Test {
   auto SetUp() -> void override {
     fs::write_atomic(
         root / "tsugumi.json",
-        R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+        R"({"nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
     fs::write_atomic(
         root / "definitions/a/_card.json",
         R"({"type":"code","executionService":"local","grants":{"hostPaths":[{"name":"data","path":"/data"}]}})");
@@ -66,9 +66,8 @@ TEST_F(HostRequirements, EmptyAndRemoteCardsNeedNoHostShare) {
   fs::write_atomic(root / "definitions/a/_card.json",
                    R"({"type":"code","executionService":"remote"})");
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
-  fs::write_atomic(
-      root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+  fs::write_atomic(root / "tsugumi.json",
+                   R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   EXPECT_TRUE(load_host_requirements(root).folders.empty());
 }
 }  // namespace

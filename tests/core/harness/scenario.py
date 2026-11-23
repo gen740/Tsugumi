@@ -50,6 +50,10 @@ class Project:
 
     def card(self, name, definition, *, outputs=None, plan=None, sources=None):
         files = dict(sources or {})
+        # NIXPATH-CONTRACT: lane A owns this fixture helper; carry declarations.
+        definition = dict(definition)
+        if "_params" in definition:
+            files["params.nix"] = definition.pop("_params")
         if outputs is not None:
             files["_outputs.fbs"] = outputs
         if plan is not None:

@@ -104,7 +104,7 @@ def test_port_types_flow_through_branch(core_factory, project):
     """A downstream Card sees the original value type through a Branch."""
     _, resolved = inspect_graph(core_factory, project, {
         "source": code(), "branch": {"type": "branch"},
-        "condition": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": True}}], "_outputs": FLAG},
+        "condition": {"type": "input", "params": {"value": True}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG},
         "sink": code(["in"]),
     }, [conn("source", "out", "branch", "value"),
         conn("condition", "flag", "branch", "condition"), conn("branch", "a", "sink", "in")])

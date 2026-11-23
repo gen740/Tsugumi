@@ -80,9 +80,16 @@ Off<R::ResolvedCard> resolved(FBB& b, const Node& n) {
   for (const auto& ref : n.nix_references)
     refs.push_back(R::CreateCardNixReference(
         b, path(b, ref.target), b.CreateString(ref.name)));
-  return R::CreateResolvedCard(b, path(b, n.path), b.CreateVector(ins),
-                               b.CreateVector(outs), diagnostics(b, diags),
-                               b.CreateVector(refs));
+  std::vector<Off<R::CardParameter>> parameters;
+  for (const auto& param : n.param_settings)
+    parameters.push_back(R::CreateCardParameterDirect(
+        b, param.name.c_str(),
+        param.build ? R::ParamSection::build : R::ParamSection::run,
+        param_type_name(param.type), param.default_json.c_str(),
+        param.value_json ? param.value_json->c_str() : nullptr));
+  return R::CreateResolvedCard(
+      b, path(b, n.path), b.CreateVector(ins), b.CreateVector(outs),
+      diagnostics(b, diags), b.CreateVector(refs), b.CreateVector(parameters));
 }
 
 Off<flatbuffers::Vector<Off<R::ResolvedCard>>> resolution(FBB& b,

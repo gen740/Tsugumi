@@ -10,6 +10,7 @@
 
 #include "execution_service.hh"
 #include "nix.hh"
+#include "nix_params.hh"
 #include "permissions.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
@@ -254,18 +255,24 @@ Service::Service(ServiceOptions opts) : opts_(std::move(opts)) {
 Service::~Service() { shutdown(); }
 
 void Service::open() {
-  store_ = std::make_unique<Store>(StoreOptions{opts_.root, opts_.fault});
-  store_->open();
+  store_ = std::make_unique<Store>(
+      StoreOptions{opts_.root, opts_.fault, [&](const auto& dir, auto text) {
+                     if (!opts_.prepared_cards.empty())
+                       return evaluate_literal_params(dir, text);
+                     return nix_->params_declaration(dir, text);
+                   }});
+  stdfs::path scratch;
+  store_->open([&] {
+    scratch =
+        opts_.scratch_dir.empty()
+            ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
+            : opts_.scratch_dir;
+    nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+  });
   history_ = std::make_unique<History>(store_->state_dir() / "runs.sqlite",
                                        opts_.fault);
   versions_ = std::make_unique<Versions>(opts_.root);
-  // Local folders (never the project share): the evaluator's inputs by
-  // content and the workers' own folders.
-  auto scratch =
-      opts_.scratch_dir.empty()
-          ? stdfs::temp_directory_path() / ("tsugumi-" + store_->project_id())
-          : opts_.scratch_dir;
-  nix_ = std::make_unique<NixRunner>(*this, scratch / "nix");
+
   substituters_ = configured_substituters(opts_.substituters_file);
   for (const char* d : {"runs", "inputs"})
     stdfs::create_directories(store_->state_dir() / d);
@@ -746,7 +753,8 @@ std::vector<std::string> Service::capabilities() {
                                    "ViewSetVisible",
                                    "ViewSave",
                                    "CardViewRead",
-                                   "NixSourceResolve",
+                                   "NixPathLockSource",
+                                   "CardNixPathNames",
                                    "VersionInit",
                                    "VersionMark",
                                    "VersionCheckout",
@@ -976,8 +984,10 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::input_types);
     case P::OutputTypesRequest:
       return on_lane(r, std::move(req), &Service::output_types);
-    case P::NixSourceResolveRequest:
-      return on_lane(r, std::move(req), &Service::nix_source_resolve);
+    case P::NixPathLockSourceRequest:
+      return on_lane(r, std::move(req), &Service::nix_path_lock_source);
+    case P::CardNixPathNamesRequest:
+      return on_lane(r, std::move(req), &Service::card_nix_path_names);
     case P::CardApiRequest:
       return on_lane(r, std::move(req), &Service::card_api);
     case P::RunPlanRequest:
@@ -1544,6 +1554,14 @@ std::vector<ChangeIn> decode_changes(
         ch.kind = ChangeIn::Kind::SetProject;
         ch.json = c->value_as_SetProject()->json()->str();
         break;
+      case R::DocumentChangeValue::SetProjectLock: {
+        const auto* lock = c->value_as_SetProjectLock();
+        ch.kind = ChangeIn::Kind::SetProjectLock;
+        ch.path = lock->path()->str();
+        if (lock->json()) ch.lock_json = lock->json()->str();
+        if (lock->base_hash()) ch.base_hash = lock->base_hash()->str();
+        break;
+      }
       case R::DocumentChangeValue::SetLayout:
         ch.kind = ChangeIn::Kind::SetLayout;
         if (const auto* bytes = c->value_as_SetLayout()->layout())
@@ -2608,19 +2626,39 @@ void Service::file_read(RequestIn& req) {
                              bytes->size(), hash));
 }
 
-void Service::nix_source_resolve(RequestIn& req) {
-  auto info = nix_->resolve_flake(
-      project_request(req)->value_as_NixSourceResolveRequest()->ref()->str());
+void Service::nix_path_lock_source(RequestIn& req) {
+  const auto url =
+      project_request(req)->value_as_NixPathLockSourceRequest()->url()->str();
+  if (!supported_nix_path_url(url))
+    throw Failed(FailureKind::invalid_request,
+                 "Unsupported nixPath URL " + url +
+                     "; expected github:, gitlab: or sourcehut:");
+  const auto info = nix_->lock_source(url);
   FBB b;
-  std::vector<flatbuffers::Offset<flatbuffers::String>> packages;
-  for (const auto& p : info.packages) packages.push_back(b.CreateString(p));
-  auto ref = b.CreateString(info.ref);
-  auto rev = b.CreateString(info.rev);
-  auto hash = b.CreateString(info.nar_hash);
-  auto res =
-      R::CreateNixSourceResolved(b, ref, rev, hash, b.CreateVector(packages));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::NixSourceResolved,
-                         res.Union()));
+  const auto source = R::CreateNixPathLockedSourceDirect(
+      b, info.type.c_str(), info.owner.empty() ? nullptr : info.owner.c_str(),
+      info.repo.empty() ? nullptr : info.repo.c_str(), info.rev.c_str(),
+      info.nar_hash.c_str(), info.last_modified);
+  reply(req, wire::reply(b, req.request_id,
+                         R::ReplyPayload::NixPathLockedSource, source.Union()));
+}
+
+void Service::card_nix_path_names(RequestIn& req) {
+  const auto* query = project_request(req)->value_as_CardNixPathNamesRequest();
+  const auto doc = store_->current();
+  if (query->at_rev() && *query->at_rev() != doc->rev)
+    throw Failed(FailureKind::revision_conflict, "project revision changed");
+  const auto dir = query->definition_dir()->string_view();
+  const auto node =
+      std::ranges::find(doc->resolution->nodes, dir, &Node::def_dir);
+  const auto names = node == doc->resolution->nodes.end()
+                         ? std::nullopt
+                         : nix_->resolved_names(node->path);
+  FBB b;
+  const auto result = R::CreateCardNixPathNames(
+      b, names.has_value(), names ? b.CreateVectorOfStrings(*names) : 0);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardNixPathNames,
+                         result.Union()));
 }
 
 void Service::input_types(RequestIn& req) {

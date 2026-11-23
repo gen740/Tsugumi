@@ -200,7 +200,8 @@ class Service : public RequestSink {
   void file_read(RequestIn& req);
   void output_types(RequestIn& req);
   void input_types(RequestIn& req);
-  void nix_source_resolve(RequestIn& req);
+  void nix_path_lock_source(RequestIn& req);
+  void card_nix_path_names(RequestIn& req);
   void card_api(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);
