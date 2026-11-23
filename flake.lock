@@ -71,11 +71,11 @@
         ]
       },
       "locked": {
-        "lastModified": 1795421002,
-        "narHash": "sha256-VsxrkkV+wLpbHLZjn5kQjSIVSIQXg80hQ1e9lu/hMlY=",
+        "lastModified": 1795433528,
+        "narHash": "sha256-izi0h8DFTMsNv0iShVdkGwp/qLvhli2XGQv+P8yrJ0M=",
         "owner": "gen740",
         "repo": "tsugumi-kit",
-        "rev": "b26b95d68b37e038f954126cb5b263a3f7844840",
+        "rev": "d877ed11303997268e2806bfccaf028f7275930b",
         "type": "github"
       },
       "original": {
