@@ -1,5 +1,7 @@
 # Tsugumi documents
 
+> **Before v1.0.0, any release may break compatibility.** Project files, the Card ABI, the SDKs and settings can change from one release to the next, without migration. Pin the version you use, and expect to update your projects when you upgrade.
+
 The concept, and a walkthrough with real screens, are in the [README](../README.md).
 Start from the document that fits what you want to read. To read with moving figures, there is the [web version](https://gen740.github.io/Tsugumi/) (the same documents). For AI, [llms.txt](https://gen740.github.io/Tsugumi/llms.txt) points to the Markdown of each page.
 
