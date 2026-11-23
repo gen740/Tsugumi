@@ -3,7 +3,7 @@
 # The document schemas, compiled by the FlatBuffers parser that reads the
 # documents' JSON text.
 set(_document_schema_sources "")
-foreach(schema ${TSUGUMI_DOCUMENT_SCHEMAS})
+foreach(schema ${TSUGUMI_DOCUMENT_SCHEMAS} card)
   set(_output ${CMAKE_CURRENT_BINARY_DIR}/${schema}_fbs.cc)
   add_custom_command(
     OUTPUT ${_output}

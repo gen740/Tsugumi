@@ -1,5 +1,6 @@
 // FlatBuffer payloads of the Card entry point.
 include "card_enums.fbs";
+include "artifact.fbs";
 
 namespace Tsugumi.Card;
 
@@ -34,3 +35,7 @@ table CardResult {
   outputs:[CardPort] (id: 0);
   failure:CardFailure (id: 1);
 }
+
+namespace tsugumi.builtin;
+table Envelope { schema:string; bytes:[ubyte]; artifacts:[tsugumi.ArtifactId]; }
+table Collected { items:[Envelope] (id: 0); }
