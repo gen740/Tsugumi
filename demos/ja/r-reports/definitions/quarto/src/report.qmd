@@ -22,5 +22,4 @@ values <- unlist(data, use.names = FALSE)
 if (is.numeric(values)) plot(values, type = "b", xlab = "Observation", ylab = "Value")
 ```
 
-File and Directory input paths are available through
-`params$tsugumi$paths$data`. Add R packages in `default.nix`.
+Add R packages in `default.nix`.

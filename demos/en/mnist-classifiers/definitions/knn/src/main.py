@@ -1,4 +1,6 @@
 """k nearest neighbours: a test digit takes the majority label of the k closest training digits."""
+from card import Input, Output, params
+from mnist.Result import ResultT
 import os
 
 # One thread: the numbers repeat and the times compare. Before the imports: the libraries read it as they load.
@@ -26,20 +28,20 @@ def confusions(ax, y, pred):
 def result(name, settings, digest, y, pred, fit, predict):
     model = name
     predictions = pred.astype(np.uint8)
-    return {'result': {
-        'model': model,
-        'settings': settings,
-        'digest': digest,
-        'accuracy': float(np.mean(pred == y)),
-        'fit_seconds': fit,
-        'predict_seconds': predict,
-        'predictions': predictions,
-    }}
+    return Output(result=ResultT(
+        model=model,
+        settings=settings,
+        digest=digest,
+        accuracy=float(np.mean(pred == y)),
+        fitSeconds=fit,
+        predictSeconds=predict,
+        predictions=predictions,
+    ))
 
 
-def main(inputs, report):
-    k = inputs.params.k
-    data = np.load(inputs.data.value.decode())
+def run(inputs: Input) -> Output:
+    k = params.k
+    data = np.load(inputs.require("data").open() / "subset.npz")
     train_x, train_y, test_x, test_y = data["train_images"], data["train_labels"], data["test_images"], data["test_labels"]
 
     model = KNeighborsClassifier(n_neighbors=k, algorithm="brute")
@@ -50,7 +52,7 @@ def main(inputs, report):
     pred = model.predict(test_x)
     predict = time.process_time() - start
     accuracy = np.mean(pred == test_y)
-    report.log(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
+    print(f"knn k={k}: accuracy {accuracy:.4f}, fit {fit:.3f} s, predict {predict:.3f} s")
 
     # What it did on a few mistakes: the test digit, then its nearest training digits.
     wrong = np.flatnonzero(pred != test_y)[:6]
@@ -70,6 +72,6 @@ def main(inputs, report):
     right.tick_params(length=0)
     right.set_title("Digits it got wrong, and their neighbours")
     fig.suptitle(f"k-nearest neighbours k={k}: accuracy {accuracy:.4f}, training {fit:.2f} s, prediction {predict:.2f} s", fontsize=11)
-    report.figure()
+    # TODO(open): Port the demo display.
 
     return result('knn', f'k={k}', str(data['digest']), test_y, pred, fit, predict)

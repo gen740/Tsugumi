@@ -1,22 +1,24 @@
 library(ggplot2)
 
 # Two methods on the same data: which genes do they agree on?
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  fdr <- inputs$params$fdr
-  a <- read.csv(inputs$path("deseq2"))
-  b <- read.csv(inputs$path("edger"))
+  fdr <- params$fdr
+  a <- read.csv(file.path(artifact_open(inputs$deseq2), "deseq2.csv"))
+  b <- read.csv(file.path(artifact_open(inputs$edger), "edger.csv"))
   d <- merge(a[, c("gene_id", "symbol", "log2fc", "fdr")], b[, c("gene_id", "log2fc", "fdr")], by = "gene_id", suffixes = c("_deseq2", "_edger"))
   d$in_deseq2 <- !is.na(d$fdr_deseq2) & d$fdr_deseq2 < fdr
   d$in_edger <- !is.na(d$fdr_edger) & d$fdr_edger < fdr
   d$class <- ifelse(d$in_deseq2 & d$in_edger, "both", ifelse(d$in_deseq2, "DESeq2 only", ifelse(d$in_edger, "edgeR only", "neither")))
   n <- table(factor(d$class, c("both", "DESeq2 only", "edgeR only", "neither")))
-  file <- file.path(run$output_directory, "agreement.csv")
+  file <- file.path(workspace, "agreement.csv")
   write.csv(as.data.frame(n, responseName = "genes"), file, row.names = FALSE)
-  outputs[["agreement"]] <- list(value = file)
+  outputs[["agreement"]] <- artifact_upload(file)
   overlap <- n[["both"]] / (n[["both"]] + n[["DESeq2 only"]] + n[["edgeR only"]])
   correlation <- cor(d$log2fc_deseq2, d$log2fc_edger, use = "complete.obs")
-  report$log(paste(capture.output(print(n)), collapse = "\n"))
+  message(paste(capture.output(print(n)), collapse = "\n"))
   unset <- sum(d$class == "edgeR only" & is.na(d$fdr_deseq2))
   shown <- d[order(d$class != "neither"), ]
   figure <- ggplot(shown, aes(log2fc_deseq2, log2fc_edger, colour = class)) +
@@ -31,7 +33,7 @@ main <- function(inputs, report, run) {
                             100 * overlap, correlation, unset)) +
     theme_minimal(base_size = 11) +
     theme(legend.position = "top")
-  report$figure(print(figure), alt = sprintf("DESeq2 and edgeR agree on %d genes", n[["both"]]), width = 7, height = 5)
+  # TODO(open): Port the demo display.
 
   outputs
 }

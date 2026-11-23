@@ -1,3 +1,4 @@
+from card import Artifact, Input, Output, params as card_params
 import os
 
 import numpy as np
@@ -23,23 +24,24 @@ def whiten(h, fs, f_low, f_high):
     return filtfilt(b, a, white)
 
 
-def main(inputs, report, run):
-    p = inputs.params
-    folder = inputs.data.value.decode()
+def run(inputs: Input) -> Output:
+    artifact, directory = Artifact.dir()
+    p = card_params
+    folder = inputs.require("data").open()
     names = sorted(n for n in os.listdir(folder) if n.endswith(".hdf5"))
     series, saved = [], {}
     for name in names:
         det = name.split("-")[0] + "1"
         h, fs, t0 = read(os.path.join(folder, name))
-        w = whiten(h, fs, p.fLow, p.fHigh)
-        t = t0 + np.arange(len(h)) / fs - p.tEvent
+        w = whiten(h, fs, p.f_low, p.f_high)
+        t = t0 + np.arange(len(h)) / fs - p.t_event
         saved[det] = w
         saved["t"] = t
         keep = (t > -p.before) & (t < p.after)
         w_std = w[(t > -10) & (t < -2)].std()
-        series.append({"id": det, "label": f"{det} whitened ({p.fLow:g}-{p.fHigh:g} Hz)",
+        series.append({"id": det, "label": f"{det} whitened ({p.f_low:g}-{p.f_high:g} Hz)",
                        "x": t[keep].tolist(), "y": (w[keep] / w_std).tolist()})
-        report.log(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}")
-    np.savez(os.path.join(run.output_directory, "whitened.npz"), fs=fs, **saved)
-    report.line_chart(series)
-    return {'whitened': {"value": run.output_directory}}
+        print(f"{det}: {len(h)} samples at {fs} Hz from GPS {t0:.0f}")
+    np.savez(os.path.join(directory, "whitened.npz"), fs=fs, **saved)
+    # TODO(open): Port the demo display.
+    return Output(whitened=artifact)

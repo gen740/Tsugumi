@@ -1,10 +1,11 @@
 """Checks the MNIST files fixed by Nix (IDX format) and shows samples of each digit."""
 import struct
 
-import matplotlib.pyplot as plt
 import numpy as np
 
-from card.dataset import DIRECTORY as directory, SOURCE as source  # written by default.nix
+from dataset import DIRECTORY as directory, SOURCE as source  # written by default.nix
+from card import Artifact, Input, Output
+from mnist.Dataset import DatasetT
 from tsugumi import Failure
 
 
@@ -19,7 +20,7 @@ def read_idx(path, magic, dims):
     return values.reshape(head[1:])
 
 
-def main(inputs, report):
+def run(input: Input) -> Output:
     train_images = read_idx(f'{directory}/train-images-idx3-ubyte', 2051, 3)
     train_labels = read_idx(f'{directory}/train-labels-idx1-ubyte', 2049, 1)
     test_images = read_idx(f'{directory}/t10k-images-idx3-ubyte', 2051, 3)
@@ -28,22 +29,11 @@ def main(inputs, report):
         raise Failure("output_invalid", f"unexpected shapes {train_images.shape}, {test_images.shape}")
     if len(train_labels) != 60000 or len(test_labels) != 10000:
         raise Failure("output_invalid", "the label files do not match the image files")
-    report.log(f"source: {source}")
-    report.log(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}")
+    print(f"source: {source}")
+    print(f"train: {train_images.shape}, test: {test_images.shape}, directory: {directory}")
 
-    per_digit = 20
-    rows = [np.hstack(test_images[test_labels == d][:per_digit]) for d in range(10)]
-    fig, ax = plt.subplots(figsize=(7.2, 4.4), layout="constrained")
-    ax.imshow(np.vstack(rows), cmap="gray_r", vmin=0, vmax=255)
-    ax.set_yticks(np.arange(10) * 28 + 14, labels=range(10))
-    ax.set_xticks([])
-    ax.tick_params(length=0)
-    ax.set_title(f"MNIST handwritten digits: {len(train_labels)} training, {len(test_labels)} test images\n"
-                 f"The first {per_digit} test images of each digit. Source: {source}", fontsize=10)
-    report.figure()
-    return {'dataset': {
-        'directory': directory,
-        'source': source,
-        'train_count': len(train_labels),
-        'test_count': len(test_labels),
-    }}
+    # TODO(open): Port the demo display.
+    return Output(dataset=DatasetT(
+        directory=Artifact.upload(directory), source=source,
+        trainCount=len(train_labels), testCount=len(test_labels)
+    ))

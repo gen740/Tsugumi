@@ -1,18 +1,20 @@
 library(ggplot2)
 
 # Drops genes with hardly any reads: those carry no information on a difference.
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  least <- inputs$params$min_total
-  d <- read.csv(file.path(inputs$path("airway"), "counts.csv"), check.names = FALSE)
-  samples <- read.csv(file.path(inputs$path("airway"), "samples.csv"))
+  least <- params$min_total
+  d <- read.csv(file.path(artifact_open(inputs$airway), "counts.csv"), check.names = FALSE)
+  samples <- read.csv(file.path(artifact_open(inputs$airway), "samples.csv"))
   total <- rowSums(d[, samples$sample])
   keep <- total >= least
-  out <- file.path(run$output_directory, "counts")
+  out <- file.path(workspace, "counts")
   dir.create(out)
   write.csv(d[keep, ], file.path(out, "counts.csv"), row.names = FALSE)
-  file.copy(file.path(inputs$path("airway"), "samples.csv"), file.path(out, "samples.csv"))
-  outputs[["counts"]] <- list(value = out)
+  file.copy(file.path(artifact_open(inputs$airway), "samples.csv"), file.path(out, "samples.csv"))
+  outputs[["counts"]] <- artifact_upload(out)
 
   shown <- data.frame(total = log10(total[total > 0]))
   figure <- ggplot(shown, aes(total)) +
@@ -22,7 +24,7 @@ main <- function(inputs, report, run) {
          title = sprintf("Keeping %2$d of %1$d genes (total %3$d or more)", nrow(d), sum(keep), least),
          subtitle = sprintf("The %d genes at 0 in every sample are not in the figure", sum(total == 0))) +
     theme_minimal(base_size = 12)
-  report$figure(print(figure), alt = sprintf("%d of %d genes kept", sum(keep), nrow(d)), width = 6.5, height = 3.6)
+  # TODO(open): Port the demo display.
 
   outputs
 }

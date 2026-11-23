@@ -6,6 +6,6 @@ in
 {
   run = sdk.input {
     outputs = ./_outputs.fbs;
-    values.value = params;
+    values.value.seed = params.value;
   };
 }

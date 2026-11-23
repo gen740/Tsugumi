@@ -5,12 +5,14 @@ exact <- function(x, what = "a value") {
   x
 }
 
-# The loop delivers a merge union tagged with the arrival port: `init` carries a Number, `half` and `triple`
-# a Walk (the value and every value before it, so that no Card has to remember anything between calls).
+# Initial values start a sequence. Feedback carries the sequence so far.
 arrival <- function(inputs) {
-  m <- inputs$arrival
-  n <- exact(m$value$value, "n")
-  list(n = n, path = if (m$value_type == "init") n else exact(m$value$path, "the sequence"))
+  value <- inputs$arrival$value
+  if (!is.null(value$seed)) {
+    n <- exact(value$seed, "n")
+    return(list(n = n, path = n))
+  }
+  list(n = exact(value$value, "n"), path = exact(value$path, "the sequence"))
 }
 
 # Emits nothing at 1 (the loop ends); otherwise the walk so far and the parity of its last value.
@@ -23,7 +25,6 @@ main <- function(inputs) {
   if (a$n == 0) stop("Collatz is defined for positive integers")
   if (a$n == 1) return(invisible())
   outputs[["value"]] <- list(value = whole(a$n), path = I(whole(a$path)))
-  outputs[["even"]] <- list(value = a$n %% 2 == 0)
 
   outputs
 }

@@ -1,4 +1,5 @@
 """Draws a stratified subset, scales the pixels to 0..1 and writes it for every classifier."""
+from card import Artifact, Input, Output, params as card_params
 import hashlib
 import os
 
@@ -22,11 +23,12 @@ def stratified(labels, size, rng):
     return rng.permutation(np.concatenate(chosen))
 
 
-def main(inputs, report, run):
+def run(inputs: Input) -> Output:
+    artifact, result_dir = Artifact.dir()
     dataset = inputs.dataset
-    directory = dataset.directory.decode()
-    params = inputs.params
-    seed, train_size, test_size = params.seed, params.trainSize, params.testSize
+    directory = dataset.directory.open()
+    params = card_params
+    seed, train_size, test_size = params.seed, params.train_size, params.test_size
     if not 10 <= train_size <= dataset.trainCount or not 10 <= test_size <= dataset.testCount:
         raise Failure("output_invalid", f"train_size must be 10..{dataset.trainCount}, "
                                         f"test_size 10..{dataset.testCount}")
@@ -44,18 +46,12 @@ def main(inputs, report, run):
     train_y, test_y = all_train_y[train], all_test_y[test]
     digest = hashlib.sha256(test_x.tobytes() + test_y.tobytes()).hexdigest()[:16]
 
-    path = os.path.join(run.output_directory, "subset.npz")
+    path = os.path.join(result_dir, "subset.npz")
     np.savez_compressed(path, train_images=train_x, train_labels=train_y,
                         test_images=test_x, test_labels=test_y, digest=digest)
-    report.log(f"wrote {path}: {os.path.getsize(path)} bytes, test digest {digest}")
+    print(f"wrote {path}: {os.path.getsize(path)} bytes, test digest {digest}")
 
     rows = [f"| {d} | {np.sum(all_train_y == d)} | {np.sum(train_y == d)} | "
             f"{np.sum(all_test_y == d)} | {np.sum(test_y == d)} |" for d in range(10)]
-    report.markdown(
-        f"**層化抽出** seed {seed}: 訓練 {train_size} 枚、テスト {test_size} 枚（数字の割合を保つ）。"
-        f"画素は 0〜1、784 次元。\n\n"
-        "| 数字 | 訓練（全体） | 訓練（使う） | テスト（全体） | テスト（使う） |\n| ---: | ---: | ---: | ---: | ---: |\n"
-        + "\n".join(rows)
-    )
-    value = path
-    return {'subset': {'value': value}}
+    # TODO(open): Port the demo display.
+    return Output(subset=artifact)

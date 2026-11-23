@@ -24,7 +24,7 @@ def run(input: Input) -> Output:
     source = input.require("input").open()
     manifest = json.loads((source / "provenance.json").read_text())
     p = params
-    lo, hi, width = p.minEv, p.maxEv, p.binEv
+    lo, hi, width = p.min_ev, p.max_ev, p.bin_ev
     assert 0 <= lo < hi and width > 0, "bad energy range or bin"
 
     # The photons in the same square of sky as the bands' grid.

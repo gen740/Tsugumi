@@ -1,3 +1,4 @@
+from card import Artifact, Input, Output, params as card_params
 import os
 
 import matplotlib
@@ -16,9 +17,10 @@ def png(fig):
     return buf.getvalue()
 
 
-def main(inputs, report, run):
-    p = inputs.params
-    d = np.load(os.path.join(inputs.whitened.value.decode(), "whitened.npz"))
+def run(inputs: Input) -> Output:
+    artifact, directory = Artifact.dir()
+    p = card_params
+    d = np.load(os.path.join(inputs.require("whitened").open(), "whitened.npz"))
     fs, t, h1, l1 = int(d["fs"]), d["t"], d["H1"], d["L1"]
     near = (t > -0.2) & (t < 0.05)
     # The time shift between the sites (light travel time, at most 10 ms) and the sign of L1.
@@ -47,10 +49,10 @@ def main(inputs, report, run):
     b.set_ylabel("frequency [Hz]")
     b.set_xlabel("time from GPS 1126259462.4 [s]")
     data = png(fig)
-    with open(os.path.join(run.output_directory, "chirp.png"), "wb") as fh:
+    with open(os.path.join(directory, "chirp.png"), "wb") as fh:
         fh.write(data)
-    with open(os.path.join(run.output_directory, "snr.csv"), "w") as fh:
+    with open(os.path.join(directory, "snr.csv"), "w") as fh:
         fh.write("detector,peak_time,snr\n" + "".join(f"{d},{pt},{s}\n" for d, pt, s in rows))
-    report.log(f"L1 vs H1: shift {shift_ms:+.1f} ms, sign {sign}; " + ", ".join(f"{d} SNR {s}" for d, _, s in rows))
-    report.image(data, "image/png", "GW150914: H1/L1 overlay and H1 spectrogram")
-    return {'plots': {"value": run.output_directory}}
+    print(f"L1 vs H1: shift {shift_ms:+.1f} ms, sign {sign}; " + ", ".join(f"{d} SNR {s}" for d, _, s in rows))
+    # TODO(open): Port the demo display.
+    return Output(plots=artifact)

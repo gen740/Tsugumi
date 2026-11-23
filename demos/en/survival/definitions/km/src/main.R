@@ -2,10 +2,12 @@ library(survival)
 library(ggplot2)
 
 # Kaplan-Meier curves by a grouping variable, with the log-rank test.
-main <- function(inputs, report, run) {
+main <- function(inputs) {
+  workspace <- tempfile("artifact-")
+  dir.create(workspace)
   outputs <- list()
-  by <- inputs$params$group
-  d <- read.csv(inputs$path("cohort"))
+  by <- params$group
+  d <- read.csv(file.path(artifact_open(inputs$cohort), "cohort.csv"))
   d$group <- switch(by,
     sex = ifelse(d$female == 1, "Women", "Men"),
     ecog = ifelse(is.na(d$ph.ecog), NA, paste0("ECOG ", pmin(d$ph.ecog, 2), ifelse(d$ph.ecog >= 2, "+", ""))),
@@ -23,11 +25,11 @@ main <- function(inputs, report, run) {
   medians <- data.frame(group = sub("group=", "", rownames(table)), n = table[, "records"], deaths = table[, "events"],
                         median = table[, "median"], lower = table[, "0.95LCL"], upper = table[, "0.95UCL"],
                         logrank_chisq = test$chisq, logrank_p = p)
-  out <- file.path(run$output_directory, "km")
+  out <- file.path(workspace, "km")
   dir.create(out)
   write.csv(curves, file.path(out, "curves.csv"), row.names = FALSE)
   write.csv(medians, file.path(out, "medians.csv"), row.names = FALSE)
-  outputs[["km"]] <- list(value = out)
+  outputs[["km"]] <- artifact_upload(out)
 
   labels <- setNames(sprintf("%s  n=%d  median %s days", medians$group, medians$n,
                              ifelse(is.na(medians$median), "not reached", sprintf("%.0f", medians$median))), medians$group)
@@ -45,7 +47,7 @@ main <- function(inputs, report, run) {
     theme_minimal(base_size = 13) +
     theme(legend.position = "inside", legend.position.inside = c(0.98, 0.98), legend.justification = c(1, 1),
           legend.background = element_rect(fill = "white", colour = NA))
-  report$figure(print(figure), alt = sprintf("Kaplan-Meier curves by %s, log-rank chi-square %.2f", by, test$chisq), width = 7.5, height = 5)
+  # TODO(open): Port the demo display.
 
   outputs
 }

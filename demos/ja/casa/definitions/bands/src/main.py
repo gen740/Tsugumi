@@ -34,11 +34,11 @@ def run(input: Input) -> Output:
     source, = events.file.open().iterdir()
     obsid = events.obsid.decode()
     tool = input.require("ciao")
-    root = params.ciaoRoot
+    root = params.ciao_root
     p = params
-    limits = [p.redMinEv, p.greenMinEv, p.blueMinEv, p.maxEv]
+    limits = [p.red_min_ev, p.green_min_ev, p.blue_min_ev, p.max_ev]
     assert all(a < b for a, b in zip(limits, limits[1:])), "energy boundaries must increase"
-    step, size = p.binSize, p.pixels
+    step, size = p.bin_size, p.pixels
     assert step > 0 and 16 <= size <= 2048
     artifact, dest = Artifact.dir()
     with fits.open(source, memmap=True) as hd:

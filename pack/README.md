@@ -2,13 +2,11 @@
 
 ```sh
 tsugumi-pack ./Temperature --output ./Temperature.app
-./Temperature.app/Contents/MacOS/Temperature --set settings.value=11.0 --output ./temperatures
-./WordCount.app/Contents/MacOS/WordCount --file text=./my-notes.txt
+./Temperature.app/Contents/MacOS/Temperature --output ./temperatures
 ```
 
-`--help` on an app lists its parameters and file inputs. Opened from the
-Finder, an app runs with the exported values and shows its results folder
-(in Documents) when done.
+Opened from the Finder, an app runs with its exported definition and shows
+the results folder in Documents when done.
 
 The exporter turns a Tsugumi Project into an app that the recipient runs
 offline on an Apple Silicon Mac, with no Tsugumi or Nix installed
@@ -39,13 +37,11 @@ come later.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
    `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
-   triggers and each Card's current parameter values, with values outside
-   Input Cards marked fixed).
+   exported workflow entry points and parameter metadata).
 
 The app, when run, boots the runner image with **no network device**. The
 payload's store is laid over the image's (a read-only overlay), the
-recipient's input files and `params.nix` edits are saved into a copy of the
-Project on a sparse scratch disk the app removes afterwards, and `tsugumid
+workflow uses a copy of the project on a temporary sparse disk. `tsugumid
 --prepared-cards` runs the Workflow from its trigger through the same RPC
 the apps use. For each Card it computes the evaluation key as it would
 before evaluating, and uses the recorded build only if the key is the
@@ -156,23 +152,8 @@ has no Nix, so nothing in it can download or build; tsugumid's log records
 no evaluation. Every Card still ran, which shows the payload is complete. (The Mac's own network was left on: this Mac is
 shared, and the guest's isolation does not depend on it.)
 
-**Same results as the Workflow in Tsugumi.** The reference is the same
-Project run by this branch's `tsugumid` directly on an online aarch64 NixOS
-host (OrbStack), with its own store and the normal project location. All six
-figures (PNG) and all seven Card logs are byte-identical to the app's. With a
-new input, `--set generate.seed=11 --set generate.cells=120 --set
-real.min_area=20`, the counts change (score: 96 by threshold, 117 by
-watershed) and are again byte-identical to the reference given the same
-values. Setting a `nix` parameter (`mitosis.hash`) is refused with its reason.
-
-**A recipient's file.** A three-Card Project (trigger, an input Card with a
-text file, a Python Card that counts lines and words and writes the text
-upper-cased as a File) exported to a 268 MiB app (payload 98 MiB; 407 MiB
-when the app evaluated). With `--file text=mine.txt` the app returned
-`counts.json` (3 lines, 6 words) and `upper/upper.txt` for the given file in
-1.8 s, identical to the reference
-run given the same file (the File value's JSON names the copy, not the
-guest's path).
+The original check compared the image and diagnostic outputs with those of the
+same project run through a standalone `tsugumid` on aarch64 Linux.
 
 Not checked here: a second Mac without Tsugumi or Nix (nothing on this Mac
 is used by the app, but its development signature would need Developer ID
@@ -181,15 +162,9 @@ shared, so nothing was brought to the front).
 
 ## Not done yet
 
-- How a recipient gives inputs. `--set` and `--file` are provisional: they
-  exist to check that an exported app runs on new values. Which values an
-  app exposes (likely only input Cards), how folders and batches are passed,
-  and the recipient's form follow from how Tsugumi itself takes a Workflow's
-  inputs, which is still to be designed; they will be replaced then.
+- TODO(open): Recipient-supplied values and artifacts for prepared definitions.
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
-- Artifact inputs: a recipient's folder
-  needs a Card that takes a Directory, which input Cards do not offer today.
 - Progress in the Finder: an app opened there shows nothing until its
   results folder opens.
 - Distribution signing: an app signed with a development certificate runs on
