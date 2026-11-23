@@ -111,12 +111,9 @@ auto main(int argc, char** argv) -> int {
     if (command == "uninstall") return Uninstall({args.begin() + 1, args.end()});
     if (command == "web") return Open(executable, {args.begin() + 1, args.end()});
     if (command == "call") return RunCall(executable, {args.begin() + 1, args.end()});
-    if (command == "lock" && args.size() >= 2 && args[1] == "update") {
-      args.erase(args.begin(), args.begin() + 2);
-      if (!args.empty() && !args.front().starts_with("-"))
-        args.insert(args.begin(), "--name");
-      args.insert(args.begin(), {"nix", "path", "lock", "update"});
-    }
+    if (command == "lock" && args.size() > 2 && args[1] == "update" &&
+        !args[2].starts_with("-"))
+      args.insert(args.begin() + 2, "--name");
     if (const auto status = RunTool(executable, args)) return *status;
     Usage();
     return 64;

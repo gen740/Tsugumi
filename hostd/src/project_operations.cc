@@ -86,7 +86,8 @@ auto UpdatedLock(const std::string& path, const std::string& project,
     if (!name.empty() && name != key) continue;
     const auto url = json::Object(entry).at("url");
     if (const auto found = locked.find(key);
-        found != locked.end() && json::Object(found->second).at("url") == url)
+        found != locked.end() &&
+        json::Text(json::Object(found->second), "url") == json::String(url))
       continue;
     auto source = Value(call("nix_path_lock_source", {{"url", url}}));
     source.emplace("name", json::Quote(key));

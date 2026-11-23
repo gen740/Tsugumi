@@ -689,3 +689,52 @@ def test_the_usual_port_taken_means_another_port(tmp_path):
             assert page_url(web(env).stdout)[1] != 8780
         finally:
             stop_resident_services(tmp_path)
+
+@needs_cli
+def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
+    from test_claude_code_plugin import UserAgent
+
+    project = tmp_path / "project"
+    contents = tmp_path / "library"
+    contents.mkdir()
+    (contents / "default.nix").write_text('"from the fixture archive"')
+    archive = tmp_path / "library.tar.gz"
+    with tarfile.open(archive, "w:gz") as tar:
+        tar.add(contents, arcname="library")
+    url = "tarball+" + archive.resolve().as_uri()
+    write_project(project, {
+        "name": "locked fixture",
+        "nixPath": [{"name": "lib", "url": url}],
+        "canvas": {"cards": [], "connections": []},
+    })
+    env = isolated_environment(tmp_path, TSUGUMI_NIX_DIR=str(NIX.resolve()))
+
+    def update(*args):
+        return subprocess.run([str(CLI.resolve()), "lock", "update", *args, "--project", str(project)],
+                              env=env, capture_output=True, text=True, timeout=30)
+
+    try:
+        for _ in range(4):
+            updated = update("lib")
+            if updated.returncode == 0:
+                break
+            request = json.loads(updated.stdout)
+            assert request["code"] == "grant_required", updated.stdout + updated.stderr
+            user = UserAgent(tmp_path)
+            try:
+                user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
+            finally:
+                user.close()
+        assert updated.returncode == 0, updated.stdout + updated.stderr
+        lock = project / "tsugumi.lock"
+        entry, = json.loads(lock.read_text())["entries"]
+        assert entry["name"] == "lib"
+        assert entry["url"] == url
+        assert entry["narHash"].startswith("sha256-")
+        assert "rev" not in entry
+        instant = lock.stat().st_mtime_ns
+        result = update()
+        assert result.returncode == 0, result.stdout + result.stderr
+        assert lock.stat().st_mtime_ns == instant
+    finally:
+        stop_resident_services(tmp_path)
