@@ -172,8 +172,9 @@ auto receive_display(void* context, const char* view, tsugumi_bytes* out,
       host.view_ready.wait(lock, ready);
     } else {
       const auto now = Clock::now();
-      const auto maximum = std::chrono::duration_cast<std::chrono::milliseconds>(
-                               Clock::time_point::max() - now).count();
+      const int64_t maximum =
+          std::chrono::duration_cast<std::chrono::milliseconds>(
+              Clock::time_point::max() - now).count();
       if (!host.view_ready.wait_until(
               lock, now + std::chrono::milliseconds(std::min(timeout_ms, maximum)),
               ready))

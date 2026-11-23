@@ -4,6 +4,7 @@
 #include <flatbuffers/flatbuffers.h>
 
 #include <optional>
+#include <stdexcept>
 #include <string>
 #include <string_view>
 
@@ -48,7 +49,7 @@ inline auto read_display(int fd) -> std::optional<std::string> {
   flatbuffers::Verifier verifier(
       reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
   if (!W::VerifyWorkerMessageBuffer(verifier))
-    throw rpc::frame::Error("invalid remote display message");
+    throw std::runtime_error("invalid remote display message");
   return frame;
 }
 }  // namespace tsugumi::workerd
