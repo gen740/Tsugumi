@@ -298,10 +298,21 @@ def run(input):
     assert not Path("/etc/hostname").exists()
     assert "TSUGUMI_REMOTE_PRIVATE_KEY" not in os.environ
     print("remote-card-stdout")
-    return Output(doc=TextT(value=input.in_.Value()))
+    return Output(doc=TextT(value=input.require("in").value))
 """
     source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
-              "_outputs": schema}
+              "_outputs": schema, "_nix": """
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/input> { inherit pkgs; };
+in {
+  run = sdk.input {
+    outputs = ./_outputs.fbs;
+    values.doc.value = params.value;
+  };
+}
+"""}
     settings = {
         "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
         "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
@@ -387,7 +398,9 @@ def run(input):
     active = wait_invocation(client, run_id, "work", lambda row: row.executionState == RemoteExecutionState.running)
     shown = wait_for_display(client, run_id).value.display
     assert shown.card.segments == [b"work"] and text(shown.view) == "notes"
-    assert bytes(shown.bytes) == payload
+    chunk = bytes(shown.bytes)
+    assert struct.unpack_from("<4I", chunk) == (0x4D475354, 0, 0, 1)
+    assert chunk[16:] == payload
     remote_gates(active)
     status = wait_run(client, run_id)
     assert status.state == RunState.succeeded, status.failure and text(status.failure.diagnostic)
@@ -411,19 +424,22 @@ def test_remote_card_cancels_a_running_job(project, core_factory, remote_broker)
 
 def test_remote_run_list_preserves_implementation_order(project, core_factory, remote_broker, tmp_path):
     def numbers(values, value=""):
-        programs = [python_run(f"""
+        variants = []
+        for number in values:
+            program = python_run(f"""
 from card import Output
 from Number import NumberT
 
 def run(input):
     return Output(out=NumberT(value={value}{number}))
-""") for number in values]
-        return entry("[ " + " ".join(programs) + " ]")
+""")
+            variants.append(f'{{ label = "{number}"; run = {program}; }}')
+        return entry("[ " + " ".join(variants) + " ]")
 
     definitions = {
         "source": {"type": "code", "_outputs": RUN_LIST_OUTPUT, "_nix": numbers([10, 20])},
         "work": {**RUN_LIST_REMOTE, "inputs": [{"name": "in"}],
-                 "_nix": numbers([100, 200], "input.in_.value + ")},
+                 "_nix": numbers([100, 200], 'input.require("in").value + ')},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
@@ -444,16 +460,19 @@ def run(input):
 def test_remote_run_list_failure_cancels_running_sibling(project, core_factory, remote_broker, remote_gates):
     if remote_gates is None:
         pytest.skip("requires a disposable worker to synchronize both jobs")
-    programs = [python_run(GATE_HELPER + f"""
+    variants = []
+    for message in ("expected-batch-member-failure", "unexpected-sibling-completion"):
+        program = python_run(GATE_HELPER + f"""
 import sys
 
 def run(input):
     wait_for_release()
     print({message!r}, file=sys.stderr)
     raise RuntimeError({message!r})
-""") for message in ("expected-batch-member-failure", "unexpected-sibling-completion")]
+""")
+        variants.append(f'{{ label = "{message}"; run = {program}; }}')
     definitions = {
-        "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(programs) + " ]")},
+        "fails": {**RUN_LIST_REMOTE, "_nix": entry("[ " + " ".join(variants) + " ]")},
         "collect": {"type": "collect", "recordIO": True},
     }
     write(project, definitions, [card(name, name) for name in definitions],
