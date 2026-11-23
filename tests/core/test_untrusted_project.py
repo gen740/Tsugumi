@@ -33,7 +33,9 @@ def test_a_source_save_cannot_write_outside_the_project(core_factory, project, t
     assert failure.value.kind == kind
     after = client.call("ProjectInspectRequest")
     assert after.rev == before.rev
-    assert bytes(after.layout or []) == bytes(before.layout or [])
+    assert bytes(after.layout if after.layout is not None else []) == bytes(
+        before.layout if before.layout is not None else []
+    )
     assert read_pages(client, "ProjectFileReadRequest", path="definitions/work/keep.txt") == b"original"
 
 

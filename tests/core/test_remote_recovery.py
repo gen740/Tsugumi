@@ -60,6 +60,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.catalog_contract = 3
         self.probe_overrides = {}
         self.receipts = {}
+        self.view_messages = []
         self.submit_count = 0
         self.download_count = 0
         self.released = set()
@@ -174,6 +175,10 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             return R.blob_chunk(body.digest, len(data), body.offset,
                                 data[body.offset:body.offset + body.limit])
         job = R.string(q.jobId)
+        if kind == R.RequestBody.ViewSendRequest:
+            assert self.receipts[job]["state"] == "running"
+            self.view_messages.append((job, R.string(body.display.view), bytes(body.display.bytes)))
+            return R.reply(R.ReplyBody.Ack, R.AckT())
         if kind == R.RequestBody.ReleaseRequest:
             self.released.add(job)
             return R.reply(R.ReplyBody.Ack, R.AckT())
@@ -472,6 +477,33 @@ def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remo
     assert all(payload not in blob for blob in remote_gateway.results.values())
     saved = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
     assert saved.outputs and not hasattr(saved, "display")
+
+
+def test_view_message_is_forwarded_to_the_remote_job(project, remote_gateway, core_factory, tmp_path):
+    from Tsugumi.Trace.Client import Client
+
+    daemon = core_factory(mocked_builds=True)
+    ui = daemon.connect(client=Client.Web)
+    worker_project(ui, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
+                   executionService="cluster", views=[
+                       {"blob": "/nix/store/example-notes", "name": "notes", "type": "html"},
+                   ])
+    subscription = text(ui.open().subscriptionId)
+    ui.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
+    ui.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated)
+    run_id = start_run(ui, "work", propagate=False)
+    try:
+        live = wait_for_state(ui, run_id, RemoteExecutionState.running)
+    except AssertionError:
+        status = ui.call("RunStatusRequest", runId=run_id)
+        assert not status.failure, status.failure and text(status.failure.diagnostic)
+        raise
+    job = text(live.executionJobId)
+    payload = b"reply\0\xff"
+    ui.call("ViewSendRequest", card=path("work"), view="notes", bytes=list(payload))
+    assert remote_gateway.view_messages == [(job, "notes", payload)]
+    remote_gateway.finish(job)
+    assert wait_run(ui, run_id).state == RunState.succeeded
 
 
 @pytest.mark.parametrize("field", ["outputLimitBytes", "outputLimitEntries"])
