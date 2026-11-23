@@ -385,7 +385,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
       </Empty>
     )
   }
-  if (!runs.length) return <Empty title={L('保持された成果物はありません')} icon="shippingbox" />
+  if (!runs.length) return <Empty title={L('成果物のある実行はありません')} icon="shippingbox" />
 
   const q = search.toLowerCase()
   const mark = runMark(runs.find(r => s(r.status?.runId) === runId))
@@ -405,7 +405,7 @@ export function CardArtifactsView({ session, cardKey }: { session: ProjectSessio
         <HSplit sizes={[220, 280, null]} min={[180, 220, 260]}>
           {[
             <div key="a" className="list fill" role="listbox" aria-label={L('成果物')}>
-              {!artifacts.length && <Empty small title={L('成果物はありません')} icon="shippingbox" description={L('設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。')} />}
+              {!artifacts.length && <Empty small title={L('成果物はありません')} icon="shippingbox" description={L('成果物を出力した実行で確認できます。')} />}
               {artifacts.map((a) => (
                 <div key={s(a.artifactId)} role="option" aria-selected={s(a.artifactId) === artifactId}
                   className={`list-row clickable col-start${s(a.artifactId) === artifactId ? ' selected' : ''}`}

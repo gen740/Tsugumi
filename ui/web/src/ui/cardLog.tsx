@@ -92,7 +92,7 @@ export function DependenciesCategory({ model }: { model: CardEditorModel }) {
   const refs = nixReferences(session).filter((r) => r.source === model.cardKey)
   return (
     <div className="scroll pad12 col gap12">
-      <div className="callout secondary">{L('この Card が使う SDK、nixpkgs の package、ほかの Card の出力は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。')}</div>
+      <div className="callout secondary">{L('この Card が使う SDK、nixpkgs の package、上流 Card の Nix exports は、Nix 定義（default.nix）で決まります。変えるときは default.nix を編集します。')}</div>
       <div className="row gap8 center">
         {hasDefinition ? <Button onClick={() => model.openDefinition()}>{L('default.nix を開く')}</Button>
           : model.kind === 'code' && <span className="secondary">{L('default.nix がありません')}</span>}

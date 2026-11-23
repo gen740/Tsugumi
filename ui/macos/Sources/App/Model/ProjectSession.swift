@@ -468,7 +468,9 @@ final class ProjectSession {
       guard !Task.isCancelled, !closed else { return }
       setConnected(false)
       connectionFailed = error is Unreached
-      connectionMessage = "\(error)"
+      connectionMessage = (error as? RPCFailure)?.kind == .projectInUse
+        ? String(localized: "別の画面でこのプロジェクトを開いています。")
+        : "\(error)"
       if let launcher = error as? LauncherError, case .incompatibleHistory(let issue) = launcher {
         environment = .incompatibleHistory(issue)
       }

@@ -545,7 +545,7 @@ struct CardArtifactsView: View {
           Label("成果物を読み込めませんでした", systemImage: "exclamationmark.triangle")
         } description: { Text(error) } actions: { Button("再試行") { Task { await loadRuns() } } }
       } else if runs.isEmpty {
-        ContentUnavailableView("保持された成果物はありません", systemImage: "shippingbox")
+        ContentUnavailableView("成果物のある実行はありません", systemImage: "shippingbox")
       } else {
         content
       }
@@ -583,7 +583,7 @@ struct CardArtifactsView: View {
         .overlay {
           if loaded && artifacts.isEmpty {
             ContentUnavailableView("成果物はありません", systemImage: "shippingbox",
-                                   description: Text("設定 > 入出力 で「成果物を保持」と保持する出力を選ぶと残ります。"))
+                                   description: Text("成果物を出力した実行で確認できます。"))
           }
         }
         .frame(minWidth: 180, idealWidth: 220)
