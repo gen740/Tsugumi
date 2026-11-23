@@ -1,18 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "time_factors",
-      "type": "double[]",
-      "data": {
-        "doubles": [
-          0.25,
-          1.0,
-          4.0
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "measurement"

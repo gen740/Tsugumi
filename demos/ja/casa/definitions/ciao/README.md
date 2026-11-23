@@ -2,4 +2,4 @@
 description: 解析ツール CIAO を Nix で固定する
 ---
 
-Chandra X-ray Center の解析ツール CIAO 4.18 を、ソースの hash を固定して Nix でビルドし、ストアのパスとバージョンを次の Card に渡す。ビルドは最初の 1 回だけで、以後の実行はストアのものをそのまま使う。式は https://github.com/gen740/ciao をコミットと hash で固定して読む（tsugumi.json の nixSources）。Python モジュールと ds9 連携、CALDB は入っていない。
+CIAO のソースは `tsugumi.lock` でコミットとハッシュを固定します。Card はプロジェクトの nixpkgs を渡して `<ciao/src/package.nix>` を import します。

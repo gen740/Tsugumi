@@ -1,42 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "f_low",
-      "type": "double",
-      "data": {
-        "double": 35.0
-      }
-    },
-    {
-      "name": "f_high",
-      "type": "double",
-      "data": {
-        "double": 350.0
-      }
-    },
-    {
-      "name": "t_event",
-      "type": "double",
-      "data": {
-        "double": 1126259462.400000095367
-      }
-    },
-    {
-      "name": "before",
-      "type": "double",
-      "data": {
-        "double": 0.2
-      }
-    },
-    {
-      "name": "after",
-      "type": "double",
-      "data": {
-        "double": 0.05
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "data"

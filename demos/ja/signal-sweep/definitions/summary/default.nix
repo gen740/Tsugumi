@@ -1,10 +1,6 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 let
-  thresholdCount = inputs.results.thresholdCount;
+  thresholdCount = inputs.results.exports.thresholdCount;
 in
 {
   run = ''

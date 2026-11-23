@@ -94,7 +94,29 @@ const kindOf = (def, id) => {
 /** As paramText in ui/web/src/model/session.ts. */
 const paramText = (v) => (typeof v === 'string' ? v : typeof v === 'number' || typeof v === 'boolean' ? String(v) : Array.isArray(v) ? JSON.stringify(v) : '')
 
-const INLINE_TYPES = new Set(['int64', 'uint64', 'double', 'bool', 'string'])
+const INLINE_TYPES = new Set(['int', 'float', 'bool', 'string'])
+
+// The checked-in demos put one literal default on each assignment line.
+// Read these for the static preview without evaluating any Nix expressions.
+function cardParams(dir, def) {
+  const file = path.join(dir, 'params.nix')
+  if (!fs.existsSync(file)) return []
+  const defaults = fs.readFileSync(file, 'utf8')
+  const values = []
+  const scalar = /"(?:[^"\\]|\\.)*"|true|false|-?\d+(?:\.\d+)?(?:e[+-]?\d+)?/gi
+  for (const [, name, literal] of defaults.matchAll(/^\s+([\w.-]+) = (.+);$/gm)) {
+    const parts = literal.match(scalar)
+    const first = parts?.[0]
+    if (first === undefined) continue
+    const type = first.startsWith('"') ? 'string' : first === 'true' || first === 'false' ? 'bool'
+      : /[.e]/i.test(first) ? 'float' : 'int'
+    const decoded = parts.map((part) => JSON.parse(part.replace(/\\\$\{/g, '${')))
+    const list = literal.startsWith('[')
+    const value = def.sweeps?.[name] ?? def.params?.[name] ?? (list ? decoded : decoded[0])
+    values.push({ name, type: list ? `[${type}]` : type, value: paramText(value) })
+  }
+  return values
+}
 
 function readCard(root, id, ports, wires) {
   const dir = path.join(root, 'definitions', id)
@@ -105,7 +127,7 @@ function readCard(root, id, ports, wires) {
   const description = frontMatter?.[1]
   const body = markdown.slice(frontMatter?.[0].length ?? 0)
   const kind = kindOf(def, id)
-  const allParams = (def.params ?? []).filter((p) => p.name && p.type).map((p) => ({ name: p.name, type: p.type, value: paramText(Object.values(p.data ?? {})[0]) }))
+  const allParams = cardParams(dir, def)
   // Resolved ports are the core's; Drafts have no ports.
   const resolved = kind === 'draft' ? undefined : ports?.[id]
   if (kind !== 'draft' && !resolved) throw new Error(`no resolved ports for ${id}: run harvest.py --ports`)
@@ -176,7 +198,7 @@ function readProject(root, ports, prefix = '', graph = readGraph(root)) {
 
 // ---- The written project of docs/CardGuide.md ----------------------------------------------
 
-/** Its Python Card, parsed as guide_files() in tests/python/test_sdk_examples.py does. */
+/** Project files shown in the guide, each in a named code block. */
 function guideFiles() {
   const page = fs.readFileSync(path.join(ROOT, 'docs', 'CardGuide.md'), 'utf8')
   const out = {}
@@ -421,7 +443,7 @@ async function main() {
   writeGuideProject(guideDir)
   const entries = [
     ...readJson(path.join(ROOT, 'demos', 'en', 'index.json')).demos.map((d) => ({ ...d, root: path.join(ROOT, 'demos', 'en', d.path) })),
-    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → multiply of docs/CardGuide.md.', tags: ['Python', 'Guide'], root: guideDir },
+    { id: 'card-guide', title: 'Your first Card', description: 'start → settings → convert from the Card guide.', tags: ['C++', 'Guide'], root: guideDir },
   ]
   const index = []
   const built = []

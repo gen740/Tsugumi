@@ -17,4 +17,5 @@ Work on a Tsugumi project with the Tsugumi MCP tools.
 3. The user watches the web UI while you work: the Cards you save change on the canvas, runs show live, and Tsugumi
    (the bird) flies to the Card you work on. A save that widens what Cards may do (network, folders) waits for the
    user's approval there.
+   The returned rules also cover the project’s Nix lock update and the Card expression tool for reading its generated SDK.
 4. Report what you changed and ran by the Cards' names, and what the run showed.

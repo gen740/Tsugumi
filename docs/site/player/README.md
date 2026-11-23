@@ -2,7 +2,7 @@
 
 A player for the documentation site that shows demos in motion without installing anything.
 Cards, wires and geometry use the Web UI's code as it is (`ui/web/src/ui/cardNode.tsx`, `ui/web/src/model/canvasKit.ts`), and the CSS uses the colours of `ui/web/src/styles/canvas.css` and `ui/web/src/styles.css`, scoped inside `.tp-root`.
-Nothing is computed in the browser: it only replays the record of a real run.
+The browser replays real run records or previews a graph in wire order.
 
 ```js
 import { mountPlayer } from './site/js/player.js'
@@ -43,7 +43,7 @@ node docs/site/player/build.mjs
 
 ### After an SDK interface change
 
-Rebuild `tsugumid` and `tsugumi-worker` from the same checkout before recording; the language SDKs come from the pinned tsugumi-kit. Install the Web dependencies (`npm ci` in `ui/web/`) and generate its protocol bindings (`nix develop --command npm run gen` there). Then, from the repository root, refresh every runnable demo and the guide, including their resolved ports:
+Rebuild `tsugumid` and `tsugumi-worker` from the same checkout before recording. Each project uses the SDK pinned in its own `tsugumi.lock`. Install the Web dependencies (`npm ci` in `ui/web/`) and generate its protocol bindings (`nix develop --command npm run gen` there). Then, from the repository root, refresh every runnable demo and the guide, including their resolved ports:
 
 ```sh
 nix develop --command python3 - <<'PYTHON'

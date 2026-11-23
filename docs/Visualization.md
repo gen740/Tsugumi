@@ -1,10 +1,10 @@
 # Visualization Cards
 
-> The demo described here is written for the previous Card ABI and is to be ported with the other demos ([TODO](Demos.md#todo-port-the-demos-to-the-current-card-abi)). This page describes the Cards as they are to be ported.
+> This page describes the planned visualization demo. See [demo status](Demos.md#todo-port-the-demos-to-the-current-card-abi).
 
 The **Visualization → report** demo includes editable Matplotlib Cards with a `default.nix` environment and a `figure` Directory output. Set `kind` to change the figure. Each Card shows its figure live in its `image` view while it runs, and saves `plot.png`, `plot.svg` and `plot.pdf`; the saved files are what a later reader or a downstream Card uses. For an interactive chart, a Python Card can send a Plotly figure to the Python SDK's `plotly` view (`tsugumi.send(tsugumi.Plotly(fig))`, [Python SDK](https://github.com/gen740/tsugumi-kit/blob/main/sdk/python/README.md)) and save its own HTML or JSON as an output. See the upstream [Matplotlib export API](https://matplotlib.org/stable/api/_as_gen/matplotlib.figure.Figure.savefig.html).
 
-`default.nix` takes NumPy and Matplotlib from the project's pinned nixpkgs. The Python SDK gives Matplotlib the kit's IPAexGothic as the Japanese fallback font, so Japanese labels render offline, the same in the live view and the saved files.
+`default.nix` takes NumPy and Matplotlib from the project’s locked `<nixpkgs>` source. The Python SDK gives Matplotlib the kit's IPAexGothic as the Japanese fallback font, so Japanese labels render offline, the same in the live view and the saved files.
 
 ## Data and parameters
 

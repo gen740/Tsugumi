@@ -1,14 +1,15 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 let
-  sdk = inputs.tsugumi.sdk { languages = [ "python" ]; };
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = {
+    inherit inputs;
+    outputs = ./_outputs.fbs;
+    params = ./params.nix;
+  };
 in
 {
-  run = inputs.tsugumi.pythonCard {
-    inherit sdk;
+  run = sdk.pythonCard (common // {
     src = ./src;
     packages = ps: [
       ps.numpy
@@ -16,5 +17,7 @@ in
       ps.scikit-image
       ps.matplotlib
     ];
-  };
+  });
+  api = sdk.pythonApi common;
+  views = sdk.views;
 }

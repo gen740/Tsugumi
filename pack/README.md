@@ -26,13 +26,15 @@ come later.
    There `tsugumid --prepare-cards` opens the Project and, for every Code
    Card, performs exactly the evaluation and build a run of that Card would
    perform on the local service (`NixRunner::build`), whether or not a run
-   would reach it. For each Card it records the evaluation key (the nixpkgs
-   pin, the system and the content-addressed definition, contract,
+   would reach it. Sources resolve against each owning project's `tsugumi.lock`.
+   Update the project's locks before export if declarations lack matching entries.
+   For each Card it records the evaluation key (the project source
+   pins, the system and the content-addressed definition, contract,
    parameter and upstream folders) and the build: plan, closure and run
    list shape. A Card that does not build fails the export and is named.
 3. **Write the payload.** The Cards' runtime closures, minus what the app's
    runner image already holds, go into `payload.erofs` with those records
-   (`cards.bin`) and the staged Project. No nixpkgs sources, derivations
+   (`cards.bin`) and the staged Project. No evaluator sources, derivations
    or Nix database: nothing in the app evaluates.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
@@ -200,6 +202,4 @@ shared, so nothing was brought to the front).
 - Distribution signing: an app signed with a development certificate runs on
   this Mac; another Mac needs Developer ID signing and notarization.
 - Cards built for x86_64-linux (Rosetta in the guest) and remote execution
-  services are not exported. Cards that use `nixSources` are refused by the
-  app's tsugumid: their source lookups are evaluations too, and the records
-  do not carry them yet.
+  services are not exported.

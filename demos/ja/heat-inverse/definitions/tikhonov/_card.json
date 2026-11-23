@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "log10_lambda_min",
-      "type": "double",
-      "data": {
-        "double": -6.0
-      }
-    },
-    {
-      "name": "log10_lambda_max",
-      "type": "double",
-      "data": {
-        "double": 1.0
-      }
-    },
-    {
-      "name": "sweep",
-      "type": "uint64",
-      "data": {
-        "uint64": 57
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "measurement"

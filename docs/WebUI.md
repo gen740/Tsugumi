@@ -78,7 +78,7 @@ The command finds `tsugumi-hostd`, `tsugumid`, the worker and the page (`ui/web/
 | Environment variable | Meaning |
 | --- | --- |
 | `TSUGUMID` / `TSUGUMI_WORKER` | Project daemon and worker locations (defaults under `build/`) |
-| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). The language SDKs come from the tsugumi-kit revision pinned in `flake.lock` |
+| `TSUGUMI_NIX_DIR` | The core's Nix files used to evaluate Cards (default `share/tsugumi/nix` beside the installed binaries). Cards obtain SDKs from their project’s [Nix search path](features.md#project-nix-search-path) |
 | `TSUGUMI_HOSTD` / `TSUGUMI_HOST_STATE` | Host service binary and its state folder (defaults chosen by `cli/src/launch.cc`) |
 | `TSUGUMI_WEB_ROOT` / `TSUGUMI_WEB_PORT` | The built page hostd serves and the port it asks for |
 | `TSUGUMI_VM_X86=qemu` | The Mac's shared VM runs x86_64-linux Cards with qemu instead of Rosetta (by default Rosetta when it is installed; [Another system](features.md#another-system-x86_64-linux)). Also read by the desktop app |

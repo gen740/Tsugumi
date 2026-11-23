@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "raise_by",
-      "type": "uint64",
-      "data": {
-        "uint64": 10
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "cut"

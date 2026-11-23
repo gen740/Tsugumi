@@ -28,8 +28,8 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Write Cards and pin environments
 
-- Choose a Code Card’s language SDK in `default.nix`. The default SDKs for C++, Python, Go, Rust, C#, Julia, R and Ruby come from [tsugumi-kit](https://github.com/gen740/tsugumi-kit). Start with a Draft or choose **From Template…** to copy saved Cards. [First Card](CardGuide.md) · [Other languages](CardGuide.md#writing-the-same-card-in-another-language) · [Templates](CardGuide.md#templates)
-- **Pin dependencies and control state.** Use **Project settings → Name and Environment** to pin Nixpkgs or add a trusted flake. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](CardGuide.md) · [Worker state](CardGuide.md#worker-state)
+- Choose a Code Card’s language SDK in `default.nix`. The SDKs for C++, Python, Go, Rust, C#, Julia, R, Ruby, Java and JavaScript come from [tsugumi-kit](https://github.com/gen740/tsugumi-kit). Start with a Draft or choose **From Template…** to copy saved Cards. [First Card](CardGuide.md) · [SDK entry points](CoreAndSDK.md#the-builder-interface) · [Templates](CardGuide.md#templates)
+- **Pin dependencies and control state.** Use **Project settings → Name and Environment** to declare and lock project sources. Declare a Card-local lock where the SDK supports one (Python, Ruby, Go, Rust and C#). For a Card that needs interpreter or library state, turn on **Keep the worker's state** (`reuseWorker`) in its settings. [Nix environments](#3-reproducible-environments-with-nix) · [Language SDKs](CardGuide.md) · [Worker state](CardGuide.md#worker-state)
 - **Keep a monitoring worker resident.** Workers retained with `reuseWorker` have no count, idle-time or memory eviction limit. They stay until the environment stops or the Card's definition or execution conditions change; a failed, cancelled or timed-out call discards its worker, and a dead worker is replaced. Each invocation records reuse, and its log identifies replacement of resident state. Fresh workers prepared for speed keep their separate limits. [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
 - **Run a Card on another Linux machine.** Start `tsugumi-workerd` there, register it in **Settings → Execution service**, and choose it under **Execution service** in the Card's settings. [Run a Card on a remote worker](RemoteExecution.md) · [Execution service](#execution-service)
@@ -103,8 +103,8 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows a value sweep of three inputs, two named implementations and one collected result.
 
-- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ (sdk.pythonCard { src = ./first; }) (sdk.pythonCard { src = ./second; }) ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
-- An Input Card supplies a batch directly: a parameter written as `"sweep": [{"uint64": 8}, {"uint64": 12}, {"uint64": 16}]` instead of `"data"` hands on each value in its own invocation. Several swept parameters give their Cartesian product, with the last one varying fastest; an arriving `start` batch is the outer axis. Each member is labeled with its values, such as `value=8`. A parameter of a list type (`uint64[]`) with `data` stays one ordinary FlatBuffers vector; with `sweep`, each element of the sweep is one vector. `sweep: [x]` is still a one-member batch (×1), and `sweep: []` sends an empty batch (×0).
+- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ (sdk.pythonCard (common // { src = ./first; })) (sdk.pythonCard (common // { src = ./second; })) ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
+- An Input Card supplies a batch with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. Each swept name is a run parameter declared in `params.nix`. Several sweeps give their Cartesian product, with the last one varying fastest and any arriving `start` batch as the outer axis. Members are labeled with their values, such as `value=8`. A list-valued parameter forms one vector per sweep member. A sweep of one member gives a batch of one, and an empty sweep gives an empty batch.
 - History rows and the batch list show each member's label. Comparing two runs, a Card that ran an execution list compares one member at a time, chosen by name: members pair by label, or by implementation number when unlabeled, and a name repeated once per arriving input pairs by its occurrence. A member present in one run only is said so.
 - Results follow the order of the input port names, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
 - An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
@@ -115,51 +115,56 @@ The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) 
 
 ### An environment per Card
 
-```nix
-{ pkgs, params, inputs, schemas }:
-let
-  sdk = inputs.tsugumi.cppSdk;
-in
-{
-  run = sdk.cppCard { inherit schemas; src = ./src; };
-  views = sdk.views;
-}
+A Code Card's `default.nix` receives `{ params, inputs }`. It imports its dependencies by name and returns `run` and optional `views`, `exports` and `api`. See the [temperature Card](CardGuide.md#the-files) for a complete definition, and the [builder interface](CoreAndSDK.md#the-builder-interface) for the per-port `inputs` table.
+
+- `builtins.currentSystem` is the system that runs the Card, locally or on a remote worker. `import <nixpkgs> { }` selects that system's packages. Evaluator state and caches are keyed by system.
+- The core resolves the pinned sources and verifies their NAR hashes before evaluation. The restricted evaluator performs no fetching and disallows Import From Derivation (IFD). Fixed-output derivations such as `pkgs.fetchurl` can fetch by hash during a build.
+- When a run starts, local Code Cards are evaluated and handed to `nix-daemon` without waiting for their data inputs. A remote worker builds its Card when it receives the invocation. Nix reuses available store paths, including those from a signed [binary cache](BinaryCaches.md).
+
+### Project Nix search path
+
+`nixPath` in `tsugumi.json` lists the sources a project's Cards can import. Each entry has a `name` and a `url`.
+
+```json
+"nixPath": [
+  {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/nixos-unstable"},
+  {"name": "tsugumi-kit", "url": "github:gen740/tsugumi-kit/main"}
+]
 ```
 
-- `schemas` holds the port schemas made from the Card's current definition and wiring; the builder generates the Card's typed API from them and places it under `share/tsugumi/api/` of its output. "Build SDK" in the Card editor and the Agent's `sdk` tool family (`api`) build the Card and show those files ([The builder interface](CoreAndSDK.md#the-builder-interface)).
+Names are unique and match `[A-Za-z0-9][A-Za-z0-9._-]*`. Use different names for different versions, for example `nixpkgs` and `nixpkgs-2505`. URLs use the `github:`, `gitlab:` or `sourcehut:` form accepted by Nix `fetchTree`. A source must expose Nix files that a Card can read with `import <name/path>`.
 
-- `tsugumi:default` uses the Nixpkgs revision bundled with the installed version of Tsugumi. New projects are created already pinned to the app's revision. To keep using it after an app update, open **Project settings → Name and Environment** and choose **Pin to This App's Nixpkgs**. You can also enter a revision and hash in the form `https://github.com/NixOS/nixpkgs/archive/<rev>.tar.gz#sha256-…`.
-- Nix evaluation uses restricted eval and forbids IFD (Import From Derivation), and the URLs it may fetch during evaluation are limited to nixpkgs archives (build-time fetches must be pinned by hash).
-- When a run starts, every Code Card in it whose preferred worker is the local one is evaluated, in turn, and its build is handed to nix-daemon right away, without waiting for its inputs; nix-daemon decides how many build at once. A Card on a remote worker is built by that worker when it receives the invocation.
-- Builds reuse outputs already in the Nix store. A signed [binary cache](BinaryCaches.md) can supply a missing store path before Nix builds it locally.
+Open **Project settings → Name and Environment → Nix search path** and add the source. **Update** locks one name and leaves the other entries in place. **Update all** locks the current declarations together and drops entries for removed names. Select the owning project when working on an external. From the CLI:
+
+```sh
+tsugumi nix path lock update --project /path/to/project --name nixpkgs
+tsugumi nix path lock update --project /path/to/project
+```
+
+Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. The [lock document](../protocol/project_lock.fbs) is JSON text with a `nixPath` list sorted by name. Each entry records `name`, `url` and a `locked` object containing `type`, `owner`, `repo`, `rev`, `narHash` and `lastModified`. The list contains only direct sources. Only an explicit lock update resolves declaration URLs and writes pins. New empty projects start with `nixPath: []`, and projects created from a project template carry its declarations and lock.
+
+Evaluation uses the lock for all declared names in the participating projects. An absent lock file is an empty lock. These messages identify the update required:
+
+- `nixPath "<name>" is not locked; update the lock`
+- `nixPath "<name>" changed (lock has <url>); update the lock`
+
+Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
+
+When a Card is copied to another project, its declarations and lock lines travel with it for the names recorded by the evaluator. If the Card has no evaluation record, the copy offers the source project's names for selection. A name collision with a different URL or pin stops the copy and shows both entries. To use both sources, choose distinct names and update the corresponding imports explicitly.
+
+### Evaluating a Card expression
+
+The `evaluate_nix` tool (`sdk` → `evaluate`) evaluates a short expression relative to a saved Card's definition directory. It has the Card's locked search path and the build's `params` and `inputs`. The lazy `card` binding is `import ./. { inherit params inputs; }`. The request defaults to the local native system and accepts an explicit `system`.
+
+Evaluation returns bounded JSON. A derivation evaluates to its output path. With `build: true`, the expression must yield a derivation. The tool builds it in the Nix sandbox and returns regular files as relative paths and bytes, capped at 2,000 entries and 8 MiB of paths and file bytes. A failed build returns the end of its log, up to 256 KiB. **Build SDK** evaluates `card.api` with `build: true` and opens `share/tsugumi/api/` read-only.
+
+```sh
+tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}' --expression card.api --build
+```
 
 ### Sharing Nix exports through connections
 
-- Set `exports` in the upstream Code Card's `default.nix`. If a downstream Code Card receives its output on the `data` port, that Card can use the exported attributes through `inputs.data`. The same exports are available to each implementation in a run list.
-- The name after `inputs.` is the downstream input port name. The port must resolve to one Code Card that always runs first. `tsugumi` and `sources` are reserved for the SDK and configured sources.
-- Collect, Fork, the value input of a Branch and Workflow boundaries preserve the Code producer's exports. A Merge can pass them through when all its inputs come from the same Code producer. A Merge with several possible producers carries data, and its downstream port has no Nix export binding.
-- The core supplies the Nix export bindings derived from the project graph. Nix reports missing attributes during evaluation. The [Canvas overlay](Usage.md#canvas-tools) shows the bindings, with nested targets drawn at their visible container and full paths in the list.
-
-### External Nix sources (`inputs.sources`)
-
-- Flakes can be added under "External sources" in "Name and Environment" of the project's settings. Enter an address (`github:owner/repo`, or the URL of a GitHub page) and press "Fetch" to see the commit and the list of packages for this environment, then press "Add". "Update" fetches a newer commit.
-- Once added, it is kept in `tsugumi.json`, pinned by commit and hash. The supported `type` is `flake`.
-
-```json
-"nixSources": [{ "name": "ciao", "type": "flake", "ref": "github:gen740/ciao/<commit>?narHash=sha256-..." }]
-```
-
-- `default.nix` can use the packages as they are. They are built when the Card runs.
-
-```nix
-{ pkgs, inputs, schemas, ... }:
-let ciao = inputs.sources.ciao.packages.ciao;
-in { run = inputs.tsugumi.cppSdk.cppCard { inherit schemas; src = ./src; tools = [ ciao ]; }; }
-```
-
-- `tsugumid` evaluates the flake with an evaluator separate from the Cards', and passes the Card only the packages' derivations. The Cards' evaluator can still fetch only nixpkgs and has no `builtins.getFlake`. The separate evaluator is the same pure evaluation as `nix build`, without IFD.
-- A package is built with the nixpkgs of that flake's `flake.lock` (not the project's nixpkgs).
-- A declaration applies only to that project's Cards (a Card in Card is another project). Every declared source is offered to the project's Cards, and `tsugumid` evaluates (and fetches) one only when a Card's evaluation reads it: Nix decides, not a search of the source text.
+Set `exports` in an upstream Code Card's `default.nix`. A connected downstream port named `data` can read its producer's values as `inputs.data.exports`. Branch, Fork, Collect and workflow boundaries can preserve a unique Code producer. A Merge or a Draft provides the `type` field alone. The [Canvas overlay](Usage.md#canvas-tools) shows export bindings derived from the graph.
 
 ### Keeping build results
 
@@ -179,7 +184,7 @@ Start with [Your first Card](CardGuide.md), then use the [worker state rules](Ca
   - **Mac (the shared VM):** Rosetta when it is installed on the Mac. qemu (`qemu-user` from cache.nixos.org) only when asked for with `TSUGUMI_VM_X86=qemu`, for a Mac without Rosetta or to try the qemu path. The app never installs Rosetta itself.
   - **Linux:** whatever the system registered, such as `boot.binfmt.emulatedSystems` on NixOS (with Nix's `extra-platforms`).
 - Each invocation records the emulator that ran it (its path; qemu's includes its version), shown in the Info tab of the Card's run history. Rosetta and qemu need not give the same numbers, so the record tells them apart.
-- Every Code Card is a `lib/main.so` loaded by a worker, so the Card's build plan also holds a worker for the selected system, built by the core from the Card's own nixpkgs, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time, and reused from the store after that by every such Card, whichever emulator built it.
+- Every Code Card is a `lib/main.so` loaded by a worker, so the Card's build plan also holds a worker for the selected system, built by the core from its own nixpkgs pin, and the kernel runs it under the emulator. The worker and Card use the same target runtime libraries. It is built once per nixpkgs and system, under emulation the first time, and reused from the store after that by every such Card, whichever emulator built it.
 - Without an emulator, the run stops before building, saying what is missing.
 
 ### Card secrets
@@ -224,7 +229,7 @@ Use `project_copy` to transfer an explicit list of `{from,to}` files from an att
 
 `attached_folder_read` and Agent `project_file_read` return bounded pages: default 256 KiB, maximum 1 MiB, with total size and continuation offsets. A 200 MB attached file reads only the requested page. The UI can still fetch every page. Model-facing pages are reduced further to preserve valid JSON and correct continuation offsets within the model tool-result budget. To inspect large content use `head`, `grep`, `wc` or bounded reads; move it with copy, never read and retype it.
 
-Grant **Shell** separately from Read, Write and Run to use `project_shell`. Its cwd is a staged view with ordinary `definitions/<id>/...` and nested `externals/...` paths. It includes only readable Cards; writable Cards' sources can be edited with tools such as `sed`. Read-granted attached folders appear read-only at `attached/<SHA-256(folder path)[0:16]>/`. `scratch/` is writable and persists for that conversation or individual helper. Root `tsugumi.json` and `layout.bin`, and each Card's `_card.json`, `README.md`, `_inputs.fbs`, `_outputs.fbs`, `_params.fbs` are read-only; use `project_edit` for small changes to these (including the authored output schema). The real project and `.tsugumi/` are inaccessible. A successful, uncancelled command saves one validated Agent revision. Failure, timeout or cancellation saves no Card changes. The normal revision, hash and external-file conflict checks protect concurrent edits; a conflict is reported, never silently merged. Core executes inside the VM on Mac and directly on Linux, with hidden credentials/control files and blocked direct local RPC. Timeout defaults to 10 seconds, maximum 30 seconds. Each output stream returns at most 256 KiB, head and tail when truncated, with total sizes and a `full_output_path` prefix for complete `.stdout`/`.stderr` files. The model-facing result retains both ends and the total sizes within 60,000 bytes of JSON, including escaping or base64; full output stays in the files. Output, scratch and command views remain under the project's `.tsugumi/agent-files/` for the person to inspect with their file tools. Analysis still belongs in Cards, whose steps can be revisited. Both chat and Claude Code tools follow two lists in `hostd/agent/Shared/agent.json`: `requests` for ordinary operations and `approvalRequests` for operations that need the person's approval for each call. The Agent may inspect usage and propose deleting run history, project build caches or selected run scratch; the approval shows the targets and measured sizes (unknown measurements are explicit). Starting versioning, keeping a named version and checking out a version also need approval each time. Version-note generation follows the person's note setting: hostd reads and stores the note through internal project RPC, independently of the tool catalog; note writes are never model or plugin tools. Concurrent requests for the same full version object ID share one generation regardless of hex letter case. The core supplies the affected runs, cache, folders or version, and records the answer and outcome in the conversation. Declining changes nothing. View state and connection operations are on neither list. Reloading external edits requires approval for every Card permission widening, regardless of origin. [Shell contract and limits](Protocol.md#projectshell) · [Human terminal](Usage.md#project-terminal)
+Grant **Shell** separately from Read, Write and Run to use `project_shell`. Its cwd is a staged view with ordinary `definitions/<id>/...` and nested `externals/...` paths. It includes only readable Cards; writable Cards' sources can be edited with tools such as `sed`. Read-granted attached folders appear read-only at `attached/<SHA-256(folder path)[0:16]>/`. `scratch/` is writable and persists for that conversation or individual helper. Root `tsugumi.json` and `layout.bin`, and each Card's `_card.json`, `README.md`, `_inputs.fbs`, `_outputs.fbs` are read-only; use `project_edit` for small changes to these (including the authored output schema). The real project and `.tsugumi/` are inaccessible. A successful, uncancelled command saves one validated Agent revision. Failure, timeout or cancellation saves no Card changes. The normal revision, hash and external-file conflict checks protect concurrent edits; a conflict is reported, never silently merged. Core executes inside the VM on Mac and directly on Linux, with hidden credentials/control files and blocked direct local RPC. Timeout defaults to 10 seconds, maximum 30 seconds. Each output stream returns at most 256 KiB, head and tail when truncated, with total sizes and a `full_output_path` prefix for complete `.stdout`/`.stderr` files. The model-facing result retains both ends and the total sizes within 60,000 bytes of JSON, including escaping or base64; full output stays in the files. Output, scratch and command views remain under the project's `.tsugumi/agent-files/` for the person to inspect with their file tools. Analysis still belongs in Cards, whose steps can be revisited. Both chat and Claude Code tools follow two lists in `hostd/agent/Shared/agent.json`: `requests` for ordinary operations and `approvalRequests` for operations that need the person's approval for each call. The Agent may inspect usage and propose deleting run history, project build caches or selected run scratch; the approval shows the targets and measured sizes (unknown measurements are explicit). Starting versioning, keeping a named version and checking out a version also need approval each time. Version-note generation follows the person's note setting: hostd reads and stores the note through internal project RPC, independently of the tool catalog; note writes are never model or plugin tools. Concurrent requests for the same full version object ID share one generation regardless of hex letter case. The core supplies the affected runs, cache, folders or version, and records the answer and outcome in the conversation. Declining changes nothing. View state and connection operations are on neither list. Reloading external edits requires approval for every Card permission widening, regardless of origin. [Shell contract and limits](Protocol.md#projectshell) · [Human terminal](Usage.md#project-terminal)
 
 ### Choosing Claude's features by purpose
 

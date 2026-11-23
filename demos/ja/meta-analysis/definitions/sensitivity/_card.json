@@ -1,22 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "estimators",
-      "type": "string[]",
-      "data": {
-        "strings": [
-          "DL",
-          "HE",
-          "HS",
-          "SJ",
-          "ML",
-          "REML",
-          "PM"
-        ]
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "trials"

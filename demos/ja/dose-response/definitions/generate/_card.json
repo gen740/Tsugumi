@@ -1,49 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 42
-      }
-    },
-    {
-      "name": "noise_sd",
-      "type": "double",
-      "data": {
-        "double": 4.0
-      }
-    },
-    {
-      "name": "concentrations",
-      "type": "uint64",
-      "data": {
-        "uint64": 8
-      }
-    },
-    {
-      "name": "top_um",
-      "type": "double",
-      "data": {
-        "double": 100.0
-      }
-    },
-    {
-      "name": "dilution",
-      "type": "double",
-      "data": {
-        "double": 3.16
-      }
-    },
-    {
-      "name": "replicates",
-      "type": "uint64",
-      "data": {
-        "uint64": 3
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "start"

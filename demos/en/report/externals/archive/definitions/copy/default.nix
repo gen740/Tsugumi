@@ -1,8 +1,4 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
+{ params, inputs }:
 {
   # A bash Card: $DIR_REPORT is the input directory and the output port
   # values are written as JSON to $TSUGUMI_OUTPUT.

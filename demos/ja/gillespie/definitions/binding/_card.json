@@ -1,50 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "concentration",
-      "type": "double",
-      "data": {
-        "double": 2.0
-      }
-    },
-    {
-      "name": "on_rate",
-      "type": "double",
-      "data": {
-        "double": 1.0
-      }
-    },
-    {
-      "name": "off_rate",
-      "type": "double",
-      "data": {
-        "double": 1.0
-      }
-    },
-    {
-      "name": "volumes",
-      "type": "double[]",
-      "data": {
-        "doubles": [
-          1.0,
-          2.0,
-          5.0,
-          10.0,
-          20.0,
-          50.0,
-          100.0
-        ]
-      }
-    },
-    {
-      "name": "replicas",
-      "type": "uint64",
-      "data": {
-        "uint64": 40
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "settings"

@@ -1,56 +1,76 @@
 # Your first Card
 
-Make a Card that just multiplies the number it receives, run it, and try other conditions.
-After making it in Python, replace the same Card with C++, R and Julia.
-
-This page is the Card specification. Each language's API (generated types, typed display values, dependency locks, threads) belongs to its SDK and is documented in [tsugumi-kit](https://github.com/gen740/tsugumi-kit/tree/main), the default SDKs. [Visualisation](Visualization.md), [marimo notebooks](Marimo.md) and [R reports](Reports.md) describe the demos built on those SDKs.
+Make a C++ Card that converts a temperature from Celsius to Fahrenheit. Then rerun it with a different parameter and inspect the saved result. The [temperature-conversion template](https://github.com/gen740/tsugumi-kit/tree/main/templates/temperature-conversion) has the same wiring.
 
 ## What you will make
 
 ```text
-start ──out→ settings ──number→ multiply
+start ──out→ settings ──temperature→ convert
 ```
 
-| Card | Kind | What it does |
-| --- | --- | --- |
-| `start` | Start (trigger) | Where the run begins |
-| `settings` | Input value (input) | Sends a number you can edit on the Canvas |
-| `multiply` | Python step | Multiplies the number it receives by `factor`, outputs the result and shows it in its view |
-
-When it is done, the Canvas looks like this. The player illustrates the Card graph. Press ▶ Run to watch the flow, and click `multiply` to read the Python code on this page (web version only).
+The Trigger starts the run. The Input Card `settings` sends an editable temperature. The Code Card `convert` calculates a Fahrenheit value, sends it to its live view and returns a typed output.
 
 <div data-player="card-guide"></div>
 
 ## Making it on screen
 
-1. Make a project with "New Project…" on the home screen.
-2. Right-click the Canvas and, from "Add Card", place "Trigger", "Input Value" and "Draft", naming them `start`, `settings` and `multiply`.
-3. Draw a wire from the output of `start` to `settings`, and from the output of `settings` to `multiply`.
-4. Open each Card (the `s` key or "Settings" in the context menu) and apply the files in the next section. In the Draft’s settings, choose Code as the implementation kind.
-
-A Card's settings look like this. Switch between "Source", "Ports" and "Nix Definition" in the list on the left to edit, and "Apply" puts the change into the Workflow.
-
-![Editing the source code in a Card's settings](assets/screenshots/card-source.png)
-
-A Card is ordinary files in the project folder, so writing them directly in an editor is the same. To start from Cards someone already wrote, copy a [template](#templates).
+1. Create a project from the temperature-conversion template or start with an empty project.
+2. For an empty project, place a Trigger, an Input Value and a Draft on the Canvas. Name them `start`, `settings` and `convert`. Add the files below and connect the ports. In the Draft's settings, choose Code as the implementation kind.
+3. If you are declaring the sources yourself, add the two names under **Project settings → Name and Environment → Nix search path**. Choose **Update all** to write `tsugumi.lock`.
 
 ## The files
-
-The whole project:
 
 `tsugumi.json`
 
 ```json
 {
-  "name": "Your first Card",
-  "pkgsPath": "tsugumi:default",
+  "name": "Temperature conversion",
+  "nixPath": [
+    {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/nixos-unstable"},
+    {"name": "tsugumi-kit", "url": "github:gen740/tsugumi-kit/main"}
+  ],
   "canvas": {
-    "cards": [{"id": "start"}, {"id": "settings"}, {"id": "multiply"}],
+    "cards": [{"id": "start"}, {"id": "settings"}, {"id": "convert"}],
     "connections": [
       {"from": {"card": "start", "port": "out"}, "to": {"card": "settings", "port": "start"}},
-      {"from": {"card": "settings", "port": "number"}, "to": {"card": "multiply", "port": "number"}}
+      {"from": {"card": "settings", "port": "temperature"}, "to": {"card": "convert", "port": "celsius"}}
     ]
   }
+}
+```
+
+The lock below is the template's checked-in example. Use an explicit update to resolve new pins for your own declarations. [Project Nix search path](features.md#project-nix-search-path)
+
+`tsugumi.lock`
+
+```json
+{
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable",
+      "locked": {
+        "type": "github",
+        "owner": "NixOS",
+        "repo": "nixpkgs",
+        "rev": "1c89083e451e891152365b799595cf7790a43325",
+        "narHash": "sha256-Y1CiZ4SoBUjLQyQM/pY+rS2dXD3CHLPstF0lmOc73D4=",
+        "lastModified": 1793341285
+      }
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main",
+      "locked": {
+        "type": "github",
+        "owner": "gen740",
+        "repo": "tsugumi-kit",
+        "rev": "54bf325572c0a66e5924b5cd091597975bcafbe3",
+        "narHash": "sha256-LLpRNabK7h3i3Ve9hO6WZFIief86ZGPJOqS7YeW8lqg=",
+        "lastModified": 1795417034
+      }
+    }
+  ]
 }
 ```
 
@@ -62,110 +82,124 @@ The whole project:
 
 ### The input value Card
 
-Write the output type in `_outputs.fbs`. The fields of `Outputs` are the output ports.
-`params` have the same names as the fields of the table that is output.
+The run parameter has the same name as the field in the `Temperature` message. The `temperature` field of `Outputs` names the output port.
 
 `definitions/settings/_card.json`
 
 ```json
-{"type": "input", "params": [{"name": "value", "type": "uint64", "data": {"uint64": 21}}]}
+{"type": "input"}
+```
+
+`definitions/settings/params.nix`
+
+```nix
+{
+  run = {
+    value = 20.0;
+  };
+}
 ```
 
 `definitions/settings/_outputs.fbs`
 
 ```text
-namespace hello;
-table Number { value:ulong; }
-table Outputs { number:Number (required); }
+namespace thermometer;
+table Temperature { value:double; }
+table Outputs { temperature:Temperature (required); }
 root_type Outputs;
 ```
 
-For a Path output, the `value` parameter names a saved project file or folder. A path such
-as `data/events.fits` is relative to the input Card's own definition folder;
-`project:definitions/shared/data/events.fits` explicitly uses the owning
-project's root to name a saved source in another Card. Inside an
-external project, these bases stay within that external project. Absolute paths
-and `..` components are rejected. The file or folder is copied into the run before
-it is passed downstream, so later source edits do not change that run's file.
+### The conversion Card
 
-### The processing Card (Python)
-
-Write the names of the input ports in `inputs`. Input types are not written: they are derived from the outputs of the connected Cards.
-
-`definitions/multiply/_card.json`
+`definitions/convert/_card.json`
 
 ```json
+{"type": "code", "inputs": [{"name": "celsius"}], "params": {"plot": true}}
+```
+
+`definitions/convert/_outputs.fbs`
+
+```text
+namespace thermometer;
+table Temperature { value:double; }
+table Outputs { fahrenheit:Temperature (required); }
+root_type Outputs;
+```
+
+`definitions/convert/params.nix`
+
+```nix
 {
-  "type": "code",
-  "inputs": [{"name": "number"}],
-  "params": [{"name": "factor", "type": "uint64", "data": {"uint64": 2}}]
+  run = {
+    scale = 1.8;
+    offset = 32.0;
+    unit = "°F";
+  };
+  build = {
+    cxxflags = [ "-O2" ];
+    plot = false;
+  };
 }
 ```
 
-`definitions/multiply/_outputs.fbs`
+`definitions/convert/default.nix`
 
-```text
-namespace hello;
-table Result { value:ulong; }
-table Outputs { result:Result (required); }
-root_type Outputs;
+```nix
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
+  common = {
+    inherit inputs;
+    outputs = ./_outputs.fbs;
+    params = ./params.nix;
+  };
+in
+{
+  run = sdk.cppCard (common // {
+    src = ./src;
+    cxxflags = params.cxxflags;
+    tools = pkgs.lib.optional params.plot pkgs.gnuplot;
+  });
+  api = sdk.cppApi common;
+  views = builtins.filter (view: view.name == "markdown") sdk.views;
+}
 ```
 
-A Card's summary goes in the one-line `description` front matter in `README.md`. It appears on the Canvas and in the Card's settings, so write briefly what the Card does.
+The override for `plot` adds gnuplot to the Card's available tools. `scale`, `offset` and `unit` are delivered on each call. The SDK creates types from the port schema, `_outputs.fbs` and the run declarations in `params.nix`.
 
-`definitions/multiply/README.md`
+`definitions/convert/README.md`
 
 ```markdown
 ---
-description: Multiply number by factor
+description: Convert Celsius to Fahrenheit
 ---
 ```
 
-The SDK, the environment and the Card's views go in `default.nix`. `inputs.tsugumi` holds the SDKs from tsugumi-kit; `pythonSdk.pythonCard` builds the Card and `pythonSdk.views` are the views the Python SDK bundles. To use `numpy` and the like, add `packages = ps: [ ps.numpy ];` to `pythonCard`. Packages come from the project's pinned nixpkgs.
+`definitions/convert/src/card.cc`
 
-`definitions/multiply/default.nix`
+```cpp
+#include "card.hh"
 
-```nix
-{ pkgs, params, inputs, schemas }:
-let
-  sdk = inputs.tsugumi.pythonSdk;
-in
-{
-  run = sdk.pythonCard { inherit schemas; src = ./src; };
-  views = builtins.filter (view: view.name == "text") sdk.views;
+auto run(const Card::Inputs& input) -> Card::Output {
+  using Fallback = decltype(Card::Output::fahrenheit)::value_type;
+  using Celsius = Card::InputType<"celsius", Fallback>;
+  const auto celsius = input.get<Celsius>("celsius");
+  const double fahrenheit = celsius.value * input.params.scale + input.params.offset;
+  card::display::send(card::display::Scalar{fahrenheit, input.params.unit});
+  Card::Output output;
+  output.fahrenheit.emplace().value = fahrenheit;
+  return output;
 }
 ```
 
-The body is a function from the Card's input to its output: `run(input) -> Output`. The SDK generates `card.py` with the `Input` and `Output` classes and one FlatBuffers object type per port, importable as `outputs.<port>.<namespace>.<table>`. `tsugumi.send` shows a value in the Card's view while it runs.
-
-`definitions/multiply/src/main.py`
-
-```python
-import tsugumi
-from card import Input, Output
-from outputs.result.hello.Result import ResultT
-
-
-def run(input: Input) -> Output:
-    n = input.require("number").value
-    factor = input.params.factor
-    tsugumi.send(f"{n} × {factor} = {n * factor}")
-    return Output(result=ResultT(value=n * factor))
-```
-
-The [Python SDK guide](https://github.com/gen740/tsugumi-kit/blob/main/sdk/python/README.md) lists the generated names, how strings and unions arrive and the typed values `tsugumi.send` accepts.
+`Card::InputType` selects the connected type or a fallback that lets the source compile while unwired. `input.get` reports `input_missing` if the call requires an absent value. In the Card editor's Source view, press **Build SDK** to read the generated names and declarations.
 
 ## Running it and checking
 
-1. Press "Run" (⌘R) at the top of the Canvas. Only the first time takes a while, as Nix prepares the environment.
-2. Open `multiply`'s view window: it shows `21 × 2 = 42` while the run goes on. The view is live: it is not saved with the run.
-3. "Run History" in the context menu shows the time and logs of each stage (Nix evaluation, build, run, saving), and the `result` value of 42 that the run saved.
-
-## Trying other conditions
-
-- **Change only a parameter.** Set `factor` of `multiply` to 3 and run only `multiply` with "Run Only This Card (Last Inputs)" in the context menu. `settings` does not run, and with the saved input the result is `21 × 3 = 63`. `factor` is not passed to Nix, so nothing is rebuilt either.
-- **Change something upstream.** After changing `value` of `settings`, run again from `start`. Partial runs use saved inputs, so an upstream change does not arrive until you run the whole ([Rerunning from the middle](Rationale.md#rerunning-from-the-middle)).
-- **Go back to an earlier version.** Each run commits the changes to git. From "Version History…" (⌥⌘Y) in the Workflow menu, go back to an earlier version and start a different attempt ([Versions](Versions.md)).
+1. Press **Run** (⌘R). The first build prepares the Card's environment.
+2. Open `convert`'s live view to see `68 °F`. Use **Run History** to inspect the output on `fahrenheit` and the logs for evaluation, build and execution.
+3. Change the `offset` to `0.0` and choose **Run Only This Card (Last Inputs)**. This experiment uses the saved 20-degree input and yields 36 without rebuilding the Card. Resetting the parameter removes its override and restores `32.0`.
 
 ## Inputs and outputs
 
@@ -173,21 +207,21 @@ A Card is `(input) -> output`. One call receives the values on its input ports a
 
 | SDK in `default.nix` | Entry point | Guide |
 | --- | --- | --- |
-| `cppSdk.cppCard` | `auto run(const Card::Inputs& input) -> Card::Output` | [C++](https://github.com/gen740/tsugumi-kit/blob/main/docs/cpp-sdk.md) |
-| `pythonSdk.pythonCard` | `def run(input: Input) -> Output` | [Python](https://github.com/gen740/tsugumi-kit/blob/main/sdk/python/README.md) |
-| `rSdk.rCard` | `main <- function(input)` returns a named list | [R](https://github.com/gen740/tsugumi-kit/blob/main/sdk/r/README.md) |
-| `juliaSdk.juliaCard` | `main(input)` returns a NamedTuple or Dict | [Julia](https://github.com/gen740/tsugumi-kit/blob/main/sdk/julia/README.md) |
-| `goSdk.goCard` | `func run(input tsugumi.Inputs) (tsugumi.Output, error)` | [Go](https://github.com/gen740/tsugumi-kit/blob/main/sdk/go/README.md) |
-| `rustSdk.rustCard` | `fn run(input: Inputs<'_>) -> Result<Output, Failure>` with `tsugumi::export!(run)` | [Rust](https://github.com/gen740/tsugumi-kit/blob/main/sdk/rust/README.md) |
-| `rubySdk.rubyCard` | `def main(input)` returns a Hash | [Ruby](https://github.com/gen740/tsugumi-kit/blob/main/sdk/ruby/README.md) |
-| `csharpSdk.csharpCard` | `public static Output Run(Input input)` | [C#](https://github.com/gen740/tsugumi-kit/blob/main/sdk/csharp/README.md) |
+| `cppCard` | `auto run(const Card::Inputs& input) -> Card::Output` | [C++](https://github.com/gen740/tsugumi-kit/blob/main/docs/cpp-sdk.md) |
+| `pythonCard` | `def run(input: Input) -> Output` | [Python](https://github.com/gen740/tsugumi-kit/blob/main/sdk/python/README.md) |
+| `rCard` | `main <- function(input)` returns a named list | [R](https://github.com/gen740/tsugumi-kit/blob/main/sdk/r/README.md) |
+| `juliaCard` | `main(input)` returns a NamedTuple or Dict | [Julia](https://github.com/gen740/tsugumi-kit/blob/main/sdk/julia/README.md) |
+| `goCard` | `func run(input tsugumi.Inputs) (tsugumi.Output, error)` | [Go](https://github.com/gen740/tsugumi-kit/blob/main/sdk/go/README.md) |
+| `rustCard` | `fn run(input: Inputs<'_>) -> Result<Output, Failure>` with `tsugumi::export!(run)` | [Rust](https://github.com/gen740/tsugumi-kit/blob/main/sdk/rust/README.md) |
+| `rubyCard` | `def main(input)` returns a Hash | [Ruby](https://github.com/gen740/tsugumi-kit/blob/main/sdk/ruby/README.md) |
+| `csharpCard` | `public static Output Run(Input input)` | [C#](https://github.com/gen740/tsugumi-kit/blob/main/sdk/csharp/README.md) |
 
 Any SDK that implements the [Card ABI](CardABI.md) can take the place of these: the core knows no language, only a built `lib/main.so` that exports `tsugumi_main`.
 
-The core prepares the Card's port schemas and passes them to `default.nix` as `schemas`: `_inputs.fbs` from the connected outputs, `_outputs.fbs` from the Card's own schema and `_params.fbs` from its parameters. The SDK generates the Card's types from these files and places the generated API under `share/tsugumi/api/` of the build result. Press **Build SDK** in the Card editor's source view (the Agent uses its Card API tool) to read the exact names.
+The core supplies connected input types as `inputs.<port>.type`. The SDK combines them with `_outputs.fbs` and `params.nix` to generate the typed interface. **Build SDK** builds `card.api` via the [generic Nix evaluation tool](features.md#evaluating-a-card-expression) and shows the files under `share/tsugumi/api/`.
 
 - An input declaration contains its name. Connect one wire to give it the upstream output’s type. An unconnected input is absent. The Card’s SDK reports `input_missing` with the port name when the Card requires an absent input.
-- Parameters are one `parameters.Params` message. A scalar parameter without a value is absent rather than zero.
+- Run parameters arrive in one `parameters.Params` message, with every field set to its effective value.
 - The Card returns one value per output port it produces. A missing required output fails the call with `output_invalid`. The SDK checks the payload against the port's type.
 - Numeric messages keep IEEE NaN, positive and negative infinity and signed zero.
 
@@ -206,110 +240,14 @@ Raise or return the SDK's failure (Python `tsugumi.Failure("validation_failed", 
 
 During a call, the Card can ask whether it has been cancelled and how much of its deadline remains (`cancelled()` and `remaining_ms()` in each SDK). A long loop should check between units of work. A stop or deadline also ends code that does not check.
 
-## Writing the same Card in another language
-
-As long as the input and output types are the same, what is inside can be replaced while the wires on the Canvas and the Cards around it stay as they are. `_card.json` and `_outputs.fbs` stay the same as for Python. Only `default.nix` and `src/` change.
-
-### C++
-
-Read each input through `Card::Inputs` by port name. `Card::InputType` supplies the connected type and lets the same source compile when the port is unwired. Return ports through `Card::Output`.
-
-`definitions/multiply/default.nix` (C++)
-
-```nix
-{ pkgs, params, inputs, schemas }:
-let
-  sdk = inputs.tsugumi.cppSdk;
-in
-{
-  run = sdk.cppCard { inherit schemas; src = ./src; };
-  views = builtins.filter (view: view.name == "text") sdk.views;
-}
-```
-
-`definitions/multiply/src/card.cc` (C++)
-
-```cpp
-#include "card.hh"
-
-#include <string>
-
-auto run(const Card::Inputs& input) -> Card::Output {
-  using Fallback = decltype(Card::Output::result)::value_type;
-  using Number = Card::InputType<"number", Fallback>;
-  const auto n = input.get<Number>("number").value;
-  const auto factor = input.params.factor.value_or(1);
-  card::display::send(std::to_string(n) + " × " + std::to_string(factor) +
-                      " = " + std::to_string(n * factor));
-  Card::Output output;
-  output.result.emplace().value = n * factor;
-  return output;
-}
-```
-
-### R
-
-Messages are named lists. Packages come from nixpkgs' `rPackages` (`packages = ps: [ ps.survival ps.ggplot2 ];`). The R SDK bundles the `text` view.
-
-`definitions/multiply/default.nix` (R)
-
-```nix
-{ pkgs, params, inputs, schemas }:
-{
-  run = inputs.tsugumi.rSdk.rCard { inherit schemas; src = ./src; };
-  views = builtins.filter (view: view.name == "text") inputs.tsugumi.rSdk.views;
-}
-```
-
-`definitions/multiply/src/main.R` (R)
-
-```r
-main <- function(input) {
-  n <- input$number$value
-  factor <- input$params$factor
-  send(sprintf("%g × %g = %g", n, factor, n * factor))
-  list(result = list(value = n * factor))
-}
-```
-
-R keeps integers exactly only up to 2^53: larger ones arrive as decimal strings, and a decimal string is also how to return one. `stop("why")` fails the call with its message.
-
-### Julia
-
-Messages are dictionaries keyed by field name.
-
-`definitions/multiply/default.nix` (Julia)
-
-```nix
-{ pkgs, params, inputs, schemas }:
-{
-  run = inputs.tsugumi.juliaSdk.juliaCard { inherit schemas; src = ./src; };
-  views = builtins.filter (view: view.name == "text") inputs.tsugumi.juliaSdk.views;
-}
-```
-
-`definitions/multiply/src/main.jl` (Julia)
-
-```julia
-function main(input)
-    n = input.number["value"]
-    factor = input.params["factor"]
-    send("$n × $factor = $(n * factor)")
-    return (; result=(; value=n * factor))
-end
-```
-
-### Go, Rust, Ruby and C#
-
-The same Card in these languages has the same `_card.json` and `_outputs.fbs`, a `default.nix` that names `goSdk.goCard`, `rustSdk.rustCard`, `rubySdk.rubyCard` or `csharpSdk.csharpCard`, and the entry point from the table above. Each SDK's guide in tsugumi-kit has a complete example. External modules, crates, gems and NuGet packages come from a lock and its hash named in `default.nix`; each SDK's guide says how to make them. Nothing is fetched while a Card runs.
-
 ## Views
 
-A Card shows what it is doing in its views. A view is fixed by the Card's definition, before any run: the Card declares its views in `default.nix`, next to `run` and `exports`, and the Card's view window shows each of them, empty, until data arrives. While the Card runs it sends messages to a view by name; the view draws them.
+A Card shows what it is doing in its views. A view is fixed by the Card's definition, before any run: the Card declares its views in `default.nix`, next to `run`, `api` and `exports`, and the Card's view window shows each of them, empty, until data arrives. While the Card runs it sends messages to a view by name; the view draws them.
 
 ```nix
 {
-  run = sdk.pythonCard { inherit schemas; src = ./src; };
+  run = sdk.pythonCard (common // { src = ./src; });
+  api = sdk.pythonApi common;
   views = sdk.views ++ [
     { name = "notes"; type = "html"; blob = ./notes.html; }
   ];
@@ -388,7 +326,7 @@ Cards start a fresh worker for each call by default. Set `reuseWorker: true` to 
 | `TMPDIR` | Scratch. Read the path from the environment. | Cleared for each call. |
 | `/tmp` | On Linux workers, the shared VM and remote workers, the same scratch as `TMPDIR`. | On native macOS only `TMPDIR` is scratch. |
 
-The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. A file input's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard { inherit schemas; src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; }`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
+The worker sets the working directory, `HOME`, `TMPDIR` and the environment at launch. A file input's path is valid only during its call. A cache in `HOME` should be safe to rebuild when a later call finds it missing. The Card's process gets no shell and no `PATH` of its own: there is no implicit `/bin/sh`. A Card that runs other programs declares them to its SDK's builder, for example `sdk.pythonCard (common // { src = ./src; tools = [ pkgs.coreutils pkgs.ripgrep ]; })`, and the builder puts exactly those on the Card's `PATH`. Packages come from the project's pinned nixpkgs.
 
 ## Card definition reference
 
@@ -407,14 +345,15 @@ Definition files:
 
 | File | What it is |
 | --- | --- |
-| `_card.json` | What the Card is (`type`, required) and all settings: `inputs`, `params`, run settings |
+| `_card.json` | What the Card is (`type`, required) and its settings, including `inputs`, parameter overrides and run settings |
 | `README.md` | Optional one-line `description: …` between `---` lines and a Markdown body. Keep the description and body when implementing a Draft. |
 | `_comments.json` | Review comments, keyed by stable comment ids across versions. |
 | `_outputs.fbs` | One table per output port, root table `Outputs` |
-| `default.nix` | Code Cards only: a function `{ pkgs, params, inputs, schemas }:` returning `run` (one implementation or an ordered list), and optionally `views` and `exports`. Nothing else is accepted |
+| `params.nix` | Optional parameter declarations and their defaults |
+| `default.nix` | Code Cards only. A function `{ params, inputs }:` returning `run` and optional `views`, `exports` and `api` |
 | `src/` | Code Cards only: the sources |
 
-Never write `_inputs.fbs`: input types come from the connected outputs. The SDK is chosen in `default.nix`; `_card.json` has no language.
+Input types come from the connected outputs. Select the SDK in `default.nix`.
 
 ### Card types
 
@@ -440,8 +379,8 @@ To control a Branch from the Canvas, declare a `bool` parameter named `value`
 and an output message with a `value:bool` field. Wire that output to the
 Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 
-```json
-{"type": "input", "params": [{"name": "seed", "type": "uint64", "data": {"uint64": 42}}]}
+```nix
+{ run = { seed = 42; }; }
 ```
 
 ### An input Card that passes on a project file or folder
@@ -449,12 +388,13 @@ Branch’s `condition` input. The Canvas renders the parameter as a toggle.
 The editor has a picker for files and folders in the project. At run time the
 worker stages a copy and the next Card receives its path.
 
-`definitions/load/_card.json` (the path is relative to this Card's definition folder):
+Set `"type": "input"` in `_card.json`. Declare the path in the Input Card's `params.nix`:
 
-```json
-{"type": "input",
- "params": [{"name": "value", "type": "string", "data": {"string": "data/events.fits"}}]}
+```nix
+{ run = { value = "data/events.fits"; }; }
 ```
+
+The path is relative to the Card's definition folder.
 
 Use `project:definitions/shared/data/events.fits` for a saved source in another
 Card of the owning project.
@@ -472,9 +412,22 @@ root_type Outputs;
 
 The next Card reads the path directly, for example `Path(input.events)` in Python.
 
+### Parameters
+
+Declare defaults in the optional `params.nix` in the Card's definition folder. The top-level attrset may contain `run`, `build`, or both. A parameter name may appear in just one section. Names use 1–128 ASCII letters, digits, underscores, hyphens or dots, excluding `.` and `..`. Run names must also be valid FlatBuffers field names, so identifiers such as `sample_rate` work across SDKs.
+
+The default determines the type. A default can be a boolean, signed 64-bit integer, double-precision float, literal string or a nonempty homogeneous list of those scalars. `10` is an integer and `10.0` is a float. Use a decimal point in exponent notation, as in `1.0e3`, and parenthesize a negative list element, as in `[ 0 (-3) ]`. Declarations contain literals and the two section attrsets. Expressions, interpolation, paths, nested parameter objects, nested lists and null are invalid. The core validates the parsed declaration and caches it by file content.
+
+For each name, the effective value is its default unless `_card.json` contains an override, for example `"params": {"offset": 0.0}`. JSON numbers can override a float. An integer override must be integral. Undeclared names and incompatible values are validation errors. Resetting the parameter removes the override. The editor leaves the declarations in `params.nix` intact.
+
+| Section | Where the value arrives |
+| --- | --- |
+| `run` | `CardInput.params` on each invocation, as `parameters.Params`. The fields have IDs assigned in bytewise name order. A value edit does not change the build inputs. |
+| `build` | `params.<name>` in `default.nix`, as a typed Nix value. Use it for settings that affect derivations. |
+
 ### Code Card settings
 
-A Code Card has `"type": "code"`. Choose the SDK in the Card’s `default.nix`. Declare input port names in `inputs`; connected outputs determine their types. Parameters are entries such as `{"name": "low", "type": "double", "data": {"double": 600}}`. Their types are `bool`, `int64`, `uint64`, `double`, `string` and arrays of those types; they arrive in the Card's input as `params`. A parameter with `nix: true` is also a build-time value in `default.nix`, as `params.<name>`; changing it rebuilds the Card.
+A Code Card has `"type": "code"`. Declare input port names in `inputs`. The connected outputs supply the input types, and `default.nix` selects the SDK.
 
 Network access is off by default where the worker can isolate it. Set `grants.network` to true to allow it. TLS uses the Nix `cacert` bundle through `SSL_CERT_FILE`; report downloaded data's URL, size and SHA-256. For immutable public data, prefer a pinned Nix fetch as described below.
 
@@ -500,7 +453,7 @@ What the Card does with the value is its author's responsibility: child processe
 ### Run lists and connected Nix exports
 
 Use `demos/en/signal-sweep` for a parameter sweep. The `samples` Input Card
-sweeps its `value` parameter: `"sweep": [{"uint64": 8}, {"uint64": 12}, {"uint64": 16}]` in place of `"data"` hands
+sweeps its declared run parameter with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. It hands
 on each signal in its own invocation, labeled `value=8` and so on.
 
 A Code Card compares implementations with a run list: `run` is a list of
@@ -511,36 +464,34 @@ implementation per threshold from the same source, with the threshold written
 beside `main.py` as `threshold.py`:
 
 ```nix
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 let
-  sdk = inputs.tsugumi.pythonSdk;
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = { inherit inputs; outputs = ./_outputs.fbs; };
   thresholds = [
     10
     14
   ];
   compare = threshold: {
     label = "threshold=${toString threshold}";
-    run = sdk.pythonCard {
-      inherit schemas;
+    run = sdk.pythonCard (common // {
       src = pkgs.runCommand "score-threshold-${toString threshold}" { } ''
         cp -r ${./src} $out
         chmod -R +w $out
         echo "THRESHOLD = ${toString threshold}" > $out/threshold.py
       '';
-    };
+    });
   };
 in
 {
   run = map compare thresholds;
+  api = sdk.pythonApi common;
   exports.thresholdCount = builtins.length thresholds;
 }
 ```
 
-A list-typed parameter (`"type": "uint64[]"`) with `"data": {"uint64s": [1, 2]}` is one ordinary
-vector value. Only `sweep` makes a batch, also for a single value
-(`"sweep": [{"uint64": 5}]` is ×1); each element of a list-typed sweep is one vector.
-Several swept parameters run their Cartesian product, the last one varying
-fastest. Code Cards use run lists instead of `sweep`.
+A list-valued run parameter is one ordinary vector. Under `sweeps`, each entry in a list-typed sweep is one vector. A one-member sweep still forms a batch. Multiple sweeps produce their Cartesian product with the last parameter varying fastest. Code Cards compare implementations through run lists.
 
 The three swept values and two implementations produce six invocations, in input
 item order with implementation order varying fastest. Every batch input is an
@@ -553,23 +504,25 @@ Add a built-in `collect` after `score` to send one ordinary port value with an
 (`input.results.items`). Each item carries its name and kind, with the original
 bytes or path. See the fixed [Collected layout](CardABI.md#built-in-values).
 
-Refer to Nix exports as `inputs.<destination-port>`. Collect, Fork, Branch's
+Refer to Nix exports as `inputs.<destination-port>.exports`. Collect, Fork, Branch's
 `value` input and Workflow boundaries preserve a unique Code producer. Use a
 direct connection to that Code Card if the producer would otherwise be
 ambiguous. The `score` Card exports `thresholdCount`, which `summary` reads through
-Collect as `inputs.results.thresholdCount` and writes beside its own source the
+Collect as `inputs.results.exports.thresholdCount` and writes beside its own source the
 same way. Each run implementation shares the same exports.
 
 ### Data fixed by Nix
 
 Large public data (an observation, a reference genome, a simulation's result) can be fixed like a
-package: fetched once into the Nix store by its hash, never during a run. A param with `"nix":
-true` is readable in `default.nix` as `params.<name>` (changing it rebuilds the Card). The store
+package: fetched once into the Nix store by its hash, before a run. Declare the file name and hash as `build` parameters in `params.nix` and read them as `params.<name>` in `default.nix`. The store
 path reaches the Card's code through a small generated module beside its source:
 
 ```nix
-{ pkgs, params, inputs, schemas }:
+{ params, inputs }:
 let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+  common = { inherit inputs; outputs = ./_outputs.fbs; params = ./params.nix; };
   raw = pkgs.fetchurl {
     url = "ftp://host/path/${params.file}";  # explicit FTPS: ftp:// with
     curlOptsList = [ "--ssl-reqd" ];           # --ssl-reqd (often faster than https)
@@ -578,14 +531,14 @@ let
   data = pkgs.runCommand "data.fits" { } "gunzip -c ${raw} > $out";
 in
 {
-  run = inputs.tsugumi.pythonSdk.pythonCard {
-    inherit schemas;
+  run = sdk.pythonCard (common // {
     src = pkgs.runCommand "load-src" { } ''
       cp -r ${./src} $out
       chmod -R +w $out
       echo 'EVENTS = "${data}"' > $out/observation.py
     '';
-  };
+  });
+  api = sdk.pythonApi common;
 }
 ```
 

@@ -1,28 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "age_min",
-      "type": "uint64",
-      "data": {
-        "uint64": 0
-      }
-    },
-    {
-      "name": "age_max",
-      "type": "uint64",
-      "data": {
-        "uint64": 120
-      }
-    },
-    {
-      "name": "ecog_max",
-      "type": "uint64",
-      "data": {
-        "uint64": 3
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "lung"

@@ -1,35 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "fit_until",
-      "type": "uint64",
-      "data": {
-        "uint64": 1914
-      }
-    },
-    {
-      "name": "restarts",
-      "type": "uint64",
-      "data": {
-        "uint64": 24
-      }
-    },
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": {
-        "uint64": 12
-      }
-    },
-    {
-      "name": "dt",
-      "type": "double",
-      "data": {
-        "double": 0.05
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "pelts"

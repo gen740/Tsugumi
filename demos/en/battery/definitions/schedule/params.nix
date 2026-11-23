@@ -1,0 +1,5 @@
+{
+  run = {
+    tariff = "spot";
+  };
+}

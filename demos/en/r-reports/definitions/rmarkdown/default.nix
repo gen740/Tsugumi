@@ -1,12 +1,19 @@
-{
-  pkgs,
-  inputs,
-  params,
-}:
-{
-  run = inputs.tsugumi.reportCard {
-    src = ./src;
-    entry = "report.Rmd";
-    packages = ps: [ ];
+{ params, inputs }:
+let
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/r> { inherit pkgs; };
+  common = {
+    inherit inputs;
+    outputs = ./_outputs.fbs;
+    params = ./params.nix;
   };
+in
+{
+  run = sdk.rCard (common // {
+    src = ./src;
+    packages = ps: [ ps.rmarkdown ps.processx ];
+    tools = [ pkgs.pandoc ];
+  });
+  api = sdk.rApi common;
+  views = sdk.views;
 }

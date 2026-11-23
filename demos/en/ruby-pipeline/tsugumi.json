@@ -1,6 +1,15 @@
 {
   "name": "Ruby pipeline",
-  "pkgsPath": "tsugumi:default",
+  "nixPath": [
+    {
+      "name": "nixpkgs",
+      "url": "github:NixOS/nixpkgs/nixos-unstable"
+    },
+    {
+      "name": "tsugumi-kit",
+      "url": "github:gen740/tsugumi-kit/main"
+    }
+  ],
   "canvas": {
     "cards": [
       {

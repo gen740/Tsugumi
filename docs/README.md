@@ -11,7 +11,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [INSTALL.md](INSTALL.md) | Installing and updating the desktop app and the `tsugumi` command (Mac, Linux, Windows), and building from source |
 | [Usage.md](Usage.md) | Canvas tools, running from a Card, chart updates, settings and Agent controls |
 | [Demos.md](Demos.md) | Choose a demo, try changes and interpret its results |
-| [CardGuide.md](CardGuide.md) | Build a Card that takes an input and computes, the same Card in Python, C++, R and Julia, and the Card's views. Each language SDK's own guide is in [tsugumi-kit](https://github.com/gen740/tsugumi-kit) |
+| [CardGuide.md](CardGuide.md) | Build a temperature conversion Card in C++, change its parameters, and inspect its live view and saved output. Language SDK guides are in [tsugumi-kit](https://github.com/gen740/tsugumi-kit) |
 | [RunHistory.md](RunHistory.md) | Inspect and compare runs, check runtime packages and open saved artifacts |
 | [RemoteExecution.md](RemoteExecution.md) | Start `tsugumi-workerd` on a remote worker machine and run a Code Card on its Linux host |
 | [Visualization.md](Visualization.md) | Matplotlib figure Cards: data parameters, a live view and saved figures |

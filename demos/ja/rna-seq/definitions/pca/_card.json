@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "top_genes",
-      "type": "uint64",
-      "data": {
-        "uint64": 500
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "normalized"

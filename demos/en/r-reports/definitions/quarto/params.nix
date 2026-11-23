@@ -1,0 +1,5 @@
+{
+  run = {
+    title = "Analysis report";
+  };
+}

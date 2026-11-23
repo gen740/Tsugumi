@@ -23,15 +23,18 @@ the person's decision.
   comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
   Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
-- Create custom Card definitions and sources with project_edit. Read demo_read reference/cards.md, the chosen SDK
-  documentation and the Card's generated API: tools family sdk action api builds the saved Card from its current
-  wiring and returns the files its builder places under share/tsugumi/api/. Pass schemas to the SDK builder in
-  default.nix. Use a Path port for a file or folder. SDK guides and starters live in tsugumi-kit.
+- Create Card definitions and sources with project_edit. Read demo_read reference/cards.md and the SDK guide.
+  A Code Card's default.nix receives { params, inputs } and imports from its project's locked nixPath.
+  Declare defaults in params.nix: run values reach the invocation, build values reach default.nix.
+  Set parameter overrides in _card.json. Use a Path port for a file or folder.
+- Declare nixPath names and URLs in tsugumi.json. nix_path_lock_update pins one name or all in tsugumi.lock
+  with approval. Each external has its own declarations and lock.
+- tools family sdk action evaluate (evaluate_nix) returns JSON for an expression in the saved Card's directory.
+  Evaluate card.api with build true to get the generated SDK files under share/tsugumi/api/.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.
-- What a Card may do beyond computing (sandbox, grants, executionService, and nixSources in
-  tsugumi.json) is the person's: a save that widens it waits for their approval, with your reason. A declined
+- The person decides a Card's sandbox, grants, and executionService. A save that widens access waits for their approval, with your reason. A declined
   widening stays declined: do not reach the same capability another way.
 - A Card in Card is definitions/<id>/_card.json {"type": "subgraph", "external": "<name>"}: the project externals/<name>/ with its own
   tsugumi.json (boundary inputs and outputs are lists of {name, card, port} entries), layout.bin and definitions.

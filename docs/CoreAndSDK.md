@@ -1,6 +1,6 @@
 # The core and the language SDKs
 
-**Status** — decided by the owner on 2026-11-13, 2026-11-21 and 2026-11-22. The Card ABI cutover implements it.
+**Status** — decided by the owner on 2026-11-13 through 2026-11-23.
 Points that are not decided yet are listed under [Open](#open).
 
 The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card sees when it runs is in [The sandbox contract](SandboxContract.md).
@@ -20,46 +20,38 @@ The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card
 
 - The core is `tsugumid`, `workerd`, `hostd`, `protocol` and the UIs. None of them knows a programming language.
 - A language SDK is a swappable part, chosen per Card. Users can write their own.
-- tsugumi-kit ships ten default SDKs: C++, Python, Go, Rust, C#, Julia, R, Ruby, Java and JavaScript. Tsugumi pins one kit revision in its `flake.lock`.
-- A Card selects its language SDK in `default.nix` from the kit the core passes as `inputs.tsugumi`. The core passes the kit unchanged, and the Card gives its builder the port schemas. [The builder interface](#the-builder-interface)
+- tsugumi-kit provides ten language SDKs. A Project declares and locks the kit source like any other Nix dependency. The Card selects its language entry point in `default.nix`.
 - The contract between the core and a language SDK is the common [Card ABI](CardABI.md).
 - The worker comes from the core, including the build of a worker for a foreign system or a remote host. Across versions, the promise is the Card ABI.
-- Bash-bodied Cards, `preRun` and `postRun` are abolished. If they return, it will be as an extension of a language SDK, not in the core.
 - The Card's process gets no implicit `/bin/sh` and no implicit `PATH`. A Card declares the programs it runs to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone ([The sandbox contract](SandboxContract.md#the-worker-builds-what-the-card-sees)).
 
 ## The builder interface
 
-The core calls a Card's `default.nix` with four arguments.
+The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](features.md#project-nix-search-path).
 
-```nix
-{ pkgs, params, inputs, schemas }:
-let sdk = inputs.tsugumi.cppSdk; in
-{
-  run = sdk.cppCard { inherit schemas; src = ./src; };
-  views = sdk.views;
-}
-```
+- `params` contains the effective `build` values declared in [`params.nix`](CardGuide.md#parameters). Each value comes from the override in `_card.json` or the declared default.
+- The `inputs` attribute set is derived from the wiring and keyed by destination input port name.
 
-- `pkgs`: the project's nixpkgs for the Card's target system.
-- `params`: the Card's parameters marked `nix: true`, as Nix values. The others reach the Card only at run time.
-- `inputs`:
-  - `inputs.<port>`: the `exports` of the one Code Card that always produces that input ([Sharing Nix exports](features.md#sharing-nix-exports-through-connections));
-  - `inputs.tsugumi`: the pinned kit, `import <kit> { inherit pkgs; }`, passed through unchanged;
-  - `inputs.sources.<name>`: the packages of a flake the project declares in `nixSources` ([External Nix sources](features.md#external-nix-sources-inputssources)). The core evaluates a declared flake only when the Card's evaluation reads it.
-- `schemas`: a store directory with `_inputs.fbs`, `_outputs.fbs` and `_params.fbs`, made from the Card's current definition and wiring. Each file has one root table (`Inputs`, `Outputs`, `Params`) with the ports or parameters as fields, in declaration order. Only connected inputs appear, with their upstream output's type, and none is `(required)`. A Path port is `string (tsugumi: "path")`.
+| Upstream | `inputs.<port>` |
+| --- | --- |
+| Unconnected | Attribute absent |
+| Code Card | `{ type; exports; }`, with `{}` for an undeclared `exports` |
+| Branch, Fork or Collect | `{ type; exports; }` when the route preserves a Code producer, with `type` from the wiring and `exports` from that producer |
+| Merge | `{ type; }`, including a generated union for mixed FlatBuffer types |
+| Draft | `{ type; }`, with an empty provisional type |
+| A built-in with no eligible Code producer | `{ type; }` |
 
-The schemas are all the core tells a builder about the Card. No UI information reaches the builder.
+The `type` field is the store path of a FlatBuffers schema with one input port. Its `inputs.Inputs` root has one field with ID 0, using the connected type. It includes the input type's dependencies in `inputs.<port>`. A Path field is a `string (tsugumi: "path")`.
+
+Each kit entry point at `sdk/<lang>/default.nix` takes `{ pkgs }`. It exposes a language builder, an API builder and `views`. For example, the C++ entry point provides `cppCard` and `cppApi`. The run builder takes `src`, `outputs = ./_outputs.fbs`, `params = ./params.nix` when present, and `inputs`, plus language-specific options. The API builder takes `inputs`, `outputs` and optional `params`. Both generate the typed interface from the input files, the authored outputs and the run parameter declarations. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
-Every language SDK's builder places, next to `lib/main.so` in the run output, the generated API that the Card's code is written against, under `share/tsugumi/api/`: the generated sources (for example C++ `card.hh`, Python stubs, Go or Rust sources) and a `README.md` listing the Card's typed inputs, outputs and parameters. They are built from the same `schemas`. This is an obligation of each SDK, checked in tsugumi-kit.
+The Card's top-level `api` attribute is a code-generation derivation. Its output contains the generated API and a `README.md` listing the types under `share/tsugumi/api/`. The run and API builders share code generation. Normal Card builds leave `api` unevaluated.
 
-The Card API request uses the normal local Nix build with the Card's saved definition, current wiring, and configured system. It returns relative paths and raw bytes for regular files under each implementation's `share/tsugumi/api/`, or the build failure and the end of its log. One reply can cover up to 2,000 directory entries and 8 MiB of paths and file bytes. The build output lives in the Nix store. The Agent reads the files through `tools` with family `sdk` and action `api`. In both Card editors, **Build SDK** opens the same files in the read-only **SDK** section. [CardApi](Protocol.md#cardapi)
+### Evaluating a Card expression
 
-A Card whose target can only be built on an execution service cannot show its
-API yet. The execution service accepts invocation jobs and returns their
-results. A build-only request needs a scoped, cancellable way to realize the
-plan and return the bounded API files from the worker's store.
+The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a Nix expression in the saved Card's directory. It can return a JSON value or build one derivation and return its regular output files. **Build SDK** in the Mac and Web Card editors builds `card.api` with that tool and shows `share/tsugumi/api/` read-only.
 
 ## What the core evaluates
 
@@ -68,6 +60,7 @@ The result of a Card's `default.nix` may define only these attributes:
 - `run`: a derivation containing `lib/main.so`, or a list of `{ label; run; }`;
 - `views`: the Card's [views](#views);
 - `exports`: values that downstream Cards may read.
+- `api`: the optional code-generation derivation.
 
 A language SDK's Nix builder only returns the derivation. There is no manifest. The build plan holds the run derivations, the ordered view list and, for remote or foreign execution, the core's worker.
 
@@ -75,7 +68,7 @@ A language SDK's Nix builder only returns the derivation. There is no manifest. 
 
 There is no language SDK metadata. The interface between the core and a language SDK is only:
 
-1. **a Nix builder** that takes the Card's `schemas` and returns a derivation containing `lib/main.so` and `share/tsugumi/api/`;
+1. **A Nix builder** that produces `lib/main.so` from the sources and the Card contract. The separate API builder publishes `share/tsugumi/api/`.
 2. **[Card ABI](CardABI.md).**
 
 What a language SDK might otherwise have described lives elsewhere:
@@ -88,9 +81,7 @@ What a language SDK might otherwise have described lives elsewhere:
 
 ### Port schemas
 
-The generated `_inputs.fbs` and `_outputs.fbs` contain one root catalog per side. Fields follow port declaration order, with consecutive field IDs. Each FlatBuffer port includes the schema declarations its root table needs. A Path port is a `string (tsugumi: "path")`.
-
-The input catalog includes connected inputs and inherits their types from the upstream outputs. Its fields are nullable. The Card expresses input requirements in its SDK's language, and the SDK reports `input_missing` with the port name when a required value is absent. The output catalog carries the declared outputs and their `required` attributes.
+The core generates a one-port input schema for each connected port. The SDK combines the port schemas into its typed input interface. Connected input fields are nullable. The Card expresses input requirements in its SDK's language, and the SDK reports `input_missing` with the port name when a required value is absent. The authored `_outputs.fbs` carries declared outputs and their `required` attributes.
 
 When a Merge produces a union, each distinct FlatBuffer type has one member. Its box holds the original bytes in a `[ubyte]` field with `nested_flatbuffer` naming that type. The SDK decodes those bytes and exposes the member as its original type. The member names sent to the Canvas through RPC are presentation data.
 
@@ -113,15 +104,18 @@ When a Merge produces a union, each distinct FlatBuffer type has one member. Its
 
 ## Views
 
-A Card declares its views at the top level of its `default.nix`, next to `run` and `exports`:
+A Card declares its `views` next to `run`, `api` and `exports`:
 
 ```nix
-{ inputs, schemas, ... }:
+{ params, inputs }:
 let
-  sdk = inputs.tsugumi.cppSdk;
+  pkgs = import <nixpkgs> { };
+  sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
+  common = { inherit inputs; outputs = ./_outputs.fbs; };
 in
 {
-  run = sdk.cppCard { inherit schemas; src = ./src; };
+  run = sdk.cppCard (common // { src = ./src; });
+  api = sdk.cppApi common;
   views = sdk.views ++ [
     { name = "notes"; type = "html"; blob = ./notes.html; }
   ];

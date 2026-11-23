@@ -1,14 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "fail_on_purpose",
-      "type": "bool",
-      "data": {
-        "bool": false
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "csv"

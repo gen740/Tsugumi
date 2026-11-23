@@ -52,7 +52,7 @@ RUN = {v: k for k, v in vars(RunState).items() if not k.startswith("_")}
 
 
 def guide_files() -> dict[str, str]:
-    """The Python Card of docs/CardGuide.md, parsed as tests/python/test_sdk_examples.py does."""
+    """The project files in named code blocks in docs/CardGuide.md."""
     page = (ROOT / "docs" / "CardGuide.md").read_text()
     files: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):

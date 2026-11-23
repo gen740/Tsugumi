@@ -1,21 +1,5 @@
 {
   "type": "code",
-  "params": [
-    {
-      "name": "years",
-      "type": "uint64",
-      "data": {
-        "uint64": 100
-      }
-    },
-    {
-      "name": "dt",
-      "type": "double",
-      "data": {
-        "double": 0.05
-      }
-    }
-  ],
   "inputs": [
     {
       "name": "fits"
