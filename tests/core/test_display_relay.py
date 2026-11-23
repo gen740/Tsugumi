@@ -74,20 +74,23 @@ def test_views_are_declared_before_a_run_and_replaced_on_definition_change(proje
 
 @pytest.mark.environment
 def test_real_nix_publishes_view_files_without_building_the_card(project, core_factory):
-    client = core_factory().connect()
-    Project(project).card("work", {"type": "code"}, outputs=OUTPUTS, sources={
-        "default.nix": """
-{ pkgs, inputs, params, ... }: {
+    from projects import card, write_nix_project
+
+    definition = {"type": "code", "_outputs": OUTPUTS, "_nix": """
+{ inputs, params }: {
   run = throw "the view build must leave run lazy";
   views = [{ name = "notes"; type = "html"; blob = ./notes.html; }];
 }
-""",
-        "notes.html": "<!doctype html><p>Waiting for data</p>",
-    }).save(client)
+"""}
+    write_nix_project(project, {"work": definition}, [card("work", "work")], [],
+                      {"definitions/work/notes.html": "<!doctype html><p>Waiting for data</p>"})
+    client = core_factory(project_root=project).connect()
     sub = text(client.open().subscriptionId)
     client.call("ViewSetVisibleRequest", subscriptionId=sub, cards=[path("work")])
-    note, = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
-                                     timeout=90).value.views
+    update = client.wait_notification(lambda n: n.valueType == NotificationPayload.CardViewsUpdated,
+                                      timeout=90).value
+    assert not update.failure, update.failure and text(update.failure.diagnostic)
+    note, = update.views
     assert text(note.name) == "notes" and text(note.type) == "html"
     blob = Path(text(note.blob))
     assert blob.is_relative_to("/nix/store")
