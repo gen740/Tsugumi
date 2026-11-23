@@ -1,4 +1,4 @@
-// Run, Card API, history, value, artifact, declared view file and log handlers.
+// Run, Nix evaluation, history, value, artifact, declared view file and log handlers.
 #include <sys/stat.h>
 
 #include <algorithm>
@@ -51,55 +51,6 @@ auto require_run_id(const flatbuffers::String& s, const char* what) -> void {
   if (!crypto::is_run_id(s.string_view()))
     throw Failed(FailureKind::invalid_request,
                  std::string(what) + " must be a positive project run number");
-}
-
-constexpr size_t kCardApiEntryLimit = 2000;
-constexpr uint64_t kCardApiByteLimit = 8u << 20;
-constexpr std::string_view kCardApiDirectory = "share/tsugumi/api";
-
-auto card_api_files(const CardBuildPlan& plan, const std::string& package,
-                    size_t& entries_left, uint64_t& bytes_left, FBB& b)
-    -> std::vector<flatbuffers::Offset<R::CardApiFile>> {
-  // Only paths in the realised plan's store closure are eligible. Walk from
-  // the store so links in the package or above the API directory are rejected.
-  if (std::ranges::find(plan.common.environment.paths, package) ==
-      plan.common.environment.paths.end())
-    throw Failed(FailureKind::nix_failed,
-                 "run output is outside the build closure");
-  const auto store = stdfs::path(plan.common.derivation.output).parent_path();
-  auto base = stdfs::path(package).lexically_relative(store);
-  if (base.empty() || base.has_parent_path())
-    throw Failed(FailureKind::nix_failed,
-                 "run output is outside the Nix store");
-  for (const auto& component : stdfs::path(kCardApiDirectory)) {
-    base /= component;
-    std::error_code ec;
-    const auto status = stdfs::symlink_status(store / base, ec);
-    if (status.type() == stdfs::file_type::not_found) return {};
-    if (ec)
-      throw fs::Error("cannot inspect " + (store / base).string() + ": " +
-                      ec.message());
-    if (!stdfs::is_directory(status)) return {};
-  }
-  const auto listing = fs::list_beneath(store, base, entries_left);
-  entries_left -= listing.files.size() + listing.directories.size() +
-                  listing.links.size() + listing.special.size();
-  std::vector<flatbuffers::Offset<R::CardApiFile>> files;
-  for (const auto& path : listing.files) {
-    if (path.size() > bytes_left)
-      throw Failed(FailureKind::resource_limit,
-                   "share/tsugumi/api/ exceeds 8 MiB");
-    bytes_left -= path.size();
-    std::string content;
-    bytes_left -=
-        fs::stream_beneath(store, base / path, bytes_left,
-                           [&](std::string_view chunk) { content += chunk; });
-    files.push_back(R::CreateCardApiFile(
-        b, b.CreateString(path),
-        b.CreateVector(reinterpret_cast<const uint8_t*>(content.data()),
-                       content.size())));
-  }
-  return files;
 }
 
 }  // namespace
@@ -164,8 +115,8 @@ void Service::run(RequestIn& req) {
 // ---------------------------------------------------------------------------
 // Read pool
 
-void Service::card_api(RequestIn& req) {
-  const auto* r = project_request(req)->value_as_CardApiRequest();
+void Service::evaluate_nix(RequestIn& req) {
+  const auto* r = project_request(req)->value_as_EvaluateNixRequest();
   auto doc = store_->current();
   check_at_rev(r->at_rev(), *doc);
   auto card = wire::card_arg(r->card());
@@ -173,77 +124,101 @@ void Service::card_api(RequestIn& req) {
   if (!node)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
-  if (node->kind != CardType::Code)
+  if (node->kind != CardType::Code && node->kind != CardType::Draft)
     throw Failed(FailureKind::invalid_request,
-                 "only a Code Card has a builder and its API",
+                 "Nix evaluation requires a Code or Draft Card",
                  {{"card", path_key(card)}});
-  // Use the normal build with the local store and the Card's target system.
-  const SharedStoreDerivationTransport transport;
-  BuildRequest build;
-  build.node = node;
-  build.doc = doc;
-  build.target = {WorkerKind::native, node->settings.system.empty()
-                                          ? native_system()
-                                          : node->settings.system};
-  build.transport = &transport;
-  build.timeout_seconds = node->settings.build_timeout_seconds;
+  if (r->expression()->size() == 0)
+    throw Failed(FailureKind::invalid_request, "expression is empty");
+
   std::stop_source stop;
   std::stop_callback disconnected(req.connection_stop,
                                   [&] { stop.request_stop(); });
   std::stop_callback shutdown(card_views_shutdown_.get_token(),
                               [&] { stop.request_stop(); });
-  build.cancel = stop.get_token();
-  // The end of the build output, for a failure.
   constexpr size_t kLogLimit = 256u << 10;
-  std::string log;
-  std::mutex log_mu;
-  build.log = [&](proc::LineChunk chunk) {
-    std::lock_guard lock(log_mu);
-    for (const auto& line : chunk.lines) {
-      log += line;
-      if (!line.ends_with('\n')) log += '\n';
-    }
-    if (log.size() > kLogLimit) log.erase(0, log.size() - kLogLimit);
+  std::mutex log_mutex;
+  std::string log_tail;
+  const auto append_log = [&](std::string_view line) {
+    line = line.substr(line.size() > kLogLimit ? line.size() - kLogLimit : 0);
+    if (log_tail.size() + line.size() > kLogLimit)
+      log_tail.erase(0, log_tail.size() + line.size() - kLogLimit);
+    log_tail.append(line);
   };
-  FBB b;
-  std::vector<flatbuffers::Offset<R::CardApiImplementation>> implementations;
-  flatbuffers::Offset<D::Failure> failure;
+  ExpressionRequest call{
+      .doc = doc,
+      .card = std::move(card),
+      .expression = r->expression()->str(),
+      .build = r->build(),
+      .system = r->system() ? r->system()->str() : native_system(),
+      .cancel = stop.get_token(),
+      .deadline = std::nullopt,
+      .log =
+          [&](proc::LineChunk chunk) {
+            std::lock_guard lock(log_mutex);
+            for (const auto& line : chunk.lines) {
+              append_log(line);
+              if (!line.ends_with('\n')) append_log("\n");
+            }
+          },
+  };
+  if (auto timeout = node->settings.build_timeout_seconds) {
+    const auto now = std::chrono::steady_clock::now();
+    const auto remaining = std::chrono::duration_cast<std::chrono::seconds>(
+        std::chrono::steady_clock::time_point::max() - now);
+    call.deadline = *timeout > static_cast<uint64_t>(remaining.count())
+                        ? std::chrono::steady_clock::time_point::max()
+                        : now + std::chrono::seconds(*timeout);
+  }
+
+  ExpressionResult result;
+  auto failure_kind = FailureKind::nix_failed;
   try {
-    const auto plan = nix_->build(build);
-    size_t entries_left = kCardApiEntryLimit;
-    uint64_t bytes_left = kCardApiByteLimit;
-    for (size_t i = 0; i < plan.implementations.size(); ++i) {
-      const auto& package = plan.implementations[i];
-      const auto files =
-          card_api_files(plan, package, entries_left, bytes_left, b);
-      const auto label = i < plan.implementation_labels.size()
-                             ? plan.implementation_labels[i]
-                             : std::string();
-      implementations.push_back(R::CreateCardApiImplementation(
-          b, static_cast<uint32_t>(i + 1),
-          label.empty() ? 0 : b.CreateString(label), b.CreateString(package),
-          b.CreateVector(files)));
+    result = nix_->evaluate_expression(call);
+  } catch (const NixInterrupted& e) {
+    if (!e.timed_out) throw Failed(FailureKind::cancelled, e.what());
+    failure_kind = FailureKind::timeout;
+    result.build_error = e.what();
+  } catch (const Failed&) {
+    throw;
+  } catch (const std::exception& e) {
+    result.build_error = e.what();
+  }
+
+  FBB b;
+  std::vector<flatbuffers::Offset<R::NixOutputFile>> files;
+  files.reserve(result.files.size());
+  for (const auto& file : result.files) {
+    // Wire paths are UTF-8. Skip names that cannot be represented losslessly.
+    if (text::replace_invalid_utf8(file.path) != file.path) {
+      result.truncated = true;
+      continue;
     }
-  } catch (const Failed& f) {
-    if (stop.stop_requested()) throw;
-    implementations.clear();
-    b.Clear();
-    failure = wire::failure(b, f.failure);
-  } catch (const fs::Error& e) {
-    implementations.clear();
-    b.Clear();
+    files.push_back(R::CreateNixOutputFile(
+        b, b.CreateString(file.path),
+        b.CreateVector(reinterpret_cast<const uint8_t*>(file.bytes.data()),
+                       file.bytes.size())));
+  }
+  flatbuffers::Offset<D::Failure> failure;
+  flatbuffers::Offset<flatbuffers::String> log;
+  if (result.build_error) {
     failure =
-        wire::failure(b, FailureData::make(FailureKind::nix_failed, e.what()));
+        wire::failure(b, FailureData::make(failure_kind, *result.build_error));
+    std::lock_guard lock(log_mutex);
+    auto tail = text::replace_invalid_utf8(
+        result.log_tail.empty() ? log_tail : result.log_tail);
+    if (tail.size() > kLogLimit) {
+      auto start = tail.size() - kLogLimit;
+      while ((static_cast<unsigned char>(tail[start]) & 0xc0) == 0x80) ++start;
+      tail.erase(0, start);
+    }
+    if (!tail.empty()) log = b.CreateString(tail);
   }
-  std::string build_log;
-  {
-    std::lock_guard lock(log_mu);
-    build_log = text::replace_invalid_utf8(log);
-  }
-  auto res = R::CreateCardApiResult(
-      b, doc->rev, b.CreateVector(implementations), failure,
-      failure.IsNull() ? 0 : b.CreateString(build_log));
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardApiResult,
+  auto res = R::CreateEvaluateNixResult(
+      b, doc->rev, result.json ? b.CreateString(*result.json) : 0,
+      call.build && failure.IsNull() ? b.CreateVector(files) : 0,
+      result.truncated, failure, log);
+  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::EvaluateNixResult,
                          res.Union()));
 }
 

@@ -21,7 +21,6 @@ function value(v: unknown): J | undefined {
   if (Array.isArray(v)) return v.length ? v.map(x => value(x) ?? null) : undefined
   return undefined
 }
-
 function fields(source: Record<string, unknown>, keys: readonly string[]): JObj {
   const out = obj()
   for (const k of keys) {
@@ -127,24 +126,4 @@ export function splitCardNotes(notes: J | undefined): { readme?: string; comment
   const readme = printReadme({ description: str(notes.get('description')) ?? '', body: str(notes.get('content')) ?? '' })
   const list = arr(notes.get('comments'))
   return { readme, comments: list?.length ? obj([['comments', list]]) : undefined }
-}
-
-// ---- Param values ----------------------------------------------------------------------
-
-const paramFields: Record<string, string> = {
-  bool: 'bool', int64: 'int64', uint64: 'uint64', double: 'double', string: 'string',
-  'bool[]': 'bools', 'int64[]': 'int64s', 'uint64[]': 'uint64s', 'double[]': 'doubles', 'string[]': 'strings',
-}
-
-/** The field of a ParamValue that holds a value of the param type. */
-export const paramField = (type: string | undefined): string => paramFields[type ?? ''] ?? 'string'
-
-/** A param value in its ParamValue form: {"<type field>": value}. */
-export const paramValue = (type: string | undefined, v: J): J => obj([[paramField(type), v]])
-
-/** The value of a ParamValue (`data` or a sweep entry), whatever field holds it. */
-export function paramData(data: J | undefined, type?: string): J | undefined {
-  if (!isObj(data)) return undefined
-  if (type !== undefined) return data.get(paramField(type))
-  return data.entries()[0]?.[1]
 }

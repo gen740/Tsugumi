@@ -13,7 +13,7 @@ enum Shared {
     "ProjectFileListRequest",
     "ProjectFileStatRequest",
     "ProjectFileReadRequest",
-    "CardApiRequest",
+    "EvaluateNixRequest",
     "RunPlanRequest",
     "RunRequest",
     "RunCancelRequest",
@@ -646,7 +646,7 @@ enum Shared {
   "draftRequest": {
     "root": "the root workflow",
     "child": "the child workflow {scope}",
-    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md, the chosen SDK documentation and the Card's generated API (tools family sdk, action api) before writing Card sources. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
+    "text": "Implement these Draft Cards in {where}, matching their description, content and existing connections, keeping their ids. Each implementation is one project_edit containing its definition, sources and every incoming, outgoing and boundary wire end rebound to a real port; ends on remaining Drafts stay empty. Preserve the existing README.md description and body, and fill an empty description in that edit. Read demo_read reference/cards.md, the chosen SDK documentation and the Card's generated API (evaluate_nix with expression card.api and build enabled) before writing Card sources. Then check them with project_validate, run the workflow once from its trigger Card and check each Card's result with run_record.\n{list}"
   },
   "commentRequest": {
     "text": "The user left comments on these Cards in {where}; do what they ask. By default the Card a comment is on changes, keeping its id and wiring; a comment may ask for new Cards or a split (project_edit for the Cards and connections in one atomic save). A Draft among them is implemented following its comments. Comments with finding=true are observations, not change requests. The save that does what a comment asks also resolves it: project_edit of the Card's _comments.json with that comment's \"resolved\": true and a one-line \"resolution\" in the user's language; Tsugumi records which Cards that save changed. How to write code Cards: demo_read reference/cards.md. Then check them with project_validate, run what changed once and check each result with run_record; a result that is not what its comment asks means the work is not done. A comment you cannot do stays open, with the reason in your reply.\n{list}"
@@ -1061,6 +1061,7 @@ enum Shared {
       "project_file_list",
       "project_file_read",
       "input_types",
+      "evaluate_nix",
       "project_validate",
       "run_plan",
       "run",
@@ -1081,7 +1082,6 @@ enum Shared {
         "reload": "project_reload"
       },
       "sdk": {
-        "api": "card_api",
         "output_types": "output_types"
       },
       "runs": {
@@ -1148,7 +1148,7 @@ enum Shared {
       "run_value_read",
       "artifact_list",
       "log_range",
-      "card_api",
+      "evaluate_nix",
       "attached_folder_read",
       "project_shell",
       "tool_result_read",

@@ -5,6 +5,8 @@
 #include <algorithm>
 #include <condition_variable>
 #include <future>
+#include <map>
+#include <set>
 
 #include "agent/approval.hh"
 #include "agent/context.hh"
@@ -363,13 +365,73 @@ auto UsesRecordedDefinitions(const std::string& name) -> bool {
           name != "run_history_delete") ||
          name.starts_with("artifact_") || name == "log_range";
 }
+
+// The evaluator can read every source staged for the Card and its exports
+// producers. Walk the confirmed wiring before returning an expression's value.
+auto EvaluationCards(const json::Members& snapshot, const std::string& card)
+    -> std::vector<std::string> {
+  std::map<std::string, std::vector<std::string>> producers;
+  const auto key = [](const std::string& raw) {
+    return json::Encode(
+        json::Array(json::Get(json::Object(raw), "segments", "[]")));
+  };
+  for (const auto& raw : json::Array(json::Get(snapshot, "resolution", "[]"))) {
+    const auto resolved = json::Object(raw);
+    auto& targets = producers[key(resolved.at("card"))];
+    for (const auto& ref :
+         json::Array(json::Get(resolved, "nix_references", "[]")))
+      targets.push_back(key(json::Object(ref).at("target")));
+  }
+  std::vector cards{key(card)};
+  std::set seen{cards.front()};
+  for (size_t i = 0; i < cards.size(); ++i)
+    if (const auto it = producers.find(cards[i]); it != producers.end())
+      for (const auto& target : it->second)
+        if (seen.insert(target).second) cards.push_back(target);
+  return cards;
+}
+
+auto CheckEvaluationSources(const host::AgentExclude& policy,
+                            const host::SaveBase& base,
+                            const json::Members& snapshot,
+                            const json::Members& args) -> void {
+  const auto cards = EvaluationCards(snapshot, json::Get(args, "card", "{}"));
+  std::set<std::string> definitions;
+  for (const auto& card : cards) {
+    policy.CheckRequest("", {{"segments", card}});
+    std::string prefix;
+    const auto segments = json::Array(card);
+    for (size_t i = 0; i < segments.size(); ++i) {
+      const auto definition =
+          prefix + "definitions/" + json::String(segments[i]) + '/';
+      if (i + 1 == segments.size()) {
+        definitions.insert(definition);
+        break;
+      }
+      const auto it = base.files.find(definition + "_card.json");
+      if (it == base.files.end()) break;
+      const auto external = json::Text(json::Object(it->second), "external");
+      if (external.empty()) break;
+      prefix += "externals/" + external + '/';
+    }
+  }
+  for (const auto& raw : json::Array(json::Get(snapshot, "sources", "[]"))) {
+    const auto path = json::Text(json::Object(raw), "path");
+    if (std::ranges::any_of(definitions, [&](const std::string& def) {
+          return path.starts_with(def) && path != def + "_card.json" &&
+                 path != def + "README.md" && path != def + "_comments.json";
+        }))
+      policy.Check(path);
+  }
+}
 }  // namespace
 
 auto Tools::ProjectCall(const std::string& project, const std::string& name,
                         const std::string& arguments, std::stop_token stop)
     -> std::string {
   const auto inspected = InspectProject(project, stop);
-  const auto policy = ExclusionsFor(project, host::CaptureSaveBase(inspected));
+  const auto base = host::CaptureSaveBase(inspected);
+  const auto policy = ExclusionsFor(project, base);
   auto args = json::Object(arguments);
   if (name == "log_range") args.erase("live");
   const bool recorded = UsesRecordedDefinitions(name);
@@ -380,7 +442,7 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
         json::Encode(json::Members{{"reply", json::Quote("ProjectSnapshot")},
                                    {"value", json::Encode(inspected)}}));
   }
-  if (name == "run_plan" || name == "card_api" ||
+  if (name == "run_plan" || name == "evaluate_nix" ||
       name.starts_with("project_file_")) {
     const auto revision = json::Get(inspected, "rev");
     const auto number = [](const std::string& value) {
@@ -391,6 +453,8 @@ auto Tools::ProjectCall(const std::string& project, const std::string& name,
       throw Failure("revision_conflict", "The project changed; read it again");
     if (name != "project_file_format") args["at_rev"] = revision;
   }
+  if (name == "evaluate_nix")
+    CheckEvaluationSources(policy, base, inspected, args);
   auto check_recorded = [&](const std::string& run, const std::string& card) {
     policy.Check(".tsugumi/runs/" + run);
     json::Members query{{"run_id", json::Quote(run)}};
@@ -1232,7 +1296,7 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (boundary->scoped() &&
         (call.name == "project_file_list" || call.name == "project_file_read" ||
          call.name == "project_file_stat" || call.name == "project_validate" ||
-         call.name == "run_plan" || call.name == "card_api")) {
+         call.name == "run_plan" || call.name == "evaluate_nix")) {
       revision = json::Get(args, "at_rev", "");
       if (revision.empty()) {
         inspected = host::CaptureSaveBase(InspectProject(project, stop));
@@ -1251,10 +1315,22 @@ auto Tools::ExecuteTool(const std::string& conversation,
     if (call.name != "project_edit" && call.name != "project_connect" &&
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
+    if (boundary->scoped() && call.name == "evaluate_nix") {
+      const auto snapshot = InspectProject(project, stop);
+      const auto rev = json::Get(snapshot, "rev");
+      if (json::String(rev, rev) != json::String(revision, revision))
+        throw Failure("revision_conflict",
+                      "The project changed; read it again");
+      for (const auto& card :
+           EvaluationCards(snapshot, json::Get(args, "card", "{}")))
+        boundary->Check(
+            "input_types",
+            {{"card", json::Encode(json::Members{{"segments", card}})}}, read);
+    }
     if (boundary->scoped() && (call.name == "run" || call.name == "run_plan" ||
-                               call.name == "card_api")) {
+                               call.name == "evaluate_nix")) {
       json::Members plan{{"card", json::Get(args, "card")}};
-      if (call.name == "card_api")
+      if (call.name == "evaluate_nix")
         plan["propagate"] = "false";
       else if (args.contains("propagate"))
         plan["propagate"] = args.at("propagate");
@@ -1264,14 +1340,17 @@ auto Tools::ExecuteTool(const std::string& conversation,
         plan["at_rev"] = args.at("at_rev");
       const auto result =
           ProjectCall(project, "run_plan", json::Encode(plan), stop);
-      boundary->CheckPlan(result, call.name != "run_plan");
+      boundary->CheckPlan(
+          result, call.name == "run" || (call.name == "evaluate_nix" &&
+                                         json::Bool(json::Get(args, "build"))));
       // A run must supply the same base_rev used by this plan. The project
       // rejects a missing or stale revision before executing anything.
     }
   }
-  const bool execution = call.name == "run" || call.name == "run_cancel" ||
-                         call.name == "card_api" ||
-                         call.name == "project_shell";
+  const bool execution =
+      call.name == "run" || call.name == "run_cancel" ||
+      (call.name == "evaluate_nix" && json::Bool(json::Get(args, "build"))) ||
+      call.name == "project_shell";
   const bool changes_project =
       (!execution && (spec->mutating || spec->approval_required)) ||
       call.name == "card_id";
@@ -1323,9 +1402,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
                            "Read the user-selected attached folder");
   }
   host::StripOwnedFields(call.name, spec->mutating, args);
-  if (call.name == "card_api") {
-    // Each request builds the inspected revision. The Nix store is the only
-    // build cache, so there is no durable tool receipt for this read.
+  if (call.name == "evaluate_nix") {
+    // Repeated evaluations use the confirmed revision without a durable tool receipt.
     auto result = ProjectCall(project, call.name, json::Encode(args), stop);
     const auto envelope = json::Object(result);
     const auto value = json::Object(json::Get(envelope, "value", "{}"));

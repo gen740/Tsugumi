@@ -119,23 +119,4 @@ enum Documents {
     return (readme, list.isEmpty ? nil : .object([("comments", .array(list))]))
   }
 
-  // MARK: - Param values
-
-  private static let paramFields = [
-    "bool": "bool", "int64": "int64", "uint64": "uint64", "double": "double", "string": "string",
-    "bool[]": "bools", "int64[]": "int64s", "uint64[]": "uint64s", "double[]": "doubles", "string[]": "strings",
-  ]
-
-  /// The field of a ParamValue that holds a value of the param type.
-  static func paramField(_ type: String?) -> String { paramFields[type ?? ""] ?? "string" }
-
-  /// A param value in its ParamValue form: {"<type field>": value}.
-  static func paramValue(_ type: String?, _ v: JSONValue) -> JSONValue { .object([(paramField(type), v)]) }
-
-  /// The value of a ParamValue (`data` or a sweep entry), whatever field holds it.
-  static func paramData(_ data: JSONValue?, type: String? = nil) -> JSONValue? {
-    guard let data, case .object(let fields) = data else { return nil }
-    if let type { return data[paramField(type)] }
-    return fields.first?.1
-  }
 }

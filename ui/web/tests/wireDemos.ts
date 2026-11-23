@@ -34,10 +34,9 @@ function node(dir: string, id: string): CardNodeData {
   const declared = named(def?.inputs)
   switch (def?.type) {
     case 'trigger': return { ...blank, kind: 'trigger', inputs: [], outputs: [{ name: 'out' }] }
-    case 'input': {
-      const params = (def.params ?? []).filter((p: { type: string }) => ['int64', 'uint64', 'double', 'bool', 'string'].includes(p.type)).map((p: { name: string; type: string }) => ({ ...p, value: '' }))
-      return { ...blank, kind: 'input', params, inputs: [{ name: 'start' }], outputs: typed }
-    }
+    // This fixture tests port routing without an evaluator. Parameter rows
+    // from the live resolution are covered in the Input Card behavior tests.
+    case 'input': return { ...blank, kind: 'input', inputs: [{ name: 'start' }], outputs: typed }
     case 'branch': return { ...blank, kind: 'branch', inputs: [{ name: 'value' }, { name: 'condition' }], outputs: [{ name: 'a' }, { name: 'b' }] }
     case 'merge': return { ...blank, kind: 'merge', inputs: declared, outputs: [{ name: 'out' }] }
     case 'collect': return { ...blank, kind: 'collect', inputs: [{ name: 'in' }], outputs: [{ name: 'out' }] }

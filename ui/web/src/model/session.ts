@@ -16,14 +16,14 @@ import { projectHost } from '../wire/projectHost'
 import { hostCall, onHostEvent } from '../wire/host'
 import { environmentHost, environmentProgress, environmentState, type EnvPublicState } from '../wire/environment'
 import { parse, arr, bool, clone, dbl, get, isObj, J, jeq, JObj, num, numText, obj, real, serialize, str, tryParse } from '../../shared/json'
-import { D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
+import { cardPath, D, R, LiveDisplayUpdate, RPCClient, RPCError, RPCFailure, s, segs, sOpt, Transport, uuid, webSocketTransport } from '../wire/rpc'
 import {
   applicableStages, CardGeometry, CardNodeData, mergeStageStatus, orderedPorts, ParamData, PortData, Pt, Stage, stageOfPhase, stageParts, StageProgress, StageStatus,
   snapToGrid,
 } from './canvasKit'
 import type { LayoutBar, LayoutScene } from '../../shared/layoutScene'
 import { cloneDef, cloneExternal, defEq } from './documentValues'
-import { cardNotes, layoutView, noteId, paramData, paramValue, parseReadme, printReadme, splitCardNotes } from './documents'
+import { cardNotes, layoutView, noteId, parseReadme, printReadme, splitCardNotes } from './documents'
 import { Observable } from './observable'
 import { FlowDirection, prefs } from './prefs'
 import { runMark } from './runMark'
@@ -62,12 +62,21 @@ export function portTypeName(port?: PortInfo): string | undefined {
   return port?.kind === D.PortKind.Path ? 'Path' : port?.rootType
 }
 
+export interface CardParameter {
+  name: string
+  section: R.ParamSection
+  type: string
+  defaultValue: J
+  override?: J
+}
+
 export interface ResolvedCard {
   path: string[]
   inputs: PortInfo[]
   outputs: PortInfo[]
   diagnostics: Diagnostic[]
   nixReferences: { target: string[]; name: string }[]
+  parameters?: CardParameter[]
 }
 
 /** One stage of an invocation as the core recorded it (core clock, ms). */
@@ -820,7 +829,13 @@ export class ProjectSession extends Observable {
       const p = segs(rc.card)
       const d = rc.diagnostics.map(diag)
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
-        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })) })
+        nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })),
+        parameters: (rc.parameters ?? []).flatMap(p => {
+          const defaultValue = tryParse(s(p.defaultJson))
+          if (defaultValue === undefined) return []
+          return [{ name: s(p.name), section: p.section, type: s(p.type), defaultValue,
+            override: p.valueJson === null ? undefined : tryParse(s(p.valueJson)) }]
+        }) })
       all.push(...d)
     }
     for (const [card, views] of this.liveViews) {
@@ -1851,23 +1866,10 @@ export class ProjectSession extends Observable {
   }
 
   /** Mutates the value inside the caller's transaction, without an autosave. */
-  updateParam(k: CardKey, name: string, value: J | undefined, initial?: { parameter?: J }) {
-    if (initial) {
-      const dir = this.definitionDir(k)
-      if (dir) {
-        const selector = ['params', obj([['name', name]])]
-        const type = str(get(initial.parameter, 'type'))
-        this.appendEdits([this.fieldEdit(dir + '_card.json', [...selector, 'data'], get(initial.parameter, 'data'),
-          value === undefined ? undefined : paramValue(type, value))])
-      }
-      return
-    }
-    this.updateCard(k, (c) => {
-      const params = (arr(c.get('params')) ?? []).map((p) => clone(p))
-      const p = params.find((p) => str(get(p, 'name')) === name)
-      if (isObj(p)) p.set('data', value === undefined ? undefined : paramValue(str(p.get('type')), value))
-      c.set('params', params)
-    })
+  async setParam(k: CardKey, name: string, value: J | undefined, expectedRev: bigint) {
+    const edit = new H.ProjectSetParamT(cardPath(path(k)), name,
+      value === undefined ? null : serialize(value, false), expectedRev)
+    return (await this.operate(H.ProjectOperationBody.ProjectSetParam, edit)).rev ?? this.rev
   }
 
   /** The host moves the complete selected definition/external closure. */
@@ -2073,9 +2075,15 @@ export class ProjectSession extends Observable {
     }
   }
 
-  async resolveNixSource(ref: string): Promise<R.NixSourceResolvedT> {
-    if (!this.client) throw new RPCError('disconnected', L('接続していません'))
-    return this.client.resolveNixSource(ref)
+  async updateNixPathLock(prefix: string, name?: string) {
+    await this.operate(H.ProjectOperationBody.ProjectUpdateNixPathLock,
+      new H.ProjectUpdateNixPathLockT(prefix ? prefix.slice(0, -1) : null, name ?? null), false)
+  }
+
+  nixPathLock(prefix: string): J | undefined {
+    const text = this.carriedText(prefix + 'tsugumi.lock')
+    try { return text === undefined ? undefined : parse(text) }
+    catch { return undefined }
   }
 
   async refreshCacheUsage() {
@@ -2248,17 +2256,13 @@ export class ProjectSession extends Observable {
     return { inputs: ins, outputs: outs }
   }
 
-  /** Params edited directly on Input Cards. */
-  inlineParams(k: CardKey, definition?: J): ParamData[] {
-    const def = definition ?? this.cardDefinition(k)
-    if (this.kind(k) !== 'input' || def === undefined) return []
-    return (arr(get(def, 'params')) ?? []).flatMap((p) => {
-      const name = str(get(p, 'name')), type = str(get(p, 'type'))
-      if (!name || !type || !['int64', 'uint64', 'double', 'bool', 'string'].includes(type)) return []
-      // Swept values are edited in the Card's settings, where the list is visible.
-      if (get(p, 'sweep') !== undefined) return []
-      return [{ name, type, value: paramText(paramData(get(p, 'data'), type)) }]
-    })
+  /** Scalar parameters editable on Input Cards. */
+  inlineParams(k: CardKey): ParamData[] {
+    if (this.kind(k) !== 'input') return []
+    const sweeps = get(this.cardDefinition(k), 'sweeps')
+    return (this.resolution.get(k)?.parameters ?? []).filter(p =>
+      p.section === R.ParamSection.run && !p.type.startsWith('[') && get(sweeps, p.name) === undefined)
+      .map(p => ({ name: p.name, type: p.type, value: paramText(p.override ?? p.defaultValue) }))
   }
 
   cardDescription(k: CardKey): string | undefined {
@@ -2386,7 +2390,7 @@ export class ProjectSession extends Observable {
       state?.executionState === D.RemoteExecutionState.cancelling ? remoteExecutionLabel(state.executionState) : undefined
     return {
       title: path(k).pop() || k, kind, runMark: state || batch ? runMark(this.runStatus) : undefined, symbol: kind === 'invalid' ? undefined : sym || undefined, summary: summary || undefined,
-      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k, opts.definition),
+      inputs: this.visualPorts(k, ports.inputs, false), outputs: this.visualPorts(k, opts.outputs ?? ports.outputs, true), params: this.inlineParams(k),
       result: state?.transfer ?? pending ?? (!state && kind !== 'draft' && this.waitsOnDraft(k) ? L('Draft のため実行しない') : undefined),
       state: kind === 'subgraph' ? this.compositeState(k) : this.canvasCardState(k), stage: empty ? undefined : this.stageProgress(k), executionList,
       invocation: empty ? 0n : state?.invocation ?? 0n, runContinues: this.runActive,
@@ -2577,14 +2581,7 @@ export function formatBytes(n: number | bigint | null | undefined): string {
 /** Integers keep their exact decimal spelling (64 bit safe); the core
  *  validates types and ranges and reports what it rejects. */
 export function parseParam(text: string, type: string): J {
-  const t = text.trim()
-  switch (type) {
-    case 'int64': case 'uint64': return /^-?[0-9]+$/.test(t) ? num(t) : t
-    case 'double': return t !== '' && /^-?(0|[1-9][0-9]*)(\.[0-9]+)?([eE][+-]?[0-9]+)?$/.test(t) ? num(t) : t
-    case 'bool': return t === 'true'
-    case 'string': return text
-    default: return tryParse(t) ?? text
-  }
+  return type === 'string' ? text : tryParse(text) ?? text
 }
 
 export const paramText = (v: J | undefined): string => {

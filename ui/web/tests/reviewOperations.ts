@@ -4,7 +4,7 @@ import assert from 'node:assert/strict'
 import { Builder } from 'flatbuffers'
 import * as H from '../shared/gen/tsugumi/host'
 import { D, R, RPCFailure } from '../src/wire/rpc'
-import { arr, get, J, num, numText, obj, parse, serialize } from '../shared/json'
+import { get, J, num, numText, obj, parse, serialize } from '../shared/json'
 
 const page = globalThis as Record<string, unknown>
 page.document ??= { documentElement: { dataset: {}, style: {} }, addEventListener() {} }
@@ -25,10 +25,32 @@ function session() {
   s.refreshDerivedLayout = () => {}; s.refreshVisibleDisplays = async () => {}
   s.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 0n,
     projectJson: '{"canvas":{"cards":[{"id":"a"}],"connections":[]}}', layout: [],
-    definitions: [definitionFixture('a', '{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":1}}]}', '{"content":"before"}')],
+    definitions: [definitionFixture('a', '{"type":"input","params":{"value":1}}', '{"content":"before"}')],
   }))
   return s
 }
+// Lock operations publish a carried source but provide no undo receipt.
+{
+  const s = session()
+  const lock = '{"nixPath":[{"name":"science","url":"github:owner/repo","locked":{"type":"github","rev":"abcdef1234","narHash":"sha256-example","lastModified":1700000000}}]}'
+  let calls = 0
+  s.operateProject = async (request: H.ProjectOperateRequestT) => {
+    assert.equal(request.bodyType, H.ProjectOperationBody.ProjectUpdateNixPathLock)
+    const body = request.body as H.ProjectUpdateNixPathLockT
+    assert.equal(body.projectPath, calls === 0 ? null : 'externals/sub')
+    assert.equal(body.name, calls === 0 ? 'science' : null)
+    const path = (calls++ === 0 ? '' : 'externals/sub/') + 'tsugumi.lock'
+    const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n,
+      sourcesUpsert: [Object.assign(new R.SourceInfoT(), { path, document: textBytes(lock) })] })
+    return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta })
+  }
+  await s.updateNixPathLock('', 'science')
+  await s.updateNixPathLock('externals/sub/')
+  assert.equal(serialize(s.nixPathLock(''), false), lock)
+  assert.equal(serialize(s.nixPathLock('externals/sub/'), false), lock)
+  assert.equal(s.undoStack.length, 0)
+}
+
 function inverse(name: string) { return new H.ProjectEditsT([new H.ProjectEditT(H.ProjectEditValue.ProjectFieldEdit,
   new H.ProjectFieldEditT('tsugumi.json', [new H.ProjectSelectorT('name')], new H.ProjectValueT(true, '"after"'), new H.ProjectValueT(true, JSON.stringify(name))))]) }
 function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inverse'), fields = {}) {
@@ -42,25 +64,24 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
 {
   const s = session(), edit = new InlineParamEdit()
   edit.begin('1', s.rev)
-  edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   const changed = Object.assign(new R.DocumentDeltaT(), { baseRev: 0n, rev: 1n, origin: 'agent',
-    definitionsUpsert: [definitionFixture('a', '{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":2}}]}', '{"content":"before"}')] })
+    definitionsUpsert: [definitionFixture('a', '{"type":"input","params":{"value":2}}', '{"content":"before"}')] })
   s.applyDelta(changed)
-  const guards: number[] = []
+  const guards: (bigint | null)[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
-    const edit = (request.body as H.ProjectEditsT).edits[0]
-    const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
-    const before = parse(String(field.oldValue!.json))
-    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(numText(get(before, 'int64')))
-      : Number(serialize(get(arr(get(before, 'params'))![0], 'data', 'int64')!))
-    guards.push(old)
-    if (old !== 2) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
+    assert.equal(request.bodyType, H.ProjectOperationBody.ProjectSetParam)
+    const param = request.body as H.ProjectSetParamT
+    guards.push(param.expectedRev)
+    assert.deepEqual(param.card?.segments, ['a'])
+    assert.equal(param.name, 'value')
+    assert.equal(param.valueJson, '3')
+    if (param.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
     return saved(s, request)
   }
-  assert.equal(await edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', false))), false)
+  assert.equal(await edit.commitParam(s, 'a', 'value', num(3), false), false)
   assert.equal(edit.conflictRev, 1n, edit.error)
-  assert.equal(await edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', true))), true)
-  assert.deepEqual(guards, [1, 2])
+  assert.equal(await edit.commitParam(s, 'a', 'value', num(3), true), true)
+  assert.deepEqual(guards, [0n, 1n])
 
   const draft = session()
   await draft.startDraftEdit('a')
@@ -88,7 +109,7 @@ function saved(s: any, request: H.ProjectOperateRequestT, edits = inverse('inver
 for (const echoFirst of [false, true]) {
   const s = session()
   const prefix = 'externals/sub/'
-  const card = (value: number) => `{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":${value}}}]}`
+  const card = (value: number) => `{"type":"input","params":{"value":${value}}}`
   s.confirmedDefinitions.set('sub', parse('{"type":"subgraph","external":"sub"}'))
   s.confirmedProject = parse('{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}')
   const source = (file: string, documentJson: string) =>
@@ -100,24 +121,21 @@ for (const echoFirst of [false, true]) {
   s.client.readFile = async () => { throw new Error('Unexpected extra file read') }
   let calls = 0
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
-    const edit = (request.body as H.ProjectEditsT).edits[0]
-    const field = edit.value as H.ProjectFieldEditT | H.ProjectJSONEditT
-    const before = parse(String(field.oldValue!.json))
-    const old = edit.valueType === H.ProjectEditValue.ProjectFieldEdit ? Number(numText(get(before, 'int64')))
-      : Number(serialize(get(arr(get(before, 'params'))![0], 'data', 'int64')!))
-    assert.equal(old, ++calls)
+    const param = request.body as H.ProjectSetParamT
+    assert.deepEqual(param.card?.segments, ['sub', 'a'])
+    assert.equal(param.expectedRev, s.rev)
+    assert.equal(param.valueJson, ++calls === 1 ? '2' : null)
     const result = saved(s, request, inverse('internal'), { sourcesUpsert: [
-      source('definitions/a/_card.json', card(calls + 1)),
+      source('definitions/a/_card.json', calls === 1 ? card(2) : '{"type":"input"}'),
     ] })
     if (echoFirst) s.applyDelta(result.delta)
     return result
   }
-  const first = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(2)))
-  const second = s.applyMutation((x: InstanceType<typeof ProjectSession>) => x.updateParam('sub/a', 'value', num(3)))
-  await Promise.all([first, second])
-  await s.save()
+  await s.setParam('sub/a', 'value', num(2), s.rev)
+  assert.equal(numText(get(s.cardDefinition('sub/a'), 'params', 'value')), '2')
+  await s.setParam('sub/a', 'value', undefined, s.rev)
   assert.equal(calls, 2)
-  assert.equal(numText(get(arr(get(s.cardDefinition('sub/a'), 'params'))![0], 'data', 'int64')), '3')
+  assert.equal(get(s.cardDefinition('sub/a'), 'params', 'value'), undefined)
   assert.equal(s.saveError, undefined)
 }
 
@@ -165,35 +183,40 @@ for (const kind of [D.FailureKind.value_conflict, D.FailureKind.source_changed])
 for (const draft of [false, true]) {
   const s = session(), edit = new InlineParamEdit()
   edit.begin('1', s.rev)
-  edit.paramBase = { parameter: arr(get(s.cardDefinition('a'), 'params'))![0] }
   if (draft) { await s.startDraftEdit('a'); s.inlineDraft.content = 'mine' }
   const fields = (n: number) => ({ definitionsUpsert: [definitionFixture('a',
-    `{"type":"input","params":[{"name":"value","type":"int64","data":{"int64":${n}}}]}`,
+    `{"type":"input","params":{"value":${n}}}`,
     JSON.stringify({ content: String(n), description: 'unrelated' }))] })
   const publish = (n: number) => s.applyDelta(Object.assign(new R.DocumentDeltaT(), { baseRev: s.rev, rev: s.rev + 1n, origin: 'agent', ...fields(n) }))
   publish(2)
   let actual = 2
   const guards: string[] = []
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
-    const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectFieldEditT | H.ProjectJSONEditT
-    const before = parse(String(field.oldValue!.json))
-    const guard = draft ? String(before).split('\n').at(-1)! : numText(get(before, 'int64'))!
-    guards.push(guard)
-    if (guard !== String(actual)) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
-    if (draft) assert.match(JSON.parse(String(field.newValue!.json)), /description: unrelated/)
+    if (draft) {
+      const field = (request.body as H.ProjectEditsT).edits[0].value as H.ProjectJSONEditT
+      const before = parse(String(field.oldValue!.json))
+      const guard = String(before).split('\n').at(-1)!
+      guards.push(guard)
+      if (guard !== String(actual)) throw new RPCFailure({ kind: D.FailureKind.value_conflict })
+      assert.match(JSON.parse(String(field.newValue!.json)), /description: unrelated/)
+    } else {
+      const param = request.body as H.ProjectSetParamT
+      guards.push(String(param.expectedRev))
+      if (param.expectedRev !== s.rev) throw new RPCFailure({ kind: D.FailureKind.revision_conflict })
+    }
     return saved(s, request, inverse('inline'), draft ? { definitionsUpsert: [definitionFixture('a', serialize(s.cardDefinition('a')), '{"content":"mine","description":"unrelated"}')] } : fields(3))
   }
   const save = async (overwrite: boolean) => {
     if (draft) { await s.finishDraftEdit(overwrite); return !s.inlineDraft }
-    return edit.commit(s, '3', x => x.updateParam('a', 'value', num(3), edit.parameterBase(s, 'a', 'value', overwrite)))
+    return edit.commitParam(s, 'a', 'value', num(3), overwrite)
   }
   assert.equal(await save(false), false)
   actual = 4; publish(actual)
   assert.equal(await save(true), false)
-  assert.equal(guards.at(-1), '2')
+  assert.equal(guards.at(-1), draft ? '2' : '1')
   assert.equal(await save(true), true)
-  assert.equal(guards.at(-1), '4')
-  assert.equal(draft ? get(s.cardMeta('a'), 'content') : numText(get(arr(get(s.cardDefinition('a'), 'params'))![0], 'data', 'int64')), draft ? 'mine' : '3')
+  assert.equal(guards.at(-1), draft ? '4' : '2')
+  assert.equal(draft ? get(s.cardMeta('a'), 'content') : numText(get(s.cardDefinition('a'), 'params', 'value')), draft ? 'mine' : '3')
 }
 
 // Each entity editor uses the same field working-copy path as its UI closure.

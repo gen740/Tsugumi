@@ -2259,7 +2259,7 @@ enum PreviewSamples {
     func port(_ n: String) -> PortData { PortData(name: n, typeName: "t.Number") }
     let input = CardNodeData(title: String(localized: "初期値"), kind: .input, summary: nil,
                              inputs: [port("start")], outputs: [port("value")],
-                             params: [ParamData(name: "value", type: "uint64", value: "27")],
+                             params: [ParamData(name: "value", type: "int", value: "27")],
                              state: .succeeded, invocation: 1)
     var step = CardNodeData(title: String(localized: "n / 2"), kind: .code,
                             summary: String(localized: "偶数を半分にする"), inputs: [port("number")], outputs: [port("next")],

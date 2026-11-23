@@ -68,16 +68,36 @@ import TsugumiTestSupport
   #expect(names == [bundledName])
 }
 
-@Test func nixSourcesNameTheirFlakesAsTheWebUIDoes() async throws {
-  struct Case: Decodable { let ref: String; let name: String; let unlocked: String; let commit: String? }
-  let root = URL(fileURLWithPath: #filePath).deletingLastPathComponent().appendingPathComponent("../../../..")
-  let cases = try JSONDecoder().decode([Case].self, from: Data(contentsOf: root.appendingPathComponent("tests/fixtures/nix-source-refs.json")))
-  #expect(!cases.isEmpty)
-  for c in cases {
-    #expect(NixSources.sourceName(c.ref) == c.name, "\(c.ref)")
-    #expect(NixSources.unlockedRef(c.ref) == c.unlocked, "\(c.ref)")
-    #expect(NixSources.shortCommit(c.ref) == c.commit, "\(c.ref)")
+@Test func nixPathShowsTheLockForTheDeclaredURL() throws {
+  let url = "github:owner/repo"
+  let lock = try JSONValue.parse(#"{"nixPath":[{"name":"science","url":"github:owner/repo","locked":{"type":"github","rev":"abcdef1234","narHash":"sha256-example","lastModified":1700000000}}]}"#)
+  #expect(NixPathLockStatus.read(nil, name: "science", url: url) == .unlocked)
+  #expect(NixPathLockStatus.read(lock, name: "other", url: url) == .unlocked)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: url + "/other") == .urlChanged)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: url) ==
+          .locked(revision: "abcdef1", modified: Date(timeIntervalSince1970: 1_700_000_000)))
+}
+
+@Test func sdkBuildShowsOnlyTheApiDirectoryAndPreservesFailureLog() {
+  let result = Tsugumi_RPC_EvaluateNixResultT()
+  result.failure = nil
+  func file(_ path: String) -> Tsugumi_RPC_NixOutputFileT {
+    let file = Tsugumi_RPC_NixOutputFileT()
+    file.path = path
+    file.content = Array("api".utf8)
+    return file
   }
+  result.files = [file("share/tsugumi/api/README.md"), file("share/tsugumi/api-extra/x"), file("bin/tool")]
+  result.truncated = true
+  let sdk = SdkBuild(result, prefix: "sdk:")
+  #expect(sdk.files?.map(\.id) == ["sdk:README.md"])
+  #expect(sdk.files?.first?.text == "api" && sdk.truncated)
+  let failure = Tsugumi_Data_FailureT()
+  failure.diagnostic = "Nix failed"
+  result.failure = failure
+  result.log = "last line"
+  let failed = SdkBuild(result, prefix: "sdk:")
+  #expect(failed.files == nil && failed.failure == "Nix failed" && failed.log == "last line")
 }
 
 @Test func aVersionHoverFitsItsCards() {
@@ -342,11 +362,11 @@ import TsugumiTestSupport
 }
 
 @Test func paramsKeepExactIntegerSpelling() {
-  #expect(parseParam("18446744073709551615", "uint64") == .number("18446744073709551615"))
-  #expect(parseParam("-3", "int64") == .number("-3"))
-  #expect(parseParam("1.5e3", "double") == .number("1.5e3"))
+  #expect(parseParam("9223372036854775807", "int") == .number("9223372036854775807"))
+  #expect(parseParam("-3", "int") == .number("-3"))
+  #expect(parseParam("1.5e3", "float") == .number("1.5e3"))
   // Values the core must reject are passed on as text, never coerced.
-  #expect(parseParam("12abc", "uint64") == .string("12abc"))
+  #expect(parseParam("12abc", "int") == .string("12abc"))
   #expect(parseParam(" x ", "string") == .string(" x "))
 }
 

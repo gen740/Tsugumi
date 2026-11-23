@@ -60,22 +60,12 @@ extension ProjectSession {
   }
 
   /// Params edited directly on input Cards.
-  func inlineParams(_ k: CardKey, definition: JSONValue? = nil) -> [ParamData] {
-    guard kind(k).editsValueOnCanvas, let def = definition ?? cardDefinition(k) else { return [] }
-    return (def["params"]?.array ?? []).compactMap { p -> ParamData? in
-      guard let name = p["name"]?.string, let type = p["type"]?.string,
-            ["int64", "uint64", "double", "bool", "string"].contains(type) else { return nil }
-      // Swept values are edited in the Card's settings, where the list is visible.
-      if p["sweep"] != nil { return nil }
-      let v = Documents.paramData(p["data"], type: type)
-      let text: String
-      switch v {
-      case .string(let s)?: text = s
-      case .number(let n)?: text = n
-      case .bool(let b)?: text = b ? "true" : "false"
-      default: text = ""
-      }
-      return ParamData(name: name, type: type, value: text)
+  func inlineParams(_ k: CardKey) -> [ParamData] {
+    guard kind(k).editsValueOnCanvas else { return [] }
+    let sweeps = cardDefinition(k)?["sweeps"]
+    return (resolution[k]?.parameters ?? []).compactMap { parameter in
+      guard parameter.section == .run, !parameter.type.hasPrefix("["), sweeps?[parameter.name] == nil else { return nil }
+      return ParamData(name: parameter.name, type: parameter.type, value: parameterText(parameter.effectiveValue))
     }
   }
 
@@ -215,7 +205,7 @@ extension ProjectSession {
       title: title, kind: kind,
       symbol: kind == .invalid ? nil : (def?["symbol"]?.string).flatMap { $0.isEmpty ? nil : $0 },
       summary: summary, inputs: visualPorts(k, ports.inputs, output: false), outputs: visualPorts(k, outputs ?? ports.outputs, output: true),
-      params: inlineParams(k, definition: definition),
+      params: inlineParams(k),
       result: state?.transfer ?? state?.executionState?.pendingLabel ?? (state == nil && kind != .draft && waitsOnDraft(k) ? String(localized: "Draft のため実行しない") : nil),
       resultFailed: false,
       state: kind == .subgraph ? compositeState(k) : canvasCardState(k), executionList: executionList, stage: empty ? nil : stageProgress(k),
@@ -245,19 +235,6 @@ extension ProjectSession {
   }
 
   func geometry(_ k: CardKey) -> CardGeometry { CardGeometry(nodeData(k), flow: flow) }
-}
-
-/// Integers keep their exact decimal spelling (64 bit safe); the core
-/// validates types and ranges and reports what it rejects.
-func parseParam(_ s: String, _ type: String) -> JSONValue {
-  let t = s.trimmingCharacters(in: .whitespaces)
-  switch type {
-  case "int64", "uint64": return t.range(of: #"^-?[0-9]+$"#, options: .regularExpression) != nil ? .number(t) : .string(t)
-  case "double": return Double(t) != nil && !t.isEmpty ? .number(t) : .string(t)
-  case "bool": return .bool(t == "true")
-  case "string": return .string(s)
-  default: return (try? JSONValue.parse(t)) ?? .string(s)
-  }
 }
 
 func orderedPorts(_ ports: [PortData], saved: [String]) -> [PortData] {
