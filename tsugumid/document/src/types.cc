@@ -146,8 +146,8 @@ class Renderer {
   void emit(std::string& out) {
     for (auto [is_obj, index] : order_) {
       std::string full =
-          original(is_obj ? s_.objects()->Get(index)->name()->str()
-                          : s_.enums()->Get(index)->name()->str());
+          is_obj ? s_.objects()->Get(index)->name()->str()
+                 : s_.enums()->Get(index)->name()->str();
       auto dot = full.rfind('.');
       std::string ns = dot == std::string::npos ? "" : full.substr(0, dot);
       std::string base = dot == std::string::npos ? full : full.substr(dot + 1);
