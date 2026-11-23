@@ -71,11 +71,14 @@ def test_opened_artifact_is_a_read_only_mount(core_factory, project):
         if (directory.empty() || statvfs(directory.c_str(), &mount) != 0 ||
             !(mount.f_flag & ST_RDONLY)) return 2;
         const auto mounted = mounts();
+        if (open_artifact(call, in) != directory || mounts() != mounted) return 7;
         if (before.find(directory) != std::string::npos ||
             mounted.find(directory) == std::string::npos) return 6;
+        const auto member = fs::path(directory) / "report.txt";
         std::string contents;
-        std::ifstream(fs::path(directory) / "report.txt") >> contents;
+        std::ifstream(member) >> contents;
         if (contents != "artifact") return 3;
+        if (std::ofstream(member, std::ios::app)) return 8;
         out.number(std::chrono::duration_cast<std::chrono::microseconds>(delay).count());
     """, inputs=["doc"], recordIO=True, declarations="#include <sys/statvfs.h>")
 

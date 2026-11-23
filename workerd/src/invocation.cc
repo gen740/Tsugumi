@@ -247,8 +247,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
       grants.push_back({std::move(id), (input / relative).string()});
     }
   }
-  if (!grants.empty())
-    throw Failed(FailureKind::unsupported, "lazy artifact mounts are unavailable");
+  spawn.grants = grants;
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
   struct InputLoop {

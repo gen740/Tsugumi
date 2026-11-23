@@ -9,6 +9,9 @@
 namespace tsugumi::workerd {
 // The largest frame between the core and a Card worker (tsugumi/rpc/frame.hh).
 inline constexpr uint32_t kMaxWorkerFrameBytes = (16u << 20) + 65536;
+// Private descriptors passed only to the Linux native host.
+inline constexpr int kArtifactSocket = 5;
+inline constexpr int kHostProc = 6;
 inline constexpr size_t kViewBudget = 2 * TSUGUMI_MESSAGE_MAX;
 inline constexpr auto message_cost(size_t size) -> size_t {
   // An empty payload still occupies an entry in the queue.

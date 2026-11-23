@@ -47,6 +47,7 @@ struct WorkerSpawn {
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
   // never project data roots.
   std::vector<std::string> ro_paths;
+  std::vector<ArtifactGrant> grants;
   // The Card's key, used by the remote invocation launcher.
   std::string card;
   // Covered with an empty tmpfs for sandbox: false Cards (the control folder
@@ -137,6 +138,7 @@ class WorkerProc {
   auto idle() -> void;
   auto resume(Borrowed borrowed) -> void;
   auto scratch() const -> const std::string& { return scratch_; }
+  auto artifact_path(const ArtifactGrant& grant) const -> std::string;
   // The sink may run on the reader thread between invocations. It must own
   // its captures and return promptly.
   auto set_display(DisplaySink display) -> void;
@@ -173,6 +175,10 @@ class WorkerProc {
   std::string scratch_;
   std::filesystem::path cgroup_;
   bool x11_mounted_ = false;
+#ifdef __linux__
+  int artifact_socket_ = -1;
+  std::thread artifact_broker_;
+#endif
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;
   uint64_t call_id_ = 0;
