@@ -10,6 +10,8 @@
 #include <fstream>
 #include <iostream>
 #include <set>
+#include <sys/socket.h>
+#include <thread>
 
 #include "nix_store.hh"
 #include "tsugumi/protocol/worker_generated.h"
@@ -171,6 +173,26 @@ auto relay_display(const WorkerDisplayData& display, std::stop_token) -> void {
   }
 }
 
+auto receive_view(std::weak_ptr<WorkerProc::ViewReceiver> target) -> void {
+  const char ready = 1;
+  if (::write(workerd::kViewInputFd, &ready, 1) != 1) return;
+  try {
+    while (auto frame = rpc::frame::Read(workerd::kViewInputFd,
+                                         workerd::kRemoteDisplayBytes)) {
+      flatbuffers::Verifier verifier(
+          reinterpret_cast<const uint8_t*>(frame->data()), frame->size());
+      if (!verifier.VerifyBuffer<W::WorkerDisplay>(nullptr)) break;
+      const auto* message = flatbuffers::GetRoot<W::WorkerDisplay>(frame->data());
+      auto worker = target.lock();
+      const char accepted = worker && worker->send(
+          {message->view()->str(), bytes(message->bytes())});
+      if (::write(workerd::kViewInputFd, &accepted, 1) != 1) break;
+    }
+  } catch (const rpc::frame::Error&) {
+  }
+  ::shutdown(workerd::kViewInputFd, SHUT_RDWR);
+}
+
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
                 const remote::RW::InvocationT& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
@@ -229,6 +251,10 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
     throw Failed(FailureKind::unsupported, "lazy artifact mounts are unavailable");
   WorkerPool pool(directory / "scratch", {}, WorkerPoolMode::one_shot);
   auto lease = pool.acquire(spawn.card, "", spawn, false);
+  struct InputLoop {
+    std::jthread thread;
+    ~InputLoop() { ::shutdown(workerd::kViewInputFd, SHUT_RDWR); }
+  } input_loop{std::jthread(receive_view, lease.worker->view_receiver())};
   spawn.secrets.reset();
   workerd::Invocation request;
   request.inputs = values;
@@ -256,7 +282,8 @@ namespace workerd {
 auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
             const stdfs::path& store, const stdfs::path& group) -> void {
   const auto job = parse_spec(read(directory / "spec.fb", kMaxSpec));
-  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0)
+  if (::fcntl(kDisplayChannelFd, F_SETFD, FD_CLOEXEC) != 0 ||
+      ::fcntl(kViewInputFd, F_SETFD, FD_CLOEXEC) != 0)
     throw std::runtime_error("the job's live display channel is missing");
   // Nothing this process starts may inherit the Card secret pipe.
   if (!job->secrets.empty() &&

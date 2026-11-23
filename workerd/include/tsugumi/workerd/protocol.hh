@@ -53,6 +53,7 @@ inline constexpr int kSecretChannelFd = 6;
 // The invocation sends live view frames to the listener through this socket.
 // Leave room for the log slice and the rest of a Status reply.
 inline constexpr int kDisplayChannelFd = 7;
+inline constexpr int kViewInputFd = 8;
 inline constexpr uint32_t kRemoteDisplayBytes = (16u << 20) + 65536;
 // The marker a running job's work directory holds while its invocation waits
 // for its Card secrets; it never holds a value.

@@ -100,6 +100,7 @@ class WorkerProc {
   struct ViewReceiver {
     std::mutex mutex;
     WorkerProc* worker = nullptr;
+    std::function<bool(const WorkerDisplayData&)> remote;
     auto send(const WorkerDisplayData& display) -> bool;
   };
 
@@ -164,7 +165,7 @@ class WorkerProc {
   auto read_data() -> void;
   auto stop_log_reader() -> void;
   void read_logs(bool drain);
-  void send(int fd, const std::string& frame);
+  void send(int fd, const std::string& frame, bool observe = true);
 
   pid_t pid_ = -1;
   int data_fd_ = -1;

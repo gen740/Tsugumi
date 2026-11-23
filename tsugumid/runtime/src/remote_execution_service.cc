@@ -218,6 +218,25 @@ auto PreparedRemoteExecution::execute(const ExecutionRequest& request)
     History::put_remote_job(db, job);
   });
 
+  auto receiver = std::make_shared<WorkerProc::ViewReceiver>();
+  receiver->remote = [&client = client_, target = target_, instance = instance_,
+                      id = s.execution_job_id, stop = request.stop](const auto& message) {
+    try {
+      client.send_view(target, instance, id, message, stop);
+      return true;
+    } catch (const std::exception&) {
+      return false;
+    }
+  };
+  service_.set_view_receiver(node.path, receiver);
+  // Close the route and drain any send using it before execute returns.
+  struct CloseReceiver {
+    WorkerProc::ViewReceiver& receiver;
+    ~CloseReceiver() {
+      std::lock_guard lock(receiver.mutex);
+      receiver.remote = nullptr;
+    }
+  } close_receiver{*receiver};
   auto& history = service_.history();
   ExecutionResult output;
   LiveRemoteLog live_log(kRemoteLogTransportBytes, request.log);

@@ -99,6 +99,9 @@ class RemoteJobClient {
   auto submit(std::string_view service, std::string_view instance,
               std::string_view job_id, std::string_view spec,
               std::stop_token stop) const -> RemoteJobState;
+  auto send_view(std::string_view service, std::string_view instance,
+                 std::string_view job_id, const WorkerDisplayData& display,
+                 std::stop_token stop) const -> void;
   auto status(std::string_view service, std::string_view instance,
               std::string_view job_id, uint64_t log_offset,
               std::stop_token stop) const -> RemoteJobState;

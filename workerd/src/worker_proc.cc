@@ -54,8 +54,8 @@ void close_fd(int& fd) {
 
 auto send_frame(trace::Link& link, int fd, const std::string& frame,
                 const std::atomic<bool>* cancel,
-                std::optional<std::chrono::steady_clock::time_point> deadline)
-    -> void {
+                std::optional<std::chrono::steady_clock::time_point> deadline,
+                bool observe = true) -> void {
   rpc::frame::CheckSize(frame.size(), workerd::kMaxWorkerFrameBytes);
   const auto prefix =
       rpc::frame::EncodePrefix(static_cast<uint32_t>(frame.size()));
@@ -89,8 +89,9 @@ auto send_frame(trace::Link& link, int fd, const std::string& frame,
     }
     throw Failed(FailureKind::worker_failed, "worker connection broken");
   }
-  trace::Observe(link, "project core", "Card worker", true, frame,
-                 &trace::kFlatBufferCodec);
+  if (observe)
+    trace::Observe(link, "project core", "Card worker", true, frame,
+                   &trace::kFlatBufferCodec);
 }
 
 #ifdef __APPLE__
@@ -850,11 +851,12 @@ void WorkerProc::read_logs(bool drain) {
   }
 }
 
-void WorkerProc::send(int fd, const std::string& frame) {
+void WorkerProc::send(int fd, const std::string& frame, bool observe) {
   // A stopped worker may also stop draining control messages. Never let the
   // cancellation notification delay escalation to killing the process group.
   send_frame(trace_link_, fd, frame, nullptr,
-             std::chrono::steady_clock::now() + std::chrono::milliseconds(100));
+             std::chrono::steady_clock::now() + std::chrono::milliseconds(100),
+             observe);
 }
 
 auto WorkerProc::start_data_reader() -> void {
@@ -886,7 +888,7 @@ auto WorkerProc::set_display(DisplaySink display) -> void {
 
 auto WorkerProc::ViewReceiver::send(const WorkerDisplayData& message) -> bool {
   std::lock_guard lock(mutex);
-  return worker && worker->send_display(message);
+  return remote ? remote(message) : worker && worker->send_display(message);
 }
 
 auto WorkerProc::view_receiver() -> std::weak_ptr<ViewReceiver> {
@@ -915,7 +917,7 @@ auto WorkerProc::send_display(const WorkerDisplayData& display) -> bool {
   if (b.GetSize() > workerd::kMaxWorkerFrameBytes) return false;
   try {
     send(control_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                       b.GetSize()});
+                       b.GetSize()}, false);
   } catch (const Failed&) {
     ::shutdown(control_fd_, SHUT_RDWR);
     return false;
@@ -987,7 +989,7 @@ auto WorkerProc::read_data() -> void {
         {
           std::lock_guard lock(control_mutex_);
           send(control_fd_, {reinterpret_cast<const char*>(b.GetBufferPointer()),
-                             b.GetSize()});
+                             b.GetSize()}, false);
         }
         continue;
       }

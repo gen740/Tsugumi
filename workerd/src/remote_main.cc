@@ -45,6 +45,7 @@
 #include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/workerd/frame.hh"
 #include "tsugumi/workerd/invocation.hh"
 #include "tsugumi/workerd/worker_proc.hh"
 
@@ -74,8 +75,13 @@ class DisplayChannel {
  public:
   using Batch = std::vector<std::unique_ptr<Tsugumi::Worker::WorkerDisplayT>>;
 
-  explicit DisplayChannel(Fd&& descriptor)
-      : socket_(std::move(descriptor)), thread_([this] { read(); }) {}
+  DisplayChannel(Fd&& descriptor, Fd&& reverse)
+      : socket_(std::move(descriptor)), reverse_(std::move(reverse)),
+        thread_([this] { read(); }) {
+    const timeval timeout{2, 0};
+    ::setsockopt(reverse_.value, SOL_SOCKET, SO_RCVTIMEO, &timeout, sizeof(timeout));
+    ::setsockopt(reverse_.value, SOL_SOCKET, SO_SNDTIMEO, &timeout, sizeof(timeout));
+  }
   ~DisplayChannel() {
     {
       std::lock_guard lock(mutex_);
@@ -102,6 +108,33 @@ class DisplayChannel {
     }
     // A finished adapter can still have complete frames in the socket.
     return {std::move(batch), !pending_.empty() || (finished && !closed_)};
+  }
+
+  auto send(const Tsugumi::Worker::WorkerDisplayT& message) -> bool {
+    if (message.view.empty() || message.bytes.size() > TSUGUMI_MESSAGE_MAX)
+      return false;
+    std::unique_lock lock(reverse_mutex_, std::try_to_lock);
+    if (!lock.owns_lock()) return false;
+    if (!reverse_ready_) {
+      char ready = 0;
+      if (::recv(reverse_.value, &ready, 1, MSG_DONTWAIT) != 1 || ready != 1)
+        return false;
+      reverse_ready_ = true;
+    }
+    flatbuffers::FlatBufferBuilder builder;
+    builder.Finish(Tsugumi::Worker::WorkerDisplay::Pack(builder, &message));
+    if (builder.GetSize() > kRemoteDisplayBytes) return false;
+    try {
+      rpc::frame::Write(
+          reverse_.value,
+          {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+           builder.GetSize()}, kRemoteDisplayBytes);
+      char accepted = 0;
+      if (::read(reverse_.value, &accepted, 1) == 1) return accepted == 1;
+    } catch (const rpc::frame::Error&) {
+    }
+    ::shutdown(reverse_.value, SHUT_RDWR);
+    return false;
   }
 
   auto expired() -> bool {
@@ -147,6 +180,9 @@ class DisplayChannel {
   }
 
   Fd socket_;
+  Fd reverse_;
+  std::mutex reverse_mutex_;
+  bool reverse_ready_ = false;
   std::mutex mutex_;
   std::deque<Entry> pending_;
   std::map<std::string, size_t> queued_bytes_;
@@ -383,6 +419,14 @@ class Daemon {
                       "sandbox limits require a delegated cgroup v2 subtree");
         return reply(
             journal->submit(q.job_id, data, *spec, q.core_life_id).status());
+      }
+      case R::RequestBody::ViewSendRequest: {
+        const auto record = journal->status(q.job_id, q.core_life_id);
+        const auto channel = display_channel(*journal, q.job_id);
+        if (record.state != R::JobState::Running || !channel ||
+            !channel->send(*q.body.AsViewSendRequest()->display))
+          throw Error(R::ErrorCode::Rejected, "the Card cannot accept a view message");
+        return reply(R::AckT{});
       }
       case R::RequestBody::StatusRequest: {
         auto status =
@@ -635,9 +679,15 @@ class Daemon {
     Fd display_reader(pair[0]), display_writer(pair[1]);
     Fd adapter_display(::fcntl(display_writer.value, F_DUPFD_CLOEXEC, 10));
     if (adapter_display.value < 0) return false;
+    if (::socketpair(AF_UNIX, SOCK_STREAM | SOCK_CLOEXEC, 0, pair) != 0)
+      return false;
+    Fd input_writer(pair[0]), input_reader(pair[1]);
+    Fd adapter_input(::fcntl(input_reader.value, F_DUPFD_CLOEXEC, 10));
+    if (adapter_input.value < 0) return false;
     std::shared_ptr<DisplayChannel> display;
     try {
-      display = std::make_shared<DisplayChannel>(std::move(display_reader));
+      display = std::make_shared<DisplayChannel>(std::move(display_reader),
+                                                 std::move(input_writer));
     } catch (const std::exception&) {
       return false;
     }
@@ -646,6 +696,7 @@ class Daemon {
     posix_spawn_file_actions_adddup2(&actions, lock, 5);
     posix_spawn_file_actions_adddup2(&actions, adapter_display.value,
                                      kDisplayChannelFd);
+    posix_spawn_file_actions_adddup2(&actions, adapter_input.value, kViewInputFd);
     if (channel)
       posix_spawn_file_actions_adddup2(&actions, channel_reader.value,
                                        kSecretChannelFd);
@@ -754,6 +805,7 @@ auto supervise(const std::string& self, const stdfs::path& root,
     }
     if (!spec->secrets.empty()) ::close(kSecretChannelFd);
     ::close(kDisplayChannelFd);
+    ::close(kViewInputFd);
     int status = 0;
     for (;;) {
       const auto current = journal.status(job);
