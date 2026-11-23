@@ -40,6 +40,8 @@ enum FailureKind : ushort {
   approval_required = 31,
   value_conflict = 32,
   source_changed = 33,
+  project_in_use = 34,
+  input_invalid = 35,
 }
 
 /// Path: a regular file or a directory, decided at run time. FlatBuffer: one
