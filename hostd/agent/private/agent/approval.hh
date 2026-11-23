@@ -95,6 +95,14 @@ inline auto DescribeOperation(
           "The latest run, active runs and pending remote results are "
           "protected. null bytes means the size has not been measured.");
     }
+  } else if (name == "nix_path_lock_update") {
+    const auto snapshot = read("project_inspect", {});
+    targets["revision"] = json::Get(snapshot, "rev");
+    targets["project_name"] = json::Get(
+        json::Object(json::Text(snapshot, "project_json", "{}")), "name");
+    targets["effect"] = json::Quote(
+        "Resolve missing or changed Nix sources and remove undeclared "
+        "entries from the selected project's tsugumi.lock.");
   } else if (name == "template_add" || name == "template_import") {
     targets["effect"] =
         json::Quote(name == "template_add"

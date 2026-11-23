@@ -713,11 +713,12 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
         return subprocess.run([str(CLI.resolve()), "lock", "update", *args, "--project", str(project)],
                               env=env, capture_output=True, text=True, timeout=30)
 
-    try:
+    def approved_update(*args):
         for _ in range(4):
-            updated = update("lib")
+            updated = update(*args)
             if updated.returncode == 0:
-                break
+                return
+            assert updated.stdout, updated.stderr
             request = json.loads(updated.stdout)
             assert request["code"] == "grant_required", updated.stdout + updated.stderr
             user = UserAgent(tmp_path)
@@ -725,7 +726,10 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
                 user.call("AccessResolveRequest", request_id=request["request_id"], allow=True)
             finally:
                 user.close()
-        assert updated.returncode == 0, updated.stdout + updated.stderr
+        pytest.fail(updated.stdout + updated.stderr)
+
+    try:
+        approved_update("lib")
         lock = project / "tsugumi.lock"
         entry, = json.loads(lock.read_text())["entries"]
         assert entry["name"] == "lib"
@@ -733,8 +737,7 @@ def test_lock_update_pins_a_local_archive_through_the_agent_tool(tmp_path):
         assert entry["narHash"].startswith("sha256-")
         assert "rev" not in entry
         instant = lock.stat().st_mtime_ns
-        result = update()
-        assert result.returncode == 0, result.stdout + result.stderr
+        approved_update()
         assert lock.stat().st_mtime_ns == instant
     finally:
         stop_resident_services(tmp_path)
