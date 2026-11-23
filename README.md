@@ -23,6 +23,8 @@
 
 **Run the analysis you sketched with AI, as it is, and check it with your own hands.**
 
+> **Before v1.0.0, any release may break compatibility.** Project files, the Card ABI, the SDKs and settings can change from one release to the next, without migration. Pin the version you use, and expect to update your projects when you upgrade.
+
 Tsugumi is a research workbench in which the specification a person draws, the thing an AI edits and the processing that actually runs are one and the same Workflow. It runs on macOS, Linux and Windows (Windows through WSL2).
 You draw a computation or a data pipeline as Cards and the wires between them, implement it together with an AI, and run it in environments pinned with Nix.
 You open the code or the result of a Card you are curious about, change a condition and try again with the inputs that were saved. Going back and forth like this, a researcher comes to understand how the analysis got where it did, and can ask the next question.
