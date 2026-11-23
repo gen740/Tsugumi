@@ -20,6 +20,7 @@ import time
 import pytest
 from harness import remote_worker as R
 from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
+from Tsugumi.RemoteWorker.DisplayCredit import DisplayCreditT
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
@@ -404,7 +405,7 @@ def test_real_remote_artifact_boundary(worker, case):
         granted = ArtifactIdT(bytes=[3] * 16)
         relative = f"1/group/source/@2/{bytes(granted.bytes).hex()}"
         contents = b"staged"
-        files.append({"path": f"artifacts/{relative}/input.txt",
+        files.append({"path": f"artifacts/{relative}/nested/input.txt",
                       "sha256": worker.upload(job, contents), "size": len(contents)})
         inputs.append(CardPortT(name="doc", artifacts=[granted]))
         grants.append(ArtifactGrantT(id=granted, path=relative))
@@ -421,10 +422,11 @@ def test_real_remote_artifact_boundary(worker, case):
             if (holder == root) break;
           }
           std::string contents;
-          std::ifstream(granted / "input.txt") >> contents;
+          const auto input = granted / "nested/input.txt";
+          std::ifstream(input) >> contents;
           if (contents != "staged" ||
-              std::ofstream(granted / "input.txt", std::ios::app) ||
-              chmod((granted / "input.txt").c_str(), 0600) == 0) return 4;
+              std::ofstream(input, std::ios::app) ||
+              chmod(input.c_str(), 0600) == 0) return 4;
           static const uint8_t first[] = {0, 0};
           static const uint8_t second[] = {0, 255, 128};
           if (call.effects->send(call.host, "data", first, sizeof(first)) ||
@@ -457,12 +459,29 @@ def test_real_remote_artifact_boundary(worker, case):
         response = worker.call(R.RequestBody.SubmitRequest, R.SubmitRequestT(spec=spec), job=job)
         assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
         displays = []
+        display_after = 0
+        released = {}
         deadline = time.monotonic() + 300
         while True:
-            status = worker.call(R.RequestBody.StatusRequest, R.StatusRequestT(), job=job).body
-            displays.extend(bytes(message.bytes) for message in status.displays or [])
+            # Advance past replayed displays and return credit for consumed bytes.
+            query = R.StatusRequestT(displayAfter=display_after, displayCredits=[
+                DisplayCreditT(view=view, released=total)
+                for view, total in released.items()
+            ])
+            response = worker.call(R.RequestBody.StatusRequest, query, job=job)
+            assert response.bodyType == R.ReplyBody.JobStatus, vars(response.body)
+            status = response.body
+            if status.displaySequence > display_after:
+                display_after = status.displaySequence
+                for message in status.displays:
+                    view = R.string(message.view)
+                    payload = bytes(message.bytes)
+                    displays.append((view, payload))
+                    released[view] = released.get(view, 0) + max(1, len(payload))
             if status.state == R.JobState.Succeeded and not status.displayPending:
                 break
+            assert status.state not in (R.JobState.Failed, R.JobState.Cancelled,
+                                        R.JobState.Interrupted, R.JobState.Released), vars(status)
             assert time.monotonic() < deadline, vars(status)
             time.sleep(0.1)
 
@@ -472,23 +491,30 @@ def test_real_remote_artifact_boundary(worker, case):
             assert response.bodyType == R.ReplyBody.BlobChunk
             return bytes(response.body.bytes)
 
-        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(status.result)))
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(status.resultSha256)))
         entries = {R.string(entry.path): R.string(entry.sha256) for entry in manifest.outputs}
         assert all("display" not in name for name in entries)
         result = WorkerMessageT.InitFromPackedBuf(
             result_bytes(R.string(manifest.invocationResultSha256)))
         if case == "artifact":
-            assert displays == [b"\x00\x00", b"\x00\xff\x80"]
-            assert result.valueType == WorkerPayload.WorkerResult
+            assert result.valueType == WorkerPayload.WorkerResult, vars(result.value)
+            assert displays == [("data", b"\x00\x00"), ("data", b"\x00\xff\x80")]
             created, = result.value.created
             output, = result.value.outputs
             assert bytes(output.artifacts[0].bytes) == bytes(created.bytes)
             artifact_id = bytes(created.bytes).hex()
-            assert result_bytes(entries[f"files/artifacts/{artifact_id}/report.txt"]) == b"artifact"
-            assert not any("unrelated" in name for name in entries)
+            artifact_path = f"files/artifacts/{artifact_id}/report.txt"
+            assert {name for name in entries if name.startswith("files/")} == {artifact_path}
+            assert result_bytes(entries[artifact_path]) == b"artifact"
         else:
             assert result.valueType == WorkerPayload.WorkerFailure
             assert result.value.failure.kind == FailureKind.output_invalid
+            diagnostic = {
+                "symlink": "symbolic link",
+                "byte-budget": "output byte budget exceeded",
+                "entry-budget": "output entry budget exceeded",
+            }[case]
+            assert diagnostic in R.string(result.value.failure.diagnostic)
             assert not any(name.startswith("files/") for name in entries)
     finally:
         worker.call(R.RequestBody.ReleaseRequest,

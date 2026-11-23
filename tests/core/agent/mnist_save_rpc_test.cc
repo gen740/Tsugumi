@@ -28,6 +28,7 @@ TEST_F(AgentProjectFixture,
   const auto snapshot = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
+  const auto sources = json::Array(snapshot.at("sources"));
   auto project = json::Object(document);
   auto canvas = json::Object(project.at("canvas"));
   auto cards = json::Array(canvas.at("cards"));
@@ -92,9 +93,20 @@ TEST_F(AgentProjectFixture,
             {"bytes", Quote("def main(inputs, report):\n    return {}\n")}});
     change("PutSource", {{"path", Quote("definitions/" + id + "/_outputs.fbs")},
                          {"bytes", Quote(output_schema)}});
-    change("PutSource",
-           {{"path", Quote("definitions/" + id + "/params.nix")},
-            {"bytes", Quote("{ rate = 0.001; regularization = 1.0; }")}});
+    const auto params_path = "definitions/" + id + "/params.nix";
+    json::Members params{
+        {"path", Quote(params_path)},
+        {"bytes", Quote("{ rate = 0.001; regularization = 1.0; }")}};
+    // The bundled Drafts already have params.nix. Replacing one needs its
+    // snapshot hash; the new report Card creates the file without a hash.
+    for (const auto& raw_source : sources) {
+      const auto source = json::Object(raw_source);
+      if (json::Text(source, "path") == params_path) {
+        params["base_hash"] = source.at("hash");
+        break;
+      }
+    }
+    change("PutSource", std::move(params));
   }
   // The bundled Japanese text exercises multibyte clipping in tool events.
   const auto read_arguments = R"({"path":"definitions/boosting/README.md"})";
@@ -111,6 +123,10 @@ TEST_F(AgentProjectFixture,
                   .Code()
                   .empty());
   WaitUntilIdle(conversation);
+  const auto requests = model.Requests();
+  ASSERT_EQ(requests.size(), 4u);
+  ASSERT_FALSE(JsonBool(requests.back(), "/messages/6/content/0/is_error"))
+      << JsonString(requests.back(), "/messages/6/content/0/content");
   const auto after = json::Object(
       json::Get(json::Object(JsonString(Inspect(conversation).View(), "/text")),
                 "value"));
