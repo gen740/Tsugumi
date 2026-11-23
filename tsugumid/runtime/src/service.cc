@@ -260,7 +260,7 @@ void Service::open() {
       StoreOptions{opts_.root, opts_.fault, [&](const auto& dir, auto text) {
                      if (!opts_.prepared_cards.empty())
                        return evaluate_literal_params(dir, text);
-                     return nix_->params_declaration(dir, text);
+                     return nix_->check_params_value(dir, text);
                    }});
   stdfs::path scratch;
   store_->open([&] {
@@ -2631,13 +2631,11 @@ void Service::file_read(RequestIn& req) {
 void Service::nix_path_lock_source(RequestIn& req) {
   const auto url =
       project_request(req)->value_as_NixPathLockSourceRequest()->url()->str();
-  if (!supported_nix_path_url(url))
-    throw Failed(FailureKind::invalid_request,
-                 "Unsupported nixPath URL " + url +
-                     "; expected github:, gitlab: or sourcehut:");
   const auto locked = nix_->lock_source(url);
   FBB b;
-  const auto source = R::CreateNixPathLockedSource(b, b.CreateString(locked));
+  const auto source = R::CreateNixPathLockedSource(
+      b, locked.rev.empty() ? 0 : b.CreateString(locked.rev),
+      b.CreateString(locked.nar_hash));
   reply(req, wire::reply(b, req.request_id,
                          R::ReplyPayload::NixPathLockedSource, source.Union()));
 }

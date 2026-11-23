@@ -1,4 +1,6 @@
 // Private messages between tsugumid and its libnix evaluator subprocess.
+include "project_lock.fbs";
+
 namespace Tsugumi.NixEvaluator;
 
 table Initialize {
@@ -6,21 +8,9 @@ table Initialize {
   epoch:ulong;
 }
 
-table LockedSource {
-  type:string (required);
-  owner:string (required);
-  repo:string (required);
-  rev:string (required);
-  nar_hash:string (required);
-}
-table Pin {
-  name:string (required);
-  intent:string (required);
-  url:string (required);
-}
 table ProjectScope {
   project:string;
-  pins:[Pin];
+  entries:[Tsugumi.Document.LockEntry];
 }
 table DefinitionScope {
   directory:string (required);
@@ -29,12 +19,11 @@ table DefinitionScope {
 }
 table Scope {
   definitions:[DefinitionScope];
-  generated:[string];
   projects:[ProjectScope];
 }
 table Evaluate {
   scope:Scope (required);
-  core_nixpkgs:LockedSource (required);
+  core_nixpkgs:Tsugumi.Document.LockEntry (required);
   nix_dir:string;
   needs_worker:bool;
   args:string (required);
@@ -58,9 +47,9 @@ table Expression {
 }
 
 table LockSource { url:string (required); }
-table ParamsDeclaration { text:string (required); origin:string (required); }
+table CheckParamsValue { text:string (required); origin:string (required); }
 
-union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, ParamsDeclaration }
+union RequestBody { Initialize, Evaluate, Reuse, Expression, LockSource, CheckParamsValue }
 
 table Request {
   system:string;
@@ -82,12 +71,12 @@ table ExpressionValue {
   output_name:string;
 }
 table ParamsValue { json:string (required); }
-table LockedUrl { url:string (required); }
+table ResolvedSource { rev:string; narHash:string (required); }
 table Log { line:string; }
 // Size-prefixed stdout frames from the build client.
 table BuildLog { line:string; truncated:bool; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 
-union ReplyBody { Evaluation, Reusable, ExpressionValue, LockedUrl, ParamsValue, Log, Build, Error }
+union ReplyBody { Evaluation, Reusable, ExpressionValue, ResolvedSource, ParamsValue, Log, Build, Error }
 table Reply { body:ReplyBody (required); }

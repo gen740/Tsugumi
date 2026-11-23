@@ -1571,7 +1571,7 @@ private struct SourceCategory: View {
   private func open(_ path: String) { model.openFile(path) }
 
   /// The "SDK" section: builds the saved definition with the current wiring
-  /// by evaluating and building (import ./. { inherit params inputs; }).api, then lists share/tsugumi/api/.
+  /// by evaluating and building (import ./. { inherit params inputs; }).api or null, then lists share/tsugumi/api/.
   @ViewBuilder private var sdkSection: some View {
     HStack {
       Text("SDK").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
@@ -1610,7 +1610,7 @@ private struct SourceCategory: View {
     guard let rpc = model.session.rpc, !sdk.building else { return }
     sdk = SdkBuild(building: true)
     do {
-      let result = try await rpc.evaluateNix(card: path(model.cardKey), expression: "(import ./. { inherit params inputs; }).api", build: true, atRev: model.session.rev)
+      let result = try await rpc.evaluateNix(card: path(model.cardKey), expression: "(import ./. { inherit params inputs; }).api or null", build: true, atRev: model.session.rev)
       sdk = SdkBuild(result, prefix: Self.sdkPrefix)
     } catch {
       sdk = SdkBuild(failure: "\(error)")

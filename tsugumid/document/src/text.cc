@@ -4,10 +4,8 @@
 
 #include <algorithm>
 #include <memory>
-#include <set>
 
 #include "tsugumi/document/document.hh"
-#include "tsugumi/util/json_object.hh"
 
 extern const unsigned char tsugumi_project_document_fbs[];
 extern const unsigned long tsugumi_project_document_fbs_size;
@@ -88,34 +86,6 @@ auto describe(const std::string& error) -> std::string {
 // GenText writes an empty vector as "[\n\n  ]" and an empty table as
 // "{\n  }". Strings never hold a raw newline (it is escaped), so every
 // newline here is structure.
-auto compact_json(std::string_view text) -> std::string {
-  std::string result;
-  bool quoted = false;
-  for (size_t index = 0; index < text.size(); ++index) {
-    const char c = text[index];
-    if (quoted && c == '\\') {
-      result += c;
-      result += text[++index];
-      continue;
-    }
-    if (c == '"') quoted = !quoted;
-    if (quoted || std::string_view(" \r\n\t").find(c) == std::string_view::npos)
-      result += c;
-  }
-  return result;
-}
-
-auto strict_object(std::string_view text, std::string path) -> json::Members {
-  schema::v::Mapping<schema::v::String, schema::Json> object;
-  if (const auto error = schema::decode(text, object))
-    throw json::DecodeFailure(std::move(path), "object", error->message);
-  json::Members members;
-  for (const auto& [name, value] : object.value())
-    if (!members.emplace(name, compact_json(schema::text(value))).second)
-      throw std::runtime_error(path + ": duplicate field " + name);
-  return members;
-}
-
 auto collapse_empty(const std::string& text) -> std::string {
   std::string out;
   out.reserve(text.size());
@@ -150,19 +120,6 @@ auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
   std::string owned(text);
-  if (schema == Schema::Card || schema == Schema::Lock) {
-    try {
-      auto document = strict_object(text, std::string(path));
-      const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
-      if (auto it = document.find(key); it != document.end())
-        it->second = json::Quote(json::Encode(strict_object(it->second, key)));
-      owned = json::Encode(document);
-    } catch (const std::exception& e) {
-      throw DocumentError("invalid_document",
-                          std::string(path) + ": " + e.what(),
-                          {{"path", std::string(path)}});
-    }
-  }
   if (owned.find('\0') != std::string::npos || !p.ParseJson(owned.c_str()))
     throw DocumentError("invalid_document",
                         std::string(path) + ": " + describe(p.error_),
@@ -180,26 +137,6 @@ auto print(Schema schema, std::string_view buffer) -> std::string {
     throw DocumentError("invalid_document",
                         std::string("cannot print document: ") + error);
   text = collapse_empty(text);
-  if (schema == Schema::Card || schema == Schema::Lock) {
-    const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
-    const auto* value = schema == Schema::Card
-                            ? root<D::Card>(buffer).sweeps()
-                            : root<D::ProjectLock>(buffer).nixPath();
-    if (value) {
-      const auto prefix = std::string("\n  \"") + key + "\": ";
-      const auto start = text.find(prefix) + prefix.size();
-      const auto end = text.find('\n', start);
-      const auto quoted_end = text[end - 1] == ',' ? end - 1 : end;
-      auto pretty = schema::pretty_text(value->string_view());
-      if (!pretty.empty() && pretty.back() == '\n') pretty.pop_back();
-      size_t newline = 0;
-      while ((newline = pretty.find('\n', newline)) != std::string::npos) {
-        pretty.insert(newline + 1, "  ");
-        newline += 3;
-      }
-      text.replace(start, quoted_end - start, pretty);
-    }
-  }
   if (text.empty() || text.back() != '\n') text += '\n';
   return text;
 }

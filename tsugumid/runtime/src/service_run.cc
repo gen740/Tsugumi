@@ -124,9 +124,10 @@ void Service::evaluate_nix(RequestIn& req) {
   if (!node)
     throw Failed(FailureKind::not_found, "unknown card " + path_key(card),
                  {{"card", path_key(card)}});
-  if (node->kind != CardType::Code && node->kind != CardType::Draft)
+  if (node->kind != CardType::Code && node->kind != CardType::Draft &&
+      node->kind != CardType::Input)
     throw Failed(FailureKind::invalid_request,
-                 "Nix evaluation requires a Code or Draft Card",
+                 "Nix evaluation requires a Code, Input or Draft Card",
                  {{"card", path_key(card)}});
   if (r->expression()->size() == 0)
     throw Failed(FailureKind::invalid_request, "expression is empty");
@@ -901,6 +902,15 @@ void Service::run_value_read(RequestIn& req) {
     throw Failed(FailureKind::invalid_range, "offset is past the end");
   reply(req, wire::file_page(req.request_id, port, page.bytes, offset,
                              page.size, page.hash));
+}
+
+auto Service::register_store_artifact(const std::string& /*run*/,
+                                      const CardPath& /*card*/,
+                                      uint64_t /*invocation*/,
+                                      const ArtifactKey& /*id*/,
+                                      const stdfs::path& /*store_path*/)
+    -> void {
+  // p7: lane X provides storage
 }
 
 void Service::artifact_list(RequestIn& req) {

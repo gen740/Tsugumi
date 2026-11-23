@@ -119,6 +119,9 @@ class Service : public RequestSink {
                        const std::function<void(std::string_view, uint64_t,
                                                 uint64_t)>& progress = {})
       -> Value;
+  auto register_store_artifact(const std::string& run, const CardPath& card,
+                               uint64_t invocation, const ArtifactKey& id,
+                               const std::filesystem::path& store_path) -> void;
   // The backend that runs the Cards naming execution service `id`.
   auto execution_service(const std::string& id) -> ExecutionService&;
   auto invalidate_resident(const std::string& card) -> void;

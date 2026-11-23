@@ -1,36 +1,37 @@
 # Evaluated with restricted filesystem access and without IFD.
 {
-  gen,
-  upstream,
-  card,
+  scope,
   viewsOnly ? false,
   expressionOnly ? false,
 }:
 let
-  up = builtins.fromJSON (builtins.readFile upstream);
-  argumentsFor = g: deps: {
-    params = builtins.fromJSON (builtins.readFile (g + "/params.json"));
-    inputs = builtins.listToAttrs (
-      map (d: {
-        name = d.name;
-        value = {
-          type = builtins.path {
-            path = g + "/types/${d.name}.fbs";
-            name = "${d.name}.fbs";
-          };
-        }
-        // (if d ? producer then { exports = cards.${d.producer}.exports or { }; } else { });
-      }) deps
-    );
-  };
+  argumentsFor =
+    entry:
+    let
+      dir = /. + entry.definition;
+      file = dir + "/params.nix";
+    in
+    {
+      params = if builtins.pathExists file then import file else { };
+      inputs = builtins.listToAttrs (
+        map (id: {
+          name = id;
+          value = cards.${id}.exports or { };
+        }) entry.deps
+      );
+    };
   cards = builtins.listToAttrs (
-    map (u: {
-      name = u.key;
-      value = import (/. + u.def) (argumentsFor (/. + u.gen) u.deps);
-    }) up.cards
+    map (entry: {
+      name = entry.id;
+      value =
+        let
+          dir = /. + entry.definition;
+        in
+        if builtins.pathExists (dir + "/default.nix") then import dir (argumentsFor entry) else { };
+    }) scope.cards
   );
-  arguments = argumentsFor gen up.deps;
-  self = import card arguments;
+  arguments = argumentsFor scope.self;
+  self = import (/. + scope.self.definition) arguments;
   unknown = builtins.filter (
     key:
     !(builtins.elem key [
@@ -70,7 +71,7 @@ let
     then
       entry
     else
-      throw "each run implementation must be a derivation containing lib/main.so; only run list entries can have labels";
+      throw "each run implementation must be a derivation; only run list entries can have labels";
   runs = map normalize entries;
   declarations = self.views or [ ];
   viewOf =

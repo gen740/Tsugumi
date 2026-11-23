@@ -44,8 +44,8 @@ auto Executable(const char* argv0) -> f::path {
 auto Usage() -> void {
   std::cout << "Usage: tsugumi <tool> [--option value ...] [--json '<object>'] "
                "[--project <folder>]\n"
-               "       tsugumi nix path lock update [--project <folder>] "
-               "[--project-path <external>] [--name <source>]\n"
+               "       tsugumi lock update [name] [--project <folder>] "
+               "[--project-path <external>]\n"
                "       tsugumi call <RequestName> ['<json>']\n"
                "       tsugumi web [--port N] [--no-browser] [project folder]\n"
                "       tsugumi mcp\n"
@@ -111,6 +111,9 @@ auto main(int argc, char** argv) -> int {
     if (command == "uninstall") return Uninstall({args.begin() + 1, args.end()});
     if (command == "web") return Open(executable, {args.begin() + 1, args.end()});
     if (command == "call") return RunCall(executable, {args.begin() + 1, args.end()});
+    if (command == "lock" && args.size() > 2 && args[1] == "update" &&
+        !args[2].starts_with("-"))
+      args.insert(args.begin() + 2, "--name");
     if (const auto status = RunTool(executable, args)) return *status;
     Usage();
     return 64;

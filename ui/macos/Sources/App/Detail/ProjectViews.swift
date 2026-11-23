@@ -293,8 +293,7 @@ private struct NixPathRows: View {
     switch value {
     case .unlocked: Text("未ロック")
     case .urlChanged: Text("URL が変更されました")
-    case .locked(let revision, let modified):
-      Text(verbatim: [revision, modified?.formatted(.iso8601.year().month().day())].compactMap { $0 }.joined(separator: " · "))
+    case .locked(let pin): Text(verbatim: pin)
     }
   }
 }

@@ -14,6 +14,7 @@ namespace f = std::filesystem;
 namespace {
 
 auto Words(const std::string& name) -> std::vector<std::string> {
+  if (name == "nix_path_lock_update") return {"lock", "update"};
   std::vector<std::string> out;
   std::stringstream s(name);
   for (std::string word; std::getline(s, word, '_');) out.push_back(word);

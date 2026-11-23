@@ -290,7 +290,7 @@ import TsugumiTestSupport
   @Test func lockUpdatesUseTheSelectedScopeWithoutAnUndoReceipt() async throws {
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let bytes = #"{"nixPath":{"science":"github:owner/repo/abcdef1234567890abcdef1234567890abcdef12?narHash=sha256-example&lastModified=1700000000"}}"#
+    let bytes = #"{"entries":[{"name":"science","url":"github:owner/repo","rev":"abcdef1234567890abcdef1234567890abcdef12","narHash":"sha256-example"}]}"#
     var calls = 0
     session.operateProject = { request in
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectUpdateNixPathLockT)

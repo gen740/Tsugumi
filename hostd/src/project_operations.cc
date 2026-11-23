@@ -71,28 +71,32 @@ auto NixPath(std::string_view document) -> json::Members {
 auto UpdatedLock(const std::string& path, const std::string& project,
                  const std::optional<std::string>& old, const std::string& name,
                  const OperationCall& call) -> std::string {
-  auto declarations = NixPath(project);
-  auto locked =
-      name.empty() || !old
-          ? json::Members{}
-          : json::Object(json::Get(json::Object(*old), "nixPath", "{}"));
-  if (!name.empty()) {
-    if (!declarations.contains(name))
-      throw Failure("not_found", "Undeclared nixPath name " + name);
-    const auto entry = declarations.at(name);
-    declarations = {{name, entry}};
+  const auto declarations = NixPath(project);
+  if (!name.empty() && !declarations.contains(name))
+    throw Failure("not_found", "Undeclared nixPath name " + name);
+  std::map<std::string, std::string> locked;
+  if (old) {
+    const auto parsed = parse_project_lock(path, *old);
+    for (auto& raw : json::Array(json::Object(parsed.text).at("entries"))) {
+      const auto key = json::Text(json::Object(raw), "name");
+      if (declarations.contains(key)) locked.emplace(key, std::move(raw));
+    }
   }
-  for (const auto& [key, entry] : declarations)
-    if (!supported_nix_path_url(json::Text(json::Object(entry), "url")))
-      throw Failure("invalid_request",
-                    "Unsupported fetchTree URL for nixPath " + key +
-                        "; expected github:, gitlab: or sourcehut:");
   for (const auto& [key, entry] : declarations) {
+    if (!name.empty() && name != key) continue;
     const auto url = json::Object(entry).at("url");
-    const auto pin = Value(call("nix_path_lock_source", {{"url", url}}));
-    locked[key] = pin.at("url");
+    if (const auto found = locked.find(key);
+        found != locked.end() &&
+        json::Text(json::Object(found->second), "url") == json::String(url))
+      continue;
+    auto source = Value(call("nix_path_lock_source", {{"url", url}}));
+    source.emplace("name", json::Quote(key));
+    source.emplace("url", url);
+    locked[key] = json::Encode(source);
   }
-  return parse_project_lock(path, "{\"nixPath\":" + json::Encode(locked) + "}")
+  std::vector<std::string> entries;
+  for (auto& [_, entry] : locked) entries.push_back(std::move(entry));
+  return parse_project_lock(path, "{\"entries\":" + json::Encode(entries) + "}")
       .text;
 }
 

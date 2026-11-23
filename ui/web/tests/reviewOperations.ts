@@ -37,7 +37,7 @@ function session() {
 // Lock operations publish a carried source but provide no undo receipt.
 {
   const s = session()
-  const lock = '{"nixPath":{"science":"github:owner/repo/abcdef1234567890abcdef1234567890abcdef12?narHash=sha256-example&lastModified=1700000000"}}'
+  const lock = '{"entries":[{"name":"science","url":"github:owner/repo","rev":"abcdef1234567890abcdef1234567890abcdef12","narHash":"sha256-example"}]}'
   let calls = 0
   s.operateProject = async (request: H.ProjectOperateRequestT) => {
     assert.equal(request.bodyType, H.ProjectOperationBody.ProjectUpdateNixPathLock)

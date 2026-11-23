@@ -27,12 +27,12 @@ const rpc = new RPCClient({
 })
 
 await rpc.evaluateNix(['plot'], 'builtins.currentSystem')
-const sdk = sdkBuild(await rpc.evaluateNix(['nested', 'plot'], '(import ./. { inherit params inputs; }).api', {
+const sdk = sdkBuild(await rpc.evaluateNix(['nested', 'plot'], '(import ./. { inherit params inputs; }).api or null', {
   build: true, atRev: 42n,
 }))
 assert.deepEqual(calls.map(r => [r.card?.segments, r.expression, r.build, r.atRev]), [
   [['plot'], 'builtins.currentSystem', false, null],
-  [['nested', 'plot'], '(import ./. { inherit params inputs; }).api', true, 42n],
+  [['nested', 'plot'], '(import ./. { inherit params inputs; }).api or null', true, 42n],
 ])
 assert.deepEqual(sdk, {
   building: false, files: [{ id: 'sdk:README.md', name: 'README.md', text: 'API' }], truncated: true,

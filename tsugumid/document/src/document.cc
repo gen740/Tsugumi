@@ -81,6 +81,15 @@ auto Document::is_card_note_file(const std::string& path) -> bool {
          is_document_file(std::string(rel));
 }
 
+auto Document::is_generated_input_file(const std::string& path) -> bool {
+  auto local = local_document_path(path);
+  if (!local.starts_with("definitions/") || !local.ends_with("/_inputs.fbs"))
+    return false;
+  local.remove_prefix(12);
+  local.remove_suffix(12);
+  return valid_id(std::string(local));
+}
+
 auto Document::is_note_file(const std::string& path) -> bool {
   const auto rel = local_document_path(path);
   if (!rel.starts_with("notes/") || !rel.ends_with(".md")) return false;
@@ -292,55 +301,19 @@ auto valid_nix_path_name(std::string_view name) -> bool {
          });
 }
 
-auto supported_nix_path_url(std::string_view url) -> bool {
-  return url.starts_with("github:") || url.starts_with("gitlab:") ||
-         url.starts_with("sourcehut:");
-}
-
 auto parse_project_lock(const std::string& path, const std::string& text)
     -> ParsedDocument {
   auto buffer = document_text::parse(Schema::Lock, path, text);
   const auto& lock = document_text::root<D::ProjectLock>(buffer);
-  for (const auto& [name, value] :
-       json::Object(lock.nixPath()->string_view())) {
-    if (!valid_nix_path_name(name))
-      invalid(path + ": invalid nixPath name " + json::Quote(name));
-    const auto url = json::String(value);
-    const auto query = url.find('?');
-    const auto source = std::string_view(url).substr(0, query);
-    const auto rev = source.substr(source.rfind('/') + 1);
-    if (!supported_nix_path_url(url) || std::ranges::count(source, '/') != 2 ||
-        rev.size() != 40 ||
-        !std::ranges::all_of(
-            rev, [](unsigned char c) { return std::isxdigit(c); }) ||
-        query == url.npos)
-      invalid(path + ": invalid locked URL for " + json::Quote(name));
-    bool hash = false;
-    bool modified = false;
-    auto options = std::string_view(url).substr(query + 1);
-    while (!options.empty()) {
-      const auto separator = options.find('&');
-      const auto option = options.substr(0, separator);
-      if (!hash && option.starts_with("narHash=sha256-") &&
-          option.size() > std::string_view("narHash=sha256-").size()) {
-        hash = true;
-      } else if (!modified && option.starts_with("lastModified=")) {
-        const auto timestamp =
-            option.substr(std::string_view("lastModified=").size());
-        if (timestamp.empty() || !std::ranges::all_of(timestamp, [](char c) {
-              return c >= '0' && c <= '9';
-            }))
-          invalid(path + ": invalid lastModified for " + json::Quote(name));
-        modified = true;
-      } else {
-        invalid(path + ": unexpected locked URL query for " +
-                json::Quote(name));
-      }
-      if (separator == options.npos) break;
-      options.remove_prefix(separator + 1);
-    }
-    if (!hash) invalid(path + ": missing narHash for " + json::Quote(name));
+  check_nix_path(lock.entries(), path);
+  for (const auto* entry : *lock.entries()) {
+    const auto hash = entry->narHash()->string_view();
+    if (!hash.starts_with("sha256-") || hash.size() <= 7)
+      invalid(path + ": invalid narHash for " + entry->name()->str());
   }
+  std::unique_ptr<D::ProjectLockT> object(lock.UnPack());
+  std::ranges::sort(object->entries, {}, &D::LockEntryT::name);
+  buffer = document_text::pack<D::ProjectLock>(*object);
   return {buffer, document_text::print(Schema::Lock, buffer)};
 }
 
@@ -501,7 +474,7 @@ std::string execution_fingerprint(const Document& doc) {
     if (path.starts_with("skills/") || path.starts_with("templates/") ||
         relative.starts_with("templates/") ||
         Document::is_card_note_file(path) || Document::is_note_file(path) ||
-        relative == "layout.bin")
+        relative == "layout.bin" || Document::is_generated_input_file(path))
       continue;
     h.update("\0src\0", 5);
     h.update(path);

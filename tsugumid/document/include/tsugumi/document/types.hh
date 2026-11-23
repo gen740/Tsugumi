@@ -8,6 +8,7 @@
 #include <string>
 #include <vector>
 
+#include "tsugumi/document/schema_sources.hh"
 #include "tsugumi/protocol/tsugumi_enums_generated.h"
 
 namespace reflection {
@@ -49,7 +50,8 @@ struct CatalogResult {
 // Parses an _outputs.fbs text. The root table is the port catalog; each field
 // is one port carrying a table or an annotated Path string.
 CatalogResult parse_catalog(const std::string& fbs_text,
-                            const std::string& filename);
+                            const std::string& filename,
+                            const SchemaSourceReader& read = {});
 
 // The whole schema of an _outputs.fbs text, rooted at its catalog (`root`).
 std::optional<std::string> schema_bfbs(const std::string& fbs_text,
@@ -71,10 +73,6 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 // and returns the new fully qualified root name.
 std::string render_closure(const Type& t, const std::string& prefix,
                            std::string& out, bool nested = false);
-
-// A catalog of the message types used to generate a Card's SDK bindings.
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string;
 
 // Builtin message types.
 TypeRef empty_type();
@@ -100,7 +98,4 @@ bool verify(const Type& t, const std::string& bytes);
 
 // Generates a Params schema text (`table Params {...}`) for the given
 // name -> fbs type list.
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields);
-
 }  // namespace tsugumi::types

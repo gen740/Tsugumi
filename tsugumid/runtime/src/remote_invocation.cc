@@ -202,9 +202,8 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
-  const auto& params = request.node.run_params_buffer;
   auto call = worker_call_frame(
-      1, inputs, params, request.node.outputs,
+      1, inputs, {}, request.node.outputs,
       request.node.settings.timeout_seconds
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)

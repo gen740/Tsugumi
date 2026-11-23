@@ -7,7 +7,10 @@
 #include <set>
 #include <sstream>
 
+#include "tsugumi/document/input_schema.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/flatbuffer_schema.hh"
 
 namespace tsugumi::types {
@@ -119,8 +122,10 @@ class Renderer {
   // "nested", so no dotted name of one level can be read as another level's
   // (FlatBuffers also tries shorter namespace prefixes when it resolves a
   // name). Member types that are not merged keep their names.
-  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false)
-      : s_(s), prefix_(std::move(prefix)), nested_(nested) {}
+  Renderer(const reflection::Schema& s, std::string prefix, bool nested = false,
+           InputDeclarations* declarations = nullptr)
+      : s_(s), prefix_(std::move(prefix)), nested_(nested),
+        declarations_(declarations) {}
 
   std::string original(const std::string& full) const {
     static const std::string merge = "tsugumi.merge";
@@ -130,12 +135,17 @@ class Renderer {
   }
 
   std::string qualified(const std::string& name) const {
+    if (declarations_ && artifact(name)) return name;
     return prefix_.empty() ? original(name) : prefix_ + "." + original(name);
   }
 
   void object(int index) {
     if (!objs_.insert(index).second) return;
     const auto* o = s_.objects()->Get(index);
+    if (declarations_ && artifact(o->name()->string_view())) {
+      declarations_->artifact = true;
+      return;
+    }
     for (const auto* f : *o->fields()) {
       deps(*f->type());
       if (const auto* nested = nested_root(*f))
@@ -165,15 +175,65 @@ class Renderer {
       std::string base = dot == std::string::npos ? full : full.substr(dot + 1);
       std::string qns =
           prefix_.empty() ? ns : (ns.empty() ? prefix_ : prefix_ + "." + ns);
-      out += "namespace " + qns + ";\n";
+      std::string text;
+      if (!qns.empty()) text += "namespace " + qns + ";\n";
       if (is_obj)
-        emit_object(*s_.objects()->Get(index), base, out);
+        emit_object(*s_.objects()->Get(index), base, text);
       else
-        emit_enum(*s_.enums()->Get(index), base, out);
+        emit_enum(*s_.enums()->Get(index), base, text);
+      if (declarations_) {
+        const auto name = qualified(full);
+        auto [entry, added] = declarations_->types.try_emplace(name);
+        if (added) {
+          entry->second.text = std::move(text);
+          declarations_->order.push_back(name);
+        } else if (entry->second.text != text) {
+          throw std::runtime_error("conflicting input schema declarations for " + name);
+        }
+      } else {
+        out += text;
+      }
     }
   }
 
  private:
+  static auto artifact(std::string_view name) -> bool {
+    return name == "tsugumi.Artifact" || name == "tsugumi.ArtifactId";
+  }
+
+  using Attributes = flatbuffers::Vector<flatbuffers::Offset<reflection::KeyValue>>;
+  auto copied_attributes(const Attributes* attributes,
+                         std::string_view handled = "") -> std::vector<std::string> {
+    std::vector<std::string> items;
+    if (!declarations_ || !attributes) return items;
+    static const flatbuffers::Parser parser;
+    for (const auto* attr : *attributes) {
+      const auto key = attr->key()->str();
+      if (key == "tsugumi_schema" ||
+          handled.find(" " + key + " ") != std::string_view::npos)
+        continue;
+      const bool known = parser.known_attributes_.contains(key);
+      if (!known) declarations_->attributes.insert(key);
+      const auto value = attr->value() ? attr->value()->str() : "";
+      if (value.empty() || (known && value == "0"))
+        items.push_back(key);
+      else if (known)
+        items.push_back(key + ": " + value);
+      else
+        items.push_back(key + ": " + json::Quote(value));
+    }
+    return items;
+  }
+
+  static auto emit_attributes(const std::vector<std::string>& attrs,
+                              std::string& out) -> void {
+    if (attrs.empty()) return;
+    out += " (";
+    for (size_t i = 0; i < attrs.size(); ++i)
+      out += (i ? ", " : "") + attrs[i];
+    out += ")";
+  }
+
   auto nested_root(const reflection::Field& field) const
       -> const reflection::Object* {
     if (const auto* attrs = field.attributes())
@@ -206,15 +266,17 @@ class Renderer {
   void emit_object(const reflection::Object& o, const std::string& name,
                    std::string& out) {
     out += o.is_struct() ? "struct " : "table ";
-    out += name + " {\n";
+    out += name;
+    emit_attributes(copied_attributes(o.attributes()), out);
+    out += " {\n";
     std::vector<const reflection::Field*> fields(o.fields()->begin(),
                                                  o.fields()->end());
     std::sort(fields.begin(), fields.end(),
               [](auto* a, auto* b) { return a->id() < b->id(); });
     for (const auto* f : fields) {
       const auto& t = *f->type();
-      if (t.base_type() == BaseType::UType)
-        continue;  // implicit union type field
+      if (t.base_type() == BaseType::UType || t.element() == BaseType::UType)
+        continue;  // implicit union discriminator, including vectors of unions
       std::string tn;
       if (t.base_type() == BaseType::Vector ||
           t.base_type() == BaseType::Vector64)
@@ -244,22 +306,18 @@ class Renderer {
           out += " = " + std::to_string(f->default_integer());
         }
       }
-      std::vector<std::string> attrs;
+      auto attrs = copied_attributes(f->attributes(), " id required deprecated key nested_flatbuffer ");
       if (!o.is_struct()) {
         // Union value fields occupy two ids; the declared id is the value one.
         attrs.push_back("id: " + std::to_string(f->id()));
       }
       if (f->required()) attrs.push_back("required");
       if (f->deprecated()) attrs.push_back("deprecated");
+      if (declarations_ && f->key()) attrs.push_back("key");
       if (const auto* nested = nested_root(*f))
         attrs.push_back("nested_flatbuffer: \"" +
                         qualified(nested->name()->str()) + "\"");
-      if (!attrs.empty()) {
-        out += " (";
-        for (size_t i = 0; i < attrs.size(); ++i)
-          out += (i ? ", " : "") + attrs[i];
-        out += ")";
-      }
+      emit_attributes(attrs, out);
       out += ";\n";
     }
     out += "}\n";
@@ -268,27 +326,33 @@ class Renderer {
   void emit_enum(const reflection::Enum& e, const std::string& name,
                  std::string& out) {
     if (e.is_union()) {
-      out += "union " + name + " { ";
+      out += "union " + name;
+      emit_attributes(copied_attributes(e.attributes()), out);
+      out += " { ";
       bool first = true;
       for (const auto* v : *e.values()) {
         if (v->value() == 0) continue;
         if (!first) out += ", ";
         first = false;
         out += v->name()->str() + ": " +
-               qualified(
-                   s_.objects()->Get(v->union_type()->index())->name()->str()) +
+               type_name(*v->union_type(), v->union_type()->base_type()) +
                " = " + std::to_string(v->value());
+        emit_attributes(copied_attributes(v->attributes()), out);
       }
       out += " }\n";
       return;
     }
     out += "enum " + name + " : " +
-           scalar_name(e.underlying_type()->base_type()) + " { ";
+           scalar_name(e.underlying_type()->base_type());
+    // Values in reflection already use their wire bit masks.
+    emit_attributes(copied_attributes(e.attributes(), " bit_flags "), out);
+    out += " { ";
     bool first = true;
     for (const auto* v : *e.values()) {
       if (!first) out += ", ";
       first = false;
       out += v->name()->str() + " = " + std::to_string(v->value());
+      emit_attributes(copied_attributes(v->attributes()), out);
     }
     out += " }\n";
   }
@@ -296,6 +360,7 @@ class Renderer {
   const reflection::Schema& s_;
   std::string prefix_;
   bool nested_ = false;
+  InputDeclarations* declarations_;
   std::set<int> objs_;
   std::set<int> enums_;
   std::vector<std::pair<bool, int>> order_;
@@ -319,7 +384,7 @@ const reflection::Object* Type::root() const { return schema()->root_table(); }
 std::optional<TypeRef> compile(const std::string& fbs_text,
                                const std::string& root, std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "schema.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "schema.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -339,7 +404,7 @@ std::optional<TypeRef> compile(const std::string& fbs_text,
 std::optional<std::string> schema_bfbs(const std::string& fbs_text,
                                        std::string* root, std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "_outputs.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -458,7 +523,7 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
                                             const std::string& type_name,
                                             PortKind kind, std::string* error) {
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, "_outputs.fbs")) {
+  if (!parse_schema(*parser, fbs_text, "_outputs.fbs", {})) {
     *error = parser->error_;
     return std::nullopt;
   }
@@ -541,10 +606,11 @@ std::optional<std::string> set_catalog_port(const std::string& fbs_text,
 }
 
 CatalogResult parse_catalog(const std::string& fbs_text,
-                            const std::string& filename) {
+                            const std::string& filename,
+                            const SchemaSourceReader& read) {
   CatalogResult r;
   auto parser = make_parser();
-  if (!parser->Parse(fbs_text.c_str(), nullptr, filename.c_str())) {
+  if (!parse_schema(*parser, fbs_text, filename, read)) {
     r.errors.push_back(parser->error_);
     return r;
   }
@@ -629,24 +695,24 @@ std::string render_closure(const Type& t, const std::string& prefix,
   return r.qualified(s->root_table()->name()->str());
 }
 
-auto card_catalog(const std::vector<PortType>& ports, bool inputs)
-    -> std::string {
-  const std::string side = inputs ? "inputs" : "outputs";
-  const std::string table = inputs ? "Inputs" : "Outputs";
-  std::string types = "attribute \"tsugumi\";\n";
-  std::string catalog = "namespace " + side + ";\ntable " + table + " {\n";
-  int id = 0;
-  for (const auto& port : ports) {
-    if (!port.resolved()) continue;
-    const bool path = port.kind == PortKind::Path;
-    const auto root =
-        path ? "string"
-             : render_closure(*port.type, side + "." + port.name, types);
-    catalog += "  " + port.name + ":" + root + " (id: " + std::to_string(id++) +
-               (path ? ", tsugumi: \"path\"" : "") +
-               (!inputs && port.required ? ", required" : "") + ");\n";
+auto render_input_candidate(const Type& type, const std::string& prefix,
+                            InputDeclarations& declarations) -> std::string {
+  const auto& schema = *type.schema();
+  Renderer renderer(schema, prefix, false, &declarations);
+  const auto* root = schema.root_table();
+  const auto name = renderer.qualified(root->name()->str());
+  for (flatbuffers::uoffset_t i = 0; i < schema.objects()->size(); ++i)
+    if (schema.objects()->Get(i) == root) renderer.object(static_cast<int>(i));
+  std::string unused;
+  renderer.emit(unused);
+  if (const auto it = declarations.types.find(name); it != declarations.types.end()) {
+    auto& id = it->second.schema;
+    const auto candidate_id = schema_id(type);
+    if (!id.empty() && id != candidate_id)
+      throw std::runtime_error("conflicting input schema ids for " + name);
+    id = candidate_id;
   }
-  return types + catalog + "}\nroot_type " + table + ";\n";
+  return name;
 }
 
 TypeRef empty_type() {
@@ -790,17 +856,6 @@ bool json_to_flatbuffer(const Type& t, const std::string& json,
   out->assign(reinterpret_cast<const char*>(p->builder_.GetBufferPointer()),
               p->builder_.GetSize());
   return true;
-}
-
-std::string params_schema(
-    const std::vector<std::pair<std::string, std::string>>& fields) {
-  std::string text = "namespace parameters;\ntable Params {\n";
-  int id = 0;
-  for (const auto& [name, type] : fields) {
-    text += "  " + name + ":" + type + " (id: " + std::to_string(id++) + ");\n";
-  }
-  text += "}\nroot_type Params;\n";
-  return text;
 }
 
 }  // namespace tsugumi::types

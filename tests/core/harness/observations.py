@@ -33,10 +33,10 @@ def read_pages(client, request, *, page_bytes=31, verify_integrity=False, **fiel
             return bytes(content)
 
 
-def read_output(client, run_id, *, card="work", port="out"):
+def read_output(client, run_id, *, card="work", port="out", invocation=1):
     """Read one recorded output through RunValueRead."""
     return read_pages(client, "RunValueReadRequest", runId=run_id, card=path(card),
-                      invocation=1, side=ValueSide.output, port=port)
+                      invocation=invocation, side=ValueSide.output, port=port)
 
 
 def decode_scalar(payload, kind="string", *, field=0):

@@ -3,11 +3,13 @@ import { parse } from '../shared/json'
 import { nixPathLockStatus } from '../src/model/nixPath'
 
 const url = 'github:owner/repo'
-const lock = parse('{"nixPath":{"science":"github:owner/repo/abcdef1234567890abcdef1234567890abcdef12?narHash=sha256-example&lastModified=1700000000"}}')
+const lock = parse('{"entries":[{"name":"science","url":"github:owner/repo","rev":"abcdef1234567890abcdef1234567890abcdef12","narHash":"sha256-example"}]}')
 assert.deepEqual(nixPathLockStatus(undefined, 'science', url), { kind: 'unlocked' })
 assert.deepEqual(nixPathLockStatus(lock, 'other', url), { kind: 'unlocked' })
 assert.deepEqual(nixPathLockStatus(lock, 'science', 'github:owner/other'), { kind: 'urlChanged' })
-for (const intent of [url, url + '/another-ref'])
-  assert.deepEqual(nixPathLockStatus(lock, 'science', intent), {
-    kind: 'locked', revision: 'abcdef1', modified: new Date(1700000000 * 1000),
-  })
+assert.deepEqual(nixPathLockStatus(lock, 'science', url + '/another-ref'), { kind: 'urlChanged' })
+assert.deepEqual(nixPathLockStatus(lock, 'science', url), { kind: 'locked', pin: 'abcdef1' })
+const tarball = parse('{"entries":[{"name":"archive","url":"https://example.com/a.tgz","narHash":"sha256-example"}]}')
+assert.deepEqual(nixPathLockStatus(tarball, 'archive', 'https://example.com/a.tgz'), {
+  kind: 'locked', pin: 'sha256-example',
+})

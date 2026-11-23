@@ -43,15 +43,15 @@ TEST(NixPathDocument, ValidatesNamesAndUrlsAndSortsLockLines) {
           R"([{"name":"ok","url":"invalid url"}])",
       })
     EXPECT_THROW(parse_project_json(project(entries)), DocumentError);
-  const auto lock = parse_project_lock("tsugumi.lock", R"({"nixPath":{
-    "z":"github:org/z/0123456789012345678901234567890123456789?narHash=sha256-z",
-    "a":"gitlab:org/a/0123456789012345678901234567890123456789?narHash=sha256-a"
-  }})");
+  const auto lock = parse_project_lock("tsugumi.lock", R"({"entries":[
+    {"name":"z","url":"git+https://example.com/z","rev":"0123456789012345678901234567890123456789","narHash":"sha256-z"},
+    {"name":"a","url":"https://example.com/a.tar.gz","narHash":"sha256-a"}
+  ]})");
   EXPECT_LT(lock.text.find("\"a\""), lock.text.find("\"z\""));
   EXPECT_THROW(
-      parse_project_lock("tsugumi.lock", R"({"nixPath":{"a":"github:org/a"}})"),
+      parse_project_lock("tsugumi.lock", R"({"entries":[{"name":"a","url":"github:org/a"}]})"),
       DocumentError);
-  EXPECT_THROW(parse_project_lock("tsugumi.lock", R"({"nixPath":{"a":true}})"),
+  EXPECT_THROW(parse_project_lock("tsugumi.lock", R"({"entries":[true]})"),
                DocumentError);
   EXPECT_EQ(parse_project_lock("tsugumi.lock", lock.text).text, lock.text);
 }
@@ -82,9 +82,8 @@ struct FakeNixPathCore {
         value = {{"kind", "\"nix_failed\""}, {"diagnostic", "\"lock failed\""}};
       } else {
         reply = "NixPathLockedSource";
-        value = {{"url", json::Quote("github:org/repo/"
-                                     "0123456789012345678901234567890123456789?"
-                                     "narHash=sha256-new&lastModified=42")}};
+        value = {{"rev", json::Quote("0123456789012345678901234567890123456789")},
+                 {"narHash", json::Quote("sha256-new")}};
       }
     } else if (method == "rewrite_param_literal") {
       EXPECT_EQ(json::Text(args, "name"), "scale");
@@ -152,7 +151,7 @@ TEST(NixPathOperation, RootAndExternalLocksUpdateOneAndAllAtomically) {
   const std::string project =
       R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[],"connections":[]}})";
   const std::string old =
-      R"({"nixPath":{"stale":"github:org/stale/0123456789012345678901234567890123456789?narHash=sha256-old"}})";
+      R"({"entries":[{"name":"stale","url":"github:org/stale","narHash":"sha256-old"}]})";
   FakeNixPathCore core;
   core.snapshot = {
       {"rev", "\"7\""},
@@ -172,7 +171,7 @@ TEST(NixPathOperation, RootAndExternalLocksUpdateOneAndAllAtomically) {
   EXPECT_EQ(json::Text(change, "path"), "tsugumi.lock");
   EXPECT_EQ(json::Text(change, "base_hash"), crypto::sha256_hex(old));
   EXPECT_EQ(core.calls, (std::vector<std::string>{"github:org/repo"}));
-  EXPECT_NE(json::Text(change, "json").find("stale"), std::string::npos);
+  EXPECT_EQ(json::Text(change, "json").find("stale"), std::string::npos);
   update.project_path = "externals/sub";
   update.name.clear();
   operation.body.Set(update);
@@ -184,6 +183,31 @@ TEST(NixPathOperation, RootAndExternalLocksUpdateOneAndAllAtomically) {
   core.fail_lock = true;
   EXPECT_THROW(core.Execute(operation), Failure);
   EXPECT_TRUE(core.save.empty());
+}
+
+TEST(NixPathOperation, KeepsMatchingEntriesAndResolvesChangedURLs) {
+  const std::string project =
+      R"({"nixPath":[{"name":"fixed","url":"https://example.com/a.tgz"},{"name":"changed","url":"github:org/repo/new-ref"},{"name":"missing","url":"git+https://example.com/repo"}]})";
+  const std::string old =
+      R"({"entries":[{"name":"fixed","url":"https://example.com/a.tgz","narHash":"sha256-keep"},{"name":"changed","url":"github:org/repo/old-ref","narHash":"sha256-outdated"}]})";
+  FakeNixPathCore core;
+  core.snapshot = {
+      {"rev", "\"7\""},
+      {"project_json", json::Quote(project)},
+      {"sources", json::Encode(std::vector<std::string>{
+                      SourceDoc("tsugumi.lock", old)})}};
+  H::ProjectOperateRequestT operation;
+  operation.project_id = "p";
+  operation.op_id = "update";
+  operation.body.Set(H::ProjectUpdateNixPathLockT{});
+  core.Execute(operation);
+  EXPECT_EQ(core.calls, (std::vector<std::string>{
+                            "github:org/repo/new-ref",
+                            "git+https://example.com/repo"}));
+  const auto text = json::Text(core.ReadChange("SetProjectLock"), "json");
+  EXPECT_NE(text.find("sha256-keep"), std::string::npos);
+  EXPECT_EQ(text.find("sha256-outdated"), std::string::npos);
+  EXPECT_NE(text.find("github:org/repo/new-ref"), std::string::npos);
 }
 
 TEST(NixPathOperation, ParamRewriteUsesTheConfirmedSourceAndRevision) {
@@ -236,7 +260,7 @@ TEST(NixPathOperation, CardCopyDoesNotCarryPinsOrBlockOnNames) {
   const std::string source =
       R"({"nixPath":[{"name":"used","url":"github:org/repo"}],"canvas":{"cards":[{"id":"source"}],"connections":[]}})";
   const std::string pin =
-      R"({"nixPath":{"used":"github:org/repo/0123456789012345678901234567890123456789?narHash=sha256-old"}})";
+      R"({"entries":[{"name":"used","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-old"}]})";
   const std::string destination =
       R"({"nixPath":[{"name":"used","url":"github:other/repo"}],"canvas":{"cards":[],"connections":[]}})";
   FakeNixPathCore core;
@@ -479,10 +503,15 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"sweeps":{"k":[3]}})"
+            ? R"({"type":"code","inputs":[{"name":"source"}]})"
             : R"({"type":"code","inputs":[]})");
+    if (std::string_view(scenario) == "unknown_param")
+      doc.sources["definitions/compare/params.nix"] = {};
     const auto resolved = resolve(
-        doc, [](const auto&) -> std::optional<std::string> { return {}; });
+        doc, [](const auto&) -> std::optional<std::string> { return "{ k = []; }"; },
+        [](const auto&, auto) -> std::string {
+          throw std::runtime_error("empty lists are not allowed");
+        });
     bool found = false;
     for (const auto& diagnostic : resolved->all_diagnostics(false)) {
       if (diagnostic.code != (std::string(scenario) == "unknown_param"

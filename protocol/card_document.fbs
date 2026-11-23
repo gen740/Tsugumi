@@ -69,9 +69,6 @@ table Card {
   /// externals/<external>/ for a subgraph (Card in Card).
   external:string;
   symbol:string;
-  /// Input Card sweeps, name to array of values. Types come from params.nix.
-  /// Carried as JSON text in the buffer and as an object in the document.
-  sweeps:string;
   inputs:[Input];
   /// A Fork's.
   outputs:[Output];

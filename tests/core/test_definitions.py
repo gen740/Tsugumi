@@ -9,10 +9,11 @@ from pathlib import Path
 import pytest
 
 from harness.values import recorded_input_json
-from projects import MSG_FBS, SINK, builtin_project, card, conn, put, run_and_wait
+from projects import MSG_FBS, MSG_INPUT_NIX, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from harness.document import layout_bytes, params_nix, write_layout
+from harness.nix_path import declarations, test_lock_entries as fixture_locks, write_lock
 
 
 def project_json(c) -> tuple[int, dict]:
@@ -31,10 +32,13 @@ def diagnostics(c, card: list[str]) -> list[str]:
 def external(root: Path, name: str, text_value: str) -> None:
     """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
+    pins = [entry for entry in fixture_locks() if entry["name"] == "nixpkgs"]
     put(ext / "tsugumi.json", json.dumps({
-        "name": name, "nixPath": [],
+        "name": name, "nixPath": declarations(pins),
         "canvas": {"cards": [{"id": "say"}], "connections": []},
         "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
+    write_lock(ext, pins)
+    put(ext / "definitions" / "say" / "default.nix", MSG_INPUT_NIX)
     put(ext / "definitions" / "say" / "_card.json", json.dumps({"type": "input"}))
     put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)

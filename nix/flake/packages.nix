@@ -9,7 +9,7 @@ let
     narHash = nixpkgs.narHash;
   };
   lock = builtins.fromJSON (builtins.readFile ../../flake.lock);
-  testNixPathLock.nixPath =
+  testNixPathLock.entries =
     map
       (
         name:
@@ -17,9 +17,9 @@ let
           inherit (lock.nodes.${lock.nodes.root.inputs.${name}}) locked original;
         in
         {
-          inherit name locked;
+          inherit name;
+          inherit (locked) rev narHash;
           url = "${original.type}:${original.owner}/${original.repo}/${original.ref}";
-          locked_url = "${locked.type}:${locked.owner}/${locked.repo}/${locked.rev}?narHash=${locked.narHash}";
         }
       )
       [

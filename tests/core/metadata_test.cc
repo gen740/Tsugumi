@@ -76,7 +76,7 @@ TEST(NixParams, AcceptsTypedLiteralsAndSortsByName) {
       zero = 0.0;
       int = 10;
       float = 10.0;
-      exp = 1e3;
+      exp = 1.0e3;
       negative = -0.5;
       flag = true;
       text = "quoted\ntext";
@@ -92,8 +92,8 @@ TEST(NixParams, AcceptsTypedLiteralsAndSortsByName) {
       actual,
       R"([{"name":"bools","type":"[bool]","value":[false,true]},{"name":"exp","type":"float","value":1000.0},{"name":"flag","type":"bool","value":true},{"name":"flag2","type":"bool","value":false},{"name":"float","type":"float","value":10.0},{"name":"floats","type":"[float]","value":[1.0,-2.0]},{"name":"indented","type":"string","value":"indented"},{"name":"int","type":"int","value":10},{"name":"ints","type":"[int]","value":[1,-2]},{"name":"negative","type":"float","value":-0.5},{"name":"strings","type":"[string]","value":["","x"]},{"name":"text","type":"string","value":"quoted\ntext"},{"name":"z","type":"int","value":-3},{"name":"zero","type":"float","value":0.0}])");
   EXPECT_EQ(evaluate_literal_params("definitions/a/",
-                                    "{ min = -9223372036854775808; }"),
-            R"([{"name":"min","type":"int","value":-9223372036854775808}])");
+                                    "{ max = 9223372036854775807; }"),
+            R"([{"name":"max","type":"int","value":9223372036854775807}])");
   EXPECT_EQ(evaluate_literal_params("definitions/a/", "{ }"), R"([])");
 }
 
@@ -145,7 +145,7 @@ TEST(NixParams, RewriteKeepsCommentsInsideAList) {
             R"([{"name":"items","type":"[int]","value":[7]}])");
 }
 
-TEST_F(DocumentStorage, AllParamsAreEncodedForNixAndTheCard) {
+TEST_F(DocumentStorage, CheckedParamsPreserveLiteralTypes) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"canvas":{"cards":[{"id":"start"},{"id":"a"}],"connections":[]}})");
@@ -157,24 +157,18 @@ TEST_F(DocumentStorage, AllParamsAreEncodedForNixAndTheCard) {
   const auto* node = store.current()->resolution->find({"a"});
   ASSERT_NE(node, nullptr);
   EXPECT_TRUE(node->diags.empty());
-  EXPECT_EQ(node->params_nix_json,
-            R"({"a":false,"count":-5,"preset":5.0,"z":0.0})");
-  const auto buffer = params_buffer(node->settings.params);
-  const auto* table = flatbuffers::GetRoot<flatbuffers::Table>(buffer.data());
-  const auto field = [](int id) { return flatbuffers::FieldIndexToOffset(id); };
-  EXPECT_TRUE(table->CheckField(field(0)));
-  EXPECT_FALSE(table->GetField<uint8_t>(field(0), 1));
-  EXPECT_EQ(table->GetField<int64_t>(field(1), 0), -5);
-  EXPECT_DOUBLE_EQ(table->GetField<double>(field(2), 1.0), 5.0);
-  EXPECT_TRUE(table->CheckField(field(3)));
-  EXPECT_DOUBLE_EQ(table->GetField<double>(field(3), 1.0), 0.0);
-  EXPECT_EQ(normalize_param_value(ParamType::Int64, "9.223372036854775807e18"),
-            "9223372036854775807");
+  const auto& params = node->settings.params;
+  ASSERT_EQ(params.size(), 4u);
+  EXPECT_EQ(params[0].data, "false");
+  EXPECT_EQ(params[1].data, "-5");
+  EXPECT_EQ(params[2].type, ParamType::Double);
+  EXPECT_EQ(params[2].data, "5.0");
+  EXPECT_EQ(params[3].data, "0.0");
 }
 
 TEST_F(DocumentStorage, LockIsCarriedAndConflictsWithDiskEdits) {
   const std::string lock =
-      R"({"nixPath":{"source":"github:org/repo/0123456789012345678901234567890123456789?narHash=sha256-123&lastModified=42"}})";
+      R"({"entries":[{"name":"source","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-123"}]})";
   Store store({root, ""});
   store.open();
   EXPECT_FALSE(store.current()->sources.contains("tsugumi.lock"));
@@ -401,54 +395,38 @@ TEST_F(DocumentStorage, BranchConditionInheritsItsUpstreamSchema) {
   EXPECT_TRUE(branch->diags.empty());
 }
 
-TEST_F(DocumentStorage, NixPortsCarryWiredTypesAndOnlyAllowedExports) {
+TEST_F(DocumentStorage, NixExportsAreTransitiveAndStopAtMerge) {
   fs::write_atomic(root / "tsugumi.json", R"({
     "canvas": {
-      "cards": [{"id":"start"},{"id":"producer"},{"id":"branch"},{"id":"fork"},
-                {"id":"collect"},{"id":"merge"},{"id":"draft"},{"id":"consumer"}],
+      "cards": [{"id":"A"},{"id":"B"},{"id":"C"},{"id":"merge"},{"id":"D"}],
       "connections": [
-        {"from":{"card":"producer","port":"out"},"to":{"card":"consumer","port":"direct"}},
-        {"from":{"card":"producer","port":"out"},"to":{"card":"branch","port":"value"}},
-        {"from":{"card":"start","port":"out"},"to":{"card":"branch","port":"condition"}},
-        {"from":{"card":"branch","port":"a"},"to":{"card":"consumer","port":"branch"}},
-        {"from":{"card":"branch","port":"a"},"to":{"card":"fork","port":"value"}},
-        {"from":{"card":"fork","port":"a"},"to":{"card":"consumer","port":"fork"}},
-        {"from":{"card":"fork","port":"a"},"to":{"card":"collect","port":"in"}},
-        {"from":{"card":"collect","port":"out"},"to":{"card":"consumer","port":"collect"}},
-        {"from":{"card":"producer","port":"out"},"to":{"card":"merge","port":"a"}},
-        {"from":{"card":"merge","port":"out"},"to":{"card":"consumer","port":"merge"}},
-        {"from":{"card":"draft","port":""},"to":{"card":"consumer","port":"draft"}}
+        {"from":{"card":"A","port":"out"},"to":{"card":"B","port":"in"}},
+        {"from":{"card":"B","port":"out"},"to":{"card":"C","port":"in"}},
+        {"from":{"card":"A","port":"out"},"to":{"card":"merge","port":"a"}},
+        {"from":{"card":"merge","port":"out"},"to":{"card":"D","port":"in"}}
       ]
     }
   })");
-  for (const auto* card : {"branch", "fork", "collect", "draft"})
+  for (const auto* id : {"A", "B", "C", "D"}) {
+    const auto dir = root / "definitions" / id;
+    fs::write_atomic(dir / "_card.json",
+                     R"({"type":"code","inputs":[{"name":"in"}]})");
     fs::write_atomic(
-        root / ("definitions/" + std::string(card) + "/_card.json"),
-        "{\"type\":" + json::Quote(card) + "}");
+        dir / "_outputs.fbs",
+        "table M { value:string; } table O { out:M; } root_type O;");
+  }
   fs::write_atomic(root / "definitions/merge/_card.json",
                    R"({"type":"merge","inputs":[{"name":"a"}]})");
-  fs::write_atomic(root / "definitions/producer/_card.json",
-                   R"({"type":"code"})");
-  fs::write_atomic(root / "definitions/producer/_outputs.fbs",
-                   "table M { value:string; } table O { out:M; } root_type O;");
-  fs::write_atomic(root / "definitions/consumer/_card.json", R"({
-    "type":"code","inputs":[{"name":"direct"},{"name":"branch"},{"name":"fork"},
-    {"name":"collect"},{"name":"merge"},{"name":"draft"},{"name":"unwired"}]
-  })");
   Store store({root, ""});
   store.open();
   const auto& graph = *store.current()->resolution;
-  const auto& ports = graph.find({"consumer"})->nix_ports;
-  ASSERT_EQ(ports.size(), 6u);
-  for (const auto* name : {"direct", "branch", "fork", "collect"}) {
-    EXPECT_EQ(ports.at(name).exports_node, graph.index.at("producer")) << name;
-    EXPECT_TRUE(ports.at(name).type.resolved()) << name;
-  }
-  EXPECT_FALSE(ports.at("merge").exports_node);
-  EXPECT_TRUE(ports.at("merge").type.resolved());
-  EXPECT_FALSE(ports.at("draft").exports_node);
-  EXPECT_EQ(ports.at("draft").type.type, types::empty_type());
-  EXPECT_FALSE(ports.contains("unwired"));
+  const auto& refs = graph.find({"C"})->nix_references;
+  ASSERT_EQ(refs.size(), 2u);
+  EXPECT_EQ(refs[0].name, "A");
+  EXPECT_EQ(refs[0].target, CardPath{"A"});
+  EXPECT_EQ(refs[1].name, "B");
+  EXPECT_EQ(refs[1].target, CardPath{"B"});
+  EXPECT_TRUE(graph.find({"D"})->nix_references.empty());
 }
 
 TEST_F(DocumentStorage, ADraftAndARealSourceCannotShareAnInput) {

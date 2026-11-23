@@ -452,7 +452,7 @@ def test_evaluate_nix_needs_a_definition_at_the_current_revision(builtin_client)
     """Nix evaluation requires a definition at the revision requested."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
-    for card, kind in ((path("missing"), "not_found"), (path("src"), "invalid_request"),
+    for card, kind in ((path("missing"), "not_found"), (path("start"), "invalid_request"),
                        (path("merge"), "not_found")):
         with pytest.raises(RpcFailure) as e:
             c.call("EvaluateNixRequest", expression="1", card=card, atRev=rev)

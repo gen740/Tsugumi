@@ -7,7 +7,7 @@ from pathlib import Path
 
 def test_lock_entries():
     if text := os.environ.get("TSUGUMI_TEST_NIX_LOCK"):
-        return json.loads(text)["nixPath"]
+        return json.loads(text)["entries"]
     # Source-tree invocations outside the packaged runner use the same pins.
     nodes = json.loads((Path(__file__).resolve().parents[3] / "flake.lock").read_text())["nodes"]
     root = nodes["root"]["inputs"]
@@ -16,8 +16,8 @@ def test_lock_entries():
         node = nodes[root[name]]
         original = node["original"]
         url = "{type}:{owner}/{repo}/{ref}".format(**original)
-        locked_url = "{type}:{owner}/{repo}/{rev}?narHash={narHash}".format(**node["locked"])
-        entries.append({"name": name, "url": url, "locked_url": locked_url})
+        entries.append({"name": name, "url": url, "rev": node["locked"]["rev"],
+                        "narHash": node["locked"]["narHash"]})
     return entries
 
 
@@ -26,5 +26,5 @@ def declarations(entries):
 
 
 def write_lock(root, entries):
-    pins = {entry["name"]: entry["locked_url"] for entry in entries}
-    (root / "tsugumi.lock").write_text(json.dumps({"nixPath": pins}, sort_keys=True))
+    rows = sorted(entries, key=lambda entry: entry["name"])
+    (root / "tsugumi.lock").write_text(json.dumps({"entries": rows}, indent=2) + "\n")

@@ -1064,7 +1064,8 @@ table FileContent {
 }
 
 table NixPathLockedSource {
-  url:string (id: 0, required);
+  rev:string (id: 0);
+  narHash:string (id: 1, required);
 }
 
 table RewrittenParamLiteral {

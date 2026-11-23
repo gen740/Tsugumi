@@ -98,8 +98,8 @@ class NixRunner {
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;
   auto evaluate_expression(const ExpressionRequest& req) -> ExpressionResult;
-  auto lock_source(const std::string& url) -> std::string;
-  auto params_declaration(const std::filesystem::path& def_dir,
+  auto lock_source(const std::string& url) -> NixSource;
+  auto check_params_value(const std::filesystem::path& def_dir,
                           std::string_view text) -> std::string;
 
   CacheClearOutcome clear_cache();

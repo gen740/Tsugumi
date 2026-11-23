@@ -18,7 +18,7 @@
   cardNixpkgs,
   hosq,
   testNixPathLock ? {
-    nixPath = [ ];
+    entries = [ ];
   },
   nixfmt,
   git,
