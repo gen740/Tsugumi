@@ -908,12 +908,6 @@ class Builder {
       if (p.name == name) return &p;
     return nullptr;
   }
-  types::PortType* out_port(Node& n, const std::string& name) {
-    for (auto& p : n.outputs)
-      if (p.name == name) return &p;
-    return nullptr;
-  }
-
   void resolve_types() {
     const types::PortType draft{"", PortKind::FlatBuffer, false,
                                 types::empty_type()};
