@@ -14,7 +14,7 @@ def project_with_file(root, value, external=False, record_io=False):
     owner = root / "externals/child" if external else root
     write(owner,
           defs={"load": {"type": "input",
-                         "params": [{"name": "value", "type": "string", "data": {"string": value}}],
+                         "params": {"value": value}, "_params": '{ run = { value = ""; }; }',
                          "recordIO": record_io, "retainArtifact": True, "artifactOutput": "doc", "_outputs": FILE_FBS},
                 "shared": {"type": "trigger"}},
           cards=[card("load", "load"), card("shared", "shared")], conns=[],

@@ -35,7 +35,7 @@ TEST(LayoutBoundary, DeletingACardDoesNotInterpretOrRewriteLayout) {
   } cleanup{root};
   fs::write_atomic(
       root / "tsugumi.json",
-      R"({"name":"test","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+      R"({"name":"test","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   fs::write_atomic(root / "definitions/a/_card.json",
                    R"({"type":"draft"})");
   const auto layout = document_text::parse(

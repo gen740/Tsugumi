@@ -202,7 +202,7 @@ auto stage_remote_invocation(const RemoteJobClient& client,
   if (request.stop.stop_requested())
     throw Failed(FailureKind::cancelled,
                  "run cancelled before external submission");
-  const auto params = NixRunner::params_buffer(request.node);
+  const auto& params = request.node.run_params_buffer;
   auto call = worker_call_frame(
       1, inputs, params, request.node.outputs,
       request.node.settings.timeout_seconds

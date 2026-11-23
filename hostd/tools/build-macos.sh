@@ -3,7 +3,6 @@
 # Remote-worker TLS uses the OpenSSL already supplied by the development shell.
 # Nix supplies pinned build tools, FlatBuffers and source-only dependencies.
 set -euo pipefail
-# NIXPATH-CONTRACT: the native core no longer installs a bundled kit.
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
 if [ "${TSUGUMI_HOST_BUILD_ENV:-}" != 1 ]; then
   exec nix develop "$repo" -c env TSUGUMI_HOST_BUILD_ENV=1 "$0"

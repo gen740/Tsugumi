@@ -273,37 +273,6 @@ stdfs::path NixRunner::gcroots_dir() const {
   return d.empty() ? cache_dir() / "gcroots" : d;
 }
 
-types::TypeRef NixRunner::params_type(const Node& node) {
-  std::vector<std::pair<std::string, std::string>> fields;
-  for (const auto& p : node.settings.params)
-    fields.emplace_back(p.name, param_fbs_type(p.type));
-  std::string err;
-  auto t =
-      types::compile(types::params_schema(fields), "parameters.Params", &err);
-  if (!t) throw Failed(FailureKind::validation_failed, "params schema: " + err);
-  return *t;
-}
-
-std::string NixRunner::params_json(const std::vector<ParamDef>& params) {
-  std::string out = "{";
-  for (const auto& p : params) {
-    if (!p.data) continue;
-    if (out.size() > 1) out += ',';
-    out += json::Quote(p.name) + ':' + param_value_json(p.type, *p.data);
-  }
-  return out + '}';
-}
-
-std::string NixRunner::params_buffer(const Node& node) {
-  auto t = params_type(node);
-  std::string out;
-  std::string err;
-  if (!types::json_to_flatbuffer(*t, params_json(node.settings.params), &out,
-                                 &err))
-    throw Failed(FailureKind::validation_failed, "params: " + err);
-  return out;
-}
-
 // A folder of the evaluation area named after its contents: written once,
 // then reused by every later Card and run with the same contents.
 stdfs::path NixRunner::content_dir(

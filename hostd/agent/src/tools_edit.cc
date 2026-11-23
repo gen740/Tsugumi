@@ -137,7 +137,12 @@ auto Tools::EditProjectTool(const std::string& conversation,
     };
     const bool adding =
         call.name == "template_add" || call.name == "template_import";
-    if (adding) {
+    if (call.name == "nix_path_lock_update") {
+      H::ProjectUpdateNixPathLockT value;
+      value.project_path = json::Text(args, "project_path");
+      value.name = json::Text(args, "name");
+      request.body.Set(std::move(value));
+    } else if (adding) {
       H::TemplateAddT value;
       value.name = json::Text(args, "name");
       if (!host::TemplateName(value.name))

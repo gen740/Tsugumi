@@ -14,7 +14,7 @@ import pytest
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import NUM, ONE_MAIN, TXT, log, python_card, txt_main
 from conftest import real_environment
-from projects import card, conn, run_and_wait, write
+from projects import card, conn, run_and_wait, write_nix_project as write
 from test_cards_shared_vm import load, shown
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(os.environ.get("TSUGUMI_TEST_SHARED_VM") != "1",
 # Identifies the process (PIDs repeat across sandboxes: each has its own PID namespace).
 COUNT_MAIN = """import random
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 WORKER = random.getrandbits(32)
 calls = 0
@@ -54,7 +54,7 @@ def run(input):
 # Reads its Path input, keeps every line it saw (state kept by the resident
 # worker) and must not be able to change the input.
 READ_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
+from t.Num import NumT
 
 lines = []
 
@@ -74,7 +74,7 @@ def run(input):
 # Without reuseWorker (the default): a new process per call, each starting with calls = 1.
 FRESH_MAIN = """import random
 from card import Output
-from outputs.again.t.Num import NumT
+from t.Num import NumT
 
 WORKER = random.getrandbits(32)
 calls = 0
@@ -189,7 +189,7 @@ let f = x: f (x + 1); in { run = f 0; }
 # Reach 1.1.1.1:80 over TCP (no DNS).
 REACH_MAIN = """import socket
 from card import Output
-from outputs.out.t.Reach import ReachT
+from t.Reach import ReachT
 
 def run(input):
     try:

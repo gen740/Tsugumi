@@ -50,6 +50,9 @@ class Project:
 
     def card(self, name, definition, *, outputs=None, plan=None, sources=None):
         files = dict(sources or {})
+        definition = dict(definition)
+        if "_params" in definition:
+            files["params.nix"] = definition.pop("_params")
         if outputs is not None:
             files["_outputs.fbs"] = outputs
         if "sdk.pythonCard" in files.get("default.nix", ""):

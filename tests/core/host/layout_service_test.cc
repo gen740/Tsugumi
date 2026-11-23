@@ -484,7 +484,7 @@ TEST(HostCardPlacement, DisplayRpcCompletesMissingPositions) {
   const std::string project =
       R"({"canvas":{"cards":[{"id":"wide"},{"id":"new"}],"connections":[]}})";
   const std::string definition =
-      R"({"params":[{},{},{}],"inputs":[{},{},{},{},{},{},{},{}]})";
+      R"({"params":{"a":0,"b":true,"c":"x"},"inputs":[{},{},{},{},{},{},{},{}]})";
   flatbuffers::FlatBufferBuilder builder;
   const auto input = H::CreateLayoutCompleteRequest(
       builder, builder.CreateString(project), builder.CreateString("{}"),

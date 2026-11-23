@@ -16,6 +16,7 @@
 #include <utility>
 
 #include "nix_eval.hh"
+#include "nix_params.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json.hh"
@@ -249,7 +250,6 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
   return result;
 }
 
-// NIXPATH-CONTRACT: mock builds do not contact the network or evaluate Nix.
 auto NixEvaluator::lock_source(const std::string&) -> LockedSource {
   throw std::runtime_error("the mock evaluator cannot fetch sources");
 }
@@ -259,9 +259,10 @@ auto NixEvaluator::expression(const NixCall&, const std::string&, bool)
   throw std::runtime_error("the mock evaluator cannot evaluate expressions");
 }
 
-auto NixEvaluator::params_declaration(const NixCall&, std::string_view,
-                                      const std::string&) -> std::string {
-  throw std::runtime_error("the mock evaluator cannot parse params.nix");
+auto NixEvaluator::params_declaration(const NixCall&, std::string_view text,
+                                      const std::string& origin) -> std::string {
+  return evaluate_literal_params(
+      std::filesystem::path(origin).parent_path().generic_string() + '/', text);
 }
 
 auto NixStore::rooted_usage(const std::vector<std::vector<std::string>>& roots)

@@ -95,7 +95,7 @@ in
         ci-arm-shell = ci-core.override { target = "tsugumi_arm_shell_tests"; };
         # The guest of tsugumi-pack and of the apps it exports (pack/).
         pack-guest = pkgs.callPackage ../../pack/guest {
-          inherit kernel cardNixpkgs;
+          inherit kernel;
           tsugumid = guestCore;
         };
         # One distributable image; the helper extracts its VZ attachments.

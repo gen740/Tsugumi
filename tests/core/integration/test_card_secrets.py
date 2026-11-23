@@ -19,7 +19,7 @@ from harness import remote_worker as R
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
 from test_worker_loading import native_card
-from projects import card, run_and_wait, write
+from projects import card, run_and_wait, write_nix_project as write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.RunState import RunState

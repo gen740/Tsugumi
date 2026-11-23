@@ -17,7 +17,7 @@ from conftest import real_environment
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import (ENVIRONMENT_MAIN, FLAG, NUM, ONE_MAIN, TXT, check_process_environment, log,
                                 python_card, txt_main)
-from projects import card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import card, conn, run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -76,7 +76,7 @@ def test_backpressure_stall_ends_the_run(env):
         "seed": python_card(ONE_MAIN),
         "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": python_card(ONE_MAIN, inputs=["x"], maxRuns=1000, reuseWorker=True),
-        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
+        "flag": {"type": "input", "params": {"value": False}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG},
         "branch": {"type": "branch"},
     }
     c = load(env, defs,
@@ -182,7 +182,7 @@ def test_isolation(env):
 
 
 OOM_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
+from t.Num import NumT
 
 def run(input):
     buffer = bytearray(128 << 20)
@@ -219,7 +219,7 @@ def test_card_limits_are_delegated_and_released(env):
 
 
 GREETING_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
+from t.Num import NumT
 
 def run(input):
     assert GREETING == "hello b", GREETING
@@ -271,7 +271,7 @@ def test_stages_and_cache(env):
 LOAD_MAIN = """import json, os
 from pathlib import Path
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 HOME = Path.home()
 (HOME / ".config").mkdir(parents=True, exist_ok=True)
@@ -318,7 +318,7 @@ def test_unselected_branch_is_not_evaluated(env):
 { run = builtins.throw "must never be evaluated"; }
 '''}
     defs = {"trigger": {"type": "trigger"},
-            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
+            "flag": {"type": "input", "params": {"value": False}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG},
             "branch": {"type": "branch"}, "broken": broken}
     c = load(env, defs,
              [card("start", "trigger"),

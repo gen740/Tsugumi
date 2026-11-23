@@ -8,7 +8,8 @@ class EvalState;
 }
 
 namespace tsugumi {
-// NIXPATH-CONTRACT: lane B implements literal-only parsing and evaluation.
-auto read_params_nix(nix::EvalState&, std::string_view text,
+auto read_params_nix(nix::EvalState& state, std::string_view text,
                      const std::string& origin) -> std::string;
+auto evaluate_literal_params(const std::string& def_dir, std::string_view text)
+    -> std::string;
 }  // namespace tsugumi

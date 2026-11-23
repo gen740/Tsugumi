@@ -40,12 +40,10 @@ std::vector<std::string> fork_outputs(const DefinitionDoc& def);
 enum class ParamType {
   Bool,
   Int64,
-  UInt64,
   Double,
   String,
   BoolArray,
   Int64Array,
-  UInt64Array,
   DoubleArray,
   StringArray,
 };
@@ -53,23 +51,25 @@ std::optional<ParamType> parse_param_type(const std::string& s);
 const char* param_type_name(ParamType t);
 std::string param_fbs_type(ParamType t);
 
-using ParamValue = Tsugumi::Document::ParamValueT;
-
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
-  std::optional<ParamValue> data;  // effective value (checked against type)
-  // An Input Card's value sweep (exclusive with data): one execution batch
-  // member per value, in order, and the Cartesian product across swept params.
-  std::optional<std::vector<ParamValue>> sweep;
-  bool nix = false;
+  std::optional<std::string> data;  // effective value as canonical JSON
+  std::optional<std::vector<std::string>> sweep;
 };
 
-// A param value as JSON text (for the params handed to default.nix and the
-// Card's Params buffer).
-auto param_value_json(ParamType t, const ParamValue& v) -> std::string;
-// A value as a label: a string as it is, other values as their JSON text.
-auto param_value_label(ParamType t, const ParamValue& v) -> std::string;
+struct ParamSetting {
+  std::string name;
+  bool build = false;
+  ParamType type = ParamType::String;
+  std::string default_json;
+  std::optional<std::string> value_json;
+};
+
+auto normalize_param_value(ParamType type, std::string_view json)
+    -> std::string;
+auto params_json(const std::vector<ParamDef>& params) -> std::string;
+auto params_buffer(const std::vector<ParamDef>& params) -> std::string;
 
 struct HostFolder {
   std::string path;  // on the Mac
@@ -125,7 +125,6 @@ struct ValueSweepMember {
 };
 ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index);
 
-// NIXPATH-CONTRACT: shared with lane B's resolved document model.
 struct NixPathEntry {
   std::string name;
   std::string url;
@@ -149,10 +148,12 @@ struct Node {
   std::string def_dir;
   std::string project_dir;  // "" or "externals/<p>/": the project the Card is
                             // written in
-  std::vector<NixPathEntry> nix_path;
+  std::vector<NixPathEntry> nix_path;  // declarations in project_dir
   std::vector<CardNixReference> nix_references;
   std::map<std::string, NixInput> nix_ports;
-  std::string build_params_json = "{}";  // NIXPATH-CONTRACT: supplied by lane B
+  std::string build_params_json = "{}";
+  std::string run_params_buffer;
+  std::vector<ParamSetting> param_settings;
   std::optional<Tsugumi::Document::BoundaryT>
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)
@@ -203,14 +204,11 @@ struct Resolution {
 
 using SourceReader =
     std::function<std::optional<std::string>(const std::string& rel)>;
+using ParamsReader = std::function<std::string(const std::string& def_dir,
+                                               std::string_view text)>;
 
 std::shared_ptr<const Resolution> resolve(const Document& doc,
-                                          const SourceReader& read);
-
-// Checks that a value sets exactly the field of the param type (and that a
-// double is finite); returns error text.
-std::optional<std::string> check_param_value(
-    ParamType t, const Tsugumi::Document::ParamValue& v);
-// Decodes an array-of-strings param.
+                                          const SourceReader& read,
+                                          const ParamsReader& read_params = {});
 
 }  // namespace tsugumi

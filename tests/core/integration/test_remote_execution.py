@@ -38,7 +38,7 @@ from projects import (
     wait_for_display,
     wait_invocation,
     wait_run,
-    write,
+    write_nix_project as write,
 )
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
@@ -421,7 +421,7 @@ def test_remote_run_list_preserves_implementation_order(project, core_factory, r
     def numbers(values, value=""):
         programs = [python_run(f"""
 from card import Output
-from outputs.out.Number import NumberT
+from Number import NumberT
 
 def run(input):
     return Output(out=NumberT(value={value}{number}))
@@ -544,7 +544,7 @@ SECRET_PROJECT = "a2b3c4"
 USES_SECRET = """
 import os
 from card import Output
-from outputs.out.Number import NumberT
+from Number import NumberT
 
 def run(input):
     value = os.environ["database_password"]

@@ -58,15 +58,13 @@ def conn(a: str, ap: str, b: str, bp: str) -> dict:
 
 
 def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test",
-          *, locked=None) -> None:
+          *, locked=()) -> None:
     """Writes a project. `defs` are the bodies of _card.json by name; a body
     may carry "_outputs" (its _outputs.fbs), "_params" (its params.nix) and
     "_nix" (its default.nix).
     `files` are written as they are, except those under
     definitions/<a def>/, which every Card made from it gets."""
     files = files or {}
-    if locked is None:
-        locked = test_lock_entries()
     root.mkdir(parents=True, exist_ok=True)
     for c in cards:
         cid = c["id"]
@@ -74,7 +72,7 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         if "_inner" in c:
             inner = c["_inner"]
             write(root / "externals" / cid, defs, inner["cards"], inner["connections"],
-                  {k: v for k, v in files.items() if k.startswith("definitions/")}, name=cid)
+                  {k: v for k, v in files.items() if k.startswith("definitions/")}, name=cid, locked=locked)
             doc = json.loads((root / "externals" / cid / "tsugumi.json").read_text())
             doc["boundary"] = {side: [dict(name=name, **ep) for name, ep in ports.items()]
                                for side, ports in inner["boundary"].items()}
@@ -109,7 +107,13 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
     put(root / "tsugumi.json", json.dumps({
         "name": name, "nixPath": declarations(locked),
         "canvas": {"cards": [{"id": c["id"]} for c in cards], "connections": conns}}))
-    write_lock(root, locked)
+    if locked:
+        write_lock(root, locked)
+
+
+def write_nix_project(root, defs, cards, conns, files=None, name="test", *, locked=None):
+    """Write a project for the real evaluator with pinned fixture dependencies."""
+    write(root, defs, cards, conns, files, name, locked=test_lock_entries() if locked is None else locked)
 
 
 def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns=()) -> None:

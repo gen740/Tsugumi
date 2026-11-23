@@ -9,7 +9,7 @@ from harness.file_events import wait_for_file
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
 from harness.scenario import Project
-from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_run, write
+from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_run, write_nix_project as write
 from test_worker_loading import native_card
 from tsugumi_client import path
 from Tsugumi.Data.CardState import CardState

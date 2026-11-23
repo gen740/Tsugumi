@@ -151,7 +151,7 @@ TEST(HelperScope, ReadsAndWritesAreSeparateExactSetsWithNestedIdentifiers) {
 TEST(HelperScope,
      ExecutorChecksTheCompleteGraphWithoutRewritingUntouchedBytes) {
   const std::string before =
-      R"({"name": "workflow", "pkgsPath":"tsugumi:default", "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
+      R"({"name": "workflow", "nixPath": [], "canvas":{"cards":[{"id":"writer"},{"id":"other"}],"connections":[]}})";
   const auto reader = [&](const std::string& path) {
     return path == "tsugumi.json" ? before : "";
   };
@@ -514,7 +514,7 @@ TEST(HelperGraphScope, AddsOnlyOwnedCardsAndKeepsTheHiddenGraph) {
   project["canvas"] = json::Encode(canvas);
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
-  project["pkgsPath"] = json::Quote("changed");
+  project["nixPath"] = R"([{"name":"science","url":"github:org/science"}])";
   EXPECT_THROW(scope.Check("project_save", args(json::Encode(project)), read),
                std::runtime_error);
 }

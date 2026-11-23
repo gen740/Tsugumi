@@ -12,7 +12,7 @@ from harness.nix_path import test_lock_entries as fixture_locks
 from harness.real_cards import log, python_card, python_nix
 from harness.scenario import run
 from projects import (MSG_FBS, card, run_and_wait, start_run, wait_for_log, wait_run,
-                      wait_run_notification, write)
+                      wait_run_notification, write_nix_project as write)
 from tsugumi_client import path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind

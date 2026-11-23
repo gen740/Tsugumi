@@ -19,7 +19,7 @@ from pathlib import Path
 
 import pytest
 
-from projects import card, conn, run_and_wait, write
+from projects import card, conn, run_and_wait, write_nix_project as write
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import (ENVIRONMENT_MAIN, TXT, accept_in_background, check_process_environment,
                                 python_card, txt_main)

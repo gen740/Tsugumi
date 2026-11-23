@@ -17,7 +17,7 @@ from harness.definition_evaluation import (
 from harness.nix_path import test_lock_entries as fixture_locks, write_lock
 from harness.real_cards import nix_string
 from harness.scenario import Project, run, wait_run
-from projects import card, card_in_card, conn, write
+from projects import card, card_in_card, conn, write_nix_project as write
 from tsugumi_client import path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.PortKind import PortKind
@@ -84,13 +84,13 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
             first, second = second, first
     elif changed_input == "nix-param":
         files = {"default.nix": expression("params.message"),
-                 "params.nix": '{ build.message = "first"; }'}
+                 "params.nix": '{ build = { message = "first"; }; }'}
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": {"message": "second"}})
     elif changed_input == "params-declaration":
         files = {"default.nix": expression(schema_says("./params.nix", "second", "second", "first")),
-                 "params.nix": '{ run.first = "value"; }'}
-        changed_file, replacement = "params.nix", '{ run.second = "value"; }'
+                 "params.nix": '{ run = { first = "value"; }; }'}
+        changed_file, replacement = "params.nix", '{ run = { second = "value"; }; }'
     elif changed_input == "output-schema":
         files = {"default.nix": expression(
             schema_says("./_outputs.fbs", "Second", "outputs.out.Second", "outputs.out.First"))}
@@ -287,7 +287,8 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
     pins = {entry["name"]: entry for entry in fixture_locks()}
     root_lock = [pins["nixpkgs"], dict(pins["nixpkgs"], name="shared"),
                  dict(pins["nixpkgs"], name="root-only")]
-    external_lock = [pins["nixpkgs"], dict(pins["tsugumi-kit"], name="shared")]
+    external_lock = [pins["nixpkgs"], dict(pins["tsugumi-kit"], name="shared"),
+                     dict(pins["tsugumi-kit"], name="external-only")]
     outputs = 'table First { value:string; } table Outputs { out:First; } root_type Outputs;'
     lookup = 'builtins.hashFile "sha256" <shared/flake.nix>'
     producer = (ARGUMENTS + "{ exports.marker = import ./nested/lookup.nix; run = "
@@ -295,7 +296,9 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
     consumer = expression(
         'if (builtins.tryEval <root-only>).success then throw "root name leaked" '
         'else if inputs.data.exports.marker == import ./nested/lookup.nix '
-        'then throw "projects shared a mapping" else "independent"')
+        'then throw "projects shared a mapping" '
+        'else if builtins.pathExists <external-only/flake.nix> then "independent" '
+        'else throw "external name missing"')
     defs = {
         "producer": {**definition(), "_nix": producer, "_outputs": outputs},
         "work": {**definition(inputs=[{"name": "data"}]), "_nix": consumer, "_outputs": EMPTY_OUTPUTS},
@@ -314,7 +317,19 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
     edit_json(external / "tsugumi.json", lambda doc: doc.update(nixPath=declarations(external_lock)))
     write_lock(external, external_lock)
     client = core_factory().connect()
+    rev = client.call("ProjectInspectRequest").rev
+
+    def names(directory):
+        return client.call("CardNixPathNamesRequest", definitionDir=directory, atRev=rev)
+
+    work_dir = "externals/outer/definitions/work/"
+    assert not names(work_dir).recorded
     assert completed_definition(client, card="outer/work", start="producer")[0] == "independent\n"
+    work = names(work_dir)
+    producer = names("definitions/producer/")
+    assert work.recorded and sorted(map(text, work.names)) == ["external-only", "nixpkgs", "shared"]
+    # The latest producer observation only forced its exports.
+    assert producer.recorded and list(map(text, producer.names)) == ["shared"]
 
 
 def test_target_system_change_selects_new_packages_and_definition(core_factory, project):

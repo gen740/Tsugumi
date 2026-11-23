@@ -13,4 +13,3 @@ function(tsugumi_card_nix_files directory)
 endfunction()
 
 tsugumi_card_nix_files("" nix/card-entry.nix)
-# NIXPATH-CONTRACT: the evaluator directory carries only core-owned Nix files.

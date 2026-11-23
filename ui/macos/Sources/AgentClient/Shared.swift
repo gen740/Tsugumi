@@ -29,7 +29,6 @@ enum Shared {
     "InputTypesRequest",
     "VersionGraphRequest",
     "VersionCanvasRequest",
-    "NixSourceResolveRequest",
     "RunLatestInvocationsRequest",
     "RunEnvironmentsRequest",
     "RunEnvironmentPathsRequest",
@@ -37,6 +36,20 @@ enum Shared {
     "ProjectCacheUsageRequest"
   ],
   "hostTools": [
+    {
+      "name": "nix_path_lock_update",
+      "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to update just that declared nixPath source. Omit name to update every declaration and remove obsolete pins.",
+      "mutating": true,
+      "approval_required": true,
+      "inputSchema": {
+        "type": "object",
+        "properties": {
+          "project_path": {"type": "string"},
+          "name": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    },
     {
       "name": "version_diff",
       "description": "Read the code and settings diff of a saved version against its first parent, or against from_commit. Covers tsugumi.json, Card definitions and code in src/; data files and layout.bin are left out. Long diffs are cut (truncated).",
@@ -154,6 +167,11 @@ enum Shared {
           "base_rev"
         ],
         "properties": {
+          "nix_path_names": {
+            "description": "Explicit names to carry if NixPathCopyChoices is returned. An empty array chooses no names.",
+            "type": "array",
+            "items": {"type": "string"}
+          },
           "source": {
             "type": "string",
             "enum": [
@@ -1033,6 +1051,7 @@ enum Shared {
   "modelTools": {
     "core": [
       "project_edit",
+      "nix_path_lock_update",
       "project_copy",
       "project_connect",
       "project_make_subgraph",
@@ -1063,8 +1082,7 @@ enum Shared {
       },
       "sdk": {
         "api": "card_api",
-        "output_types": "output_types",
-        "resolve_source": "nix_source_resolve"
+        "output_types": "output_types"
       },
       "runs": {
         "status": "run_status",

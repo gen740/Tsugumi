@@ -77,7 +77,7 @@ TEST_F(AgentProjectFixture,
   Write(root / "definitions/next/_card.json", R"({"type":"draft"})");
   StartProject(
       false,
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
   const auto conversation = Conversation("reference-draft-edit");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -93,7 +93,7 @@ TEST_F(AgentProjectFixture,
   ASSERT_TRUE(reply.Code().empty()) << reply.View();
   ASSERT_FALSE(JsonBool(reply.View(), "/isError")) << reply.View();
   const auto project = Read(root / "tsugumi.json");
-  EXPECT_EQ(JsonString(project, "/pkgsPath"), "tsugumi:default");
+  EXPECT_NE(project.find(R"("nixPath": [])"), std::string::npos);
   EXPECT_EQ(JsonString(project, "/canvas/connections/0/to/port"), "start");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/from/port"), "result");
   EXPECT_EQ(JsonString(project, "/canvas/connections/1/to/port"), "");
@@ -244,7 +244,7 @@ TEST_F(AgentProjectFixture,
         std::string("\0\xff", 2));
   StartProject(
       false,
-      R"({"name":"Graph","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
+      R"({"name":"Graph","nixPath": [],"canvas":{"cards":[{"id":"a"},{"id":"b"}],"connections":[]}})");
   const auto conversation = Conversation("transform");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -296,7 +296,7 @@ TEST_F(AgentProjectFixture,
   Write(child / "definitions/child/data.bin", std::string("\0\xff", 2));
   StartProject(
       false,
-      R"({"name":"Aliases","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"mine"},{"id":"alias"}],"connections":[]}})");
+      R"({"name":"Aliases","nixPath": [],"canvas":{"cards":[{"id":"mine"},{"id":"alias"}],"connections":[]}})");
   const auto conversation = Conversation("alias-subgraph");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);
@@ -315,7 +315,7 @@ TEST_F(AgentProjectFixture, NarrowEditRequiresWriteAndPermissionApproval) {
         R"({"type":"draft"})");
   StartProject(
       false,
-      R"({"name":"Permissions","pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"a"}],"connections":[]}})");
+      R"({"name":"Permissions","nixPath": [],"canvas":{"cards":[{"id":"a"}],"connections":[]}})");
   const auto conversation = Conversation("permissions-edit");
   Grant(conversation);
   const auto before = Read(directory.path / "project/definitions/a/_card.json");

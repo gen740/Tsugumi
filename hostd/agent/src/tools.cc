@@ -154,6 +154,35 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
     return folder;
   };
+  resolved_context.copy_resolution_names =
+      [&](const auto& folder,
+          const auto& dir) -> std::optional<std::vector<std::string>> {
+    std::string source;
+    {
+      std::lock_guard lock(mutex);
+      auto query = db.prepare("SELECT id FROM project_paths WHERE path=?");
+      query.bind(1, std::filesystem::weakly_canonical(folder).string());
+      if (query.step()) source = query.text(0);
+    }
+    if (source.empty()) return std::nullopt;
+    // The copy has already authorized the source folder. An unregistered
+    // or stopped source has no available evaluator record.
+    try {
+      const auto response = json::Object(RawProjectCall(
+          source, "card_nix_path_names",
+          json::Encode(json::Members{{"definition_dir", json::Quote(dir)}}),
+          stop));
+      const auto value = json::Object(json::Get(response, "value", "{}"));
+      if (!json::Bool(json::Get(value, "recorded"))) return std::nullopt;
+      std::vector<std::string> names;
+      for (const auto& raw : json::Array(json::Get(value, "names", "[]")))
+        names.push_back(json::String(raw));
+      return names;
+    } catch (const Failure& error) {
+      if (error.code != "not_found" && error.code != "unavailable") throw;
+      return std::nullopt;
+    }
+  };
   return operations.Execute(operation, resolved_context,
                             [&](const auto& method, const auto& arguments) {
                               host::OperationReply reply;
@@ -227,6 +256,11 @@ auto Tools::SaveProject(const std::string& project, json::Members original,
       return LayoutToolFailure("revision_conflict",
                                "The project changed; read the project again "
                                "and re-apply your input.");
+    for (const auto& raw : json::Array(json::Get(original, "changes", "[]")))
+      if (json::Text(json::Object(raw), "value_type") == "SetProjectLock")
+        return LayoutToolFailure(
+            "permission_denied",
+            "Use nix_path_lock_update to change tsugumi.lock");
     const auto policy = ExclusionsFor(project, latest);
     const host::SourcePatches patches;
     policy.CheckSave(original, latest, patches);
@@ -1211,6 +1245,9 @@ auto Tools::ExecuteTool(const std::string& conversation,
     // the stale at_rev/base_rev instead of reading a different Card.
     const auto read = HelperReader(conversation, stop, revision, authorization,
                                    inspected ? &*inspected : nullptr);
+    if (boundary->scoped() && call.name == "nix_path_lock_update")
+      throw Failure("permission_denied",
+                    "A scoped helper cannot update a project lock");
     if (call.name != "project_edit" && call.name != "project_connect" &&
         call.name != "project_make_subgraph" && call.name != "project_layout")
       boundary->Check(call.name, args, read);
@@ -1424,7 +1461,8 @@ auto Tools::ExecuteTool(const std::string& conversation,
   } else if (call.name == "project_edit" || call.name == "project_connect" ||
              call.name == "project_make_subgraph" ||
              call.name == "project_layout" || call.name == "template_copy" ||
-             call.name == "template_add" || call.name == "template_import") {
+             call.name == "template_add" || call.name == "template_import" ||
+             call.name == "nix_path_lock_update") {
     result = EditProjectTool(conversation, project, call, args, op_id, boundary,
                              interrupted, stop);
   } else if (interrupted && spec->mutating) {

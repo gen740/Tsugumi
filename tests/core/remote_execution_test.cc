@@ -79,7 +79,7 @@ TEST(RemoteExecutionLifetime,
   fs::create_directories(root);
   tsugumi::fs::write_atomic(
       root / "tsugumi.json",
-      R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
+      R"({"nixPath": [],"canvas":{"cards":[],"connections":[]}})");
   ServiceOptions options;
   options.root = root;
   options.scratch_dir = root / "scratch";

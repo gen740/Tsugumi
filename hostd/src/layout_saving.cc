@@ -98,8 +98,8 @@ static auto TransformLayout(
       if (const auto file = read("definitions/" + id + "/_card.json")) {
         const auto definition =
             json::Object(file->text, "definitions/" + id + "/_card.json");
-        params = json::Array(json::Get(definition, "params", "[]"),
-                             "definitions/" + id + "/_card.json.params")
+        params = json::Object(json::Get(definition, "params", "{}"),
+                              "definitions/" + id + "/_card.json.params")
                      .size();
         ports = json::Array(json::Get(definition, "inputs", "[]"),
                             "definitions/" + id + "/_card.json.inputs")

@@ -19,7 +19,7 @@ import uuid
 from measure_stages import (ROOT, UNAVAILABLE, Daemon, path, print_table, run_once,
                             summarize, summary, text)
 from harness.real_cards import PYTHON_BINDINGS
-from projects import SINK, card, conn, write
+from projects import SINK, card, conn, write_nix_project as write
 
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
@@ -39,7 +39,7 @@ from pathlib import Path
 import time
 
 from card import Output
-from outputs.metrics.bench.Metrics import MetricsT
+from bench.Metrics import MetricsT
 
 OP = __OP__
 SIZE = 1 << 30
@@ -80,7 +80,7 @@ def run(input):
         if read_bytes != SIZE:
             raise ValueError(f"expected {SIZE} input bytes, got {read_bytes}")
     if out is None:
-        from outputs.out.bench.Number import NumberT
+        from bench.Number import NumberT
         out = NumberT(value=read_bytes or 1)
     elapsed = (time.perf_counter_ns() - begin) / 1e6
     metrics = json.dumps({"body_ms": elapsed, "pid": os.getpid(),

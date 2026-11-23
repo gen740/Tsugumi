@@ -394,7 +394,6 @@ def native_card(body, *, inputs=(), outputs=NUM, declarations="", views="[]", **
     return {
         "type": "code", "inputs": [{"name": name} for name in inputs],
         **settings, "_outputs": outputs,
-        # NIXPATH-CONTRACT: native Card fixtures use the project's locked nixpkgs.
         "_nix": "{ params, inputs }: let pkgs = import <nixpkgs> { }; in {\n  run = " +
         card_package(body, declarations=declarations) +
         f";\n  views = {views};\n}}",

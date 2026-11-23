@@ -8,7 +8,7 @@ import pytest
 
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import log
-from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write
+from projects import FILE_FBS, card, conn, run_and_wait, start_run, wait_for_log, wait_run, write_nix_project as write
 from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind

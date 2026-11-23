@@ -20,9 +20,10 @@ table Outputs { out:Message; } root_type Outputs;)";
 auto Graph(const std::string& cards, const std::string& wires, Files files)
     -> std::shared_ptr<const Resolution> {
   Document doc;
-  doc.project_buffer = parse_project_json(
-      "{\"pkgsPath\":\"tsugumi:default\",\"canvas\":{\"cards\":" + cards +
-      ",\"connections\":" + wires + "}}").buffer;
+  doc.project_buffer =
+      parse_project_json("{\"nixPath\":[],\"canvas\":{\"cards\":" + cards +
+                         ",\"connections\":" + wires + "}}")
+          .buffer;
   for (const auto& [path, text] : files) {
     doc.sources[path] = {crypto::sha256_hex(text), text.size()};
     if (!path.starts_with("definitions/")) continue;

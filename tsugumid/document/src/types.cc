@@ -777,9 +777,12 @@ bool verify(const Type& t, const std::string& bytes) {
 }
 
 bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error) {
+                        std::string* out, std::string* error,
+                        bool force_defaults) {
   auto p = parser_from_type(t, error);
   if (!p) return false;
+  p->opts.force_defaults = force_defaults;
+  p->builder_.ForceDefaults(force_defaults);
   if (!p->ParseJson(json.c_str())) {
     *error = p->error_;
     return false;
@@ -794,10 +797,7 @@ std::string params_schema(
   std::string text = "namespace parameters;\ntable Params {\n";
   int id = 0;
   for (const auto& [name, type] : fields) {
-    bool scalar =
-        type == "bool" || type == "long" || type == "ulong" || type == "double";
-    text += "  " + name + ":" + type + (scalar ? " = null" : "") +
-            " (id: " + std::to_string(id++) + ");\n";
+    text += "  " + name + ":" + type + " (id: " + std::to_string(id++) + ");\n";
   }
   text += "}\nroot_type Params;\n";
   return text;

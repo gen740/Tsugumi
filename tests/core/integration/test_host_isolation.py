@@ -12,7 +12,7 @@ from __future__ import annotations
 
 import socket
 
-from projects import card, conn, run_and_wait, write
+from projects import card, conn, run_and_wait, write_nix_project as write
 from harness.real_cards import TXT, accept_in_background, python_card, txt_main
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState

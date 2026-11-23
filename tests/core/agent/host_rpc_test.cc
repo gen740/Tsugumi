@@ -92,7 +92,8 @@ class HostProjectsFixture : public AgentFixture {
   }
 };
 
-TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
+TEST_F(HostProjectsFixture,
+       CreatesProjectDocumentsInNewAndExactlyEmptyFolders) {
   const auto defaults = Call(
       *host, H::RequestPayload::HostProjectDefaultsRequest, [](Builder& b) {
         return H::CreateHostProjectDefaultsRequest(b).Union();
@@ -106,8 +107,8 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
       });
   EXPECT_EQ(trust.HostValue()->value_as_ProjectTrust()->decision(),
             H::ProjectTrustDecision::Trusted);
-  EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
-            JsonString(defaults.View(), "/nixpkgsPin"));
+  EXPECT_NE(Read(folder / "tsugumi.json").find(R"("nixPath": [])"),
+            std::string::npos);
   EXPECT_EQ(JsonString(FixtureLayoutText(Read(folder / "layout.bin")), "/flow"), "leftToRight");
   std::filesystem::create_directory(directory.path / "empty");
   EXPECT_TRUE(Create("empty").Code().empty());

@@ -19,13 +19,14 @@ FILE_FBS = 'attribute "tsugumi";\n' \
 
 def make(root: Path) -> None:
     put(root / "tsugumi.json", json.dumps({
-        "name": "files", "pkgsPath": "tsugumi:default",
+        "name": "files", "nixPath": [],
         "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
             {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": "start"}},
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
     put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "type": "input", "retainArtifact": True, "params": [{"name": "value", "type": "string", "data": {"string": "data/events.txt"}}]}))
+        "type": "input", "retainArtifact": True, "params": {"value": "data/events.txt"}}))
+    put(root / "definitions" / "load" / "params.nix", '{ run = { value = ""; }; }')
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
     put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, retainArtifact=True)))
@@ -82,7 +83,7 @@ def test_put_definition_can_keep_the_readme(tmp_path, core_factory):
     put(root / "definitions" / "load" / "README.md", readme)
     c = core_factory(project_root=root, mocked_builds=True).connect()
     snap = c.call("ProjectInspectRequest")
-    card = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "data/events.txt"}}],
+    card = {"type": "input", "params": {"value": "data/events.txt"},
             "maxRuns": 2}
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
            changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepReadme=True, keepComments=True)])

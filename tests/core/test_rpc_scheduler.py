@@ -37,8 +37,8 @@ root_type Outputs;
 
 BASE_DEFS = {
     "trigger": {"type": "trigger"},
-    "msg": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "hello"}}], "_outputs": MSG_FBS},
-    "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": True}}], "_outputs": FLAG_FBS},
+    "msg": {"type": "input", "params": {"text": "hello"}, "_params": '{ run = { text = ""; }; }', "_outputs": MSG_FBS},
+    "flag": {"type": "input", "params": {"value": True}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG_FBS},
     "branch": {"type": "branch"},
     "fork": {"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
     "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
@@ -147,7 +147,7 @@ def test_fork_sends_the_value_on_every_output(env, tmp_path):
 
 def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
     """A saved Boolean Input selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, condition={"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG_FBS}),
+    write(project, dict(BASE_DEFS, condition={"type": "input", "params": {"value": False}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG_FBS}),
           [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
            card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
           [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),

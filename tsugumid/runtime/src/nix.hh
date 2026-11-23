@@ -94,11 +94,6 @@ class NixRunner {
   NixRunner(Service& svc, std::filesystem::path eval_dir);
   ~NixRunner();
 
-  static std::string params_json(const std::vector<ParamDef>& params);
-  // FlatBuffer of all effective params (table Params).
-  static std::string params_buffer(const Node& node);
-  static types::TypeRef params_type(const Node& node);
-
   auto build(const BuildRequest& req) -> CardBuildPlan;
   // Build only the declared view files on the UI's native store.
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;

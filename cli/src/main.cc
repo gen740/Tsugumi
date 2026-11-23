@@ -42,12 +42,16 @@ auto Executable(const char* argv0) -> f::path {
 }
 
 auto Usage() -> void {
-  std::cout << "Usage: tsugumi <tool> [--option value ...] [--json '<object>'] [--project <folder>]\n"
+  std::cout << "Usage: tsugumi <tool> [--option value ...] [--json '<object>'] "
+               "[--project <folder>]\n"
+               "       tsugumi nix path lock update [--project <folder>] "
+               "[--project-path <external>] [--name <source>]\n"
                "       tsugumi call <RequestName> ['<json>']\n"
                "       tsugumi web [--port N] [--no-browser] [project folder]\n"
                "       tsugumi mcp\n"
                "       tsugumi update | uninstall [--yes] | --version\n"
-               "Tools work as the host's Agent principal, with the same access as Claude Code's.\n";
+               "Tools work as the host's Agent principal, with the same access "
+               "as Claude Code's.\n";
 }
 
 auto Open(const f::path& executable, const std::vector<std::string>& args) -> int {

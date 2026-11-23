@@ -40,7 +40,6 @@ runCommand "tsugumi-ci-runtime"
     exec python3 "$(dirname "$0")/run-isolated.py" "$@"
     EOF
     chmod +x "$out/libexec/tsugumi-tests/run-command"
-    # NIXPATH-CONTRACT: pass test-only source locks through the isolated runner.
     makeWrapper "$out/libexec/tsugumi-tests/run-command" "$out/bin/tsugumi-test-env" \
       --prefix PATH : ${
         lib.makeBinPath [

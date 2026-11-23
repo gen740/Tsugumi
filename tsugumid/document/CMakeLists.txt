@@ -32,7 +32,3 @@ target_link_libraries(tsugumi_document PUBLIC tsugumi_protocol tsugumi_json
 
 set_source_files_properties(${PROJECT_SOURCE_DIR}/tsugumid/document/src/worker_condition.cc PROPERTIES
   COMPILE_OPTIONS "-Wall;-Wextra;-Werror;-Wformat=2;-Wimplicit-fallthrough")
-
-target_compile_definitions(tsugumi_document PRIVATE
-  TSUGUMI_CARD_NIXPKGS_REV="${TSUGUMI_CARD_NIXPKGS_REV}"
-  TSUGUMI_CARD_NIXPKGS_NARHASH="${TSUGUMI_CARD_NIXPKGS_NARHASH}")

@@ -4,7 +4,7 @@ import hashlib
 from pathlib import Path
 
 from harness.real_cards import log
-from projects import FILE_FBS, card, conn, run_and_wait, write
+from projects import FILE_FBS, card, conn, run_and_wait, write_nix_project as write
 from test_worker_loading import native_card
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState

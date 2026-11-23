@@ -1,12 +1,13 @@
 #include "tsugumi/document/document.hh"
 
-#include <regex>
+#include <algorithm>
 #include <set>
 
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/document/readme.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
+#include "tsugumi/util/json_object.hh"
 #include "tsugumi/util/text.hh"
 
 namespace tsugumi {
@@ -99,13 +100,20 @@ bool Document::is_document_file(const std::string& rel) {
 
 auto Document::is_external_document_file(std::string_view path) -> bool {
   return path.starts_with("externals/") &&
-         is_document_file(std::string(local_document_path(path)));
+         (is_document_file(std::string(local_document_path(path))) ||
+          is_lock_file(path));
+}
+
+auto Document::is_lock_file(std::string_view path) -> bool {
+  return local_document_path(path) == "tsugumi.lock";
 }
 
 auto external_document_source(const std::string& path, std::string bytes,
                               bool canonicalize)
     -> SourceEntry {
   const auto local = local_document_path(path);
+  if (local == "tsugumi.lock")
+    return lock_source_document(path, std::move(bytes));
   if (local != "layout.bin" && !text::valid_utf8(bytes))
     throw DocumentError("invalid_document", path + ": expected UTF-8 text",
                         {{"path", path}});
@@ -157,8 +165,9 @@ bool Document::is_source_area(const std::string& rel) {
 
 auto Document::classify_source_path(const std::string& rel) -> SourcePath {
   if (!fs::valid_relative_path(rel)) return SourcePath::Invalid;
-  if (is_document_file(rel) || rel.starts_with(".tsugumi/") ||
-      rel == ".tsugumi" || rel.find(".tsugumi-tmp-") != std::string::npos)
+  if (is_document_file(rel) || is_lock_file(rel) ||
+      rel.starts_with(".tsugumi/") || rel == ".tsugumi" ||
+      rel.find(".tsugumi-tmp-") != std::string::npos)
     return SourcePath::Protected;
   if (rel.starts_with("definitions/")) {
     auto rest = rel.substr(12);
@@ -227,36 +236,22 @@ void check_boundary(const D::Project& p, const std::string& where) {
   }
 }
 
-auto check_nix_sources(const D::Project& p) -> void {
-  if (!p.nixSources()) return;
-  static const std::regex name_re(R"(^[A-Za-z_][A-Za-z0-9_-]*$)");
-  static const std::regex ref_re(
-      R"(^(github:|gitlab:|sourcehut:|git\+https://|https://)[^\s"\\$]*[?&]narHash=sha256-[A-Za-z0-9%+/=]+.*$)");
-  std::set<std::string> sources;
-  for (const auto* s : *p.nixSources()) {
-    const auto name = s->name()->str();
-    if (!std::regex_match(name, name_re))
-      invalid("nixSources: \"" + name + "\" is not a name");
-    if (s->type()->str() != "flake")
-      invalid("nixSources: " + name + ": type must be flake");
-    if (!std::regex_match(s->ref()->str(), ref_re))
-      invalid("nixSources: " + name +
-              ": ref must be a locked flake reference with a narHash");
-    if (const auto* overrides = s->overrides()) {
-      std::set<std::string> packages;
-      for (const auto* o : *overrides) {
-        if (!packages.insert(o->package()->str()).second)
-          invalid("nixSources: " + name + ": duplicate override of " +
-                  o->package()->str());
-        if ((o->override() && !o->override_flexbuffer_root().IsMap()) ||
-            (o->overrideAttrs() &&
-             !o->overrideAttrs_flexbuffer_root().IsMap()))
-          invalid("nixSources: " + name + ": the override of " +
-                  o->package()->str() + " must be objects");
-      }
-    }
-    if (!sources.insert(name).second)
-      invalid("nixSources: duplicate name " + name);
+template <class Entries>
+auto check_nix_path(const Entries* entries, const std::string& path) -> void {
+  if (!entries) return;
+  std::set<std::string> names;
+  for (const auto* entry : *entries) {
+    const auto name = entry->name()->str();
+    if (!valid_nix_path_name(name))
+      invalid(path + ": nixPath name \"" + name +
+              "\" must match [A-Za-z0-9][A-Za-z0-9._-]*");
+    if (!names.insert(name).second)
+      invalid(path + ": duplicate nixPath name " + name);
+    const auto url = entry->url()->string_view();
+    if (url.empty() || url.find_first_of(" \t\r\n") != std::string_view::npos ||
+        url.find('\0') != std::string_view::npos ||
+        url.find(':') == std::string_view::npos)
+      invalid(path + ": nixPath \"" + name + "\" needs a fetchTree URL");
   }
 }
 
@@ -279,25 +274,70 @@ auto check_log_limit(const D::Project& p, const std::string& where) -> void {
 }  // namespace
 
 auto initial_project_json(const std::string& name) -> std::string {
-  const std::string rev = TSUGUMI_CARD_NIXPKGS_REV;
-  const std::string hash = TSUGUMI_CARD_NIXPKGS_NARHASH;
-  if (rev.empty() || hash.empty())
-    throw DocumentError("project_defaults_unavailable",
-                        "This build has no default Card Nixpkgs pin");
-  D::ProjectT project;
-  project.name = name;
-  project.pkgsPath =
-      "https://github.com/NixOS/nixpkgs/archive/" + rev + ".tar.gz#" + hash;
-  project.canvas = std::make_unique<D::GraphT>();
-  return document_text::print(Schema::Project,
-                              document_text::pack<D::Project>(project));
+  return parse_project_json(
+             "{\"name\":" + json::Quote(name) +
+             R"(,"nixPath":[],"canvas":{"cards":[],"connections":[]}})")
+      .text;
+}
+
+auto valid_nix_path_name(std::string_view name) -> bool {
+  const auto alnum = [](char c) {
+    return (c >= 'A' && c <= 'Z') || (c >= 'a' && c <= 'z') ||
+           (c >= '0' && c <= '9');
+  };
+  return !name.empty() && alnum(name.front()) &&
+         std::ranges::all_of(name, [&](char c) {
+           return alnum(c) || c == '.' || c == '_' || c == '-';
+         });
+}
+
+auto supported_nix_path_url(std::string_view url) -> bool {
+  return url.starts_with("github:") || url.starts_with("gitlab:") ||
+         url.starts_with("sourcehut:");
+}
+
+auto parse_project_lock(const std::string& path, const std::string& text)
+    -> ParsedDocument {
+  auto buffer = document_text::parse(Schema::Lock, path, text);
+  const auto& lock = document_text::root<D::ProjectLock>(buffer);
+  check_nix_path(lock.nixPath(), path);
+  std::vector<const D::LockEntry*> sorted;
+  if (const auto* entries = lock.nixPath()) {
+    for (const auto* entry : *entries) {
+      const auto* pin = entry->locked();
+      const auto url = entry->url()->string_view();
+      if (!supported_nix_path_url(url) ||
+          url.substr(0, url.find(':')) != pin->type()->string_view() ||
+          pin->rev()->size() == 0 || pin->narHash()->size() == 0)
+        invalid(path + ": invalid locked source for " + entry->name()->str());
+      sorted.push_back(entry);
+    }
+  }
+  std::ranges::sort(sorted, {}, [](const auto* entry) {
+    return entry->name()->string_view();
+  });
+  flatbuffers::FlatBufferBuilder builder;
+  std::vector<flatbuffers::Offset<D::LockEntry>> entries;
+  for (const auto* entry : sorted)
+    entries.push_back(D::LockEntry::Pack(
+        builder, std::unique_ptr<D::LockEntryT>(entry->UnPack()).get()));
+  builder.Finish(D::CreateProjectLock(builder, builder.CreateVector(entries)));
+  buffer.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                builder.GetSize());
+  return {buffer, document_text::print(Schema::Lock, buffer)};
+}
+
+auto lock_source_document(const std::string& path, std::string bytes)
+    -> SourceEntry {
+  parse_project_lock(path, bytes);
+  return {crypto::sha256_hex(bytes), bytes.size(),
+          std::make_shared<const std::string>(std::move(bytes))};
 }
 
 auto parse_project_json(const std::string& text) -> ParsedDocument {
   auto doc = parsed(Schema::Project, "tsugumi.json", text);
   const auto& p = document_text::root<D::Project>(doc.buffer);
-  // NIXPATH-CONTRACT: lane B validates nixPath declarations in this schema.
-  check_nix_sources(p);
+  check_nix_path(p.nixPath(), "tsugumi.json");
   check_version_paths(p);
   check_log_limit(p, "tsugumi.json");
   check_graph_shape(*p.canvas(), "tsugumi.json canvas");
@@ -310,7 +350,7 @@ auto parse_external_project(const std::string& rel, const std::string& text)
   auto doc = parsed(Schema::Project, rel, text);
   const auto& p = document_text::root<D::Project>(doc.buffer);
   check_log_limit(p, rel);
-  check_nix_sources(p);
+  check_nix_path(p.nixPath(), rel);
   check_version_paths(p);
   check_graph_shape(*p.canvas(), rel + " canvas");
   check_boundary(p, rel);
@@ -481,18 +521,16 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
   doc->project_buffer = std::move(project.buffer);
   doc->project_json = std::move(project.text);
   doc->disk_hashes["tsugumi.json"] = crypto::sha256_hex(*project_text);
-
-  // NIXPATH-CONTRACT: lane B owns the typed lock snapshot, validation and edits.
-  std::error_code lock_error;
-  if (stdfs::exists(stdfs::symlink_status(root / "tsugumi.lock", lock_error))) {
-    std::string lock;
-    fs::stream_beneath(root, "tsugumi.lock", UINT64_MAX, [&](std::string_view chunk) {
-      consume("tsugumi.lock", chunk.size());
-      lock.append(chunk);
-    });
-    doc->sources.emplace("tsugumi.lock", SourceEntry{
-        crypto::sha256_hex(lock), lock.size(),
-        std::make_shared<const std::string>(std::move(lock))});
+  if (std::error_code error;
+      stdfs::exists(stdfs::symlink_status(root / "tsugumi.lock", error))) {
+    std::string bytes;
+    fs::stream_beneath(root, "tsugumi.lock", UINT64_MAX,
+                       [&](std::string_view chunk) {
+                         consume("tsugumi.lock", chunk.size());
+                         bytes.append(chunk);
+                       });
+    doc->sources.emplace(
+        "tsugumi.lock", lock_source_document("tsugumi.lock", std::move(bytes)));
   }
 
   if (auto layout = fs::read_file(root / "layout.bin")) {
@@ -549,7 +587,8 @@ std::shared_ptr<Document> load_from_disk(const stdfs::path& root) {
           {{"path", std::string(area) + "/" + listing.links.front()}});
     for (const auto& f : listing.files) {
       std::string rel = std::string(area) + "/" + f;
-      if (!Document::is_source_area(rel)) continue;
+      if (!Document::is_source_area(rel) && !Document::is_lock_file(rel))
+        continue;
       const bool external = Document::is_external_document_file(rel);
       if (external || Document::is_note_file(rel)) {
         std::string bytes;

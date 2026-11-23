@@ -83,35 +83,32 @@ def definition_of(project, card):
     return path, json.loads(path.read_text())
 
 
-def apply_request(project, request, inputs):
-    """Set the recipient's parameter values and files in the Cards' _card.json."""
+def apply_request(project, request, inputs, parameters):
+    """Write recipient-selected run overrides into the copied definitions."""
     for card, name in request.get("files", {}).items():
         path, definition = definition_of(project, card)
-        values = [p for p in definition.get("params", []) if p["name"] == "value"]
-        if definition.get("type") != "input" or not values:
+        spec = next((p for p in parameters.get(card, []) if p["name"] == "value"), None)
+        if (definition.get("type") != "input" or not spec
+                or spec.get("build", False) or spec["type"] != "string"):
             raise SystemExit(f"{card} is not an input Card with a file")
-        # An input Card's file is a source of its own folder: the core copies
-        # it into the run from there.
         source = inputs / card / name
         target = project / "definitions" / card / "recipient" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        values[0]["data"] = {"string": f"recipient/{name}"}
+        definition.setdefault("params", {})["value"] = f"recipient/{name}"
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
     for card, values in request.get("params", {}).items():
         path, definition = definition_of(project, card)
         if definition.get("type") not in SETTABLE:
             raise SystemExit(f"{card} is a {definition.get('type')} Card: its parameters shape the Workflow")
-        params = {p["name"]: p for p in definition.get("params", [])}
+        declarations = {p["name"]: p for p in parameters.get(card, [])}
         for name, value in values.items():
-            if name not in params:
-                raise SystemExit(f"Card {card} has no parameter {name} (it has {', '.join(params) or 'none'})")
-            if params[name].get("nix"):
+            if name not in declarations:
+                raise SystemExit(f"Card {card} has no parameter {name}")
+            if declarations[name].get("build", False):
                 raise SystemExit(f"{card}.{name} is fixed at export: it changes the Card's build")
-            field = params[name]["type"].replace("[]", "s")
-            params[name]["data"] = {field: value}
+            definition.setdefault("params", {})[name] = value
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
-
 
 def record_all(project):
     """recordIO on for every Code Card of the copy."""
@@ -263,7 +260,8 @@ def main():
     project, request_path, result = (Path(a) for a in sys.argv[1:4])
     work = Path(os.environ.get("PACK_WORK", "/work"))
     request = json.loads(request_path.read_text()) if request_path.is_file() else {}
-    apply_request(project, request, request_path.parent / "inputs")
+    parameters = json.loads(Path(os.environ["PACK_PARAMETERS"]).read_text())
+    apply_request(project, request, request_path.parent / "inputs", parameters)
     record_all(project)
     found = triggers(project)
     start = request.get("start") or (found[0] if found else None)

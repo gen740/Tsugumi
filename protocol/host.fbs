@@ -252,7 +252,17 @@ table ProjectConnect {
 table ProjectMakeSubgraph { project_path:string; cards:[string]; id:string (required); }
 // Source paths name a definition or an external folder in the current project.
 // The host copies its complete document/source closure and places the new Card.
-table ProjectCopyItem { from:string (required); id:string (required); x:double; y:double; demo:string; folder:string; }
+table ProjectCopyItem {
+  from:string (required);
+  id:string (required);
+  x:double;
+  y:double;
+  demo:string;
+  folder:string;
+  /// Explicit choice when the source Card has no evaluation record.
+  choose_nix_path_names:bool;
+  nix_path_names:[string];
+}
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
 enum BuiltinCard:ubyte { Draft, Trigger, InputValue, BooleanInput, Branch, Fork, Merge, Collect }
@@ -288,7 +298,19 @@ table HostTemplateAddRequest { addition:TemplateAdd (required); }
 table ProjectTemplateCopy {
   project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
 }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd }
+table ProjectUpdateNixPathLock {
+  project_path:string;
+  /// Omitted locks every declared name and removes obsolete lines.
+  name:string;
+}
+table ProjectSetParam {
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  /// Omitted clears the override.
+  value_json:string;
+  expected_rev:uint64 = null;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectSetParam }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);
@@ -347,7 +369,7 @@ table ExecutionService { id:string (required); name:string (required); endpoint:
 table ExecutionServices { services:[ExecutionService]; host_public_key:string (required); }
 table ExecutionAuthorization { endpoint:string (required); capability_file:string (required); available:bool; }
 
-table ProjectDefaults { nixpkgs_pin:string (required); agent_exclude:[string]; }
+table ProjectDefaults { agent_exclude:[string]; }
 table ProjectInfo { path:string (required); name:string (required); }
 table ProjectLocation { path:string (required); }
 // opened_at is Unix epoch milliseconds. Forget never removes project folders.

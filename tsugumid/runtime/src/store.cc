@@ -5,6 +5,7 @@
 #include <set>
 #include <thread>
 
+#include "nix_params.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/text.hh"
@@ -33,7 +34,8 @@ std::string def_dir(const std::string& id) { return "definitions/" + id + "/"; }
 // .tsugumi/ or a path leaving the project.
 bool writable(const stdfs::path& root, const std::string& rel) {
   return fs::valid_relative_path(rel) &&
-         (Document::is_document_file(rel) || Document::is_source_area(rel)) &&
+         (Document::is_document_file(rel) || Document::is_source_area(rel) ||
+          Document::is_lock_file(rel)) &&
          fs::resolves_inside(root, root / rel);
 }
 
@@ -237,7 +239,7 @@ std::optional<Receipt> Store::receipt(const std::string& op_id) const {
                  statement.blob(2)};
 }
 
-void Store::open() {
+void Store::open(const std::function<void()>& before_resolve) {
   stdfs::create_directories(state_dir());
   // Project identity: a short reference persisted in internal state, never in
   // the root files.
@@ -258,6 +260,7 @@ void Store::open() {
   auto loaded = load_document(opts_.root);
   loaded->rev = rev;
   loaded->execution_rev = exec_rev;
+  if (before_resolve) before_resolve();
   auto doc = finalize(loaded);
   std::lock_guard<std::mutex> l(mu_);
   doc_ = doc;
@@ -305,7 +308,10 @@ std::shared_ptr<Document> Store::finalize(std::shared_ptr<Document> doc,
     doc->resolution = base->resolution;
     return doc;
   }
-  doc->resolution = resolve(*doc, source_reader(opts_.root, *doc, pending));
+  doc->resolution =
+      resolve(*doc, source_reader(opts_.root, *doc, pending),
+              opts_.read_params ? opts_.read_params
+                                : ParamsReader(evaluate_literal_params));
   return doc;
 }
 
@@ -565,6 +571,34 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
           doc->project_json = std::move(parsed.text);
         });
         break;
+      case K::SetProjectLock: {
+        if (!Document::is_lock_file(c.path) || !writable(opts_.root, c.path))
+          throw Failed(FailureKind::invalid_path,
+                       "invalid lock path " + c.path);
+        const auto project = c.path.substr(0, c.path.size() - 4) + "json";
+        if (project == "tsugumi.json" || base->sources.contains(project))
+          check_disk_unchanged(*base, {{project, std::nullopt}});
+        check_disk_unchanged(*base, {{c.path, std::nullopt}});
+        const auto old = base->sources.find(c.path);
+        const auto expected = old == base->sources.end()
+                                  ? std::nullopt
+                                  : std::optional(old->second.hash);
+        if (expected != c.base_hash)
+          throw hash_conflict(c.path, c.base_hash.value_or(""),
+                              expected.value_or(""));
+        if (!c.lock_json) {
+          if (old != base->sources.end()) {
+            doc->sources.erase(c.path);
+            files[c.path] = std::nullopt;
+          }
+          break;
+        }
+        wrap([&] {
+          doc->sources[c.path] = lock_source_document(c.path, *c.lock_json);
+          files[c.path] = *c.lock_json;
+        });
+        break;
+      }
       case K::SetLayout:
         wrap([&] {
           check_layout("layout.bin", c.json);
@@ -693,6 +727,12 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
       }
     }
   }
+  for (const auto& [path, _] : doc->sources)
+    if (path != "tsugumi.lock" && Document::is_lock_file(path) &&
+        !doc->sources.contains(path.substr(0, path.size() - 4) + "json"))
+      throw Failed(FailureKind::invalid_document,
+                   path + " has no project document");
+
   // Sources under a definition need the definition in the final document.
   for (const auto& [path, _] : doc->sources) {
     if (!path.starts_with("definitions/")) continue;
@@ -706,9 +746,11 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   wrap([&] { check_structure(*doc); });
 
   // Files carried with their bytes: nested projects' documents and notes.
-  const auto carried = [](const std::string& path, std::string bytes) {
+  const auto carried = [&](const std::string& path, std::string bytes) {
+    const bool preserve =
+        path.ends_with("/tsugumi.json") && !base->sources.contains(path);
     return Document::is_external_document_file(path)
-               ? external_document_source(path, std::move(bytes), true)
+               ? external_document_source(path, std::move(bytes), !preserve)
                : note_source(path, std::move(bytes));
   };
   for (auto& [path, content] : files) {
@@ -869,7 +911,10 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   auto base = current();
   auto doc = load_document(checkout.empty() ? opts_.root : checkout);
   if (!checkout.empty()) {
-    doc->resolution = resolve(*doc, source_reader(checkout, *doc));
+    doc->resolution =
+        resolve(*doc, source_reader(checkout, *doc),
+                opts_.read_params ? opts_.read_params
+                                  : ParamsReader(evaluate_literal_params));
     doc->resolution_key = doc->execution_fingerprint;
     for (const auto& diagnostic : doc->resolution->all_diagnostics(false))
       if (diagnostic.code == "invalid_document")

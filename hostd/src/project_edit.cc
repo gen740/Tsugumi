@@ -541,7 +541,7 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
         notes.erase(*id);
     } else {
       if (bytes && Document::is_external_document_file(path)) {
-        if (path.ends_with("/tsugumi.json"))
+        if (path.ends_with("/tsugumi.json") && original(path))
           bytes = canonical(Schema::Project, path, *bytes);
         if (path.ends_with("/_card.json"))
           bytes = canonical(Schema::Card, path, *bytes);
@@ -594,6 +594,13 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
         const auto path = json::Text(json::Object(raw_source), "path");
         if (path.starts_with(dir)) after[path] = std::nullopt;
       }
+    } else if (type == "SetProjectLock") {
+      // Existing pins carried by a copy stay available after undo. Pins in a
+      // newly installed external are removed with the rest of its tree.
+      const auto path = json::Text(value, "path");
+      if (path.starts_with("externals/") && value.contains("json") &&
+          !original(path))
+        store_source(path, json::Text(value, "json"));
     } else if (type == "PutSource") {
       store_source(json::Text(value, "path"),
                    DecodeSourceBytes(json::Get(value, "bytes")));
@@ -982,6 +989,15 @@ auto PrepareProjectEdits(
     root["canvas"] = json::Encode(canvas);
     project = PreserveProjectBytes(*project, json::Encode(root));
   }
+  for (const auto& [path, bytes] : files) {
+    if (!Document::is_lock_file(path) || bytes == originals.at(path)) continue;
+    const auto project = path.substr(0, path.size() - 4) + "json";
+    if (path == "tsugumi.lock" || !files.contains(project) ||
+        files.at(project).has_value() == originals.at(project).has_value() ||
+        bytes.has_value() != files.at(project).has_value())
+      throw Failure("permission_denied",
+                    "Use the explicit nixPath lock update");
+  }
   return ProjectSaveChanges(base, originals, files, removed_definitions);
 }
 
@@ -1067,8 +1083,14 @@ auto ProjectSaveChanges(const SaveBase& base, const EditFiles& originals,
       if (!content)
         throw Failure("invalid_request", "root document cannot be removed");
       changes.push_back(Change("SetProject", {{"json", json::Quote(*content)}}));
-    } else if (path == "layout.bin" ||
-               IsExternalDocument(path, "layout.bin")) {
+    } else if (Document::is_lock_file(path)) {
+      json::Members value{{"path", json::Quote(path)}};
+      if (originals.at(path))
+        value["base_hash"] =
+            json::Quote(crypto::sha256_hex(*originals.at(path)));
+      if (content) value["json"] = json::Quote(*content);
+      changes.push_back(Change("SetProjectLock", std::move(value)));
+    } else if (path == "layout.bin" || IsExternalDocument(path, "layout.bin")) {
       LayoutChanges(base, path, originals.at(path), content, files, changes);
     } else if (path.starts_with("definitions/") &&
                std::count(path.begin(), path.end(), '/') == 2 &&

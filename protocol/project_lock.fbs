@@ -1,0 +1,23 @@
+// tsugumi.lock: directly declared Nix sources pinned by an explicit update.
+namespace Tsugumi.Document;
+
+table LockedSource {
+  type:string (required);
+  owner:string;
+  repo:string;
+  rev:string (required);
+  narHash:string (required);
+  lastModified:long;
+}
+
+table LockEntry {
+  name:string (required);
+  url:string (required);
+  locked:LockedSource (required);
+}
+
+table ProjectLock {
+  nixPath:[LockEntry];
+}
+
+root_type ProjectLock;

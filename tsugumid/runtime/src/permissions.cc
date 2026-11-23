@@ -1,5 +1,7 @@
 #include "permissions.hh"
 
+#include <set>
+
 #include "tsugumi/document/document.hh"
 
 namespace tsugumi::permissions {
@@ -7,7 +9,16 @@ namespace tsugumi::permissions {
 std::vector<std::string> widenings(const Resolution* before,
                                    const Resolution& after) {
   std::vector<std::string> out;
-  // NIXPATH-CONTRACT: lane B handles policy for explicit lock updates.
+  std::set<std::pair<std::string, std::string>> sources;
+  if (before)
+    for (const auto& node : before->nodes)
+      for (const auto& entry : node.nix_path)
+        sources.emplace(entry.name, entry.url);
+  for (const auto& node : after.nodes)
+    for (const auto& entry : node.nix_path)
+      if (sources.emplace(entry.name, entry.url).second)
+        out.push_back("nix_source " + entry.name + " " + entry.url);
+
   for (const auto& n : after.nodes) {
     auto key = path_key(n.path);
     const Node* b = before ? before->find(n.path) : nullptr;

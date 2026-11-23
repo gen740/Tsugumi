@@ -90,13 +90,13 @@ def python_card(main: str, *, outputs=NUM, inputs=(), values=None, let="", tools
 
 def txt_main(body: str) -> str:
     """main.py running `body` (Python, indented by 4) and returning out = RESULT."""
-    return ("from card import Output\nfrom outputs.out.t.Txt import TxtT\n\ndef run(input):\n"
+    return ("from card import Output\nfrom t.Txt import TxtT\n\ndef run(input):\n"
             + body + "\n    return Output(out=TxtT(value=RESULT))\n")
 
 
 # main.py returning out = Num(1).
 ONE_MAIN = """from card import Output
-from outputs.out.t.Num import NumT
+from t.Num import NumT
 
 def run(input):
     return Output(out=NumT(value=1))
@@ -113,7 +113,7 @@ def log(c, run_id, card_id, stream=1, inv=1):
 # os.environ and the C environment (what native libraries read).
 ENVIRONMENT_MAIN = """import ctypes, json, os
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 AT_LOAD = os.getcwd()
 os.environ["FROM_TOP"] = "top"
@@ -152,7 +152,7 @@ def check_process_environment(first: dict, second: dict) -> None:
 # bin directory on PATH, so jq resolves there and nothing else does.
 DEFINITION_TOOLS_MAIN = """import os, shutil, subprocess
 from card import Output
-from outputs.out.t.Txt import TxtT
+from t.Txt import TxtT
 
 def run(input):
     jq = shutil.which("jq")
