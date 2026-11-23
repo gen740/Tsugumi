@@ -148,6 +148,7 @@ auto run_invocation(const ReleaseWorker& release_worker,
     between_calls = true;
     worker.set_logs(nullptr);
     if (invocation.on_timing) invocation.on_timing(begin, now_ms());
+    std::optional<FailureData> transfer_failure;
     try {
       if (!outcome.created.empty() && !stage)
         throw Failed(FailureKind::output_invalid, "unexpected artifact creation");
@@ -165,19 +166,22 @@ auto run_invocation(const ReleaseWorker& release_worker,
           fs::copy_staging_output(stage->get(), name, destination,
                                   persist, invocation.transfer, &budget);
           if (!stdfs::is_directory(stdfs::symlink_status(destination)))
-            throw Failed(FailureKind::output_invalid, "artifact must be a directory");
-        } catch (...) {
-          std::error_code error;
-          stdfs::remove_all(destination, error);
-          throw;
+            throw fs::Error("artifact must be a directory");
+        } catch (const std::runtime_error& error) {
+          std::error_code cleanup_error;
+          stdfs::remove_all(destination, cleanup_error);
+          transfer_failure =
+              FailureData::make(FailureKind::output_invalid, error.what());
+          break;
         }
         result.created.push_back(id);
       }
-      if (!result.failure)
+      if (!result.failure && !transfer_failure) {
         result.outputs = accept_outputs(std::move(outcome.outputs),
                                         invocation.outputs, invocation.inputs,
                                         outcome.created);
-      if (!result.failure && invocation.validate) invocation.validate(result);
+        if (invocation.validate) invocation.validate(result);
+      }
     } catch (const Failed& error) {
       result.failure = error.failure;
     } catch (const fs::Error& error) {
@@ -187,9 +191,10 @@ auto run_invocation(const ReleaseWorker& release_worker,
     try {
       release();
     } catch (...) {
-      if (!result.failure) throw;
-      return result;
+      if (!result.failure && !transfer_failure) throw;
     }
+    // A rejected transfer leaves a successful resident call reusable.
+    if (transfer_failure) result.failure = std::move(transfer_failure);
   } catch (...) {
     try {
       if (lease.worker) release();
