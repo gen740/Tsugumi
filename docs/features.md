@@ -104,7 +104,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows a value sweep of three inputs, two named implementations and one collected result.
 
 - A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ (sdk.pythonCard (common // { src = ./first; })) (sdk.pythonCard (common // { src = ./second; })) ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
-- An Input Card supplies a batch with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. Each swept name is a run parameter declared in `params.nix`. Several sweeps give their Cartesian product, with the last one varying fastest and any arriving `start` batch as the outer axis. Members are labeled with their values, such as `value=8`. A list-valued parameter forms one vector per sweep member. A sweep of one member gives a batch of one, and an empty sweep gives an empty batch.
+- An Input Card supplies a batch with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. Each swept name is a parameter in `params.nix`. With the sweep disabled, the Input Card uses the literal in `params.nix`. Several sweeps give their Cartesian product, with the last one varying fastest and any arriving `start` batch as the outer axis. Members are labeled with their values, such as `value=8`. A list-valued parameter forms one vector per sweep member. A sweep of one member gives a batch of one, and an empty sweep gives an empty batch.
 - History rows and the batch list show each member's label. Comparing two runs, a Card that ran an execution list compares one member at a time, chosen by name: members pair by label, or by implementation number when unlabeled, and a name repeated once per arriving input pairs by its occurrence. A member present in one run only is said so.
 - Results follow the order of the input port names, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
 - An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
@@ -141,25 +141,23 @@ tsugumi nix path lock update --project /path/to/project --name nixpkgs
 tsugumi nix path lock update --project /path/to/project
 ```
 
-Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. The [lock document](../protocol/project_lock.fbs) is JSON text with a `nixPath` list sorted by name. Each entry records `name`, `url` and a `locked` object containing `type`, `owner`, `repo`, `rev`, `narHash` and `lastModified`. The list contains only direct sources. Only an explicit lock update resolves declaration URLs and writes pins. New empty projects start with `nixPath: []`, and projects created from a project template carry its declarations and lock.
+Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. In `tsugumi.lock`, the `nixPath` JSON object maps each name to a locked URL with a revision and NAR hash. Only an explicit lock update resolves declaration URLs and writes pins for direct sources. New empty projects start with `nixPath: []`, and projects created from a project template carry its declarations and lock. [Example lock file](CardGuide.md#the-files)
 
-Evaluation uses the lock for all declared names in the participating projects. An absent lock file is an empty lock. These messages identify the update required:
-
-- `nixPath "<name>" is not locked; update the lock`
-- `nixPath "<name>" changed (lock has <url>); update the lock`
+Evaluation uses the lock for all declared names in the participating projects. An absent lock file is an empty lock. Update the lock when an entry is missing or points to a different repository or source type. After changing a ref within the same repository, update the lock to select the new revision.
 
 Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
 
-When a Card is copied to another project, its declarations and lock lines travel with it for the names recorded by the evaluator. If the Card has no evaluation record, the copy offers the source project's names for selection. A name collision with a different URL or pin stops the copy and shows both entries. To use both sources, choose distinct names and update the corresponding imports explicitly.
+After copying a Card to another project, add any required `<name>` missing from the destination's `nixPath` and update its lock.
 
 ### Evaluating a Card expression
 
-The `evaluate_nix` tool (`sdk` → `evaluate`) evaluates a short expression relative to a saved Card's definition directory. It has the Card's locked search path and the build's `params` and `inputs`. The lazy `card` binding is `import ./. { inherit params inputs; }`. The request defaults to the local native system and accepts an explicit `system`.
+The Agent's `evaluate_nix` tool evaluates a short expression on the local system, relative to a saved Card's definition directory. It has the project's locked search path and the Card build's `params` and `inputs`.
 
-Evaluation returns bounded JSON. A derivation evaluates to its output path. With `build: true`, the expression must yield a derivation. The tool builds it in the Nix sandbox and returns regular files as relative paths and bytes, capped at 2,000 entries and 8 MiB of paths and file bytes. A failed build returns the end of its log, up to 256 KiB. **Build SDK** evaluates `card.api` with `build: true` and opens `share/tsugumi/api/` read-only.
+Evaluation returns bounded JSON. A derivation evaluates to its output path. With `build: true`, the expression must yield a derivation. The tool builds it in the Nix sandbox and returns regular files as relative paths and bytes, capped at 2,000 entries and 8 MiB of paths and file bytes. A failed build returns the end of its log, up to 256 KiB. **Build SDK** evaluates `(import ./. { inherit params inputs; }).api` with `build: true` and opens `share/tsugumi/api/` read-only.
 
 ```sh
-tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}' --expression card.api --build
+tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}' \
+  --expression '(import ./. { inherit params inputs; }).api' --build
 ```
 
 ### Sharing Nix exports through connections

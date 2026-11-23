@@ -13,7 +13,7 @@ Layout proposals, layout schema validation and minimap placement belong to the h
 
 A run belongs to one `tsugumid` process life. On restart, unfinished local and remote invocations become `failed/interrupted`; remote results are never rescued and nothing reruns automatically. The remote contract ([protocol/remote_worker.fbs](../protocol/remote_worker.fbs)) carries a fresh `core_life_id` on scoped requests. Regular status and log exchanges detect a lost connection; reconnection in the same core life resumes existing work. Startup only cancels/releases old jobs ([Remote execution](RemoteExecution.md)).
 
-There are 52 requests.
+There are 53 requests.
 
 ## Connection
 
@@ -192,20 +192,38 @@ No fields.
 | `offset` | `uint64` |  |  |
 | `limit_bytes` | `uint32` |  |  |
 
-## Card API and types
+## Nix evaluation and Card types
 
 | Request | Response | Description |
 | --- | --- | --- |
-| [`CardApi`](#cardapi) | CardApiResult | Build a Code Card from its current definition and wiring (the build a run uses) and return the files its builder placed under share/tsugumi/api/ of each run implementation: the generated API its code is written against, read without interpretation (regular files; symlinks are not followed). A failed build returns failure and the build log. Unsaved edits are not part of the build. |
+| [`EvaluateNix`](#evaluatenix) | EvaluateNixResult | Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files. |
+| [`NixPathLockSource`](#nixpathlocksource) | NixPathLockedSource | Fetch a source for an explicit Host lock update. |
+| [`RewriteParamLiteral`](#rewriteparamliteral) | RewrittenParamLiteral | Prepare a guarded params.nix edit for the Host. |
 | [`InputTypes`](#inputtypes) | InputTypesResult | Read resolved incoming sources, port kinds and full types. output_port selects an upstream output instead. |
 | [`OutputTypes`](#outputtypes) | OutputTypesResult | Compile _outputs.fbs text to reflection schema; port and type_name optionally set an output's type and kind in returned text. |
-| [`NixSourceResolve`](#nixsourceresolve) | NixSourceResolved | Resolve a flake to its commit, hash and packages for this system. May fetch and evaluate on first use. |
 
-### CardApi
+### EvaluateNix
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `card` | `CardPath` | yes | Card path segments from the root project. |
+| `at_rev` | `uint64` |  |  |
+| `expression` | `string` | yes | Nix expression relative to this Card's definition directory. |
+| `build` | `bool` |  | Realize the derivation returned by the expression. Defaults to false. |
+
+### NixPathLockSource
+
+| Field | Type | Required | Description |
+| --- | --- | --- | --- |
+| `url` | `string` | yes |  |
+
+### RewriteParamLiteral
 
 | Field | Type | Required | Description |
 | --- | --- | --- | --- |
 | `card` | `CardPath` | yes |  |
+| `name` | `string` | yes |  |
+| `literal` | `string` | yes |  |
 | `at_rev` | `uint64` |  |  |
 
 ### InputTypes
@@ -224,12 +242,6 @@ No fields.
 | `port` | `string` |  |  |
 | `type_name` | `string` |  |  |
 | `kind` | `PortKind` |  |  |
-
-### NixSourceResolve
-
-| Field | Type | Required | Description |
-| --- | --- | --- | --- |
-| `ref` | `string` | yes |  |
 
 ## Running
 

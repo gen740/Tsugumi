@@ -28,19 +28,19 @@ the person's decision.
 - Every Card has its own definition folder named by its id: tsugumi.json lists {"id": "<identifier>"} and its wires,
   definitions/<id>/_card.json holds its "type" (code, draft, trigger, input, branch, fork, merge, collect or subgraph;
   every Card states it) and settings such as maxRuns, timeoutSeconds, recordIO, reuseWorker and system.
-  Param data and sweep entries carry one typed field (for example {"data": {"double": 2.5}}).
+  Input Card sweeps are keyed by parameter name in _card.json, for example {"sweeps": {"value": [1.0, 2.5]}}.
   README.md holds the optional one-line description front matter and Markdown body, and _comments.json holds review
   comments. card_id reserves the permanent Card id, which is also its name. An implemented Draft keeps its id. An output port can feed several inputs; a fork Card ({"type": "fork", "outputs": [{"name": "a"},
   {"name": "b"}]}) names that split, sending its value on every output. Each input takes one wire and inherits its type from that output.
   Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
 - Create Card definitions and sources with project_edit. Read demo_read reference/cards.md and the SDK guide.
   A Code Card's default.nix receives { params, inputs } and imports from its project's locked nixPath.
-  Declare defaults in params.nix: run values reach the invocation, build values reach default.nix.
-  Set parameter overrides in _card.json. Use a Path port for a file or folder.
+  Set current values in a flat literal params.nix. Every value reaches the invocation and default.nix.
+  Use a Path port for a file or folder.
 - Declare nixPath names and URLs in tsugumi.json. nix_path_lock_update pins one name or all in tsugumi.lock
   with approval. Each external has its own declarations and lock.
-- tools family sdk action evaluate (evaluate_nix) returns JSON for an expression in the saved Card's directory.
-  Evaluate card.api with build true to get the generated SDK files under share/tsugumi/api/.
+- evaluate_nix returns JSON for an expression in the saved Card's directory.
+  Evaluate (import ./. { inherit params inputs; }).api with build true to get the generated SDK files under share/tsugumi/api/.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.

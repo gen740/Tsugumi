@@ -1,8 +1,8 @@
 # tsugumi-pack: a Project as a standalone Mac app
 
 ```sh
-tsugumi-pack ./CellCount --output ./CellCount.app
-./CellCount.app/Contents/MacOS/CellCount --set generate.seed=11 --output ./counts
+tsugumi-pack ./Temperature --output ./Temperature.app
+./Temperature.app/Contents/MacOS/Temperature --set settings.value=11.0 --output ./temperatures
 ./WordCount.app/Contents/MacOS/WordCount --file text=./my-notes.txt
 ```
 
@@ -26,8 +26,8 @@ come later.
    There `tsugumid --prepare-cards` opens the Project and, for every Code
    Card, performs exactly the evaluation and build a run of that Card would
    perform on the local service (`NixRunner::build`), whether or not a run
-   would reach it. Sources resolve against each owning project's `tsugumi.lock`.
-   Update the project's locks before export if declarations lack matching entries.
+   would reach it. Sources resolve against the locked URLs in each owning project's
+   `tsugumi.lock`. Update the locks before export if declarations lack matching entries.
    For each Card it records the evaluation key (the project source
    pins, the system and the content-addressed definition, contract,
    parameter and upstream folders) and the build: plan, closure and run
@@ -39,12 +39,12 @@ come later.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
    `rootfs.erofs` (the runner image), `payload.erofs` and `pack.json` (the
-   triggers and each Card's parameters, with those that change the build
-   marked fixed).
+   triggers and each Card's current parameter values, with values outside
+   Input Cards marked fixed).
 
 The app, when run, boots the runner image with **no network device**. The
 payload's store is laid over the image's (a read-only overlay), the
-recipient's parameter values and files are written into a copy of the
+recipient's input files and `params.nix` edits are saved into a copy of the
 Project on a sparse scratch disk the app removes afterwards, and `tsugumid
 --prepared-cards` runs the Workflow from its trigger through the same RPC
 the apps use. For each Card it computes the evaluation key as it would
@@ -91,10 +91,10 @@ and removes the run's temporary folder and scratch disk.
   over `request.json` and moves the results folder out. Viewing is left to
   the files it writes (an image viewer, a text editor): there is no viewer in
   this path.
-- **Parameters, not rebuilt definitions.** The recipient can change the
-  parameters of Code and Input Cards (`--set card.param=value`,
-  `--params file.json`; `--help` lists them). Parameters marked `nix` change
-  the Card's build, so they are fixed at export; the app refuses them rather than attempting a build offline.
+- **Editable Input Cards.** The recipient can set Input Card values with
+  `--set card.param=value` or `--params file.json`. `--help` lists the
+  values and marks those fixed at export. Prepared Code Cards use their
+  exported values because `default.nix` can use any of them in the build.
 - **Files through the input Card.** `--file CARD=PATH` replaces the file of
   an input Card whose output is a File. The core reads an input Card's file
   only from the Card's own folder, so the app copies the recipient's file

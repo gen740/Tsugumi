@@ -28,6 +28,8 @@ node docs/site/player/build.mjs
 
 `build.mjs --out-dir <directory>` writes the same layout and copies the recorded assets into a separate output directory. It removes stray top-level JSON files for demos no longer present. Site and Web builds, Web tests and SVG rendering generate the player before using it; `TSUGUMI_SITE_PLAYER_DIR` selects an existing shared build.
 
+The static preview reads current values from the flat `params.nix`, with one literal per assignment line in the checked-in examples. Input Card sweeps come from `_card.json`. Previewing requires no Card evaluation.
+
 Recording runs is a separate step. It needs a `tsugumid` build and Nix (the first time takes a few minutes to fetch dependencies).
 
 ```sh

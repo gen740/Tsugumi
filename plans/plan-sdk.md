@@ -4,6 +4,8 @@
 
 ABI 8 supersedes this plan's ABI 7 choice of a single `Outputs` buffer. The worker and language adapters now exchange individual port buffers at the Card ABI boundary.
 
+The current SDK receives the evaluated flat `params` set from `default.nix`. Code generation uses the parameter names and types. `params.nix` holds the values for both Nix evaluation and invocation. [Parameters](../docs/CardGuide.md#parameters)
+
 Goal: adding or changing a Card builds only that Card's share, and every language's Card has the same shape.
 
 ## 1. The Card's shape (every language)

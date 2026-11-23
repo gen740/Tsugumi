@@ -90,7 +90,7 @@ Processing is split into small Cards so that people can understand the decisions
 
 In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
 
-`params.nix` groups parameters by when they are used. Effective `build` values reach `default.nix` and can change a derivation. Effective `run` values reach the Card's invocation buffer. Saving a run value in `_card.json` lets a person try a condition against the same build. The SDK generates the typed interface from the declarations, and Nix reuses derivations and store outputs.
+`params.nix` holds the Card's current parameter values for both `default.nix` and each invocation. The editor changes a literal in place. The SDK generates the interface from parameter names and types, so a value edit changes the build only if the Nix definition uses that value in a derivation. This lets a person try different conditions with the same build when the calculation reads them at runtime.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
