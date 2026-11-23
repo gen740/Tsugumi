@@ -76,6 +76,11 @@ auto Help(const ToolInfo& tool) -> void {
   std::cout << "  --json <object>   all arguments as one JSON object\n";
   if (!tool.name.starts_with("agent_"))
     std::cout << "  --project <folder> the project (default: the folder with tsugumi.json at or above this one)\n";
+  if (tool.name == "evaluate_nix")
+    std::cout << R"(
+Example:
+  tsugumi evaluate nix --card '{"segments":["plot"]}' --expression card.api --build
+)";
 }
 
 /** The tool's JSON arguments from --field value pairs, typed by its schema. */

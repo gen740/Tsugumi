@@ -72,6 +72,18 @@ struct BuildRequest {
       on_build;  // a derivation build starting or ending
 };
 
+// NIXPATH-CONTRACT: Replace this declaration with lane A's evaluator interface.
+struct ExpressionRequest {
+  DocumentPtr doc;
+  CardPath card;
+  std::string expression;
+  bool build = false;
+  std::string system;
+  std::stop_token cancel;
+  std::optional<std::chrono::steady_clock::time_point> deadline;
+  NixOutput log;
+};
+
 struct CacheClearOutcome {
   std::vector<std::string> deleted;
   std::vector<std::string> retained;
@@ -95,6 +107,7 @@ class NixRunner {
   static types::TypeRef params_type(const Node& node);
 
   auto build(const BuildRequest& req) -> CardBuildPlan;
+  auto evaluate_expression(const ExpressionRequest& req) -> ExpressionResult;
   // Build only the declared view files on the UI's native store.
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;

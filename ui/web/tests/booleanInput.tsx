@@ -1,37 +1,61 @@
 import { cardIds } from './cardIds'
 import assert from 'node:assert/strict'
+import { Builder } from 'flatbuffers'
 import TestRenderer from 'react-test-renderer'
 import { L } from '../src/i18n'
 import { CardGeometry } from '../src/model/canvasKit'
 import { ProjectSession, TEMPLATES, definitionKind } from '../src/model/session'
-import { get, parse, serialize } from '../shared/json'
+import { get, parse } from '../shared/json'
 import { CardNodeView, ParamFieldView } from '../src/ui/cardNode'
 import { CardEditorModel } from '../src/ui/cardSettings'
+import * as H from '../shared/gen/tsugumi/host'
+import { R, cardPath } from '../src/wire/rpc'
 
 const session = cardIds(new ProjectSession('/input-test', 'input-test', 'input-test'))
 session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections":[]}}')
 session.layout = parse('{}')
 let operations = 0
 const operate = session.operateProject
-session.operateProject = async request => { operations++; return operate(request) }
+const parameter = (override: string | null = null) => new R.CardParameterT('value', R.ParamSection.run, 'bool', 'false', override)
+const resolved = (card: string, override: string | null = null) =>
+  Object.assign(new R.ResolvedCardT(), { card: cardPath([card]), parameters: [parameter(override)] })
+const publish = (card: string, override?: string) => {
+  session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', section: R.ParamSection.run,
+    defaultValue: false, override: override === undefined ? undefined : parse(override) }]
+}
+session.operateProject = async request => {
+  operations++
+  if (request.bodyType !== H.ProjectOperationBody.ProjectSetParam) return operate(request)
+  const param = request.body as H.ProjectSetParamT
+  assert.equal(param.expectedRev, session.rev)
+  assert.equal(param.name, 'value')
+  assert.deepEqual(param.card?.segments, ['calibrate'])
+  const definition = new R.DefinitionT('calibrate',
+    param.valueJson === null ? '{"type":"input"}' : '{"type":"input","params":{"value":' + param.valueJson + '}}')
+  const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n,
+    definitionsUpsert: [definition], resolution: [resolved('calibrate', param.valueJson as string | null)] })
+  const builder = new Builder()
+  builder.finish(new H.ProjectEditsT().pack(builder))
+  return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...builder.asUint8Array()] })
+}
 const preset = TEMPLATES.find(t => t.id === 'input_bool')
 assert.ok(preset)
 const card = await session.addCard(preset.id, [], { x: 0, y: 0 }, 'calibrate')
 const branch = await session.addCard('branch', [], { x: 0, y: 100 })
 assert.equal(definitionKind(session.cardDefinition(card)), 'input')
-assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 await session.connect([card, 'value'], [branch, 'condition'], [])
 assert.ok(session.connections([]).some(wire =>
   get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
   get(wire, 'to', 'card') === branch && get(wire, 'to', 'port') === 'condition'))
 
+publish(card)
+assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 const before = operations
 let pending: Promise<void> | undefined
 const render = (editable: boolean) => <ParamFieldView param={session.inlineParams(card)[0]} editable={editable}
   commit={value => {
     pending = (async () => {
-      await session.applyMutation(x => x.updateParam(card, 'value', value === 'true'))
-      await session.save()
+      await session.setParam(card, 'value', value === 'true', session.rev)
     })()
     return pending
   }} />
@@ -47,12 +71,10 @@ view.update(render(false))
 assert.equal(checkbox().props.disabled, true)
 view.unmount()
 assert.equal(operations, before + 1, 'Toggling submits one operation')
-const saved = parse(serialize(session.cardDefinition(card)!))
-assert.equal(get((get(saved, 'params') as any[])[0], 'data', 'bool'), true, 'The saved value is a boolean')
-await session.undo()
+assert.equal(get(session.cardDefinition(card), 'params', 'value'), true, 'The saved override is a boolean')
+await session.setParam(card, 'value', undefined, session.rev)
+assert.equal(get(session.cardDefinition(card), 'params'), undefined)
 assert.equal(session.inlineParams(card)[0].value, 'false')
-await session.redo()
-assert.equal(session.inlineParams(card)[0].value, 'true')
 
 const draft = await session.addCard('draft', [], { x: 100, y: 0 })
 const draftEditor = new CardEditorModel(session, draft)
@@ -60,7 +82,8 @@ draftEditor.implementAs('input')
 draftEditor.implementAs(preset.id)
 assert.equal(draftEditor.implementation, preset.id)
 assert.equal(await draftEditor.apply(), true)
-assert.deepEqual(session.inlineParams(draft), [{ name: 'value', type: 'bool', value: 'false' }])
+assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ run = { value = false; }; }\n')
+assert.equal(get(session.cardDefinition(draft), 'params'), undefined)
 const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
   .replace(/^namespace .*;\n/, ''))
 assert.equal(await outputSchema(draft), await outputSchema(card))

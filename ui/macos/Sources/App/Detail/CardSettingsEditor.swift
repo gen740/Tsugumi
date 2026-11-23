@@ -34,7 +34,7 @@ final class CardEditorModel {
   private var baseDefinition: JSONValue?
   private var baseMeta: JSONValue?
   private var baseTexts: [String: String] = [:]
-  private var presetOutputs: String?
+  private var presetFiles: [String: String] = [:]
   private var baseHashes: [String: String] = [:]   // source hash when each file was read
 
   init(session: ProjectSession, cardKey: CardKey) {
@@ -86,7 +86,8 @@ final class CardEditorModel {
 
   var implementation: String {
     let kind = definitionKind(definition)
-    if kind == .input, definition?["params"]?.array?.first?["type"]?.string == "bool" {
+    if kind == .input, presetFiles[prefix + "params.nix"] == Self.inputParameters(boolean: true) ||
+      session.resolution[cardKey]?.parameters.contains(where: { $0.name == "value" && $0.type == "bool" }) == true {
       return DefinitionTemplate.booleanInput.rawValue
     }
     return kind.rawValue
@@ -96,21 +97,29 @@ final class CardEditorModel {
     if value == "input" || value == DefinitionTemplate.booleanInput.rawValue {
       let boolean = value == DefinitionTemplate.booleanInput.rawValue
       let type = boolean ? "bool" : "double"
-      definition = .object([("type", .string("input")), ("params", .array([
-        .object([("name", .string("value")), ("type", .string(type)),
-                 ("data", Documents.paramValue(type, boolean ? .bool(false) : .number("0")))])
-      ]))])
-      if let p = outputsPath, session.sources[p] == nil, !removed.contains(p) {
-        let untouched = created.contains(p) && presetOutputs != nil && texts[p] == presetOutputs
-        if untouched || (!created.contains(p) && texts[p] == nil) {
-          let schema = "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n"
-          createFile("_outputs.fbs", text: schema)
-          presetOutputs = schema
-        }
-      }
-    } else { definition = .object([("type", .string(value))]) }
+      definition = .object([("type", .string("input"))])
+      preset("_outputs.fbs", "namespace card;\ntable Value { value:\(type); }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n")
+      preset("params.nix", Self.inputParameters(boolean: boolean))
+    } else {
+      definition = .object([("type", .string(value))])
+      for (file, text) in presetFiles where created.contains(file) && texts[file] == text { removeFile(file) }
+      presetFiles = [:]
+    }
     if value == "merge" { definition?["inputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
     if value == "fork" { definition?["outputs"] = .array([.object([("name", .string("a"))]), .object([("name", .string("b"))])]) }
+  }
+
+  private static func inputParameters(boolean: Bool) -> String {
+    "{ run = { value = \(boolean ? "false" : "0.0"); }; }\n"
+  }
+
+  private func preset(_ relative: String, _ text: String) {
+    let file = prefix + relative
+    guard !prefix.isEmpty, session.sources[file] == nil, !removed.contains(file) else { return }
+    let untouched = created.contains(file) && presetFiles[file] != nil && texts[file] == presetFiles[file]
+    guard untouched || (!created.contains(file) && texts[file] == nil) else { return }
+    createFile(relative, text: text)
+    presetFiles[file] = text
   }
 
   /// Source files of the definition (documents excluded), with local changes.
@@ -139,7 +148,7 @@ final class CardEditorModel {
     baseMeta = meta
     texts = [:]
     baseTexts = [:]
-    presetOutputs = nil
+    presetFiles = [:]
     baseHashes = [:]
     loads = [:]
     for (p, t) in keep {
@@ -262,7 +271,7 @@ final class CardEditorModel {
   func createFile(_ rel: String, text: String = "") {
     guard !prefix.isEmpty, !rel.isEmpty else { return }
     let p = prefix + rel
-    if p == outputsPath { presetOutputs = nil }
+    if !created.contains(p) { presetFiles[p] = nil }
     removed.remove(p)
     created.insert(p)
     if let hash = session.sources[p]?.hash { baseHashes[p] = hash }
@@ -275,7 +284,8 @@ final class CardEditorModel {
   func rename(_ p: String, to rel: String) async -> Bool {
     let target = prefix + rel
     if target == p { return true }
-    if p == outputsPath || target == outputsPath { presetOutputs = nil }
+    presetFiles[p] = nil
+    presetFiles[target] = nil
     let origin = renames[p] ?? p
     let hash = baseHashes[p] ?? session.sources[origin]?.hash
     let text = texts[p], base = baseTexts[p], load = loads[p]
@@ -638,9 +648,15 @@ private struct GeneralCategory: View {
         } header: { Text("Draft を手動で実装") }
           footer: { Text("定義と wire の実ポート名を同じ適用で保存します。コード Card はソースと出力スキーマも作成してください。") }
       }
-      if let params = model.definition?["params"]?.array, !params.isEmpty {
-        Section("パラメータ") {
-          ForEach(params.indices, id: \.self) { i in ParamRow(model: model, index: i) }
+      if definitionKind(model.definition) == model.session.kind(model.cardKey) {
+        let parameters = model.session.resolution[model.cardKey]?.parameters ?? []
+        ForEach([Tsugumi_RPC_ParamSection.run, .build], id: \.self) { section in
+          let group = parameters.filter { $0.section == section }
+          if !group.isEmpty {
+            Section(section == .run ? String(localized: "実行時パラメータ") : String(localized: "ビルド時パラメータ")) {
+              ForEach(group) { parameter in ParamRow(model: model, parameter: parameter) }
+            }
+          }
         }
       }
       if model.kind != .subgraph && model.kind != .draft && model.kind != .invalid {
@@ -909,100 +925,118 @@ private struct HostFoldersEditor: View {
 
 private struct ParamRow: View {
   @Bindable var model: CardEditorModel
-  let index: Int
-  /// The sweep as typed, kept while it is not yet a JSON array.
+  let parameter: CardParameter
   @State private var draft: String?
+  @State private var sweepDraft: String?
+  @State private var reset = false
+  @State private var edit = InlineParamEdit()
+
+  private var session: ProjectSession { model.session }
+  private var name: String { parameter.name }
+  private var sweep: [JSONValue]? { model.definition?["sweeps"]?[name]?.array }
+  private var disabled: Bool {
+    let pendingSweepRemoval = sweep == nil && session.cardDefinition(model.cardKey)?["sweeps"]?[name] != nil
+    return !session.isEditable || edit.revision.applying || model.applying || pendingSweepRemoval
+  }
 
   var body: some View {
-    let param = model.definition?["params"]?.array?[index] ?? .object([])
-    let name = param["name"]?.string ?? "?"
-    let type = param["type"]?.string ?? "string"
-    let value = Documents.paramData(param["data"], type: type)
-    // An Input Card can hand on several values, one invocation each (an
-    // execution list). A list-typed value without it stays one vector.
-    let sweep = param["sweep"]?.array?.compactMap { Documents.paramData($0, type: type) }
-    let sweepText = draft ?? JSONValue.array(sweep ?? []).serialized(pretty: false)
-    let parsed = (try? JSONValue.parse(sweepText))?.array
-    let pathInput = model.kind == .input && name == "value" && type == "string" &&
-      (model.session.resolution[model.cardKey]?.outputs.contains { $0.kind == .path } ?? false)
+    let value = parameter.effectiveValue
+    let folder = session.definitionDir(model.cardKey)
+    let pathInput = model.kind == .input && name == "value" && parameter.type == "string" &&
+      (session.resolution[model.cardKey]?.outputs.contains { $0.kind == .path } ?? false)
     VStack(alignment: .leading, spacing: 4) {
       HStack {
-        if sweep != nil {
-          TextField(name, text: Binding(get: { sweepText }, set: { text in
-            draft = text
-            if let values = (try? JSONValue.parse(text))?.array {
-              update { $0["sweep"] = .array(values.map { Documents.paramValue(type, $0) }) }
-            }
+        if let sweep {
+          TextField(name, text: Binding(get: { sweepDraft ?? JSONValue.array(sweep).serialized(pretty: false) }, set: {
+            sweepDraft = $0
+            if let values = (try? JSONValue.parse($0))?.array { setSweep(values) }
           }))
-        } else if type == "bool" {
-          Toggle(name, isOn: Binding(get: { value?.bool ?? false }, set: { set(.bool($0)) }))
+        } else if parameter.type == "bool" {
+          Toggle(name, isOn: Binding(get: { draft.map { $0 == "true" } ?? value.bool ?? false }, set: {
+            begin()
+            draft = $0 ? "true" : "false"
+            save()
+          }))
         } else {
-          TextField(name, text: Binding(get: { display(value) }, set: { set(parseParam($0, type)) }))
-          if pathInput, let folder = model.session.definitionDir(model.cardKey) {
+          TextField(name, text: Binding(get: { draft ?? parameterText(value) }, set: {
+            begin()
+            draft = $0
+          }))
+          .onSubmit { if draft != nil { save() } }
+          if pathInput, let folder {
             Menu("ファイルかフォルダを選択…") {
-              ForEach(pathChoices(model.session.sourcePaths, definitionDir: folder), id: \.self) { p in
-                Button(p) { set(.string(p)) }
+              ForEach(pathChoices(session.sourcePaths, definitionDir: folder), id: \.self) { path in
+                Button(path) { begin(); draft = path; save() }
               }
             }
-            .fixedSize()
             .help("プロジェクトのファイルかフォルダを選びます。")
           }
+          if draft != nil { Button("保存") { save() } }
         }
-        Text(type + (param["nix"]?.bool == true ? " · nix" : "")).font(.caption2).foregroundStyle(.secondary)
-          .guideTarget("param:\(name)")
+        Text(verbatim: parameter.type).font(.caption2).foregroundStyle(.secondary)
+        if parameter.override != nil && sweep == nil {
+          Button("既定値に戻す") { begin(); reset = true; save() }
+        }
       }
-      if model.kind == .input {
-        Toggle("値ごとに呼び出す", isOn: Binding(get: { sweep != nil }, set: { setSweeping($0) }))
-          .toggleStyle(.checkbox).controlSize(.small)
-          .help("並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。")
+      .guideTarget("param:\(name)")
+      .disabled(disabled)
+      Text("既定値: \(parameter.defaultValue.serialized(pretty: false))")
+        .font(.caption).foregroundStyle(.secondary)
+      if model.kind == .input && parameter.section == .run {
+        Toggle("値ごとに呼び出す", isOn: Binding(get: { sweep != nil }, set: { enabled in
+          sweepDraft = nil
+          setSweep(enabled ? [value] : nil, updateOverride: true)
+        }))
+        .toggleStyle(.checkbox).controlSize(.small)
+        .help("並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。")
+        .disabled(disabled || draft != nil)
       }
-      if sweep != nil {
-        Group {
-          if let parsed { Text("\(parsed.count) 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。") }
-          else { Text("値を JSON の配列で書いてください。例: [8, 12, 16]") }
-          if type.hasSuffix("[]") { Text("リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。") }
-        }.font(.caption).foregroundStyle(.secondary)
-      }
-      if pathInput, let folder = model.session.definitionDir(model.cardKey), let id = model.definitionId {
+      if let sweep {
+        if let sweepDraft, (try? JSONValue.parse(sweepDraft))?.array == nil {
+          Text("値を JSON の配列で書いてください。例: [8, 12, 16]").font(.caption).foregroundStyle(.secondary)
+        } else {
+          Text("\(sweep.count) 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。").font(.caption).foregroundStyle(.secondary)
+        }
+      } else if pathInput, let folder, let id = model.definitionId {
+        let entered = draft ?? value.string ?? ""
+        let target = entered.hasPrefix("project:")
+          ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
+          : folder + entered
         Text("Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。")
           .font(.caption).foregroundStyle(.secondary)
-        if sweep == nil {
-          let entered = value?.string ?? ""
-          let target = entered.hasPrefix("project:")
-            ? String(folder.dropLast("definitions/\(id)/".count)) + entered.dropFirst(8)
-            : folder + entered
-          Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
-        }
+        Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       }
+      RevisionEditNotice(edit: edit.revision, text: { reset ? String(localized: "既定値に戻す") : (draft ?? "") },
+                         overwrite: { save(overwrite: true) }, reload: clear)
     }
   }
 
-  private func display(_ v: JSONValue?) -> String {
-    switch v {
-    case .string(let s)?: return s
-    case .number(let n)?: return n
-    case .bool(let b)?: return b ? "true" : "false"
-    case .array?: return v!.serialized(pretty: false)
-    default: return ""
-    }
+  private func begin() {
+    if draft == nil && !reset { edit.begin(parameterText(parameter.effectiveValue), rev: session.rev) }
+    reset = false
   }
 
-  private func update(_ change: (inout JSONValue) -> Void) {
-    guard var params = model.definition?["params"]?.array, index < params.count else { return }
-    change(&params[index])
-    model.definition?["params"] = .array(params)
-  }
-
-  private func set(_ v: JSONValue?) {
-    update { param in param["data"] = v.map { Documents.paramValue(param["type"]?.string, $0) } }
-  }
-
-  private func setSweeping(_ on: Bool) {
+  private func clear() {
     draft = nil
-    update { p in
-      let current = p["data"], first = p["sweep"]?.array?.first
-      p["sweep"] = on ? .array(current.map { [$0] } ?? []) : nil
-      p["data"] = on ? nil : first
+    reset = false
+    edit.begin(parameterText(parameter.effectiveValue), rev: session.rev)
+  }
+
+  private func save(overwrite: Bool = false) {
+    let value = reset ? nil : draft.map { parseParam($0, parameter.type) }
+    Task { if await edit.commitParam(session, card: model.cardKey, name: name, value: value, overwrite: overwrite) { clear() } }
+  }
+
+  /// A sweep and a scalar override for the same parameter are mutually exclusive.
+  private func setSweep(_ values: [JSONValue]?, updateOverride: Bool = false) {
+    let first = sweep?.first
+    var sweeps = model.definition?["sweeps"] ?? .object([])
+    sweeps[name] = values.map(JSONValue.array)
+    model.definition?["sweeps"] = sweeps.object?.isEmpty == true ? nil : sweeps
+    if updateOverride {
+      var overrides = model.definition?["params"] ?? .object([])
+      overrides[name] = values == nil ? first : nil
+      model.definition?["params"] = overrides.object?.isEmpty == true ? nil : overrides
     }
   }
 }
@@ -1436,7 +1470,7 @@ private struct ContextCategory: View {
 /// What the last "build SDK" returned: the files of share/tsugumi/api/ by
 /// their shown name, or the build failure and its log. Held only while the
 /// editor shows the sources.
-private struct SdkBuild {
+struct SdkBuild {
   struct File: Identifiable {
     let id: String
     let name: String
@@ -1447,6 +1481,27 @@ private struct SdkBuild {
   var files: [File]?
   var failure: String?
   var log: String?
+  var truncated = false
+
+  init(building: Bool = false, failure: String? = nil) {
+    self.building = building
+    self.failure = failure
+  }
+
+  init(_ result: Tsugumi_RPC_EvaluateNixResultT, prefix: String) {
+    if let problem = result.failure {
+      failure = problem.diagnostic ?? "\(problem.kind)"
+      log = result.log
+      return
+    }
+    truncated = result.truncated
+    let directory = "share/tsugumi/api/"
+    files = result.files.compactMap { file in
+      guard let file, file.path.hasPrefix(directory) else { return nil }
+      let relative = String(file.path.dropFirst(directory.count))
+      return File(id: prefix + relative, name: relative, text: String(decoding: file.content, as: UTF8.self))
+    }
+  }
 }
 
 /// File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
@@ -1465,7 +1520,7 @@ private struct SourceCategory: View {
   @State private var sdk = SdkBuild()
 
   static let sdkPrefix = "sdk:"
-  static let sdkLog = "sdk:log"
+  static let sdkLog = "sdk:/log"
 
   private var prefix: String { model.session.definitionDir(model.cardKey) ?? "" }
 
@@ -1533,14 +1588,14 @@ private struct SourceCategory: View {
   private func open(_ path: String) { model.openFile(path) }
 
   /// The "SDK" section: builds the saved definition with the current wiring
-  /// (the Card API request the Agent uses) and lists share/tsugumi/api/.
+  /// by evaluating and building card.api, then lists share/tsugumi/api/.
   @ViewBuilder private var sdkSection: some View {
     HStack {
       Text("SDK").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
       Spacer()
       Button(sdk.building ? String(localized: "ビルドしています…") : String(localized: "SDK をビルド")) { Task { await buildSdk() } }
         .controlSize(.small).disabled(sdk.building || model.session.rpc == nil)
-        .help("保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します")
+        .help("保存済みの定義と現在の接続で card.api をビルドし、share/tsugumi/api/ のファイルを表示します")
     }
     .padding(.leading, 10).padding(.trailing, 6).padding(.top, 12).padding(.bottom, 2)
     if let failure = sdk.failure {
@@ -1550,6 +1605,10 @@ private struct SourceCategory: View {
         FileRow(name: String(localized: "ビルドログ"), icon: "doc.text", depth: 0, folder: nil,
                 selected: model.shownFile == Self.sdkLog, readOnly: true) { open(Self.sdkLog) }
       }
+    }
+    if sdk.truncated {
+      Text("出力の上限に達したため、一部のファイルのみ表示しています").font(.caption).foregroundStyle(.secondary)
+        .padding(.horizontal, 10)
     }
     if let files = sdk.files {
       if files.isEmpty {
@@ -1568,21 +1627,8 @@ private struct SourceCategory: View {
     guard let rpc = model.session.rpc, !sdk.building else { return }
     sdk = SdkBuild(building: true)
     do {
-      let result = try await rpc.cardApi(card: path(model.cardKey), atRev: model.session.rev)
-      let implementations = result.implementations.compactMap { $0 }
-      if let failure = result.failure {
-        sdk = SdkBuild(failure: failure.diagnostic ?? "\(failure.kind)", log: result.log)
-      } else {
-        let files = implementations.enumerated().flatMap { position, implementation in
-          let label = implementation.label ?? ""
-          let base = implementations.count > 1 ? (label.isEmpty ? "#\(position + 1)" : label) + "/" : ""
-          return implementation.files.compactMap { $0 }.map { file in
-            SdkBuild.File(id: Self.sdkPrefix + "\(position)/" + file.path,
-                          name: base + file.path, text: String(decoding: file.content, as: UTF8.self))
-          }
-        }
-        sdk = SdkBuild(files: files)
-      }
+      let result = try await rpc.evaluateNix(card: path(model.cardKey), expression: "card.api", build: true, atRev: model.session.rev)
+      sdk = SdkBuild(result, prefix: Self.sdkPrefix)
     } catch {
       sdk = SdkBuild(failure: "\(error)")
     }

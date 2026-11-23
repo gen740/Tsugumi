@@ -47,6 +47,7 @@ struct ResolvedCard {
   let outputs: [PortInfo]
   let diagnostics: [Diagnostic]
   var nixReferences: [CardNixReference] = []
+  var parameters: [CardParameter] = []
 }
 
 /// One stage of an invocation as the core recorded it (core clock, ms).
@@ -740,7 +741,7 @@ final class ProjectSession {
                                outputs: rc.outputs.compactMap { $0 }.map(port), diagnostics: d,
                                nixReferences: rc.nixReferences.compactMap { $0 }.map {
                                  CardNixReference(source: key(p), target: key($0.target.path), name: $0.name)
-                               })
+                               }, parameters: rc.parameters.compactMap { $0 }.compactMap(CardParameter.init))
       all += d
     }
     resolution = r
@@ -1210,10 +1211,17 @@ final class ProjectSession {
     }
   }
 
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    guard let client else { throw RPCError.disconnected }
-    return try await client.resolveNixSource(ref: ref)
+  func updateNixPathLock(prefix: String, name: String? = nil) async throws {
+    let update = Tsugumi_Host_ProjectUpdateNixPathLockT()
+    update.projectPath = prefix.isEmpty ? nil : String(prefix.dropLast())
+    update.name = name
+    try await operate(.projectupdatenixpathlock, body: update, record: false)
+  }
+
+  func nixPathLock(prefix: String) -> JSONValue? {
+    let file = prefix + "tsugumi.lock"
+    guard sources[file] != nil, let text = carriedText(file) else { return nil }
+    return try? JSONValue.parse(text)
   }
 
   /// View traffic is kept only for Cards a window shows.

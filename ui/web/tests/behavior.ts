@@ -66,7 +66,8 @@ await import("./freeSpot")
 await import("./liveViews")
 await import("./definitionErrors")
 
-await import("./nixSources")
+await import("./nixPath")
+await import("./nixEvaluation")
 await import("./cardTemplates")
 
 await import("./sessionRestore")

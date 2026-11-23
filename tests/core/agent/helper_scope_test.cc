@@ -428,11 +428,14 @@ TEST(HelperScope, WriteDoesNotGrantRunAndReadRunDoesNotGrantWrite) {
       R"({"read_cards":["a"],"write_cards":["a"],"run_cards":[]})"));
   HelperScope runner(json::Object(
       R"({"read_cards":["a"],"write_cards":[],"run_cards":["a"]})"));
-  const auto card = json::Object(R"({"card":{"segments":["a"]}})");
-  for (const auto* tool : {"run", "card_api"}) {
+  const auto card = json::Object(R"({"card":{"segments":["a"]},"build":true})");
+  for (const auto* tool : {"run", "evaluate_nix"}) {
     EXPECT_THROW(writer.Check(tool, card, kRead), std::runtime_error);
     EXPECT_NO_THROW(runner.Check(tool, card, kRead));
   }
+  EXPECT_NO_THROW(writer.Check("evaluate_nix",
+                               json::Object(R"({"card":{"segments":["a"]}})"),
+                               kRead));
   EXPECT_THROW(
       runner.Check(
           "project_save",

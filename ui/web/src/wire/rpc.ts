@@ -190,11 +190,11 @@ export class RPCClient {
   save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
     return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-  /** Builds the saved Card from its current wiring and returns the files its
-   *  builder placed under share/tsugumi/api/, or the build failure and log. */
-  cardApi(card: string[], atRev: bigint) {
-    return this.call<R.CardApiResultT>(RequestPayload.CardApiRequest,
-      Object.assign(new R.CardApiRequestT(), { card: cardPath(card), atRev }))
+  evaluateNix(card: string[], expression: string, { build = false, system = null, atRev = null }: {
+    build?: boolean; system?: string | null; atRev?: bigint | null
+  } = {}) {
+    return this.call<R.EvaluateNixResultT>(RequestPayload.EvaluateNixRequest,
+      Object.assign(new R.EvaluateNixRequestT(), { card: cardPath(card), expression, build, system, atRev }))
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {
@@ -320,10 +320,6 @@ export class RPCClient {
   /** Each Card's latest invocation of a run. */
   latestInvocations(runId: string) {
     return this.call<R.InvocationPageT>(RequestPayload.RunLatestInvocationsRequest, Object.assign(new R.RunLatestInvocationsRequestT(), { runId }))
-  }
-  /** Looks a flake up for nixSources (nothing is saved). */
-  resolveNixSource(ref: string) {
-    return this.call<R.NixSourceResolvedT>(RequestPayload.NixSourceResolveRequest, Object.assign(new R.NixSourceResolveRequestT(), { ref }))
   }
   /** Deletes the project's build caches; documents and history are kept. */
   clearCache(opId: string) {

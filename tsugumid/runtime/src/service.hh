@@ -201,7 +201,7 @@ class Service : public RequestSink {
   void output_types(RequestIn& req);
   void input_types(RequestIn& req);
   void nix_source_resolve(RequestIn& req);
-  void card_api(RequestIn& req);
+  void evaluate_nix(RequestIn& req);
   void run_plan(RequestIn& req);
   void run_cancel(RequestIn& req);
   void run_status(RequestIn& req);

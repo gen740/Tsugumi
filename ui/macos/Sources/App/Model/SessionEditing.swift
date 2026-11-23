@@ -402,35 +402,14 @@ extension ProjectSession {
     }
   }
 
-  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?) {
-    guard let dir = definitionDir(k) else { return }
-    queueFields { [self] in
-      let definition = cardDefinition(k), match = JSONValue.object([("name", .string(name))])
-      if let param = (definition?["params"]?.array ?? []).first(where: { $0["name"]?.string == name }) {
-        return [fieldEdit(dir + "_card.json", [.string("params"), match, .string("data")], old: param["data"],
-                          new: value.map { Documents.paramValue(param["type"]?.string, $0) })]
-      }
-      throw RPCFailure(kind: .invalidRequest, diagnostic: "Unknown param: \(name)")
-    }
-  }
-
-  /// Mutates the value inside the caller's transaction, without an autosave.
-  func updateParam(_ k: CardKey, _ name: String, _ value: JSONValue?, initial: InlineParamEdit.ParamBase? = nil) {
-    if let initial {
-      if let dir = definitionDir(k) {
-        let selector: [JSONValue] = [.string("params"), .object([("name", .string(name))])]
-        appendEdits([fieldEdit(dir + "_card.json", selector + [.string("data")], old: initial.parameter?["data"],
-                                      new: value.map { Documents.paramValue(initial.parameter?["type"]?.string, $0) })])
-      }
-      return
-    }
-    updateCard(k) { c in
-      var params = c["params"]?.array ?? []
-      if let i = params.firstIndex(where: { $0["name"]?.string == name }) {
-        params[i]["data"] = value.map { Documents.paramValue(params[i]["type"]?.string, $0) }
-      }
-      c["params"] = .array(params)
-    }
+  @discardableResult
+  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?, expectedRev: UInt64) async throws -> UInt64 {
+    let edit = Tsugumi_Host_ProjectSetParamT()
+    edit.card = cardPath(path(k))
+    edit.name = name
+    edit.valueJson = value?.serialized(pretty: false)
+    edit.expectedRev = expectedRev
+    return try await operate(.projectsetparam, body: edit).rev ?? rev
   }
 
   /// Moves the selected Cards into a new Card in Card: a new external project

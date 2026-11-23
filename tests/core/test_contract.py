@@ -449,19 +449,19 @@ def test_history_pagination_and_cursor_checks(builtin_client):
     assert e.value.kind == "invalid_cursor"
 
 
-def test_card_api_needs_a_code_card_at_the_current_revision(builtin_client):
-    """The Card API builds only a Code Card, at the revision asked for; nothing is kept."""
+def test_evaluate_nix_needs_a_definition_at_the_current_revision(builtin_client):
+    """Nix evaluation requires a definition at the revision requested."""
     c = builtin_client
     rev = c.call("ProjectInspectRequest").rev
     for card, kind in ((path("missing"), "not_found"), (path("src"), "invalid_request"),
                        (path("merge"), "not_found")):
         with pytest.raises(RpcFailure) as e:
-            c.call("CardApiRequest", card=card, atRev=rev)
+            c.call("EvaluateNixRequest", expression="1", card=card, atRev=rev)
         assert e.value.kind == kind
     op = new_id()
     save_name(c, rev, "changed", op)
     with pytest.raises(RpcFailure) as e:
-        c.call("CardApiRequest", card=path("src"), atRev=rev)
+        c.call("EvaluateNixRequest", expression="1", card=path("src"), atRev=rev)
     assert e.value.kind == "revision_conflict"
     got = c.call("OperationGetRequest", opId=op)
     assert got.state == OperationState.completed and got.receipt is not None

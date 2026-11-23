@@ -288,7 +288,20 @@ table HostTemplateAddRequest { addition:TemplateAdd (required); }
 table ProjectTemplateCopy {
   project_path:string; store:TemplateStore; name:string (required); x:double; y:double;
 }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd }
+// NIXPATH-CONTRACT: Lane B owns these Host operation variants and their handlers.
+table ProjectUpdateNixPathLock {
+  project_path:string;
+  /// Omitted locks every declared name and removes obsolete lines.
+  name:string;
+}
+table ProjectSetParam {
+  card:Tsugumi.Data.CardPath (required);
+  name:string (required);
+  /// Omitted clears the override.
+  value_json:string;
+  expected_rev:uint64 = null;
+}
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectSetParam }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);

@@ -195,13 +195,14 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
-  /// Builds the saved Card from its current wiring and returns the files its
-  /// builder placed under share/tsugumi/api/, or the build failure and log.
-  func cardApi(card: [String], atRev: UInt64) async throws -> Tsugumi_RPC_CardApiResultT {
-    let r = Tsugumi_RPC_CardApiRequestT()
+  func evaluateNix(card: [String], expression: String, build: Bool = false, system: String? = nil, atRev: UInt64? = nil) async throws -> Tsugumi_RPC_EvaluateNixResultT {
+    let r = Tsugumi_RPC_EvaluateNixRequestT()
     r.card = cardPath(card)
+    r.expression = expression
+    r.build = build
+    r.system = system
     r.atRev = atRev
-    return try await call(.cardapirequest, r)
+    return try await call(.evaluatenixrequest, r)
   }
 
   /// Each Card's latest invocation of a run.
@@ -209,13 +210,6 @@ public extension RPCClient {
     let r = Tsugumi_RPC_RunLatestInvocationsRequestT()
     r.runId = runId
     return try await call(.runlatestinvocationsrequest, r)
-  }
-
-  /// Looks a flake up for nixSources (nothing is saved).
-  func resolveNixSource(ref: String) async throws -> Tsugumi_RPC_NixSourceResolvedT {
-    let r = Tsugumi_RPC_NixSourceResolveRequestT()
-    r.ref = ref
-    return try await call(.nixsourceresolverequest, r)
   }
 
   /// Deletes the project's build caches; documents and history are kept.

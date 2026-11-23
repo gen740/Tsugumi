@@ -257,9 +257,9 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
 
   const commitParam = async (k: CardKey, name: string, text: string, edit = new InlineParamEdit(), overwrite = false) => {
     if (!session.isEditable) return false
-    const type = str(get((arr(get(session.cardDefinition(k), 'params')) ?? []).find((p) => str(get(p, 'name')) === name), 'type'))
-    if (!type) return false
-    return edit.commit(session, text, x => x.updateParam(k, name, parseParam(text, type), edit.parameterBase(session, k, name, overwrite)))
+    const parameter = session.resolution.get(k)?.parameters?.find(p => p.name === name)
+    if (!parameter) return false
+    return edit.commitParam(session, k, name, parseParam(text, parameter.type), overwrite)
   }
 
   const addBuiltin = (t: DefinitionTemplate, at?: Pt) => {
@@ -610,10 +610,7 @@ export function GraphCanvas({ workspace, session, tab }: { workspace: Workspace;
           <Fragment key={k}>
           <CardNodeView data={data} flow={flow} zoom={z} selected={sel.has(k)} guide={'card:' + k}
             style={placed(origin, g.size.width * z, g.size.height * z, data.draftEditing ? { zIndex: 1 } : undefined)}
-            onParamBegin={(edit, name) => {
-              edit.paramBase = { parameter: clone((arr(get(session.cardDefinition(k), 'params')) ?? []).find(p => str(get(p, 'name')) === name)) }
-              return session.rev
-            }}
+            onParamBegin={() => session.rev}
             onParamCommit={data.kind === 'input' ? (name, text, edit, overwrite) => {
               if (!edit) { edit = new InlineParamEdit(); edit.begin(data.params.find(p => p.name === name)?.value ?? '', session.rev) }
               return commitParam(k, name, text, edit, overwrite)

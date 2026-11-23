@@ -73,7 +73,7 @@ import TsugumiTestSupport
   static let sinkSources = [
     "_outputs.fbs": "table Outputs {}\nroot_type Outputs;\n",
     "default.nix": #"""
-      { pkgs, inputs, params, ... }:
+      { params, inputs }:
       {
         run = ''
           test -r "$JSON_IN" || exit 1
@@ -101,7 +101,7 @@ import TsugumiTestSupport
         }
       }
       let list = cards.map { "{\"id\": \"\($0)\"}" }.joined(separator: ", ")
-      try Data("{\"name\": \"sync\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
+      try Data("{\"name\": \"sync\", \"nixPath\": [], \"canvas\": {\"cards\": [\(list)], \"connections\": []}}".utf8)
         .write(to: p.appendingPathComponent("tsugumi.json"))
       return p
     } catch {

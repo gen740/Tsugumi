@@ -710,11 +710,12 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
     RequireRun(found->second);
     return;
   }
-  if (tool == "run" || tool == "card_api") {
+  if (tool == "run" ||
+      (tool == "evaluate_nix" && json::Bool(json::Get(args, "build")))) {
     RequireRun(Card(json::Get(args, "card", "{}")));
     return;
   }
-  if (tool == "run_plan" || tool == "run_history" ||
+  if (tool == "evaluate_nix" || tool == "run_plan" || tool == "run_history" ||
       tool == "run_invocations" || tool == "run_record" ||
       tool == "run_value_read" || tool == "artifact_list" ||
       tool == "log_range") {

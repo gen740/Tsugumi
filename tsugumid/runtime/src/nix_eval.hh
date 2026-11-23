@@ -84,6 +84,19 @@ struct FlakeInfo {
   std::string json;
 };
 
+// NIXPATH-CONTRACT: Replace these result types with lane A's evaluator types.
+struct ExpressionFile {
+  std::string path, bytes;
+};
+
+struct ExpressionResult {
+  std::optional<std::string> json;
+  std::vector<ExpressionFile> files;
+  bool truncated = false;
+  std::string log_tail;
+  std::optional<std::string> build_error;
+};
+
 class NixEvaluator {
  public:
   // Must run on the main thread before other threads start (Boehm GC).

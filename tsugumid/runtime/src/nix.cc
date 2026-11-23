@@ -356,6 +356,11 @@ auto NixRunner::declared_views(const BuildRequest& req)
   return build_plan(view_request, !prepared_).common.views;
 }
 
+// NIXPATH-CONTRACT: Replace with lane A's implementation on integration.
+auto NixRunner::evaluate_expression(const ExpressionRequest&) -> ExpressionResult {
+  throw std::runtime_error("Nix expression evaluation requires the lane A evaluator");
+}
+
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
     -> CardBuildPlan {
   const Node& node = *req.node;

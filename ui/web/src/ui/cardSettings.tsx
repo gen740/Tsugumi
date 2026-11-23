@@ -12,11 +12,11 @@ import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
 import { pathChoices } from '../model/pathChoices'
 import { prefs } from '../model/prefs'
-import { portTypeName, CardComment, CardKey, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
+import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
 import { BFBS } from '../../shared/bfbs'
 import { arr, bool, clone, get, isObj, J, jeq, JNum, JObj, numText, obj, parse, serialize, str, tryParse } from '../../shared/json'
-import { D, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
+import { D, R, RPCFailure, s, sOpt, sha256Hex } from '../wire/rpc'
 import { CardNodeView } from './cardNode'
 import { Button, Confirm, Disclosure, Empty, Form, HSplit, Prompt, Row, Section, Select, showMenu, Spinner, TextField, Toggle, Value } from './controls'
 import { CodeEditor, EditorMarker } from './editor'
@@ -26,7 +26,7 @@ import { Icon } from './icons'
 import { FolderPicker } from './sidebar'
 import { SymbolPicker } from './symbolPicker'
 import { L } from '../i18n'
-import { paramData, paramValue, splitCardNotes } from '../model/documents'
+import { splitCardNotes } from '../model/documents'
 import { InlineParamEdit, RevisionEdit, RevisionEditNotice } from './revisionEdit'
 
 /** Whether a source file's content is known. A file that could not be read
@@ -37,6 +37,8 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
  *  is open (the Agent, the canvas): settings and files not touched here take
  *  the new content; changes on both sides require an explicit overwrite or
  *  reload choice. */
+const inputParameters = (boolean: boolean) => `{ run = { value = ${boolean ? 'false' : '0.0'}; }; }\n`
+
 export class CardEditorModel extends Observable {
   definition?: J
   meta?: J
@@ -63,7 +65,7 @@ export class CardEditorModel extends Observable {
   private baseDefinition?: J
   private baseMeta?: J
   private baseTexts = new Map<string, string>()
-  private presetOutputs?: string
+  private presetFiles = new Map<string, string>()
   /** Source hash when each file was read. */
   private baseHashes = new Map<string, string>()
 
@@ -115,29 +117,35 @@ export class CardEditorModel extends Observable {
 
   get implementation() {
     const kind = definitionKind(this.definition)
-    if (kind === 'input' && str(get(arr(get(this.definition, 'params'))?.[0], 'type')) === 'bool') return 'input_bool'
+    if (kind === 'input' && (this.presetFiles.get(this.prefix + 'params.nix') === inputParameters(true) ||
+      this.session.resolution.get(this.cardKey)?.parameters?.some(p => p.name === 'value' && p.type === 'bool'))) return 'input_bool'
     return kind
   }
 
   implementAs(value: string) {
     if (value === 'input' || value === 'input_bool') {
       const type = value === 'input_bool' ? 'bool' : 'double'
-      this.definition = obj([['type', 'input'], ['params', [
-        obj([['name', 'value'], ['type', type], ['data', paramValue(type, type === 'bool' ? false : new JNum('0'))]]),
-      ]]])
-      const p = this.outputsPath
-      if (p && !this.session.sources.has(p) && !this.removed.has(p)) {
-        const untouched = this.created.has(p) && this.presetOutputs !== undefined && this.texts.get(p) === this.presetOutputs
-        if (untouched || (!this.created.has(p) && !this.texts.has(p))) {
-          const outputs = `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`
-          this.createFile('_outputs.fbs', outputs)
-          this.presetOutputs = outputs
-        }
-      }
-    } else this.definition = obj([['type', value]])
+      this.definition = obj([['type', 'input']])
+      this.preset('_outputs.fbs', `namespace card;\ntable Value { value:${type}; }\ntable Outputs { value:Value (required); }\nroot_type Outputs;\n`)
+      this.preset('params.nix', inputParameters(value === 'input_bool'))
+    } else {
+      this.definition = obj([['type', value]])
+      for (const [file, text] of this.presetFiles)
+        if (this.created.has(file) && this.texts.get(file) === text) this.removeFile(file)
+      this.presetFiles.clear()
+    }
     if (value === 'merge') this.setSetting('inputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     if (value === 'fork') this.setSetting('outputs', [obj([['name', 'a']]), obj([['name', 'b']])])
     this.changed()
+  }
+
+  private preset(relative: string, text: string) {
+    const file = this.prefix + relative
+    if (!this.prefix || this.session.sources.has(file) || this.removed.has(file)) return
+    const untouched = this.created.has(file) && this.presetFiles.has(file) && this.texts.get(file) === this.presetFiles.get(file)
+    if (!untouched && (this.created.has(file) || this.texts.has(file))) return
+    this.createFile(relative, text)
+    this.presetFiles.set(file, text)
   }
 
   /** Source files of the definition (documents excluded), with local changes. */
@@ -169,7 +177,7 @@ export class CardEditorModel extends Observable {
     this.baseMeta = clone(this.meta)
     this.texts = new Map()
     this.baseTexts = new Map()
-    this.presetOutputs = undefined
+    this.presetFiles.clear()
     this.baseHashes = new Map()
     this.loads = new Map()
     for (const [p, t] of keep) {
@@ -301,7 +309,7 @@ export class CardEditorModel extends Observable {
     const prefix = this.prefix
     if (!prefix || !rel) return
     const p = prefix + rel
-    if (p === this.outputsPath) this.presetOutputs = undefined
+    if (!this.created.has(p)) this.presetFiles.delete(p)
     this.removed.delete(p)
     this.created.add(p)
     const hash = this.session.sources.get(p)?.hash
@@ -315,7 +323,8 @@ export class CardEditorModel extends Observable {
   async rename(p: string, rel: string): Promise<boolean> {
     const target = this.prefix + rel
     if (target === p) return true
-    if (p === this.outputsPath || target === this.outputsPath) this.presetOutputs = undefined
+    this.presetFiles.delete(p)
+    this.presetFiles.delete(target)
     const origin = this.renames.get(p) ?? p
     const hash = this.baseHashes.get(p) ?? this.session.sources.get(origin)?.hash
     const text = this.texts.get(p), base = this.baseTexts.get(p), load = this.loads.get(p)
@@ -656,9 +665,9 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
         onChange={(v) => model.setSetting(n, v.trim() ? new JNum(v.trim()) : undefined)} />
     </Row>
   )
-  const params = arr(get(def, 'params')) ?? []
-  const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
   const kind = model.kind
+  const params = kind === session.kind(model.cardKey) ? session.resolution.get(model.cardKey)?.parameters ?? [] : []
+  const diags = session.diagnostics.filter(d => d.card?.join('/') === model.cardKey)
   const serviceSetting = string('executionService', 'auto')
   const serviceId = serviceSetting.value
   const service = session.executionServices.find((e) => s(e.id) === serviceId)
@@ -721,11 +730,12 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
             .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
-      {params.length > 0 && (
-        <Section title={L('パラメータ')}>
-          {params.map((_, i) => <ParamRow key={i} model={model} index={i} />)}
-        </Section>
-      )}
+      {[R.ParamSection.run, R.ParamSection.build].map(section => {
+        const group = params.filter(p => p.section === section)
+        return group.length ? <Section key={section} title={section === R.ParamSection.run ? L('実行時パラメータ') : L('ビルド時パラメータ')}>
+          {group.map(parameter => <ParamRow key={parameter.name} model={model} parameter={parameter} />)}
+        </Section> : null
+      })}
       {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
@@ -908,73 +918,107 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
   )
 }
 
-function ParamRow({ model, index }: { model: CardEditorModel; index: number }) {
-  const param = (arr(get(model.definition, 'params')) ?? [])[index] ?? obj()
-  const name = str(get(param, 'name')) ?? '?'
-  const type = str(get(param, 'type')) ?? 'string'
-  // Values sit in the field of their type ({"double": 0.5}); this row edits
-  // the values themselves.
-  const value = paramData(get(param, 'data'), type)
-  // An Input Card can hand on several values, one invocation each (an
-  // execution list). A list-typed value without it stays one vector.
-  const sweep = arr(get(param, 'sweep'))?.map((v) => paramData(v, type) ?? null)
+function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: CardParameter }) {
+  const session = model.session
+  const { name, type } = parameter
+  const value = parameter.override ?? parameter.defaultValue
+  const sweep = arr(get(model.definition, 'sweeps', name))
   const [draft, setDraft] = useState<string>()
+  const [sweepDraft, setSweepDraft] = useState<string>()
+  const [reset, setReset] = useState(false)
+  const [edit] = useState(() => new InlineParamEdit())
+  useObserve(edit)
+
+  const disabled = !session.isEditable || edit.applying || model.applying
   const pathInput = model.kind === 'input' && name === 'value' && type === 'string' &&
-    model.session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
-  const folder = model.session.definitionDir(model.cardKey) ?? ''
-  const entered = str(value) ?? ''
+    session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
+  const folder = session.definitionDir(model.cardKey) ?? ''
+  const entered = draft ?? str(value) ?? ''
   const target = entered.startsWith('project:')
     ? folder.split('/').slice(0, -3).map((part) => part + '/').join('') + entered.slice(8)
     : folder + entered
-  const update = (change: (p: JObj) => void) => {
-    const params = (arr(get(model.definition, 'params')) ?? []).map((p) => clone(p))
-    if (index >= params.length || !isObj(params[index])) return
-    change(params[index] as JObj)
-    model.setSetting('params', params)
+  const choices = pathInput && !sweep ? pathChoices(session.sourcePaths, folder) : []
+  const begin = () => {
+    if (draft === undefined && !reset) edit.begin(paramText(value), session.rev)
+    setReset(false)
   }
-  const set = (v: J | undefined) => update((p) => p.set('data', v === undefined ? undefined : paramValue(type, v)))
-  const setSweeping = (on: boolean) => {
+  const clear = () => {
     setDraft(undefined)
-    update((p) => {
-      const current = get(p, 'data'), first = arr(get(p, 'sweep'))?.[0]
-      p.set('sweep', on ? (current === undefined ? [] : [current]) : undefined)
-      p.set('data', on ? undefined : first)
-    })
+    setReset(false)
+    edit.begin(paramText(value), session.rev)
   }
-  const choices = pathInput && !sweep ? pathChoices(model.session.sourcePaths, folder) : []
-  const sweepText = draft ?? serialize(sweep ?? [], false)
-  const parsedSweep = arr(tryParse(sweepText))
+  const save = async (text: string | undefined, overwrite = false) => {
+    if (await edit.commitParam(session, model.cardKey, name, text === undefined ? undefined : parseParam(text, type), overwrite)) clear()
+  }
+  const set = (text: string) => {
+    begin()
+    setDraft(text)
+    void save(text)
+  }
+  // A sweep and a scalar override for the same parameter are mutually exclusive.
+  const setSweep = (values: J[] | undefined, updateOverride = false) => {
+    const sweeps = clone(get(model.definition, 'sweeps'))
+    const next = isObj(sweeps) ? sweeps : obj()
+    next.set(name, values)
+    model.setSetting('sweeps', next.size ? next : undefined)
+    if (updateOverride) {
+      const current = clone(get(model.definition, 'params'))
+      const overrides = isObj(current) ? current : obj()
+      overrides.set(name, values === undefined ? sweep?.[0] : undefined)
+      model.setSetting('params', overrides.size ? overrides : undefined)
+    }
+  }
+  const pendingSweepRemoval = !sweep && get(session.cardDefinition(model.cardKey), 'sweeps', name) !== undefined
+  const valueDisabled = disabled || pendingSweepRemoval
+  const sweepText = sweepDraft ?? serialize(sweep ?? [], false)
   return (
     <Row label={name}>
       <div>
-        <div className="row gap6 center" data-guide={`param:${name}`}>
-          {sweep ? <TextField value={sweepText} onChange={(t) => {
-            setDraft(t)
-            const values = arr(tryParse(t))
-            if (values) update((p) => p.set('sweep', values.map((v) => paramValue(type, v))))
+        <div className="row gap6 center" data-guide={'param:' + name}>
+          {sweep ? <TextField value={sweepText} disabled={disabled} onChange={(text) => {
+            setSweepDraft(text)
+            const values = arr(tryParse(text))
+            if (values) setSweep(values)
           }} style={{ width: 220 }} />
             : type === 'bool'
-            ? <Toggle checked={bool(value) ?? false} onChange={(v) => set(v)} />
-            : <TextField value={paramText(value)} onChange={(t) => set(parseParam(t, type))} style={{ width: 220 }} />}
-          {pathInput && !sweep && <Select value={choices.includes(entered) ? entered : ''} onChange={(v) => v && set(v)} style={{ maxWidth: 220 }}
+            ? <Toggle checked={draft === undefined ? bool(value) ?? false : draft === 'true'} disabled={valueDisabled} onChange={v => set(String(v))} />
+            : <>
+              <TextField value={draft ?? paramText(value)} disabled={valueDisabled} onChange={text => { begin(); setDraft(text) }}
+                onKeyDown={e => {
+                  if (e.key !== 'Enter' || e.nativeEvent.isComposing || draft === undefined) return
+                  e.stopPropagation()
+                  void save(draft)
+                }} style={{ width: 220 }} />
+              {draft !== undefined && <Button disabled={valueDisabled} onClick={() => void save(draft)}>{L('保存')}</Button>}
+            </>}
+          {pathInput && !sweep && <Select value={choices.includes(entered) ? entered : ''} onChange={v => v && set(v)} disabled={valueDisabled} style={{ maxWidth: 220 }}
             help={L('プロジェクトのファイルかフォルダを選びます。')}
             options={[{ value: '', label: L('ファイルかフォルダを選択…'), disabled: true },
-              ...choices.map((p) => ({ value: p, label: p }))]} />}
-          <span className="caption2 secondary nowrap">{type + (bool(get(param, 'nix')) ? ' · nix' : '')}</span>
+              ...choices.map(p => ({ value: p, label: p }))]} />}
+          <span className="caption2 secondary nowrap">{type}</span>
+          {parameter.override !== undefined && !sweep && <Button disabled={valueDisabled} onClick={() => {
+            begin()
+            setReset(true)
+            void save(undefined)
+          }}>{L('既定値に戻す')}</Button>}
         </div>
-        {model.kind === 'input' && <div className="row gap6 center" style={{ marginTop: 4 }}>
-          <Toggle kind="checkbox" small checked={!!sweep} onChange={setSweeping} label={L('値ごとに呼び出す')}
-            help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
+        <div className="caption secondary">{L('既定値: {0}', serialize(parameter.defaultValue, false))}</div>
+        {model.kind === 'input' && parameter.section === R.ParamSection.run && <div className="row gap6 center">
+          <Toggle kind="checkbox" small checked={!!sweep} disabled={disabled || draft !== undefined} onChange={enabled => {
+            setSweepDraft(undefined)
+            setSweep(enabled ? [value] : undefined, true)
+          }} label={L('値ごとに呼び出す')} help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
         </div>}
-        {sweep && <div className="caption secondary" style={{ marginTop: 4 }}>
-          {parsedSweep ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', parsedSweep.length)
+        {sweep && <div className="caption secondary">
+          {arr(tryParse(sweepText)) ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', sweep.length)
             : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
-          {type.endsWith('[]') && <div>{L('リスト型のパラメータでは、配列の各要素がそれぞれ 1 つのリストです。')}</div>}
         </div>}
-        {pathInput && <div className="caption secondary" style={{ marginTop: 4, overflowWrap: 'anywhere' }}>
+        {pathInput && !sweep && <div className="caption secondary" style={{ overflowWrap: 'anywhere' }}>
           <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
-          {!sweep && <div>{L('参照先: {0}', target)}</div>}
+          <div>{L('参照先: {0}', target)}</div>
         </div>}
+        <RevisionEditNotice edit={edit} text={() => reset ? L('既定値に戻す') : draft ?? ''}
+          overwrite={() => void save(reset ? undefined : draft, true)} reload={clear} />
       </div>
     </Row>
   )
@@ -1415,12 +1459,25 @@ function FileRow({ name, icon, depth, folder, selected, edited, readOnly, onClic
 }
 
 const SDK = 'sdk:'
-const SDK_LOG = SDK + 'log'
+const SDK_LOG = SDK + '/log'
 
 /** What the last "build SDK" returned: the files of share/tsugumi/api/ by
  *  their shown name, or the build failure and its log. Held only while the
  *  editor is open. */
-type SdkState = { building: boolean, files?: { id: string, name: string, text: string }[], failure?: string, log?: string }
+type SdkState = { building: boolean, files?: { id: string, name: string, text: string }[], failure?: string, log?: string, truncated?: boolean }
+
+export function sdkBuild(result: R.EvaluateNixResultT): SdkState {
+  if (result.failure) return { building: false, failure: sOpt(result.failure.diagnostic) ?? D.FailureKind[result.failure.kind], log: sOpt(result.log) }
+  const directory = 'share/tsugumi/api/'
+  const decoder = new TextDecoder()
+  const files = result.files.flatMap(file => {
+    const fullPath = s(file.path)
+    if (!fullPath.startsWith(directory)) return []
+    const name = fullPath.slice(directory.length)
+    return [{ id: SDK + name, name, text: decoder.decode(Uint8Array.from(file.content)) }]
+  })
+  return { building: false, files, truncated: result.truncated }
+}
 
 /** File tree, tabs and editor for a definition's sources, `_outputs.fbs` and
  *  `default.nix`, with formatting, errors in place and the Card's generated
@@ -1456,29 +1513,14 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [shown, model.generation])
 
-  // The same Card API request the Agent uses: the saved definition built with
-  // the current wiring.
+  // Build the saved Card's API derivation with the current wiring.
   const buildSdk = async () => {
     const rpc = session.rpc
     if (!rpc || sdk.building) return
     setSdk({ building: true })
     try {
-      const r = await rpc.cardApi(path(model.cardKey), session.rev)
-      if (r.failure) {
-        setSdk({ building: false, failure: s(r.failure.diagnostic) || D.FailureKind[r.failure.kind], log: sOpt(r.log) })
-        return
-      }
-      const decoder = new TextDecoder()
-      const several = r.implementations.length > 1
-      const files = r.implementations.flatMap((impl, position) => {
-        const base = several ? (sOpt(impl.label) || `#${position + 1}`) + '/' : ''
-        return impl.files.map((file) => ({
-          id: SDK + position + '/' + s(file.path),
-          name: base + s(file.path),
-          text: decoder.decode(new Uint8Array(file.content)),
-        }))
-      })
-      setSdk({ building: false, files })
+      const result = await rpc.evaluateNix(path(model.cardKey), 'card.api', { build: true, atRev: session.rev })
+      setSdk(sdkBuild(result))
     } catch (e) {
       setSdk({ building: false, failure: errorText(e) })
     }
@@ -1644,7 +1686,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                     <div className="src-section caption row center gap4">
                       <span className="spacer">{L('SDK')}</span>
                       <Button small disabled={sdk.building || !session.rpc} onClick={() => void buildSdk()}
-                        help={L('保存済みの定義と現在の接続で Card をビルドし、share/tsugumi/api/ に生成されたファイルを表示します')}>
+                        help={L('保存済みの定義と現在の接続で card.api をビルドし、share/tsugumi/api/ のファイルを表示します')}>
                         {sdk.building ? L('ビルドしています…') : L('SDK をビルド')}
                       </Button>
                     </div>
@@ -1656,6 +1698,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                         )}
                       </>
                     )}
+                    {sdk.truncated && <div className="caption pad6">{L('出力の上限に達したため、一部のファイルのみ表示しています')}</div>}
                     {sdk.files?.length === 0 && (
                       <div className="caption pad6">{L('ビルドで生成された SDK ファイルはありません')}</div>
                     )}

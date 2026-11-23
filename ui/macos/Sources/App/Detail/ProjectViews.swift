@@ -164,115 +164,137 @@ struct ProjectSettingsContent: View {
   }
 }
 
-/// Flakes this project opts in to: an address gives its commit, hash and
-/// packages, which Cards read as inputs.
-private struct NixSourceSettings: View {
+private struct NixPathSettings: View {
   let session: ProjectSession
-  private struct Found { var name: String; let ref: String; let packages: [String] }
-  @State private var address = ""
-  @State private var found: Found?
-  @State private var working = false
-  @State private var message: String?
+  @State private var prefix = ""
+
+  var body: some View {
+    let projects = session.externals.keys.sorted()
+    Section {
+      if !projects.isEmpty {
+        Picker("対象プロジェクト", selection: $prefix) {
+          Text("ルートプロジェクト").tag("")
+          ForEach(projects, id: \.self) { Text(verbatim: String($0.dropLast())).tag($0) }
+        }
+        .onChange(of: projects) { if !projects.contains(prefix) { prefix = "" } }
+      }
+      NixPathRows(session: session, prefix: prefix).id(prefix)
+    } header: {
+      InfoHeader("Nix 検索パス", info: "Card は <名前/パス> でソースを参照します。「更新」で URL を解決し、tsugumi.lock に固定します。")
+    }
+  }
+}
+
+private struct NixPathRows: View {
+  let session: ProjectSession
+  let prefix: String
+  @State private var name = ""
+  @State private var url = ""
+  @State private var editing: String?
+  @State private var adding = false
+  @State private var updating = false
+  @State private var updateError: String?
   @State private var revisionEdit = RevisionEdit()
+  @State private var original: JSONValue?
   @State private var pending: [JSONValue]?
 
-  private var sources: [JSONValue] { session.project["nixSources"]?.array ?? [] }
-  private func entry(_ name: String, _ ref: String) -> JSONValue {
-    .object([("name", .string(name)), ("type", .string("flake")), ("ref", .string(ref))])
-  }
+  private var file: String { prefix + "tsugumi.json" }
+  private var project: JSONValue? { prefix.isEmpty ? session.project : session.externals[prefix]?.project }
+  private var entries: [JSONValue] { project?["nixPath"]?.array ?? [] }
+  private var disabled: Bool { updating || revisionEdit.applying || !session.isEditable }
 
-  private func resolve(_ ref: String, baseRev: UInt64) async -> (ref: String, packages: [String])? {
-    revisionEdit.reload(baseRev)
-    working = true
-    message = nil
-    defer { working = false }
-    do {
-      let r = try await session.resolveNixSource(ref: ref)
-      return (r.ref, r.packages.compactMap { $0 })
-    } catch {
-      message = String(localized: "取得できませんでした: \(error.localizedDescription)")
-      return nil
-    }
+  private func start(_ entry: JSONValue? = nil) {
+    editing = entry?["name"]?.string
+    adding = entry == nil
+    name = editing ?? ""
+    url = entry?["url"]?.string ?? ""
+    original = project?["nixPath"]
+    pending = nil
+    revisionEdit.reload(session.rev)
   }
 
   private func save(_ list: [JSONValue], overwrite: Bool = false) async {
     pending = list
-    let before = revisionEdit.jsonBase("tsugumi.json", initial: session.project, overwrite: overwrite)
-    var after = before ?? .object([]); after["nixSources"] = .array(list)
-    if await revisionEdit.apply(session, { $0.appendEdits([$0.jsonEdit("tsugumi.json", old: before, new: after)]) }) {
-      pending = nil
+    let before = overwrite ? revisionEdit.jsonBase(file, initial: nil, overwrite: true)?["nixPath"] : original
+    if await revisionEdit.apply(session, { s in
+      s.appendEdits([s.fieldEdit(file, [.string("nixPath")], old: before, new: .array(list))])
+    }) {
+      close()
     }
   }
 
-  private var taken: Bool { found.map { f in sources.contains { $0["name"]?.string == f.name } } ?? false }
+  private func close() {
+    editing = nil
+    adding = false
+    pending = nil
+    revisionEdit.reload(session.rev)
+  }
+
+  private func update(_ name: String? = nil) async {
+    updating = true
+    updateError = nil
+    defer { updating = false }
+    do { try await session.updateNixPathLock(prefix: prefix, name: name) }
+    catch { updateError = error.localizedDescription }
+  }
 
   var body: some View {
-    let baseRev = session.rev
-    let shownSources = sources
-    Section {
-      ForEach(sources.indices, id: \.self) { i in
-        let name = sources[i]["name"]?.string ?? ""
-        let ref = sources[i]["ref"]?.string ?? ""
+    let lock = session.nixPathLock(prefix: prefix)
+    ForEach(entries.indices, id: \.self) { index in
+      let entry = entries[index]
+      if let name = entry["name"]?.string, let url = entry["url"]?.string {
         LabeledContent(name) {
           HStack {
-            Text("\(NixSources.unlockedRef(ref)) \(NixSources.shortCommit(ref) ?? "")")
-              .font(.caption.monospaced()).foregroundStyle(.secondary).help(ref)
-            Button("更新") {
-              Task {
-                let baseSources = shownSources
-                guard let r = await resolve(NixSources.unlockedRef(ref), baseRev: baseRev) else { return }
-                await save(baseSources.map { source in
-                  guard source["name"]?.string == name else { return source }
-                  var updated = source
-                  updated["ref"] = .string(r.ref)
-                  return updated
-                })
-              }
+            VStack(alignment: .trailing) {
+              Text(verbatim: url).font(.caption.monospaced()).textSelection(.enabled)
+              status(.read(lock, name: name, url: url)).font(.caption).foregroundStyle(.secondary)
             }
+            Button("編集") { start(entry) }
+            Button("更新") { Task { await update(name) } }
             Button("削除", role: .destructive) {
-              Task { revisionEdit.reload(baseRev); await save(shownSources.filter { $0["name"]?.string != name }) }
+              start(entry)
+              let remaining = entries.filter { $0["name"]?.string != name }
+              Task { await save(remaining) }
             }
           }
-          .disabled(working || !session.isEditable)
+          .disabled(disabled)
         }
       }
+    }
+    if adding || editing != nil {
+      TextField("名前", text: $name).disabled(disabled)
+      TextField("URL", text: $url, prompt: Text(verbatim: "github:owner/repo")).disabled(disabled)
       HStack {
-        TextField("flake", text: $address, prompt: Text(verbatim: "github:owner/repo"))
-          .onChange(of: address) { found = nil }
-        Button("取得") {
-          let ref = address.trimmingCharacters(in: .whitespaces)
-          Task {
-            if let r = await resolve(ref, baseRev: baseRev) { found = Found(name: NixSources.sourceName(ref), ref: r.ref, packages: r.packages) }
-          }
+        Button(adding ? String(localized: "追加") : String(localized: "保存")) {
+          let entry = JSONValue.object([("name", .string(name)), ("url", .string(url.trimmingCharacters(in: .whitespacesAndNewlines)))])
+          var next = original?.array ?? []
+          if let index = next.firstIndex(where: { $0["name"]?.string == editing }) { next[index] = entry }
+          else { next.append(entry) }
+          Task { await save(next) }
         }
-        .disabled(working || address.trimmingCharacters(in: .whitespaces).isEmpty || !session.isEditable)
-        if working { ProgressView().controlSize(.small) }
+        .disabled(disabled || name.wholeMatch(of: #/[A-Za-z0-9][A-Za-z0-9._-]*/#) == nil ||
+          url.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ||
+          entries.contains { $0["name"]?.string == name && name != editing })
+        Button("キャンセル") { close() }.disabled(disabled)
       }
-      if let f = found {
-        TextField("名前", text: Binding(get: { found?.name ?? "" }, set: { found?.name = $0 }))
-        LabeledContent("コミット") { Text(NixSources.shortCommit(f.ref) ?? f.ref).font(.caption.monospaced()).help(f.ref) }
-        LabeledContent("package") {
-          Text(f.packages.isEmpty ? String(localized: "この環境の package はありません") : f.packages.joined(separator: ", "))
-            .font(.caption.monospaced())
-        }
-        HStack {
-          Button("追加") {
-            Task {
-              await save(shownSources + [entry(f.name, f.ref)])
-              found = nil
-              address = ""
-            }
-          }
-          .disabled(taken || f.name.wholeMatch(of: #/[A-Za-z_][A-Za-z0-9_-]*/#) == nil)
-          if taken { Text("同じ名前があります").font(.caption).foregroundStyle(.secondary) }
-        }
-      }
-      RevisionEditNotice(edit: revisionEdit, text: { JSONValue.array(pending ?? []).serialized() },
-                         overwrite: { if let pending { Task { await save(pending, overwrite: true) } } },
-                         reload: { pending = nil; revisionEdit.reload(session.rev) })
-      if let message { Text(message).font(.caption).foregroundStyle(.orange).fixedSize(horizontal: false, vertical: true) }
-    } header: {
-      InfoHeader("外部ソース", info: "追加した flake の package は、Card の default.nix で inputs.sources.ciao.packages.ciao のように使えます。コミットと hash で固定します。追加・更新・削除はすぐに保存されます。flake の式は Card の隔離の外で評価するので、信頼できるものだけを追加してください。")
+    }
+    HStack {
+      if !adding && editing == nil { Button("追加") { start() }.disabled(disabled) }
+      Button("すべて更新") { Task { await update() } }.disabled(disabled)
+      if updating { ProgressView().controlSize(.small) }
+    }
+    RevisionEditNotice(edit: revisionEdit, text: { JSONValue.array(pending ?? []).serialized() },
+                       overwrite: { if let pending { Task { await save(pending, overwrite: true) } } },
+                       reload: { close() })
+    if let updateError { Text(updateError).font(.caption).foregroundStyle(.red).textSelection(.enabled) }
+  }
+
+  private func status(_ value: NixPathLockStatus) -> Text {
+    switch value {
+    case .unlocked: Text("未ロック")
+    case .urlChanged: Text("URL が変更されました")
+    case .locked(let revision, let modified):
+      Text(verbatim: [revision, modified?.formatted(.iso8601.year().month().day())].compactMap { $0 }.joined(separator: " · "))
     }
   }
 }
@@ -281,7 +303,6 @@ private struct GeneralProjectSettings: View {
   let session: ProjectSession
   @State private var selectedProject: JSONValue = .object([])
   @State private var name = ""
-  @State private var pkgs = ""
   @State private var versionPaths = ""
   @State private var agentExclude = ""
   @State private var recording: [String: Bool] = [:]
@@ -315,22 +336,10 @@ private struct GeneralProjectSettings: View {
 
   var body: some View {
     let savedPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
-    let changed = name != (selectedProject["name"]?.string ?? "") || pkgs != (selectedProject["pkgsPath"]?.string ?? "") || versionPaths != savedPaths || agentExclude != excludeText(selectedProject) || recording != recordingValues(selectedProject) || logLimit != logLimitValue(selectedProject)
+    let changed = name != (selectedProject["name"]?.string ?? "") || versionPaths != savedPaths || agentExclude != excludeText(selectedProject) || recording != recordingValues(selectedProject) || logLimit != logLimitValue(selectedProject)
     VStack(alignment: .leading) {
       Form {
         TextField("プロジェクト名", text: $name)
-        HStack {
-          TextField("実行環境（Nixpkgs）", text: $pkgs, prompt: Text(AppModel.shared.nixpkgsPin ?? "tsugumi:default"))
-          InfoButton("このプロジェクトが使う Nixpkgs です（版の一部として残ります）。変更すると Card の再ビルドが必要になります。")
-        }
-        if pkgs.isEmpty || pkgs == "tsugumi:default" {
-          Label("Nixpkgs が固定されていません。アプリを更新すると、このプロジェクトの Card のパッケージも変わります。", systemImage: "exclamationmark.triangle")
-            .font(.caption).foregroundStyle(.orange)
-        }
-        if let pin = AppModel.shared.nixpkgsPin, pkgs != pin {
-          Button(pkgs.isEmpty || pkgs == "tsugumi:default" ? String(localized: "このアプリの Nixpkgs に固定")
-                                                           : String(localized: "このアプリの Nixpkgs に更新")) { pkgs = pin }
-        }
         Section {
           LabeledContent {
             TextEditor(text: $versionPaths).font(.system(.body, design: .monospaced)).frame(minHeight: 90)
@@ -359,11 +368,11 @@ private struct GeneralProjectSettings: View {
         }
         TrustedFoldersSettings()
         LabeledContent("場所", value: session.identity.url.path)
-        NixSourceSettings(session: session)
+        NixPathSettings(session: session)
       }
       .formStyle(.grouped)
       RevisionEditNotice(edit: revisionEdit, text: {
-        (["name: \(name)", "pkgsPath: \(pkgs)", "versionPaths:\n\(versionPaths)", "agentExclude:\n\(agentExclude)"] +
+        (["name: \(name)", "versionPaths:\n\(versionPaths)", "agentExclude:\n\(agentExclude)"] +
           recording.sorted(by: { $0.key < $1.key }).map { "\($0.key): \($0.value)" } +
           ["logLimitBytes: \(logLimit)"]).joined(separator: "\n")
       }, overwrite: { Task { await save(overwrite: true) } }, reload: { load() })
@@ -385,7 +394,6 @@ private struct GeneralProjectSettings: View {
   private func load() {
     selectedProject = session.project
     name = session.project["name"]?.string ?? ""
-    pkgs = session.project["pkgsPath"]?.string ?? ""
     versionPaths = (session.project["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
     agentExclude = excludeText(session.project)
     recording = recordingValues(session.project)
@@ -396,12 +404,11 @@ private struct GeneralProjectSettings: View {
   private func save(overwrite: Bool = false) async {
     guard validLogLimit, let bytes = UInt64(logLimit) else { return }
     let sentRecording = recording, sentLogLimit = logLimit
-    let sentName = name, sentPkgs = pkgs, sentPaths = versionPaths, sentExclude = agentExclude
+    let sentName = name, sentPaths = versionPaths, sentExclude = agentExclude
     let paths = sentPaths.components(separatedBy: .newlines).filter { !$0.isEmpty }
     let before = revisionEdit.jsonBase("tsugumi.json", initial: selectedProject, overwrite: overwrite)
     var after = before ?? .object([])
     if sentName != (selectedProject["name"]?.string ?? "") { after["name"] = .string(sentName) }
-    if sentPkgs != (selectedProject["pkgsPath"]?.string ?? "") { after["pkgsPath"] = .string(sentPkgs.isEmpty ? "tsugumi:default" : sentPkgs) }
     let originalPaths = (selectedProject["versionPaths"]?.array ?? []).compactMap(\.string).joined(separator: "\n")
     if sentPaths != originalPaths { after["versionPaths"] = .array(paths.map { .string($0) }) }
     if sentExclude != excludeText(selectedProject) { after["agentExclude"] = .array(sentExclude.components(separatedBy: .newlines).filter { !$0.isEmpty }.map { .string($0) }) }
@@ -414,7 +421,6 @@ private struct GeneralProjectSettings: View {
       selectedProject = after
       for (key, value) in recordingValues(after) where recording[key] == sentRecording[key] { recording[key] = value }
       if logLimit == sentLogLimit { logLimit = logLimitValue(after) }
-      if pkgs == sentPkgs { pkgs = after["pkgsPath"]?.string ?? "" }
       if versionPaths == sentPaths { versionPaths = paths.joined(separator: "\n") }
       message = String(localized: "保存しました。")
     }

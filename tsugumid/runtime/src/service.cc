@@ -726,7 +726,7 @@ std::vector<std::string> Service::capabilities() {
                                    "ProjectFileRead",
                                    "OutputTypes",
                                    "InputTypes",
-                                   "CardApi",
+                                   "EvaluateNix",
                                    "RunPlan",
                                    "Run",
                                    "RunCancel",
@@ -978,8 +978,8 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::output_types);
     case P::NixSourceResolveRequest:
       return on_lane(r, std::move(req), &Service::nix_source_resolve);
-    case P::CardApiRequest:
-      return on_lane(r, std::move(req), &Service::card_api);
+    case P::EvaluateNixRequest:
+      return on_lane(r, std::move(req), &Service::evaluate_nix);
     case P::RunPlanRequest:
       return on_lane(r, std::move(req), &Service::run_plan);
     case P::RunCancelRequest:
