@@ -90,24 +90,32 @@ std::string root_prefix(const CardPath& card) {
 auto project_pins(const Document& doc, const Store& store, const Node& node)
     -> std::pair<LockedNixPath, std::string> {
   const auto path = node.project_dir + "tsugumi.lock";
-  json::Members lines;
+  LockedNixPath entries;
   if (doc.sources.contains(path)) {
-    const auto lock = json::Object(store.read_source(doc, path), path);
-    lines = json::Object(json::Get(lock, "nixPath", "{}"), path);
+    const auto lock = parse_project_lock(path, store.read_source(doc, path));
+    const auto& object =
+        document_text::root<Tsugumi::Document::ProjectLock>(lock.buffer);
+    for (const auto* entry : *object.entries())
+      entries.emplace(entry->name()->str(),
+                      NixSource{entry->url()->str(),
+                                document_text::str(entry->rev()),
+                                entry->narHash()->str()});
   }
 
   LockedNixPath result;
   json::Members identity;
   for (const auto& declaration : node.nix_path) {
     const auto& name = declaration.name;
-    const auto line = lines.find(name);
-    if (line == lines.end())
+    const auto line = entries.find(name);
+    if (line == entries.end() || line->second.url != declaration.url)
       throw std::runtime_error("nixPath " + json::Quote(name) +
-                               " is not locked; update the lock");
-    result.emplace(name,
-                   NixPathPin{declaration.url, json::String(line->second)});
+                               " needs an update to " + path +
+                               "; run tsugumi lock update");
+    const auto& source = line->second;
+    result.emplace(name, source);
     identity.emplace(name, json::Encode(std::vector<std::string>{
-                               json::Quote(declaration.url), line->second}));
+                               json::Quote(source.url), json::Quote(source.rev),
+                               json::Quote(source.nar_hash)}));
   }
   return {std::move(result), json::Encode(identity)};
 }
@@ -188,7 +196,7 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
 
 NixRunner::~NixRunner() { evaluator_.reset(); }
 
-auto NixRunner::lock_source(const std::string& url) -> std::string {
+auto NixRunner::lock_source(const std::string& url) -> NixSource {
   return evaluator().lock_source(url);
 }
 
@@ -388,7 +396,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
               (call.views_only ? "; viewsOnly = true" : "") +
               (expression_only ? "; expressionOnly = true" : "") + "; }";
   call.nix_dir = nix_dir_;
-  call.core_nixpkgs = {"github", "NixOS", "nixpkgs", TSUGUMI_CARD_NIXPKGS_REV,
+  call.core_nixpkgs = {"github:NixOS/nixpkgs", TSUGUMI_CARD_NIXPKGS_REV,
                        TSUGUMI_CARD_NIXPKGS_NARHASH};
   key.update(json::Quote(call.core_nixpkgs.rev));
   key.update(json::Quote(call.core_nixpkgs.nar_hash));

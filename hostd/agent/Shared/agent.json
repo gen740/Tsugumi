@@ -34,7 +34,7 @@
   "hostTools": [
     {
       "name": "nix_path_lock_update",
-      "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to update just that declared nixPath source. Omit name to update every declaration and remove obsolete pins.",
+      "description": "Update tsugumi.lock for the root project, or an external selected by project_path (externals/<id>). Supply name to check one declaration, or omit it to check all declarations. Missing sources and changed URLs are resolved, matching entries are kept, and undeclared entries are removed.",
       "mutating": true,
       "approval_required": true,
       "inputSchema": {

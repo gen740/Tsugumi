@@ -400,10 +400,6 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
 
 namespace {
 
-auto supported_source_type(std::string_view type) -> bool {
-  return type == "github" || type == "gitlab" || type == "sourcehut";
-}
-
 struct SourceFetcher {
   nix::fetchers::Settings settings;
   nix::ref<nix::Store> store = nix::openStore();
@@ -415,64 +411,27 @@ struct SourceFetcher {
     nix::loadConfFile(settings);
   }
 
-  auto parse(const std::string& url) -> nix::fetchers::Input {
-    const auto scheme = url.substr(0, url.find(':'));
-    if (!supported_source_type(scheme) || !url.starts_with(scheme + ":"))
-      throw std::runtime_error(
-          "nixPath URL must use github:, gitlab:, or sourcehut:");
+  auto lock(const std::string& url) -> NixSource {
     const auto input = nix::fetchers::Input::fromURL(settings, url);
-    for (const auto& [key, _] : input.toAttrs()) {
-      if (key != "type" && key != "owner" && key != "repo" && key != "ref" &&
-          key != "rev" && key != "narHash" && key != "lastModified")
-        throw std::runtime_error("nixPath URL has an unsupported attribute: " +
-                                 key);
-    }
-    return input;
+    const auto [path, locked] = input.fetchToStore(settings, *store);
+    const auto hash = store->queryPathInfo(path)->narHash;
+    const auto rev = locked.getRev();
+    return {url, rev ? rev->to_string(nix::HashFormat::Base16, false) : "",
+            hash.to_string(nix::HashFormat::SRI, true)};
   }
 
-  auto lock(const std::string& url) -> std::string {
-    const auto [_, locked] = parse(url).fetchToStore(settings, *store);
-    const auto hash = locked.getNarHash();
-    if (!locked.getRev() || !hash)
-      throw std::runtime_error("nixPath fetch did not return rev and narHash");
-    nix::StringMap query{
-        {"narHash", hash->to_string(nix::HashFormat::SRI, true)}};
-    if (const auto modified = locked.getLastModified())
-      query.emplace("lastModified", std::to_string(*modified));
-    return locked.toURLString(query);
-  }
-
-  auto materialize(const std::string& name, const NixPathPin& pin)
-      -> std::string {
-    const auto input = parse(pin.url);
-    const auto intent = parse(pin.intent);
-    const auto attrs = input.toAttrs();
-    const auto desired = intent.toAttrs();
-    if (input.getType() != intent.getType() ||
-        nix::fetchers::getStrAttr(attrs, "owner") !=
-            nix::fetchers::getStrAttr(desired, "owner") ||
-        nix::fetchers::getStrAttr(attrs, "repo") !=
-            nix::fetchers::getStrAttr(desired, "repo"))
-      throw std::runtime_error("nixPath \"" + name +
-                               "\" changed source (lock has " + pin.url +
-                               "); update the lock");
-    return materialize(input);
-  }
-
-  auto materialize(const LockedSource& source) -> std::string {
-    nix::fetchers::Attrs attrs{{"type", source.type},
-                               {"owner", source.owner},
-                               {"repo", source.repo},
-                               {"rev", source.rev},
-                               {"narHash", source.nar_hash}};
+  auto materialize(const NixSource& source) -> std::string {
+    auto attrs = nix::fetchers::Input::fromURL(settings, source.url).toAttrs();
+    if (!source.rev.empty()) attrs.insert_or_assign("rev", source.rev);
+    attrs.insert_or_assign("narHash", source.nar_hash);
     return materialize(
         nix::fetchers::Input::fromAttrs(settings, std::move(attrs)));
   }
 
   auto materialize(const nix::fetchers::Input& input) -> std::string {
     const auto expected = input.getNarHash();
-    if (!input.getRev() || !expected)
-      throw std::runtime_error("nixPath source requires rev and narHash");
+    if (!expected)
+      throw std::runtime_error("nixPath source requires narHash");
     if (auto found = fetched.find(*expected); found != fetched.end())
       return store->printStorePath(found->second);
     // A locked fetchTree source is a fixed-output NAR named "source".
@@ -1139,18 +1098,18 @@ auto send(nix::FdSink& sink, Message&& message, std::string system = {})
   sink.flush();
 }
 
-auto pack_source(const LockedSource& source) -> E::LockedSourceT {
-  E::LockedSourceT result;
-  result.type = source.type;
-  result.owner = source.owner;
-  result.repo = source.repo;
+auto pack_source(const std::string& name, const NixSource& source)
+    -> Tsugumi::Document::LockEntryT {
+  Tsugumi::Document::LockEntryT result;
+  result.name = name;
+  result.url = source.url;
   result.rev = source.rev;
-  result.nar_hash = source.nar_hash;
+  result.narHash = source.nar_hash;
   return result;
 }
 
-auto unpack_source(const E::LockedSourceT& source) -> LockedSource {
-  return {source.type, source.owner, source.repo, source.rev, source.nar_hash};
+auto unpack_source(const Tsugumi::Document::LockEntryT& source) -> NixSource {
+  return {source.url, source.rev, source.narHash};
 }
 
 auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
@@ -1166,13 +1125,9 @@ auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
   for (const auto& [project, entries] : call.projects) {
     auto scope = std::make_unique<E::ProjectScopeT>();
     scope->project = project;
-    for (const auto& [name, locked] : entries) {
-      auto pin = std::make_unique<E::PinT>();
-      pin->name = name;
-      pin->intent = locked.intent;
-      pin->url = locked.url;
-      scope->pins.push_back(std::move(pin));
-    }
+    for (const auto& [name, source] : entries)
+      scope->entries.push_back(std::make_unique<Tsugumi::Document::LockEntryT>(
+          pack_source(name, source)));
     result->projects.push_back(std::move(scope));
   }
   return result;
@@ -1184,8 +1139,8 @@ auto unpack_scope(const E::ScopeT& data, NixCall& call) -> void {
     call.definitions.push_back({def->directory, def->card, def->project});
   for (const auto& project : data.projects) {
     auto& entries = call.projects[project->project];
-    for (const auto& pin : project->pins)
-      entries.emplace(pin->name, NixPathPin{pin->intent, pin->url});
+    for (const auto& source : project->entries)
+      entries.emplace(source->name, unpack_source(*source));
   }
 }
 
@@ -1236,7 +1191,7 @@ auto evaluator_main() -> void {
     for (const auto& [project, entries] : call.projects) {
       auto& paths = eval->projects[project];
       for (const auto& [name, source] : entries)
-        paths.emplace(name, fetch.materialize(name, source));
+        paths.emplace(name, fetch.materialize(source));
     }
     if (warm.size() >= 4) warm.pop_back();
     warm.emplace_front(std::move(key), std::move(eval));
@@ -1282,8 +1237,10 @@ auto evaluator_main() -> void {
       reply.epoch = result.evaluation_epoch;
       send<E::Reply>(sink, std::move(reply));
     } else if (const auto* op = request.body.AsLockSource()) {
-      E::LockedUrlT locked;
-      locked.url = fetch.lock(op->url);
+      const auto source = fetch.lock(op->url);
+      E::ResolvedSourceT locked;
+      locked.rev = source.rev;
+      locked.narHash = source.nar_hash;
       send<E::Reply>(sink, std::move(locked));
     } else if (const auto* op = request.body.AsExpression()) {
       unpack_scope(*op->scope, call);
@@ -1526,7 +1483,8 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   E::EvaluateT request;
   request.scope = pack_scope(call);
   request.core_nixpkgs =
-      std::make_unique<E::LockedSourceT>(pack_source(call.core_nixpkgs));
+      std::make_unique<Tsugumi::Document::LockEntryT>(
+          pack_source("nixpkgs", call.core_nixpkgs));
   request.nix_dir = call.nix_dir.string();
   request.needs_worker = call.needs_worker;
   request.args = call.args;
@@ -1563,13 +1521,13 @@ auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
   });
 }
 
-auto NixEvaluator::lock_source(const std::string& url) -> std::string {
+auto NixEvaluator::lock_source(const std::string& url) -> NixSource {
   E::LockSourceT request;
   request.url = url;
-  return impl_->exchange(NixCall{}, std::move(request), [](auto& reply) {
-    const auto* source = reply.AsLockedUrl();
+  return impl_->exchange(NixCall{}, std::move(request), [&](auto& reply) {
+    const auto* source = reply.AsResolvedSource();
     if (!source) throw std::runtime_error("missing nixPath lock reply");
-    return source->url;
+    return NixSource{url, source->rev, source->narHash};
   });
 }
 

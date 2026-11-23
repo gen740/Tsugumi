@@ -25,16 +25,12 @@ namespace tsugumi {
 
 inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 
-struct LockedSource {
-  std::string type, owner, repo, rev, nar_hash;
+struct NixSource {
+  std::string url, rev, nar_hash;
+  auto operator<=>(const NixSource&) const = default;
 };
 
-struct NixPathPin {
-  std::string intent, url;
-  auto operator<=>(const NixPathPin&) const = default;
-};
-
-using LockedNixPath = std::map<std::string, NixPathPin>;
+using LockedNixPath = std::map<std::string, NixSource>;
 
 struct NixDefinitionScope {
   std::string directory;
@@ -48,7 +44,7 @@ using EvaluationKey = std::tuple<std::string, std::string>;
 using NixOutput = std::function<void(proc::LineChunk)>;
 
 struct NixCall {
-  LockedSource core_nixpkgs;  // only consumed by the trusted plan builder
+  NixSource core_nixpkgs;  // only consumed by the trusted plan builder
   std::filesystem::path nix_dir;
   std::string args;
   // Confirmed definition sources, also available to alternative build backends
@@ -131,7 +127,7 @@ class NixEvaluator {
 
   auto expression(const NixCall& call, const std::string& expression,
                   bool build) -> ExpressionResult;
-  auto lock_source(const std::string& url) -> std::string;
+  auto lock_source(const std::string& url) -> NixSource;
   auto params_declaration(const NixCall& call, std::string_view text,
                           const std::string& origin) -> std::string;
 

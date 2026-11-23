@@ -150,10 +150,10 @@ auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
   std::string owned(text);
-  if (schema == Schema::Card || schema == Schema::Lock) {
+  if (schema == Schema::Card) {
     try {
       auto document = strict_object(text, std::string(path));
-      const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
+      const char* key = "sweeps";
       if (auto it = document.find(key); it != document.end())
         it->second = json::Quote(json::Encode(strict_object(it->second, key)));
       owned = json::Encode(document);
@@ -180,11 +180,9 @@ auto print(Schema schema, std::string_view buffer) -> std::string {
     throw DocumentError("invalid_document",
                         std::string("cannot print document: ") + error);
   text = collapse_empty(text);
-  if (schema == Schema::Card || schema == Schema::Lock) {
-    const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
-    const auto* value = schema == Schema::Card
-                            ? root<D::Card>(buffer).sweeps()
-                            : root<D::ProjectLock>(buffer).nixPath();
+  if (schema == Schema::Card) {
+    const char* key = "sweeps";
+    const auto* value = root<D::Card>(buffer).sweeps();
     if (value) {
       const auto prefix = std::string("\n  \"") + key + "\": ";
       const auto start = text.find(prefix) + prefix.size();

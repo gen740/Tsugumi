@@ -174,7 +174,7 @@ TEST_F(DocumentStorage, AllParamsAreEncodedForNixAndTheCard) {
 
 TEST_F(DocumentStorage, LockIsCarriedAndConflictsWithDiskEdits) {
   const std::string lock =
-      R"({"nixPath":{"source":"github:org/repo/0123456789012345678901234567890123456789?narHash=sha256-123&lastModified=42"}})";
+      R"({"entries":[{"name":"source","url":"github:org/repo","rev":"0123456789012345678901234567890123456789","narHash":"sha256-123"}]})";
   Store store({root, ""});
   store.open();
   EXPECT_FALSE(store.current()->sources.contains("tsugumi.lock"));

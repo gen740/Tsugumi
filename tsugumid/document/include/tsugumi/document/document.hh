@@ -141,7 +141,6 @@ auto parse_project_lock(const std::string& path, const std::string& text)
 auto lock_source_document(const std::string& path, std::string bytes)
     -> SourceEntry;
 auto valid_nix_path_name(std::string_view name) -> bool;
-auto supported_nix_path_url(std::string_view url) -> bool;
 auto parse_card_json(const std::string& id, const std::string& text)
     -> ParsedDocument;
 auto parse_comments_json(const std::string& rel, const std::string& text)

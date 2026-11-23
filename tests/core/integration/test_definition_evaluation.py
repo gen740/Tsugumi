@@ -6,7 +6,6 @@ require a particular number of evaluations or builds, including on reversion.
 
 import json
 from pathlib import Path
-from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -120,48 +119,41 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
         assert completed_definition(client)[:2] == before[:2]
 
 
-@pytest.mark.parametrize("case, diagnostic", [
-    ("missing", 'nixPath "nixpkgs" is not locked; update the lock'),
-    ("changed", 'nixPath "nixpkgs" changed source (lock has github:NixOS/nixpkgs/'),
-])
-def test_project_requires_a_lock_for_each_declared_name(core_factory, project, case, diagnostic):
+@pytest.mark.parametrize("case", ["missing", "changed"])
+def test_project_requires_a_lock_for_each_declared_name(core_factory, project, case):
     entries = fixture_locks()
     if case == "missing":
         write_lock(project, [entry for entry in entries if entry["name"] != "nixpkgs"])
     else:
-        edit_json(project / "tsugumi.json", lambda doc: doc["nixPath"][0].update(url="github:other/nixpkgs"))
+        edit_json(project / "tsugumi.json", lambda doc: doc["nixPath"][0].update(url=entries[0]["url"] + "-changed"))
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
         expression('"unused"'))).save(client)
     status = wait_run(client, run(client))
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.nix_failed
-    assert diagnostic in text(status.failure.diagnostic)
-    assert "update the lock" in text(status.failure.diagnostic)
+    assert 'nixPath "nixpkgs" needs an update' in text(status.failure.diagnostic)
+    assert "tsugumi lock update" in text(status.failure.diagnostic)
 
 
-def test_explicit_lock_returns_a_pinned_url_and_it_resolves_same_source_refs(core_factory, project):
+def test_explicit_lock_returns_a_revision_and_hash(core_factory, project):
     target = project / "tsugumi.lock"
     pin = next(entry for entry in fixture_locks() if entry["name"] == "nixpkgs")
-    expected = urlsplit(pin["locked_url"])
-    target.write_text('{"nixPath":{}}')
+    url = f"github:NixOS/nixpkgs/{pin['rev']}"
+    target.write_text('{"entries":[]}')
     edit_json(project / "tsugumi.json", lambda doc: doc.update(nixPath=[
-        {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/some-other-ref"},
+        {"name": "nixpkgs", "url": url},
     ]))
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
         expression('"from locked source"'))).save(client)
     snapshot = client.call("ProjectInspectRequest")
-    result = client.call("NixPathLockSourceRequest", url=f"{expected.scheme}:{expected.path}")
-    locked_url = text(result.url)
-    actual = urlsplit(locked_url)
-    assert (actual.scheme, actual.path) == (expected.scheme, expected.path)
-    query = {k: unquote(v) for k, v in (part.split("=", 1) for part in actual.query.split("&"))}
-    assert query["narHash"] == expected.query.removeprefix("narHash=")
-    assert query.keys() <= {"narHash", "lastModified"}
-    assert json.loads(target.read_text()) == {"nixPath": {}}
+    result = client.call("NixPathLockSourceRequest", url=url)
+    assert text(result.rev) == pin["rev"]
+    assert text(result.narHash) == pin["narHash"]
+    assert json.loads(target.read_text()) == {"entries": []}
 
-    locked = json.dumps({"nixPath": {"nixpkgs": locked_url}})
+    locked = json.dumps({"entries": [dict(pin, url=url)]})
     old = next(info for info in snapshot.sources if info.path == b"tsugumi.lock")
     client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
                 changes=[change("SetProjectLock", path="tsugumi.lock", json=locked, baseHash=text(old.hash))])

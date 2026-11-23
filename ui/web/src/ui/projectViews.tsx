@@ -261,7 +261,7 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
       const status = nixPathLockStatus(lock, name, url)
       const statusText = status.kind === 'unlocked' ? L('未ロック') :
         status.kind === 'urlChanged' ? L('URL が変更されました') :
-        [status.revision, status.modified?.toISOString().slice(0, 10)].filter(Boolean).join(' · ')
+        status.pin
       return (
         <Row key={name} label={name}>
           <div className="col"><code className="secondary">{url}</code><span className="caption secondary">{statusText}</span></div>

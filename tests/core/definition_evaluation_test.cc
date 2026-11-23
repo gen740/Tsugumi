@@ -44,17 +44,13 @@ class DefinitionEvaluation : public ::testing::Test {
     fs::write_atomic(root / "source" / "value", "first");
     const char* lock = std::getenv("TSUGUMI_TEST_NIX_LOCK");
     ASSERT_NE(lock, nullptr) << "run using nix develop or tsugumi-test-env";
-    for (const auto& value : json::Array(json::Object(lock).at("nixPath"))) {
+    for (const auto& value : json::Array(json::Object(lock).at("entries"))) {
       const auto row = json::Object(value);
-      pins.emplace(
-          json::Text(row, "name"),
-          NixPathPin{json::Text(row, "url"), json::Text(row, "locked_url")});
-      if (json::Text(row, "name") != "nixpkgs") continue;
-      const auto attrs = json::Object(row.at("locked"));
-      call.core_nixpkgs = {json::Text(attrs, "type"),
-                           json::Text(attrs, "owner"),
-                           json::Text(attrs, "repo"), json::Text(attrs, "rev"),
-                           json::Text(attrs, "narHash")};
+      const NixSource source{json::Text(row, "url"), json::Text(row, "rev"),
+                             json::Text(row, "narHash")};
+      const auto name = json::Text(row, "name");
+      pins.emplace(name, source);
+      if (name == "nixpkgs") call.core_nixpkgs = source;
     }
     call.system = native_system();
     call.card = "work";
