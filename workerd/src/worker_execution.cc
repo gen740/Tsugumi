@@ -109,11 +109,9 @@ auto run_invocation(const ReleaseWorker& release_worker,
     const auto disposition =
         worker_disposition(reuse, worker.alive(), between_calls,
                            validation_rejected, result.failure);
-    // Failed/dead/uncertain workers end without inspecting scratch. Transfer
-    // failures retain living residents after clearing disposable call staging.
-    if (between_calls && !validation_rejected && !result.failure &&
-        worker.alive())
-      worker.clear_scratch();
+    // Retiring a worker stops its process group before clearing scratch.
+    // Clear live staging only when returning a resident for another call.
+    if (disposition.keep) worker.clear_scratch();
     release_worker(std::move(lease.worker), disposition.keep,
                    disposition.reason);
   };
