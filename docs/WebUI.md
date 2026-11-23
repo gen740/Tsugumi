@@ -93,9 +93,7 @@ Starting the repository's daemon directly on a Mac uses Seatbelt. Review its [we
 
 ## Several projects
 
-Each browser tab can open a different project (how this corresponds to the app's windows: [Several projects](Usage.md#several-projects)). ⌘O, demos and duplicates from a project's tab open in a new tab, and "Open Home in a New Tab" on the Canvas adds a Home tab. A browser cannot bring another tab to the front, though, so the same project can be open in two tabs (equal clients of the same `tsugumid`; a save in one shows in the other). Going back Home closes that project's windows, such as Card settings. If no other tab shows the project, its terminal tabs and chat observation close; hostd, the project daemon and active core conversations continue. Reopening the project reconnects to them.
-
-hostd manages one `tsugumid` per project. Each page reports what it shows on its Host connection (`HostPageRequest`; the Mac app's main windows share one connection and each names its page), so a project the user or Claude Code shows goes to a tab or window showing it or to one on Home, and one showing another project is not switched.
+Each browser tab can open a different project. Opening a project in a second UI connection returns `project_in_use` while the first UI is connected. Opening another project, a demo or a duplicate can use a new tab. Returning Home closes project windows and observation. Reopening the project reconnects to the project daemon and active conversations.
 
 ## Shortcuts
 

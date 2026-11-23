@@ -51,7 +51,7 @@ the apps use. For each Card it computes the evaluation key as it would
 before evaluating, and uses the recorded build only if the key is the
 export's; a Card without a record, or one that changed, fails with that
 reason instead of being evaluated. Every Card's outputs (raw FlatBuffers
-bytes, JSON, and the content of File and Directory values), and logs are written under the results folder. `summary.json`
+bytes, JSON, and artifact directories), and logs are written under the results folder. `summary.json`
 lists every invocation and, under `results`, the outputs no other Card
 consumes: the Workflow's results. The guest then powers off; Ctrl-C stops it
 and removes the run's temporary folder and scratch disk.
@@ -91,15 +91,9 @@ and removes the run's temporary folder and scratch disk.
   over `request.json` and moves the results folder out. Viewing is left to
   the files it writes (an image viewer, a text editor): there is no viewer in
   this path.
-- **Editable Input Cards.** The recipient can set Input Card values with
-  `--set card.param=value` or `--params file.json`. `--help` lists the
-  values and marks those fixed at export. Prepared Code Cards use their
-  exported values because `default.nix` can use any of them in the build.
-- **Files through the input Card.** `--file CARD=PATH` replaces the file of
-  an input Card whose output is a File. The core reads an input Card's file
-  only from the Card's own folder, so the app copies the recipient's file
-  into the copy of the Project there (`recipient/<name>`) and points the Card
-  at it. An input Card is not built, so this changes no build.
+- **Prepared definitions.** Export packages the existing build results of
+  all participating definitions. Code Card parameters and Input Card values
+  are fixed by the prepared builds.
 - **Values are recorded in the app.** Record I/O is off by default, which
   would leave the recipient without recorded output values. The app's copy turns it on
   for every Code Card; it is a setting, outside what a build evaluates.
@@ -140,8 +134,7 @@ it whenever `pack/` or the native runtime changes).
 
 `demos/en/cell-count` (seven Python and Bash Cards), exported and
 run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
-measurement predates the current Card ABI. The demo still uses the previous ABI and does not build
-now. TODO: repeat the check once the demos are ported
+measurement predates the current Card ABI. TODO(open): Repeat the check after the demo display port
 ([Demos](../docs/Demos.md)).
 
 | | |
@@ -156,7 +149,7 @@ now. TODO: repeat the check once the demos are ported
 | Whole Workflow, results written | 21.8 s | 23.8–24.8 s |
 
 The first export with an empty store disk took 77 s (builds 28 s). The
-parameter sweep is 18 s of every run.
+batch of threshold variants took 18 s per run.
 
 **Offline.** The app's guest has no network device at all, and its image
 has no Nix, so nothing in it can download or build; tsugumid's log records
@@ -195,7 +188,7 @@ shared, so nothing was brought to the front).
   inputs, which is still to be designed; they will be replaced then.
 - hostd integration and the UI's export action (the tool's progress lines
   are already one per stage).
-- Directory inputs: an input Card reads one file; a recipient's folder
+- Artifact inputs: a recipient's folder
   needs a Card that takes a Directory, which input Cards do not offer today.
 - Progress in the Finder: an app opened there shows nothing until its
   results folder opens.

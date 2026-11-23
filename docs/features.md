@@ -6,9 +6,9 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Build and navigate a Workflow
 
-- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Branch, Fork, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
+- **Sketch before writing code.** Add a Draft with `e` while the Canvas has focus, describe a step, and draw its wires. Add a Start, Input, Merge or Collect Card when you already know how data should flow. [Canvas tools](Usage.md#canvas-tools) · [Kinds of Card](#kinds-of-card)
 - **Organise a larger graph.** Right-click the Canvas and choose **Arrange** to place Cards or **Untangle Wires** to reduce crossings while keeping their positions. Group related Cards with **Group Selection**, or open a Card in Card to see its child Workflow and boundary ports. The import button by **Add Card** copies another project into `externals/` and places its Workflow as a Card in Card. [Canvas tools](Usage.md#canvas-tools) · [Cards and Workflows](#2-cards-and-workflows)
-- **Sweep inputs and implementations.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one vector or Directory on. [Run lists and Collect](#run-lists-and-collect)
+- **Run variants and batches.** Give a Card a list of implementations in `run`, or send it a batch, and it runs every combination. Connect the batch to a Collect Card to pass one typed list of envelopes on. [Run lists and Collect](#run-lists-and-collect)
 - **See references between Card definitions.** Turn on **Nix references**, then hover a Card or open the list. Follow `inputs.data` to the Card connected to the `data` input. [Nix references](Usage.md#canvas-tools)
 
 ### Run, inspect and compare
@@ -21,10 +21,10 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 
 ### Display results and keep files
 
-- **Plot data with editable code.** Write a Code Card with Matplotlib or Plotly, show the figure live in one of the Card's views and save it as a File or Directory output. For example, plot a numeric column as a histogram and keep the actual bins with the figure. [Visualisation](Visualization.md) · [Views](CardGuide.md#views)
+- **Plot data with editable code.** Write a Code Card with Matplotlib or Plotly, show the figure live in one of the Card's views and save it as an Artifact output. For example, plot a numeric column as a histogram and keep the actual bins with the figure. [Visualisation](Visualization.md) · [Views](CardGuide.md#views)
 - **Watch a running Card.** Right-click a Code Card and choose **Open Display** to see the views it declares and follow what it sends while it works. Views are live: what a Card sends is not recorded, so a result to check later goes to an output or an artifact. [Live displays](Usage.md#live-displays) · [Views](CardGuide.md#views)
 - **Run a notebook or render a report.** Add a marimo notebook to run committed cells once and return typed results. Use an R Markdown or Quarto Card to render a parameterised HTML report from an upstream value. [marimo notebooks](Marimo.md) · [R Markdown and Quarto](Reports.md)
-- **Keep a result for later.** In **Ports**, keep a File or Directory output as an artifact. Open its saved files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
+- **Keep a result for later.** Return an Artifact and open its files under **Artifacts**, including a static preview for HTML. [Keep and open artifacts](RunHistory.md#keep-and-open-artifacts)
 
 ### Write Cards and pin environments
 
@@ -68,16 +68,15 @@ Every Card has a permanent id that also serves as its name. The core reserves ne
 
 ### Kinds of Card
 
-Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigger`, `input`, `branch`, `fork`, `merge`, `collect` or `subgraph`. Nothing else decides it; a missing or unknown `type` is a definition error.
+Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigger`, `input`, `merge`, `collect` or `subgraph`. Nothing else decides it; a missing or unknown `type` is a definition error.
 
 | Kind | Role |
 | --- | --- |
 | Code Card (`code`) | Builds its processing in `default.nix` with a language SDK into `lib/main.so` (C++, Python, Go, Rust, C#, Julia, R, Ruby or an SDK of your own) |
 | trigger | Where a Workflow's run starts (output port `out`) |
-| input | Builds each message in `_outputs.fbs` from parameters with matching names, edited directly on the Canvas (for a File type, the chosen file is copied into the run) |
-| branch / merge | Conditional branching (`value` and a `condition` message with `value:bool`) and merging (an arrival on any connected input goes to `out`). A scalar Branch sends its value to `a` or `b`. A Branch that receives a batch sends the filtered results to both outputs, including empty batches. For bounded feedback, send a value back through a Merge and raise the Cards' `maxRuns` (default 1) as a safety cap and end the loop through a Branch; exceeding `maxRuns` fails the Run with `execution_limit`. When both `value` and `condition` are batches, a Branch runs every combination |
-| fork | Splits a value by name: `value` goes out unchanged on every output declared in `outputs` (default `a` and `b`), each time it arrives. Its log says where it went (`fork -> a, b`). Every output always runs downstream, so a Fork never makes a path conditional |
-| Collect | Turns a batch into one value. Typed values become an `items` vector, and Files or Directories become a Directory |
+| Input | Builds the declared port values in Nix from `params.nix` and any files the definition uses |
+| Merge | Forwards every arriving envelope to `out` |
+| Collect | Aggregates a batch into a `Collected` list of envelopes |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
 | Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
@@ -87,35 +86,31 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 
 - An output port can feed several inputs. Each input port accepts one wire. Use a Merge Card to bring several arrivals to one downstream input.
 - An output port's type is declared in `_outputs.fbs`. Each connected input inherits the type of its upstream output. The SDK checks the types a Card uses.
-- A Merge with one distinct type passes each arrival through unchanged. With several FlatBuffer types, it emits a union with one member per distinct type. The Canvas displays the member type names, for example `Temperature | Reading`. Merge accepts either Path inputs or FlatBuffer inputs.
-- Values flow between Cards as FlatBuffers bytes. Every Card receives and returns them through the fixed [Card ABI](CardABI.md); how a language SDK maps them to its own values is that SDK's business.
+- A Merge forwards each value unchanged. Its consumer's generated `_inputs.fbs` uses a single type or a union of distinct candidate types. The Canvas displays their names as `A | B`.
+- Mark an output `(required)` when every invocation must produce it. Omit an optional output to select the downstream paths that run. The SDK interprets the bytes in the fixed [Card ABI](CardABI.md) envelope.
 
 ### Execution semantics (scheduler)
 
 - A Card runs when every connected input has arrived. An unconnected input is absent from the call. An arrival is a single value or a batch of values. A Merge consumes one arrival at a time.
 - Bounded queues with backpressure, cancellation and an optional per-invocation deadline (`timeoutSeconds`; none by default for local runs). Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
-- Downstream of an unselected scalar Branch output is `skipped`. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
+- When a connected input cannot arrive because its producer omitted the output or skipped, the downstream Card is recorded as `skipped`. Merge skips once all of its inputs are exhausted without any arrival. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
 - A run lives only while the `tsugumid` process that started it lives. Local and remote invocations left unfinished end as `failed` with failure kind `interrupted`; startup never imports old remote results or reruns Cards. Within one core life, remote reconnection resumes the same job. Regular status and log exchanges detect disconnection; there is no heartbeat or silence expiry ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
-- Partial runs exist only for debugging: AI-written code rarely works on its first attempt. Running one Card or from a Card downstream with saved inputs is not a result of the Workflow. Such a run is marked **Partial run** (Japanese: **部分実行**). Values computed from it carry their provenance downstream, including into later runs that consume them as saved inputs; those runs also show **Uses a partial run's result** (**部分実行の結果を使用**). Running the whole Workflow replaces these values and clears the marks. Explicit **Record I/O** and **Retain artifact** settings still apply, and kept results carry the run's marks. There is no selection of an earlier run as the input source.
-- Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including the contents of Paths). A partial run uses saved inputs for connected ports outside the run. A downstream Merge consumes the values that arrive during that run.
+- Partial runs exist only for debugging: AI-written code rarely works on its first attempt. Running one Card or from a Card downstream with saved inputs is not a result of the Workflow. Such a run is marked **Partial run** (Japanese: **部分実行**). Values computed from it carry their provenance downstream, including into later runs that consume them as saved inputs; those runs also show **Uses a partial run's result** (**部分実行の結果を使用**). Running the whole Workflow replaces these values and clears the marks. Explicit **Record I/O** settings still apply, and kept results carry the run's marks. There is no selection of an earlier run as the input source.
+- Partial runs with "Run from Here Downstream" or "Run Only This Card (Last Inputs)" reuse the inputs saved last time (including artifact IDs). A partial run uses saved inputs for connected ports outside the run. A downstream Merge consumes the values that arrive during that run.
 
 ### Run lists and Collect
 
-The [Signal detection sweep demo](Demos.md#signal-detection-sweep-signal-sweep) shows a value sweep of three inputs, two named implementations and one collected result.
+A Code or Input Card can return a list of `{ label; run; }` variants from `default.nix`. An Input Card can use a list in `params.nix` to build variants. For each trigger, the runtime runs every combination of the Card's variants and the items on its connected inputs. Two implementations and batches of three and four inputs give 24 invocations. Labels identify members in run history and comparisons.
 
-- A Code Card can supply a list of implementations in its Nix `run` attribute, such as `run = [ (sdk.pythonCard (common // { src = ./first; })) (sdk.pythonCard (common // { src = ./second; })) ];`. For each trigger, the runtime runs every combination of those implementations and the items arriving on its input ports. A single value or implementation contributes one choice. For example, two implementations and batches of three and four input values give 24 invocations. Nested implementation lists are invalid. An entry may name itself with `{ label = "threshold=10"; run = ...; }`; the label is read with the execution plan, is not part of the build, and must be unique within the list.
-- An Input Card supplies a batch with `"sweeps": {"value": [8, 12, 16]}` in `_card.json`. Each swept name is a parameter in `params.nix`. With the sweep disabled, the Input Card uses the literal in `params.nix`. Several sweeps give their Cartesian product, with the last one varying fastest and any arriving `start` batch as the outer axis. Members are labeled with their values, such as `value=8`. A list-valued parameter forms one vector per sweep member. A sweep of one member gives a batch of one, and an empty sweep gives an empty batch.
-- History rows and the batch list show each member's label. Comparing two runs, a Card that ran an execution list compares one member at a time, chosen by name: members pair by label, or by implementation number when unlabeled, and a name repeated once per arriving input pairs by its occurrence. A member present in one run only is said so.
-- Results follow the order of the input port names, the item order within each input batch and the implementation order in `run`. Parallel workers can finish in a different order. The Canvas uses thicker wires for batches and shows how many items they carry.
-- An empty implementation list or input batch produces an empty output batch and starts no workers. Collect turns an empty batch into a typed empty vector or an empty Directory. With File or Directory inputs, Collect keeps each item in a numbered subdirectory, preserving its original name and any empty directories. Each entry in the Directory's ordered `items` has a `name` and relative `path`. Other File and Directory metadata remains in the producer's individual invocation records.
-- There are at most 256 combinations per trigger (input batches, run list and value sweep together), 4,096 worker invocations per Run and 32 MiB of serialized port values for all the inputs of one activation and for all its outputs. If one invocation fails, the runtime cancels its siblings and withholds the batch. The history keeps each invocation's outcome. A partial rerun with last inputs uses the whole saved batch, including saved Files and Directories.
-- A collected value can be at most 16 MiB. Collect can copy up to 1,000 files and 64 GiB, with a total limit of 10,000 batch members and filesystem entries. Directory collection rejects symbolic links and special files.
+Collect aggregates a batch into one fixed `Collected` value, preserving each member's schema ID, bytes and artifact IDs. Skipped members are absent. Collect emits an empty list when there are no members. The graph grants the collected artifact IDs to downstream Cards.
+
+The runtime limits one trigger to 256 combinations and a run to 4,096 worker invocations. The input and output batches each allow up to 32 MiB of serialized port values.
 
 ## 3. Reproducible environments with Nix
 
 ### An environment per Card
 
-A Code Card's `default.nix` receives `{ params, inputs }`. It imports its dependencies by name and returns `run` and optional `views`, `exports` and `api`. See the [temperature Card](CardGuide.md#the-files) for a complete definition, and the [builder interface](CoreAndSDK.md#the-builder-interface) for the per-port `inputs` table.
+A Code Card's `default.nix` receives `{ params, inputs }`. It imports its dependencies by name and returns `run` and optional `views`, `exports` and `api`. See the [temperature Card](CardGuide.md#the-files) for a complete definition, and the [builder interface](CoreAndSDK.md#the-builder-interface) for the upstream `inputs` bindings.
 
 - `builtins.currentSystem` is the system that runs the Card, locally or on a remote worker. `import <nixpkgs> { }` selects that system's packages. Evaluator state and caches are keyed by system.
 - The core resolves the pinned sources and verifies their NAR hashes before evaluation. The restricted evaluator performs no fetching and disallows Import From Derivation (IFD). Fixed-output derivations such as `pkgs.fetchurl` can fetch by hash during a build.
@@ -132,18 +127,16 @@ A Code Card's `default.nix` receives `{ params, inputs }`. It imports its depend
 ]
 ```
 
-Names are unique and match `[A-Za-z0-9][A-Za-z0-9._-]*`. Use different names for different versions, for example `nixpkgs` and `nixpkgs-2505`. URLs use the `github:`, `gitlab:` or `sourcehut:` form accepted by Nix `fetchTree`. A source must expose Nix files that a Card can read with `import <name/path>`.
+Names are unique and match `[A-Za-z0-9][A-Za-z0-9._-]*`. Use different names for different versions, for example `nixpkgs` and `nixpkgs-2505`. URLs use source references accepted by Nix, such as Git repositories or HTTPS tarballs. Flake-only sources are unsupported. A source must expose Nix files that a Card can read with `import <name/path>`.
 
 Open **Project settings → Name and Environment → Nix search path** and add the source. **Update** locks one name and leaves the other entries in place. **Update all** locks the current declarations together and drops entries for removed names. Select the owning project when working on an external. From the CLI:
 
 ```sh
-tsugumi nix path lock update --project /path/to/project --name nixpkgs
-tsugumi nix path lock update --project /path/to/project
+tsugumi lock update nixpkgs --project /path/to/project
+tsugumi lock update --project /path/to/project
 ```
 
-Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. In `tsugumi.lock`, the `nixPath` JSON object maps each name to a locked URL with a revision and NAR hash. Only an explicit lock update resolves declaration URLs and writes pins for direct sources. New empty projects start with `nixPath: []`, and projects created from a project template carry its declarations and lock. [Example lock file](CardGuide.md#the-files)
-
-Evaluation uses the lock for all declared names in the participating projects. An absent lock file is an empty lock. Update the lock when an entry is missing or points to a different repository or source type. After changing a ref within the same repository, update the lock to select the new revision.
+Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](CardGuide.md#the-files)
 
 Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
 
@@ -162,7 +155,7 @@ tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}
 
 ### Sharing Nix exports through connections
 
-Set `exports` in an upstream Code Card's `default.nix`. A connected downstream port named `data` can read its producer's values as `inputs.data.exports`. Branch, Fork, Collect and workflow boundaries can preserve a unique Code producer. A Merge or a Draft provides the `type` field alone. The [Canvas overlay](Usage.md#canvas-tools) shows export bindings derived from the graph.
+Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback, Draft and nested or external boundaries.
 
 ### Keeping build results
 
@@ -213,7 +206,7 @@ A Card declares its views in `default.nix` and sends to them while it works; ope
 
 ### Several projects
 
-See [Several projects](Usage.md#several-projects) for windows and [Web UI tabs](WebUI.md#several-projects).
+A project is open in one UI connection at a time. A second UI receives `project_in_use`. The Agent and CLI can still connect. See [Several projects](Usage.md#several-projects) for windows and [Web UI tabs](WebUI.md#several-projects).
 
 ## 9. Agent
 
@@ -237,7 +230,7 @@ Tsugumi uses Claude's models and features by choosing the one that fits each job
 | --- | --- | --- |
 | Make, fix, run and check Cards | Tool use in the Messages API. The tools are generated from the RPC contract (`protocol/tsugumi.fbs`) for the explicit `requests` allow list in `hostd/agent/Shared/agent.json` | [Tools and the RPC](#tools-and-the-rpc), `hostd/agent/src/catalog.cc`, `tests/core/agent/` |
 | A model sized to the job | Implementing Cards uses the model the user chooses (default `claude-sonnet-5-5`, with effort and, on models that offer it, Fast mode selectable). With an Anthropic API key, the guide's conversation and the summaries of the thinking of the bird on the Canvas use the small `claude-haiku-5-5` (other providers use a small model of their own or the Agent's model) | [Connecting to models](#connecting-to-models), `modelOptions` in `hostd/agent/Shared/agent.json` |
-| Judging from the figures a run makes (multimodal) | PNG and JPEG bytes in a tool's result, such as an image read from a kept artifact, reach the model as images. Views are live and not recorded, so a figure the model should read is saved as a file output or an artifact. The same in the app, the Web UI and the Claude Code plugin | `hostd/agent/src/tool_images.cc`, `cli/src/mcp.cc` |
+| Judging from the figures a run makes (multimodal) | PNG and JPEG bytes in a tool's result, such as an image read from a kept artifact, reach the model as images. Views are live and not recorded, so a figure the model should read is saved as an artifact. The same in the app, the Web UI and the Claude Code plugin | `hostd/agent/src/tool_images.cc`, `cli/src/mcp.cc` |
 | Implementing independent Drafts at the same time (subagents) | `delegate` starts tasks with depth/count capabilities and exact Card sets, and returns their reports and errors | [Splitting the work](#splitting-the-work-delegate), `tests/core/agent/project_rpc_test.cc` |
 | Guiding through a fixed procedure (Skills) | The built-in Skill `$demo` (`hostd/agent/Shared/demo-skill.md`) guides through a demo, and Skills the user adds are loaded too | [Skills and conversations](#skills-and-conversations), [the guide](#the-thrush-chat-and-guide) |
 | Showing work in progress | Tool arguments are received by streaming (`eager_input_streaming`), and the Card's code is shown on the Canvas as it is written | [The Agent on the Canvas](#the-agent-on-the-canvas), `hostd/agent/src/provider.cc` |

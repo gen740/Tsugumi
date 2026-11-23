@@ -1,6 +1,6 @@
 # marimo notebook Cards
 
-> This page describes the planned notebook Card behavior. See [demo status](Demos.md#todo-port-the-demos-to-the-current-card-abi).
+> This page describes the planned notebook Card behavior. See [demo status](Demos.md#demo-status).
 
 Open the **marimo notebook → typed result** demo for a complete notebook Card. It is an ordinary Python Card: `src/notebook.py` is the editable notebook, `src/main.py` maps the Card's input to notebook variables and returns the result, and `src/runner.py` runs the notebook in a child process. `default.nix` takes marimo and Matplotlib from the project’s locked `<nixpkgs>` source (`packages = ps: [ ps.marimo ps.matplotlib ];`) and the Python SDK supplies the kit's IPAexGothic as Matplotlib's Japanese fallback font. Nothing is installed when a notebook runs or when a result is opened.
 
@@ -15,7 +15,7 @@ Connect a typed value to `data`. The Card's parameters say what goes in and what
 | `selected` | The notebook variable returned on the `value` output |
 | `factor` | An ordinary parameter of the example, available to the bindings |
 
-The default bindings map `inputs.data.source` to the notebook variable `source` and `param.factor` to `factor`. The notebook computes `result`, and the Card returns it on `value` with the saved notebook folder on the `report` Directory output. To return another type, edit `_outputs.fbs` and the end of `main.py`.
+The default bindings map `inputs.data.source` to the notebook variable `source` and `param.factor` to `factor`. The notebook computes `result`, and the Card returns it on `value` with the saved notebook folder on the `report` Artifact output. To return another type, edit `_outputs.fbs` and the end of `main.py`.
 
 A binding replaces a variable the notebook defines, so the mapping must provide **all variables defined by an overridden cell**: this is the behaviour of [marimo's `App.run(defs=…)`](https://docs.marimo.io/api/app/). Put unrelated configuration in separate cells.
 
@@ -23,7 +23,7 @@ Each call copies the source into a scratch folder and runs the notebook once wit
 
 ## Saved results and source
 
-The `report` Directory is retained as an artifact and contains:
+The `report` Artifact directory contains:
 
 - `index.html`: the static cell outputs, the selected values and the source cells with their names and line numbers;
 - `result.json` and `bindings.json`: the selected definitions and the values supplied;

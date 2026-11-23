@@ -112,7 +112,7 @@ Native macOS reports partial filesystem and network guarantees through Seatbelt.
 
 The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker replaces inputs and clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With enforced read-only inputs, the core stages validated regular files using hardlinks where possible. It uses a copy when an input cannot be protected by the read-only mount. A retained descriptor can still read the inode opened during an earlier call.
 
-The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). New File and Directory outputs, created under the working directory, are validated and copied out as snapshots before the worker clears scratch or sends the next call ([Collecting the result](CardABI.md#collecting-the-result)). A failed call keeps its failure record and discards its outputs.
+The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are snapshotted and sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
 
 ### Showing Card views
 
@@ -266,7 +266,7 @@ Helpers have separate scratch and command/output directories, including unscoped
 | Data | Where | Deleting and managing |
 | --- | --- | --- |
 | The project's documents and sources | The project folder | Manage in Finder or the like (Tsugumi never deletes the folder itself) |
-| Primary run history | `.tsugumi/runs.sqlite`, `.tsugumi/runs/` | "Delete…" under Run History |
+| Primary run history | `.tsugumi/runs.sqlite`, `.tsugumi/artifacts/` | "Delete…" under Run History |
 | Nix store, build roots | `~/Library/Application Support/Tsugumi/vm/store.img` | "Delete" under Build Cache and "Clean shared store" |
 | Control folders (token, origins, attached folders) | `~/Library/Application Support/Tsugumi/environments/<id>/control/` | "Reset all environments" |
 | API keys | hostd's owner-only `host-core/host.sqlite` (every platform) | Settings > API registers or deletes a key |

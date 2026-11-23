@@ -120,9 +120,9 @@ Tsugumi saves the full set of inputs of the latest invocation and the latest inp
 
 If downstream steps went ahead as soon as a step returned a value, a later failure to save the record would leave a run that shows as successful on screen but cannot be traced.
 
-Tsugumi validates the outputs, keeps the artifacts the settings ask for and saves the record of the invocation's completion before it announces completion and passes values downstream. A value whose save failed is not passed on. The input and output values recorded keep the type schema of that moment. The stages shown on screen are not guessed from the final state either; they come from the stages the core actually recorded: evaluation, build, run, validation and saving.
+Tsugumi validates the outputs, seals the artifacts created by the call and saves the record of the invocation's completion before it announces completion and passes values downstream. A value whose save failed is not passed on. The input and output values recorded keep the type schema of that moment. The stages shown on screen are not guessed from the final state either; they come from the stages the core actually recorded: evaluation, build, run, validation and saving.
 
-**How far a run got and where it failed are seen on screen and in the run history from the same evidence.** The full history of input and output values and the keeping of artifacts are settings, so the amount recorded can be tuned to the analysis.
+**How far a run got and where it failed are seen on screen and in the run history from the same evidence.** Recording settings control the full history of input and output values.
 
 ### Keeping Nix dependencies consistent with a Workflow that branches
 
@@ -130,7 +130,6 @@ When a Card refers to an upstream Card's Nix definition, being reachable by foll
 
 Say A branches to B or C, and D runs on whichever result arrives. The code Card that always precedes D is A. One of B and C does not run, so if D could refer to both definitions unconditionally, the dependencies would disagree with the execution path drawn on screen.
 
-A Fork is different: every one of its outputs runs downstream each time. When A forks to B and C and D waits for both, B and C always precede D, and D may refer to either of them.
 
 [Nix reference rules](features.md#sharing-nix-exports-through-connections) describe which upstream definitions are available.
 

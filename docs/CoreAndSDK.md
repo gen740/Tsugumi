@@ -29,21 +29,10 @@ The Card ABI that connects the two is in [Card ABI](CardABI.md), and what a Card
 
 The core calls a Card's `default.nix` with `{ params, inputs }`. The Card imports nixpkgs and its SDK from the [project's locked Nix search path](features.md#project-nix-search-path).
 
-- `params` is the evaluated flat set of current values from [`params.nix`](CardGuide.md#parameters). The values are also sent at runtime in `CardInput.params`.
-- The `inputs` attribute set is derived from the wiring and keyed by destination input port name.
+- `params` is the evaluated literal attrset from [params.nix](CardGuide.md#parameters). The SDK embeds it at build time.
+- `inputs` contains Nix exports from the guaranteed upstream Cards, by Card ID. In `A → B → C`, C gets both `inputs.A` and `inputs.B`. TODO(open): Exports through graph boundaries.
 
-| Upstream | `inputs.<port>` |
-| --- | --- |
-| Unconnected | Attribute absent |
-| Code Card | `{ type; exports; }`, with `{}` for an undeclared `exports` |
-| Branch, Fork or Collect | `{ type; exports; }` when the route preserves a Code producer, with `type` from the wiring and `exports` from that producer |
-| Merge | `{ type; }`, including a generated union for mixed FlatBuffer types |
-| Draft | `{ type; }`, with an empty provisional type |
-| A built-in with no eligible Code producer | `{ type; }` |
-
-The `type` field is the store path of a FlatBuffers schema with one input port. Its `inputs.Inputs` root has one field with ID 0, using the connected type. It includes the input type's dependencies in `inputs.<port>`. A Path field is a `string (tsugumi: "path")`.
-
-Each kit entry point at `sdk/<lang>/default.nix` takes `{ pkgs }`. It exposes a language builder, an API builder and `views`. For example, the C++ entry point provides `cppCard` and `cppApi`. Both builders take `common = { inherit inputs params; outputs = ./_outputs.fbs; }`. The run builder also takes `src` and language-specific options. The builders generate the typed interface from the input schemas, the authored outputs and the parameter names and types. A standalone caller can pass `params = import ./params.nix;`. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
+Import a language builder from `<tsugumi-kit/sdk/cpp>` or another SDK entry point with `{ inherit pkgs; }`. Pass evaluated `params`, the generated `_inputs.fbs` as the builder's `inputs` (or `null` when absent), and the authored `_outputs.fbs` as `outputs`. Run and API builders share code generation. See the [temperature example](CardGuide.md#the-files) and the [kit builder contract](https://github.com/gen740/tsugumi-kit/blob/main/docs/sdk-contract.md).
 
 ### The generated API (`share/tsugumi/api/`)
 
@@ -57,7 +46,7 @@ The [generic evaluation tool](features.md#evaluating-a-card-expression) runs a N
 
 The result of a Card's `default.nix` may define only these attributes:
 
-- `run`: a derivation containing `lib/main.so`, or a list of `{ label; run; }`;
+- `run`: a derivation containing `lib/main.so` for Code Cards or built port values for Input Cards, or a list of `{ label; run; }`;
 - `views`: the Card's [views](#views);
 - `exports`: values that downstream Cards may read.
 - `api`: the optional code-generation derivation.
@@ -75,15 +64,13 @@ What a language SDK might otherwise have described lives elsewhere:
 
 - Highlighting by file extension is UI presentation.
 - hostd formats JSON and Nix, chosen by file extension. Formatting Card source is the Agent's job, or the Card's `default.nix` can expose a formatter.
-- `InputTypes` describes connected ports. A FlatBuffer port has a resolved schema. A Path port carries a file or directory and is declared as `string (tsugumi: "path")` in the port catalog. [Host presentation services](HostPresentation.md)
-- The guide is ordinary documentation of the language SDK, in tsugumi-kit.
-- The generated API under `share/tsugumi/api/` (for example `card.hh`) is the description of the types.
+- `InputTypes` describes the connected ports. The generated API files (for example `card.hh`) show the SDK's interface. See [Host presentation services](HostPresentation.md).
 
 ### Port schemas
 
-The core generates a one-port input schema for each connected port. The SDK combines the port schemas into its typed input interface. Connected input fields are nullable. The Card expresses input requirements in its SDK's language, and the SDK reports `input_missing` with the port name when a required value is absent. The authored `_outputs.fbs` carries declared outputs and their `required` attributes.
+The core generates one `_inputs.fbs` per wired Card. It contains the connected ports and namespaced copies of their upstream types. The generated `tsugumi_schema` attributes let the SDK select a candidate by the ID in the port envelope. The file is versioned and refreshed when wiring or upstream schemas change.
 
-When a Merge produces a union, each distinct FlatBuffer type has one member. Its box holds the original bytes in a `[ubyte]` field with `nested_flatbuffer` naming that type. The SDK decodes those bytes and exposes the member as its original type. The member names sent to the Canvas through RPC are presentation data.
+Merge forwards each envelope unchanged. A Merge-fed port with one distinct schema has that type. With several distinct schemas, its generated input schema declares a union. The UI displays the candidate type names as `A | B`. Collect feeds a fixed `Collected` table with opaque members.
 
 ## Templates
 
@@ -99,7 +86,7 @@ When a Merge produces a union, each distinct FlatBuffer type has one member. Its
 - The Agent or the user chooses a template. The core never chooses: there is no automatic selection and there are no per-language defaults.
 - The Agent may list and copy templates. Adding or importing one needs a person's approval.
 - Scaffolding a new Card is the Agent's job.
-- The "New Card" menu offers Draft, Trigger, Input, Branch, Fork, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
+- The "New Card" menu offers Draft, Trigger, Input, Merge and Collect, and "From Template…" with Project and Host sections and nothing preselected. [Reuse Cards from a template](Usage.md#reuse-cards-from-a-template)
 - No templates ship in the core. Example templates live in tsugumi-kit.
 
 ## Views
@@ -111,7 +98,11 @@ A Card declares its `views` next to `run`, `api` and `exports`:
 let
   pkgs = import <nixpkgs> { };
   sdk = import <tsugumi-kit/sdk/cpp> { inherit pkgs; };
-  common = { inherit inputs params; outputs = ./_outputs.fbs; };
+  common = {
+    inherit params;
+    inputs = if builtins.pathExists ./_inputs.fbs then ./_inputs.fbs else null;
+    outputs = ./_outputs.fbs;
+  };
 in
 {
   run = sdk.cppCard (common // { src = ./src; });
@@ -123,57 +114,29 @@ in
 ```
 
 - Each entry is `{ name; type; blob; }`. `type` is `html` or `dawn`. `blob` is one file in the Nix store: a self-contained HTML file for `html`, a Wasm binary for `dawn`.
-- An SDK's own views are added explicitly with `sdk.views`. Nothing is merged implicitly. The C++ SDK's list holds html views for text, Markdown, tables, images, line charts (`LineChart`) and points (`Points`), and the Python SDK's list adds Plotly. Each view's bytes format is private to its SDK. The SDKs that had line charts and points before the Card ABI cutover keep them as html views; a `dawn` version comes later. An SDK with an empty list sends to views taken from another SDK's list, or the Card declares its own.
-- The core reads the list and sends it to the UIs (`CardViewsUpdated`) before any run. An empty list clears the Card's views. The core does not interpret names, types or blob contents.
-- The UIs bundle no views. Each UI shows a Card's declared views in the Card's view window, routed by `type`, and draws nothing on the Canvas.
-- A Card sends to a view with the ABI's `send(view, bytes)` ([Card ABI](CardABI.md#effects-and-their-lifetimes)). The core relays `{view, bytes}` without resolving the name. The UI matches the name against the Card's declarations and shows an error for an unknown one.
-- Nothing in the display path is recorded. A view shows live data. Results that people check later are typed outputs, files and artifacts ([What a run records](CardABI.md#what-a-run-records)).
+- Include SDK-provided views explicitly with `sdk.views`. LineChart and Points are HTML views in the SDK. Custom HTML can include its own JS and Wasm.
+- The UI shows declared views before execution and resolves their names. Undeclared or duplicate names produce a UI error.
+- Messages carry bytes in both directions through the worker, core and UI. The Card controls send pacing through [ABI backpressure](CardABI.md#display-messages).
+- View traffic is live. Use output ports and artifacts for results that people will inspect later. [Run history](RunHistory.md)
 
 ### html views
 
-- The UI loads the file in an isolated frame with no network access (`connect-src 'none'`).
-- It posts one window message, `{tsugumi: 1, port}`, which transfers a `MessagePort`.
-- Messages on that port:
-  - `{type: "data", bytes: ArrayBuffer}`, the bytes as the Card sent them;
-  - `{type: "run", state: "started" | "ended"}`.
-- The view draws its own empty state until data arrive, and owns its resizing.
-- Disposing of a view disposes of its frame.
+The UI loads the file in an isolated frame without network access and transfers
+a `MessagePort` with a window message `{tsugumi: 1, port}`. The port carries
+`{type: "data", bytes: ArrayBuffer}` messages in both directions. The view
+draws its empty state and handles resize. SDK views reassemble their own chunks.
 
 ### dawn views
 
-A `dawn` view is Wasm whose only imports are a pinned `webgpu.h` subset, under the `webgpu` import module. It exports:
+A Dawn module draws to one WebGPU canvas. The [host header](../protocol/include/tsugumi/tsugumi_view.h)
+defines the exports for startup, resize and draw and the optional message, pointer
+and key callbacks. Imports are the WebGPU subset and `tsugumi_view_send` /
+`tsugumi_view_read`. The view allocates its own read buffer. The host draws
+immediately after startup, runs all callbacks on one thread and owns one instance
+per view.
 
-```
-tsugumi_view_abi() -> i32                     // = 1, checked first
-tsugumi_view_alloc(size: i32) -> i32          // host copies message bytes here
-tsugumi_view_start(device: i32, queue: i32, format: i32,
-                   width: i32, height: i32, scale: f32) -> i32
-tsugumi_view_message(ptr: i32, len: i32) -> i32
-tsugumi_view_run(state: i32) -> i32           // 1 started, 0 ended
-tsugumi_view_resize(width: i32, height: i32, scale: f32) -> i32
-tsugumi_view_frame(target: i32) -> i32        // bit 0 = wants another frame
-```
-
-- A return of 0 means success. A negative return or a trap makes the host drop the instance and show the error.
-- Message bytes are borrowed for the duration of the call.
-- Fonts belong to the view.
-- One instance per view module per host; views of the same module share it.
-- The Web UI will run the same Wasm through a shim from `webgpu.*` to `navigator.gpu`.
-
-Until the native host exists, the UIs show a placeholder for `dawn` views.
-
-The measurements behind the native host were taken on an M3 Max with macOS 27.2. Each view drew the same table at 1200×800 @2x, and the footprint is summed over every process involved:
-
-| | Native | WKWebView + iframes, same Wasm | WKWebView + iframes, HTML | One WKWebView per view |
-| --- | --- | --- | --- | --- |
-| N=20, idle | 162 MB | 759 MB | 757 MB | about 1130 MB |
-| N=50, idle | 381 MB | 1799 MB | 967 MB | about 2760 MB |
-| N=20, first frame | 85 ms | 482 ms | 409 ms | about 1000 ms |
-| N=50, update round | 9.5 ms | 33 ms (vsync) | 156 ms | — |
-
-- Right after drawing, the gap narrows to 2–3×, because the Metal driver pool sits in the host or in the GPU process either way.
-- The native figures exclude compositing and process start.
-- The native text matched an HTML table at 2x.
+TODO(open): Dawn host, exact WebGPU imports and pinned headers. The UIs currently
+show a placeholder for Dawn views.
 
 ## Value mapping in the default SDKs
 
@@ -201,10 +164,4 @@ See [Remote execution](RemoteExecution.md#data-left-on-a-worker) and [Where data
 
 ## Open
 
-These questions are not decided yet:
-
-- **The native host for `dawn` views:** a Wasm runtime with Dawn, possibly in a helper process that can be restarted.
-- **The host architecture for `html` views:** one shared WebView per window with one sandboxed iframe per view, mounted lazily and unmounted off screen, with about 8 live at once under LRU. On an M3 Max with macOS 27.2, 20 Plotly views took 1128 MB with one WKWebView per view and 728 MB in one WKWebView with 20 iframes. An iframe with little in it costs about 0.7 MB.
-- What to keep from views in a run's record.
-- What to do without WebGPU (macOS before 26).
-- A watchdog for a runaway view in a shared WebView process.
+TODO(open): Display recording and recording of results that depend on view interaction.
