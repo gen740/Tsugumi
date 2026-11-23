@@ -12,6 +12,7 @@
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
+#include "tsugumi/document/schema_id.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
@@ -35,7 +36,6 @@ namespace {
 constexpr std::pair<CardType, const char*> kCardTypes[] = {
     {CardType::Code, "code"},         {CardType::Draft, "draft"},
     {CardType::Trigger, "trigger"},   {CardType::Input, "input"},
-    {CardType::Branch, "branch"},     {CardType::Fork, "fork"},
     {CardType::Merge, "merge"},       {CardType::Collect, "collect"},
     {CardType::Subgraph, "subgraph"},
 };
@@ -258,14 +258,6 @@ CardType card_type_of(const DefinitionDoc& def) {
   return *parsed;
 }
 
-std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
-  const auto* outputs = def.card().outputs();
-  if (!outputs) return {"a", "b"};
-  std::vector<std::string> names;
-  for (const auto* o : *outputs) names.push_back(o->name()->str());
-  return names;
-}
-
 const PortType* Node::input(const std::string& n) const {
   for (const auto& p : inputs)
     if (p.name == n) return &p;
@@ -276,6 +268,34 @@ const PortType* Node::output(const std::string& n) const {
   for (const auto& p : outputs)
     if (p.name == n) return &p;
   return nullptr;
+}
+
+auto Resolution::merge_candidates(size_t node, const std::string& port) const
+    -> std::vector<types::TypeRef> {
+  if (nodes.at(node).kind != CardType::Merge || !nodes[node].output(port))
+    return {};
+  std::vector<size_t> pending{node};
+  std::set<size_t> visited;
+  std::map<std::string, types::TypeRef> candidates;
+  while (!pending.empty()) {
+    const auto merge = pending.back();
+    pending.pop_back();
+    if (!visited.insert(merge).second) continue;
+    for (const auto& edge : edges) {
+      if (edge.to != merge) continue;
+      const auto& producer = nodes[edge.from];
+      if (producer.kind == CardType::Merge) {
+        pending.push_back(edge.from);
+        continue;
+      }
+      auto* output = producer.output(edge.from_port);
+      if (output && output->type)
+        candidates.try_emplace(schema_id(*output->type), output->type);
+    }
+  }
+  std::vector<types::TypeRef> result;
+  for (const auto& [_, candidate] : candidates) result.push_back(candidate);
+  return result;
 }
 
 const Node* Resolution::find(const CardPath& p) const {
@@ -680,30 +700,6 @@ class Builder {
           n.outputs.push_back(
               {"out", PortKind::FlatBuffer, false, types::empty_type()});
           break;
-        case CardType::Branch:
-          n.input_defs = {{"value"}, {"condition"}};
-          n.outputs = {{"a", PortKind::FlatBuffer, false, nullptr},
-                       {"b", PortKind::FlatBuffer, false, nullptr}};
-          break;
-        case CardType::Fork: {
-          // Every output always receives the value, unlike a Branch's.
-          n.input_defs = {{"value"}};
-          std::set<std::string> seen;
-          for (const auto& name : fork_outputs(*def)) {
-            if (!valid_id(name))
-              n.diags.push_back(diag(n.path, "invalid_setting",
-                                     "outputs entries need a valid name"));
-            else if (!seen.insert(name).second)
-              n.diags.push_back(
-                  diag(n.path, "invalid_setting", "duplicate output " + name));
-            else
-              n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
-          }
-          if (n.outputs.empty())
-            n.diags.push_back(
-                diag(n.path, "invalid_setting", "fork needs declared outputs"));
-          break;
-        }
         case CardType::Merge:
           n.outputs = {{"out", PortKind::FlatBuffer, false, nullptr}};
           if (n.input_defs.empty())
@@ -897,7 +893,7 @@ class Builder {
       if (!ok) continue;
       if (dn.kind != CardType::Draft &&
           !wired_inputs.emplace(dst->first, dst->second).second) {
-        dn.diags.push_back(diag(dn.path, "multiple_input_wires",
+        dn.diags.push_back(diag(dn.path, "input_already_connected",
                                 wire + ": input " + dst->second +
                                     " already has a wire; use a Merge Card "
                                     "to combine arrivals"));
@@ -921,40 +917,43 @@ class Builder {
   void resolve_types() {
     const types::PortType draft{"", PortKind::FlatBuffer, false,
                                 types::empty_type()};
-    for (size_t pass = 0; pass <= res_->nodes.size() + 1; ++pass) {
-      bool changed = false;
-      for (const auto& e : res_->edges) {
-        if (res_->nodes[e.to].kind == CardType::Draft) continue;
-        const auto* src = res_->nodes[e.from].kind == CardType::Draft
-                              ? &draft
-                              : out_port(res_->nodes[e.from], e.from_port);
-        auto* dst = in_port(res_->nodes[e.to], e.to_port);
-        if (!src || !src->resolved() || !dst || dst->resolved()) continue;
-        dst->type = src->type;
-        dst->kind = src->kind;
-        dst->merge_member_types = src->merge_member_types;
-        changed = true;
+    for (auto& node : res_->nodes) {
+      if (node.kind != CardType::Collect) continue;
+      std::string error;
+      node.outputs.front().type = collect_output_type(error);
+      if (!node.outputs.front().type)
+        node.diags.push_back(diag(node.path, "invalid_type", "collect type: " + error));
+    }
+    for (size_t i = 0; i < res_->nodes.size(); ++i) {
+      auto& node = res_->nodes[i];
+      if (node.kind != CardType::Merge) continue;
+      auto& output = node.outputs.front();
+      const auto candidates = res_->merge_candidates(i, output.name);
+      if (candidates.size() == 1) output.type = candidates.front();
+      std::set<std::string> names;
+      for (const auto& type : candidates) {
+        const auto& full = type->root_type;
+        const auto name = full.substr(full.find_last_of('.') + 1);
+        names.insert(name);
       }
-      for (auto& n : res_->nodes) changed |= derive(n);
-      if (!changed) break;
+      if (names.size() != candidates.size()) {
+        names.clear();
+        for (const auto& type : candidates) names.insert(type->root_type);
+      }
+      output.merge_member_types.assign(names.begin(), names.end());
     }
-    for (auto& n : res_->nodes) {
-      if (n.is_virtual) continue;
-      for (auto& p : n.outputs)
-        if (!p.resolved() && n.kind != CardType::Code &&
-            n.kind != CardType::Input && connected_out(n, p.name))
-          n.diags.push_back(diag(n.path, "unresolved_type",
-                                 "output " + p.name +
-                                     " type cannot be derived (unresolved "
-                                     "cycle or missing input)"));
+    for (const auto& edge : res_->edges) {
+      auto& target = res_->nodes[edge.to];
+      const auto& source = res_->nodes[edge.from];
+      const auto* from = source.kind == CardType::Draft
+                             ? &draft
+                             : source.output(edge.from_port);
+      auto* to = in_port(target, edge.to_port);
+      if (!from || !to) continue;
+      to->type = from->type;
+      to->kind = from->kind;
+      to->merge_member_types = from->merge_member_types;
     }
-  }
-
-  bool connected_out(const Node& n, const std::string& port) {
-    size_t idx = res_->index.at(path_key(n.path));
-    for (const auto& e : res_->edges)
-      if (e.from == idx && e.from_port == port) return true;
-    return false;
   }
 
   auto resolve_execution_shapes() -> void {
@@ -1025,72 +1024,10 @@ class Builder {
     }
   }
 
-  bool derive(Node& n) {
-    bool changed = false;
-    switch (n.kind) {
-      case CardType::Branch:
-      case CardType::Fork: {
-        const auto* v = n.input("value");
-        if (v && v->resolved())
-          for (auto& o : n.outputs)
-            if (!o.resolved()) {
-              o.type = v->type;
-              o.kind = v->kind;
-              o.merge_member_types = v->merge_member_types;
-              changed = true;
-            }
-        break;
-      }
-      case CardType::Collect: {
-        const auto* in = n.input("in");
-        if (!in || !in->resolved() || n.outputs[0].resolved()) break;
-        std::string error;
-        if (auto type = collect_output_type(error)) {
-          n.outputs[0].type = std::move(type);
-          changed = true;
-        } else if (derive_failed_.insert(path_key(n.path)).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_type", "collect type: " + error));
-        }
-        break;
-      }
-      case CardType::Merge: {
-        auto& out = n.outputs.front();
-        if (out.resolved() || derive_failed_.contains(path_key(n.path))) break;
-        const size_t idx = res_->index.at(path_key(n.path));
-        std::vector<const types::PortType*> ins;
-        for (const auto& p : n.inputs)
-          if (res_->incoming[idx].contains(p.name)) ins.push_back(&p);
-        if (ins.empty() ||
-            !std::ranges::all_of(ins, &types::PortType::resolved))
-          break;
-        std::string err;
-        if (auto merged = types::merged_type(ins, &err)) {
-          out.type = std::move(merged->type);
-          out.kind = ins.front()->kind;
-          out.merge_member_types = std::move(merged->member_types);
-          n.merge_tags = std::move(merged->tags);
-          changed = true;
-        } else {
-          derive_failed_.insert(path_key(n.path));
-          n.diags.push_back(diag(n.path, "invalid_type", "merge type: " + err));
-        }
-        break;
-      }
-      default:
-        break;
-    }
-    return changed;
-  }
-
   void finish_checks() {
     for (size_t i = 0; i < res_->nodes.size(); ++i) {
       Node& n = res_->nodes[i];
       if (n.is_virtual) continue;
-      for (const auto& p : n.inputs)
-        if (res_->incoming[i].contains(p.name) && !p.resolved())
-          n.diags.push_back(diag(n.path, "unresolved_type",
-                                 "input " + p.name + " type is unresolved"));
       if (n.settings.retain_artifact && n.settings.artifact_output) {
         const auto* o = n.output(*n.settings.artifact_output);
         if (!o)
@@ -1171,13 +1108,9 @@ class Builder {
       switch (res_->nodes[source].kind) {
         case CardType::Code:
           return source;
-        case CardType::Branch:
-        case CardType::Fork:
         case CardType::Collect: {
-          const auto port =
-              res_->nodes[source].kind == CardType::Collect ? "in" : "value";
           const auto& incoming = res_->incoming[source];
-          const auto upstream = incoming.find(port);
+          const auto upstream = incoming.find("in");
           if (upstream == incoming.end()) return std::nullopt;
           source = upstream->second;
           break;
@@ -1215,7 +1148,6 @@ class Builder {
   std::deque<std::string> projects_;  // nested tsugumi.json buffers
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
-  std::set<std::string> derive_failed_;
 };
 
 }  // namespace

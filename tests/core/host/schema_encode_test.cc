@@ -47,8 +47,7 @@ TEST(SchemaDecode, EveryCardStatesAKnownType) {
       EXPECT_EQ(error.args.at("path"), "definitions/x/_card.json");
     }
   }
-  for (const auto* type : {"code", "draft", "trigger", "input", "branch",
-                           "fork", "merge", "collect"})
+  for (const auto* type : {"code", "draft", "trigger", "input", "merge", "collect"})
     EXPECT_NO_THROW(
         parse_card_json("x", std::string(R"({"type":")") + type + "\"}"));
   EXPECT_NO_THROW(

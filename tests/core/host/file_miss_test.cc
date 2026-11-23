@@ -15,7 +15,7 @@ auto Snapshot(const std::string& kind) -> json::Members {
 }
 TEST(FileMiss, BuiltinSchemasDescribeTheCardFilesAndResolvedTypeTool) {
   for (const auto* kind :
-       {"branch", "fork", "merge", "collect", "trigger", "draft"}) {
+       {"merge", "collect", "trigger", "draft"}) {
     for (const auto* file : {"_outputs.fbs", "_inputs.fbs"}) {
       const auto diagnostic = DescribeFileMiss(
           "definitions/share/" + std::string(file), Snapshot(kind), {});

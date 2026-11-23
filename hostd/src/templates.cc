@@ -156,11 +156,6 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
       return {{"_card.json", R"({"type":"draft"})"}};
     case H::BuiltinCard::Trigger:
       return {{"_card.json", R"({"type":"trigger"})"}};
-    case H::BuiltinCard::Branch:
-      return {{"_card.json", R"({"type":"branch"})"}};
-    case H::BuiltinCard::Fork:
-      return {{"_card.json",
-               R"({"type":"fork","outputs":[{"name":"a"},{"name":"b"}]})"}};
     case H::BuiltinCard::Merge:
       return {{"_card.json",
                R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})"}};

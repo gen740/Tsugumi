@@ -69,7 +69,7 @@ auto DescribeFileMiss(const std::string& path, const json::Members& snapshot,
              "; project_inspect reports resolved port types in "
              "resolution[].inputs/outputs"
              " (root_type and schema_bfbs)";
-      if (kind == "branch" || kind == "fork" || kind == "merge" ||
+      if (kind == "merge" ||
           kind == "collect")
         out += "; their types follow the connected upstream ports";
     }

@@ -172,29 +172,20 @@ TEST(InputTypes, NestedBoundariesShareTheExecutableEndpointResolution) {
   ASSERT_NE(inputs[0].type, nullptr);
   EXPECT_EQ(inputs[0].type->type, inputs[0].source->output("out")->type);
 }
-TEST(InputTypes, CollectMergeBranchAndInputUseTheResolverTypes) {
+TEST(InputTypes, CollectAndMergeUseTheResolverTypes) {
   const auto graph = Graph(
-      R"([{"id":"src"},{"id":"collect"},{"id":"merge"},{"id":"branch"},{"id":"condition"}])",
+      R"([{"id":"src"},{"id":"collect"},{"id":"merge"}])",
       R"([{"from":{"card":"src","port":"out"},"to":{"card":"collect","port":"in"}},
-          {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}},
-          {"from":{"card":"merge","port":"out"},"to":{"card":"branch","port":"value"}},
-          {"from":{"card":"condition","port":"value"},"to":{"card":"branch","port":"condition"}}])",
+          {"from":{"card":"collect","port":"out"},"to":{"card":"merge","port":"items"}}])",
       {{"definitions/src/_card.json", R"({"type":"code"})"},
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/collect/_card.json", R"({"type":"collect"})"},
        {"definitions/merge/_card.json",
-        R"({"type":"merge","inputs":[{"name":"items"}]})"},
-       {"definitions/branch/_card.json", R"({"type":"branch"})"},
-       {"definitions/condition/_card.json", R"({"type":"input"})"},
-       {"definitions/condition/_outputs.fbs",
-        "table Condition { value:bool; } table Outputs { value:Condition; } "
-        "root_type Outputs;"}});
+        R"({"type":"merge","inputs":[{"name":"items"}]})"}});
   for (const auto& [card, port] :
        std::vector<std::pair<std::string, std::string>>{
            {"collect", "out"},
-           {"merge", "out"},
-           {"branch", "a"},
-           {"condition", "value"}}) {
+           {"merge", "out"}}) {
     const auto ends = input_types(*graph, {card}, port);
     ASSERT_EQ(ends.size(), 1u);
     ASSERT_TRUE(ends[0].type->type) << card;
@@ -223,56 +214,6 @@ TEST(InputTypes, SecondWireLeavesOnlyTheFirstProducer) {
   EXPECT_EQ(ends[0].type, graph->find({"dest"})->input("in"));
   EXPECT_EQ(ends[0].type->type, graph->find({"first"})->output("out")->type);
 }
-TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
-  std::string error;
-  const auto first = types::compile("table Value { x:int; }", "Value", &error);
-  const auto second =
-      types::compile("table Value { x:long; }", "Value", &error);
-  ASSERT_TRUE(first && second) << error;
-  const types::PortType a{"a", types::PortKind::FlatBuffer, true, *first};
-  const types::PortType b{"b", types::PortKind::FlatBuffer, false, *second};
-  const types::PortType c{"c", types::PortKind::FlatBuffer, false, *first};
-  const types::PortType path{"path", types::PortKind::Path, false, nullptr};
-  const types::PortType unconnected{"unused", types::PortKind::FlatBuffer,
-                                    false, nullptr};
-  const auto same = types::merged_type({&a, &c}, &error);
-  ASSERT_TRUE(same) << error;
-  EXPECT_EQ(same->type, *first);
-  EXPECT_TRUE(same->tags.empty());
-
-  const auto mixed = types::merged_type({&a, &b, &c}, &error);
-  ASSERT_TRUE(mixed) << error;
-  EXPECT_EQ(mixed->tags.at("a"), mixed->tags.at("c"));
-  EXPECT_NE(mixed->tags.at("a"), mixed->tags.at("b"));
-  const types::PortType merged{"merged", types::PortKind::FlatBuffer, false,
-                               mixed->type};
-  const auto catalog =
-      types::card_catalog({a, merged, unconnected, path}, /*inputs=*/true);
-  std::string root;
-  ASSERT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
-  EXPECT_EQ(root, "inputs.Inputs");
-  EXPECT_NE(catalog.find("table ValueBox2"), std::string::npos);
-  EXPECT_NE(catalog.find(
-                "nested_flatbuffer: \"inputs.merged.tsugumi.merge.t1.Value\""),
-            std::string::npos);
-  EXPECT_NE(catalog.find("path:string (id: 2, tsugumi: \"path\")"),
-            std::string::npos);
-  EXPECT_EQ(catalog.find("unused:"), std::string::npos);
-  EXPECT_EQ(catalog.find("required"), std::string::npos);
-
-  const std::string bytes{"\xff\x00\xf1", 3};
-  const auto wrapped = types::wrap_in_union(mixed->tags.at("b"), bytes);
-  const auto* value = flatbuffers::GetRoot<flatbuffers::Table>(wrapped.data());
-  EXPECT_EQ(value->GetField<uint8_t>(4, 0), mixed->tags.at("b"));
-  const auto* box = value->GetPointer<const flatbuffers::Table*>(6);
-  ASSERT_NE(box, nullptr);
-  const auto* nested = box->GetPointer<const flatbuffers::Vector<uint8_t>*>(4);
-  ASSERT_NE(nested, nullptr);
-  EXPECT_EQ(std::string_view(reinterpret_cast<const char*>(nested->data()),
-                             nested->size()),
-            bytes);
-}
-
 TEST(InputTypes, CatalogKeepsDeclarationOrderAndNestedBufferReferences) {
   const auto parsed = types::parse_catalog(
       R"(namespace Other;

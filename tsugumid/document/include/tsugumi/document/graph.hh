@@ -22,8 +22,6 @@ enum class CardType {
   Code,
   Trigger,
   Input,
-  Branch,
-  Fork,
   Merge,
   Collect,
   Subgraph,
@@ -34,9 +32,6 @@ const char* card_type_name(CardType t);
 std::optional<CardType> parse_card_type(std::string_view name);
 // The type a parsed definition states (parse_card_json has checked it).
 CardType card_type_of(const DefinitionDoc& def);
-// A Fork's output names: its declared outputs, or a and b without any.
-std::vector<std::string> fork_outputs(const DefinitionDoc& def);
-
 enum class ParamType {
   Bool,
   Int64,
@@ -152,7 +147,6 @@ struct Node {
   std::vector<InputDef> input_defs;
   std::vector<types::PortType> inputs;
   std::vector<types::PortType> outputs;
-  std::map<std::string, uint8_t> merge_tags;
   std::vector<Diag> diags;       // structure diagnostics
   std::vector<Diag> exec_diags;  // additional diagnostics for executable mode
   bool is_virtual = false;       // subgraph container, never executed
@@ -188,6 +182,10 @@ struct Resolution {
   // Code Cards a node's default.nix may reference: guaranteed upstream Code
   // Cards whose own guarantees do not include the node (no cycles).
   std::vector<size_t> nix_upstream(size_t node) const;
+
+  // Concrete producer types reachable through a Merge output, by schema ID.
+  auto merge_candidates(size_t node, const std::string& port) const
+      -> std::vector<types::TypeRef>;
 
   const Node* find(const CardPath& p) const;
   std::vector<Diag> all_diagnostics(bool executable) const;
