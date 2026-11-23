@@ -28,6 +28,7 @@ typedef struct tsugumi_effects {
       /* read-only directory path, only for ids granted to this call (in its input CardPorts); opened lazily. 0 ok, <0 error (not granted / missing). */
 } tsugumi_effects;
 typedef struct tsugumi_call { uint32_t abi_version; tsugumi_bytes input; void* host; const tsugumi_effects* effects; } tsugumi_call;
+typedef int (*tsugumi_main_fn)(const tsugumi_call* call, tsugumi_bytes* result);
 int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result);
 
 #ifdef __cplusplus
