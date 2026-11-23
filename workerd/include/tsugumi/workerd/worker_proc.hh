@@ -39,13 +39,13 @@ struct WorkerSpawn {
   std::filesystem::path cgroup;
   bool shared_vm = false;
   std::shared_ptr<WorkerSecrets> secrets;
-  // The worker's work/, tmp/, and input staging live with the process.
+  // The worker's work/ and tmp/ live with the process.
   // Local workerd retains process ownership while the core reads the channel.
   bool channels_borrowed = false;
   std::string scratch;
   SandboxOptions sandbox;
   // Fixed read-only runtime paths and, remotely, the job's staged inputs;
-  // never project data roots. Local inputs use inputs_dir().
+  // never project data roots.
   std::vector<std::string> ro_paths;
   // The Card's key, used by the remote invocation launcher.
   std::string card;
@@ -113,7 +113,6 @@ class WorkerProc {
     std::string scratch;
     uint64_t call_id = 0;
     uint64_t lease = 0;
-    bool read_only_inputs = false;
     std::function<void()> clear;
     std::function<void(bool)> terminate;
     std::function<void()> abandon;
@@ -152,10 +151,8 @@ class WorkerProc {
   void terminate(bool force = false);
   std::string work_dir() const { return scratch_ + "/work"; }
   std::string tmp_dir() const { return scratch_ + "/tmp"; }
-  std::string inputs_dir() const { return scratch_ + "/inputs"; }
-  // Empties tmp/ and the invocation input staging area.
+  // Empties the temporary directory between calls.
   void clear_scratch();
-  auto read_only_inputs() const -> bool { return read_only_inputs_; }
   // Resident memory of the worker process, when known.
   std::optional<uint64_t> rss_bytes() const;
 
@@ -175,7 +172,6 @@ class WorkerProc {
   bool alive_ = false;
   std::string scratch_;
   std::filesystem::path cgroup_;
-  bool read_only_inputs_ = false;
   bool x11_mounted_ = false;
   // Darwin's permission repair runs with the same authority as the Card.
   std::function<void(int, const char*)> recover_permissions_;

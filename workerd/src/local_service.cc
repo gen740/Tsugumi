@@ -62,7 +62,6 @@ auto serve_local(int fd, const std::filesystem::path& scratch) -> void {
               pool.acquire(request.card, request.key, spawn, request.reuse);
           reply.lease = ++sequence;
           reply.reused = lease.reused;
-          reply.read_only_inputs = lease.worker->read_only_inputs();
           reply.replaced = lease.replaced;
           reply.scratch = std::filesystem::path(lease.worker->work_dir())
                               .parent_path()

@@ -160,10 +160,10 @@ auto seatbelt_profile(const WorkerSpawn& sp, const std::string& scratch)
          "file-read-metadata)\n"
          "(allow file-read* " +
          read + ")\n(allow file-write* " + write +
-         ")\n"
-         "(deny file-write* (subpath " +
-         quote(scratch + "/inputs") + ")" + read_only_grants +
-         ")\n"
+         ")\n" +
+         (read_only_grants.empty()
+              ? ""
+              : "(deny file-write* " + read_only_grants + ")\n") +
          "(allow file-ioctl (subpath \"/dev\"))\n" +
          // With the network allowed, still nothing on this host: tsugumid's
          // own ports and sockets, the web server, other local services. For
@@ -329,7 +329,7 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
           "cannot restore staging directory permissions: " + target.string());
   };
 #endif
-  for (const char* d : {"work", "tmp", "inputs"})
+  for (const char* d : {"work", "tmp"})
     std::filesystem::create_directories(std::filesystem::path(scratch_) / d);
   if (::geteuid() == 0 && sp.uid && worker_uid_on_host())
     for (const char* d : {"work", "tmp"}) {
@@ -432,10 +432,6 @@ WorkerProc::WorkerProc(const WorkerSpawn& sp) : scratch_(sp.scratch) {
     if (filesystem || !sp.hidden_paths.empty())
       argv.insert(argv.end(), {"--bind", scratch_, scratch_});
     if (filesystem) {
-      argv.insert(argv.end(), {"--ro-bind", inputs_dir(), inputs_dir()});
-      read_only_inputs_ =
-          sp.sandbox.ipc &&
-          std::ranges::none_of(sp.binds, &WorkerSpawn::Bind::write);
       for (const auto& bind : sp.binds)
         argv.insert(argv.end(), {bind.write ? "--bind" : "--ro-bind",
                                  bind.source, bind.target});
@@ -623,7 +619,6 @@ WorkerProc::WorkerProc(Borrowed borrowed)
       err_fd_(borrowed.descriptors[3]),
       alive_(true),
       scratch_(std::move(borrowed.scratch)),
-      read_only_inputs_(borrowed.read_only_inputs),
       call_id_(borrowed.call_id),
       borrowed_(true),
       lease_id_(borrowed.lease),
@@ -758,7 +753,6 @@ void WorkerProc::clear_scratch() {
   try {
     fs::clear_staging(tmp_dir(), recover_permissions_,
                       x11_mounted_ ? ".X11-unix" : "");
-    fs::clear_staging(inputs_dir(), recover_permissions_);
   } catch (const std::system_error& error) {
     throw Failed(FailureKind::worker_failed,
                  "cannot clear the worker's invocation staging: " +

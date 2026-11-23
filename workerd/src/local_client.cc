@@ -145,7 +145,6 @@ auto LocalWorkers::acquire(const std::string& card, const std::string& key,
       message.scratch,
       message.call_id,
       message.lease,
-      message.read_only_inputs,
       [this, id = message.lease] { command(L::Action::ClearScratch, id); },
       [this, id = message.lease](bool force) {
         command(L::Action::Terminate, id, force);
