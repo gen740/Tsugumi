@@ -353,7 +353,6 @@ def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_pa
     from harness.native_card import STATIC_RESULT_ENTRY, card_source
     from harness.observations import decode_scalar, read_output
     from harness.values import encode_message
-    from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory().connect()
     graph = Project(project)
@@ -364,7 +363,7 @@ def test_local_worker_uses_the_recorded_build_plan(core_factory, project, tmp_pa
                                  root_type="Value")
         sources = {
             "tsugumi/card_abi.h": abi_header,
-            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", PortKind.FlatBuffer, message)]),
+            "main.c": card_source(STATIC_RESULT_ENTRY, [("out", message)]),
             "view.html": "<p>Version " + version + "</p>",
             "default.nix": """{ pkgs, ... }: {
               run = pkgs.runCommandCC "recorded-plan-card" { } ''

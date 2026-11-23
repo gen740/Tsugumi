@@ -18,17 +18,19 @@ from Tsugumi.Card.CardFailure import CardFailureT
 from Tsugumi.Card.CardPort import CardPortT
 from Tsugumi.Card.CardResult import CardResultT
 from Tsugumi.Data.FailureKind import FailureKind
-from Tsugumi.Data.PortKind import PortKind
+from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Worker.EnvVar import EnvVarT
 from Tsugumi.Worker.WorkerCall import WorkerCallT
 from Tsugumi.Worker.WorkerCancel import WorkerCancelT
+from Tsugumi.Worker.WorkerDisplay import WorkerDisplayT
 from Tsugumi.Worker.WorkerPort import WorkerPortT
 from Tsugumi.Worker.WorkerMessage import WorkerMessage, WorkerMessageT
 from Tsugumi.Worker.WorkerPayload import WorkerPayload
 from Tsugumi.Worker.WorkerStart import WorkerStartT
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKER = Path(os.environ.get("TSUGUMI_WORKER", ROOT / "build/workerd/tsugumi-worker"))
+BUILD = Path(os.environ.get("TSUGUMI_BUILD_DIR", ROOT / "build"))
+WORKER = Path(os.environ.get("TSUGUMI_WORKER", BUILD / "workerd/tsugumi-worker"))
 PARAMS = bytes.fromhex("080000000400040004000000")
 
 
@@ -101,9 +103,9 @@ def worker(package, *, startup=None, arguments=()):
                 print("worker exit", p.returncode, out, err)
 
 
-def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), params=PARAMS):
+def send_call(data, tmp_path, call_id=1, *, deadline=None, inputs=(), outputs=(), artifact_directory=None, grants=()):
     call = WorkerCallT(inputs=list(inputs), outputs=list(outputs),
-                       params=list(params), deadlineMs=deadline)
+                       artifactDirectory=artifact_directory, grants=list(grants), deadlineMs=deadline)
     send_message(data, WorkerMessageT(
         callId=call_id, valueType=WorkerPayload.WorkerCall, value=call,
     ))
@@ -127,9 +129,9 @@ def receive(data):
     return WorkerMessageT.InitFromObj(WorkerMessage.GetRootAs(full(size)))
 
 
-def test_worker_passes_inputs_unopened_and_preserves_binary_parameters(tmp_path):
+def test_worker_passes_inputs_and_schema_unopened(tmp_path):
     # Not a FlatBuffer: the worker hands input bytes to the Card's SDK as they are.
-    port = CardPortT(name="reading", kind=PortKind.FlatBuffer, bytes=list(PARAMS[:4]))
+    port = CardPortT(name="reading", schema="producer-schema", bytes=list(PARAMS))
     library(tmp_path, f'''
         #include <tsugumi/card_abi.h>
         #include <stdio.h>
@@ -138,15 +140,26 @@ def test_worker_passes_inputs_unopened_and_preserves_binary_parameters(tmp_path)
         int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {{
           static const uint8_t wire[] = {{RESULT_BYTES}};
           if (call->abi_version != 0 || call->input.size < sizeof(wire)) return 4;
-          // Read the params vector in the CardInput table and inspect its
-          // contents including embedded NUL bytes.
           const uint8_t* b = call->input.data;
-          uint32_t root, offset, size;
-          uint16_t params;
-          memcpy(&root, b, 4);
-          memcpy(&offset, b + root, 4);
-          memcpy(&params, b + root - offset + 6, 2);
-          b += root + params;
+          uint32_t offset, size;
+          uint16_t field;
+          memcpy(&offset, b, 4);
+          b += offset;
+          memcpy(&offset, b, 4);
+          memcpy(&field, b - offset + 4, 2);
+          b += field;
+          memcpy(&offset, b, 4);
+          b += offset + 4;
+          memcpy(&offset, b, 4);
+          b += offset;
+          memcpy(&offset, b, 4);
+          memcpy(&field, b - offset + 6, 2);
+          const uint8_t* schema = b + field;
+          memcpy(&offset, schema, 4);
+          if (strcmp((const char*)schema + offset + 4, "producer-schema")) return 6;
+          memcpy(&offset, b, 4);
+          memcpy(&field, b - offset + 8, 2);
+          b += field;
           memcpy(&offset, b, 4);
           b += offset;
           memcpy(&size, b, 4);
@@ -238,16 +251,14 @@ def test_encoded_failure_preserves_source(tmp_path, kind):
         }
 
 
-@pytest.mark.parametrize("result", ["invalid", "missing", "unknown", "wrong-kind", "duplicate", "path"])
+@pytest.mark.parametrize("result", ["invalid", "missing", "unknown", "duplicate", "ungranted"])
 def test_invalid_results_fail_cleanly(tmp_path, result):
-    declaration = WorkerPortT(name="reading", kind=PortKind.FlatBuffer, required=True)
-    output = CardPortT(name="reading", kind=PortKind.FlatBuffer, bytes=PARAMS)
+    declaration = WorkerPortT(name="reading", required=True)
+    output = CardPortT(name="reading", bytes=PARAMS)
     if result == "unknown":
         output.name = "extra"
-    elif result == "wrong-kind":
-        output.kind = PortKind.Path
-    elif result == "path":
-        output.path = "file"
+    elif result == "ungranted":
+        output.artifacts = [ArtifactIdT(bytes=[0] * 16)]
     card = CardResultT(outputs={"missing": [], "duplicate": [output, output]}.get(result, [output]))
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
@@ -346,10 +357,51 @@ def test_post_return_send_keeps_opaque_bytes_and_original_view(tmp_path):
         assert receive(data).valueType == WorkerPayload.WorkerResult
 
 
+def test_recv_after_return_and_reverse_credit(tmp_path):
+    library(tmp_path, r"""
+        #include <tsugumi/card_abi.h>
+        #include <pthread.h>
+        #include <string.h>
+        static const tsugumi_effects* effects;
+        static void* receive_value(void* host) {
+          tsugumi_bytes data;
+          if (effects->recv(host, "chat", &data, 3000) != 0) return (void*)1;
+          if (data.size != 4 || memcmp(data.data, "\x00\xff\x80z", 4)) return (void*)2;
+          return (void*)(intptr_t)effects->send(host, "echo", data.data, data.size);
+        }
+        int tsugumi_main(const tsugumi_call* call, tsugumi_bytes* result) {
+          static const uint8_t wire[] = {RESULT_BYTES};
+          static pthread_t thread;
+          if (!effects) {
+            effects = call->effects;
+            if (pthread_create(&thread, NULL, receive_value, call->host) != 0) return 1;
+          } else {
+            void* status;
+            pthread_join(thread, &status);
+            if (status) return 2;
+          }
+          *result = (tsugumi_bytes){wire, sizeof(wire)};
+          return 0;
+        }
+    """)
+    with worker(tmp_path) as (_, data, control):
+        send_call(data, tmp_path)
+        assert receive(data).valueType == WorkerPayload.WorkerResult
+        payload = b"\x00\xff\x80z"
+        send_message(control, WorkerMessageT(callId=0, valueType=WorkerPayload.WorkerDisplay,
+                                            value=WorkerDisplayT(view="chat", bytes=payload)))
+        frames = [receive(data), receive(data)]
+        by_kind = {frame.valueType: frame.value for frame in frames}
+        credit = by_kind[WorkerPayload.WorkerDisplayCredit]
+        assert credit.view == b"chat" and credit.bytes == len(payload)
+        echo = by_kind[WorkerPayload.WorkerDisplay]
+        assert echo.view == b"echo" and bytes(echo.bytes) == payload
+        send_call(data, tmp_path, 2)
+        assert receive(data).valueType == WorkerPayload.WorkerResult
+
+
 NUM = 'table Num { value:ulong; } table Outputs { out:Num (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; '
-             'table Outputs { doc:string (required, tsugumi: "path"); } '
-             'root_type Outputs;')
+DIRECTORY = 'table Document {} table Outputs { doc:Document (required); } root_type Outputs;'
 
 
 def card_package(body, *, declarations=""):
@@ -362,6 +414,7 @@ def card_package(body, *, declarations=""):
     sources = {
         "card_abi.h": (ROOT / "protocol/include/tsugumi/card_abi.h").read_text(),
         "card.fbs": (ROOT / "protocol/card.fbs").read_text(),
+        "artifact.fbs": (ROOT / "protocol/artifact.fbs").read_text(),
         "card_enums.fbs": (ROOT / "protocol/card_enums.fbs").read_text(),
         "card.cc": _CARD_PREAMBLE + "\n" + declarations +
         "\nint run(const tsugumi_call& call, const C::CardInput& in, Result& out) {\n" +
@@ -382,8 +435,9 @@ in pkgs.runCommandCC "native-card" {{
   cp ${{card_abi}} card_abi.h
   cp ${{card}} card.fbs
   cp ${{card_enums}} card_enums.fbs
+  cp ${{artifact}} artifact.fbs
   cp ${{source}} card.cc
-  flatc --cpp --scoped-enums card.fbs card_enums.fbs
+  flatc --cpp --scoped-enums card.fbs card_enums.fbs artifact.fbs
   mkdir -p "$out/lib"
   $CXX -std=c++20 -fPIC -shared -pthread card.cc -o "$out/lib/main.so"
 ''
@@ -428,27 +482,25 @@ struct Result {
   std::vector<fb::Offset<C::CardPort>> ports;
   fb::Offset<C::CardFailure> failure;
 
-  void add(const char* name, D::PortKind kind, fb::FlatBufferBuilder& payload,
+  void add(const char* name, fb::FlatBufferBuilder& payload,
            fb::uoffset_t table) {
     payload.Finish(fb::Offset<fb::Table>(table));
     message.ForceVectorAlignment(payload.GetSize(), sizeof(uint8_t), FLATBUFFERS_MAX_ALIGNMENT);
     const auto bytes = message.CreateVector(payload.GetBufferPointer(), payload.GetSize());
-    ports.push_back(C::CreateCardPort(message, message.CreateString(name), kind, bytes));
+    ports.push_back(C::CreateCardPort(message, message.CreateString(name), 0, bytes));
   }
 
   void number(uint64_t value, const char* port = "out") {
     fb::FlatBufferBuilder payload;
     const auto start = payload.StartTable();
     payload.AddElement<uint64_t>(4, value, 0);
-    add(port, D::PortKind::FlatBuffer, payload, payload.EndTable(start));
+    add(port, payload, payload.EndTable(start));
   }
 
-  // A Path output: a file or directory under the working directory, or an
-  // input path returned unchanged.
-  void path(const std::string& value, const char* port = "doc") {
-    ports.push_back(C::CreateCardPort(message, message.CreateString(port),
-                                      D::PortKind::Path, 0,
-                                      message.CreateString(value)));
+  void artifact(const tsugumi_artifact_id& id, const char* port = "doc") {
+    const tsugumi::ArtifactId fixed(fb::span<const uint8_t, 16>(id.bytes, 16));
+    ports.push_back(C::CreateCardPort(message, message.CreateString(port), 0, 0,
+                                     message.CreateVectorOfStructs(&fixed, 1)));
   }
 
   void fail(D::FailureKind kind, const char* error) {
@@ -456,13 +508,27 @@ struct Result {
   }
 };
 
-std::string input_path(const C::CardInput& in, std::string_view name = "doc") {
+std::string create_artifact(const tsugumi_call& call, tsugumi_artifact_id& id) {
+  tsugumi_bytes path;
+  if (call.effects->artifact_create(call.host, &id, &path) != 0)
+    throw std::runtime_error("artifact_create failed");
+  return {reinterpret_cast<const char*>(path.data), path.size};
+}
+
+std::string open_artifact(const tsugumi_call& call, const C::CardInput& in,
+                          std::string_view name = "doc") {
   for (const auto* port : *in.inputs()) {
-    if (port->name()->string_view() != name) continue;
-    return port->path() ? port->path()->str() : std::string();
+    if (port->name()->string_view() != name || !port->artifacts() ||
+        port->artifacts()->size() == 0) continue;
+    tsugumi_artifact_id id;
+    std::copy_n(port->artifacts()->Get(0)->bytes()->data(), 16, id.bytes);
+    tsugumi_bytes path;
+    if (call.effects->artifact_open(call.host, &id, &path) == 0)
+      return {reinterpret_cast<const char*>(path.data), path.size};
   }
   return {};
 }
+
 """
 
 _CARD_ENTRY = r"""

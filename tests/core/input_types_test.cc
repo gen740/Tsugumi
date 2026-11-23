@@ -65,7 +65,7 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
        {"definitions/src/_outputs.fbs", kSchema},
        {"definitions/file/_card.json", R"({"type":"input"})"},
        {"definitions/file/_outputs.fbs",
-        R"(attribute "tsugumi"; table Outputs { out:string (tsugumi:"path"); } root_type Outputs;)"},
+        kSchema},
        {"definitions/dest/_card.json",
         R"({"type":"code","inputs":[{"name":"data"},{"name":"file"},{"name":"missing"}]})"}});
   const auto result = Present(*graph, {"dest"});
@@ -85,9 +85,9 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   EXPECT_TRUE(types::schema_bfbs(result.inputs[0]->definition, &root, &error))
       << error;
   EXPECT_EQ(root, "inputs.data.sample.Message");
-  EXPECT_EQ(result.inputs[1]->kind, "path");
+  EXPECT_EQ(result.inputs[1]->kind, "value");
   EXPECT_EQ(result.inputs[1]->state, "resolved");
-  EXPECT_TRUE(result.inputs[1]->definition.empty());
+  EXPECT_FALSE(result.inputs[1]->definition.empty());
   EXPECT_EQ(result.inputs[2]->state, "no_source");
   EXPECT_FALSE(result.inputs[2]->source_card);
   EXPECT_TRUE(result.inputs[2]->definition.empty());
@@ -95,23 +95,6 @@ TEST(InputTypes, PlainWireSchemasAndRouting) {
   ASSERT_EQ(upstream.inputs.size(), 1u);
   EXPECT_NE(upstream.inputs[0]->definition.find("noise_sd:double"),
             std::string::npos);
-}
-TEST(InputTypes, PathWithoutSchemaIsResolved) {
-  namespace R = Tsugumi::RPC;
-  namespace D = Tsugumi::Data;
-  flatbuffers::FlatBufferBuilder b;
-  const auto type = D::CreatePort(b, b.CreateString("out"), D::PortKind::Path);
-  const auto input = R::CreateInputType(
-      b, b.CreateString("source"), wire::path(b, {"producer"}),
-      b.CreateString("out"), type);
-  const std::vector inputs{input};
-  b.Finish(R::CreateInputTypesResult(b, 3, b.CreateVector(inputs)));
-  const auto result = host::InputTypes(
-      *flatbuffers::GetRoot<R::InputTypesResult>(b.GetBufferPointer()));
-  ASSERT_EQ(result.inputs.size(), 1u);
-  EXPECT_EQ(result.inputs[0]->state, "resolved");
-  EXPECT_EQ(result.inputs[0]->kind, "path");
-  EXPECT_TRUE(result.inputs[0]->definition.empty());
 }
 TEST(InputTypes, DistinctUnnamedDraftEndsKeepTheirSourceTypes) {
   const auto graph = Graph(
@@ -229,12 +212,10 @@ TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
   const auto second =
       types::compile("table Value { x:long; }", "Value", &error);
   ASSERT_TRUE(first && second) << error;
-  const types::PortType a{"a", types::PortKind::FlatBuffer, true, *first};
-  const types::PortType b{"b", types::PortKind::FlatBuffer, false, *second};
-  const types::PortType c{"c", types::PortKind::FlatBuffer, false, *first};
-  const types::PortType path{"path", types::PortKind::Path, false, nullptr};
-  const types::PortType unconnected{"unused", types::PortKind::FlatBuffer,
-                                    false, nullptr};
+  const types::PortType a{"a", true, *first};
+  const types::PortType b{"b", false, *second};
+  const types::PortType c{"c", false, *first};
+  const types::PortType unconnected{"unused",                                     false, nullptr};
   const auto same = types::merged_type({&a, &c}, &error);
   ASSERT_TRUE(same) << error;
   EXPECT_EQ(same->type, *first);
@@ -244,18 +225,16 @@ TEST(InputTypes, MergeBoxesOpaqueBytesAndRendersNestedTypes) {
   ASSERT_TRUE(mixed) << error;
   EXPECT_EQ(mixed->tags.at("a"), mixed->tags.at("c"));
   EXPECT_NE(mixed->tags.at("a"), mixed->tags.at("b"));
-  const types::PortType merged{"merged", types::PortKind::FlatBuffer, false,
+  const types::PortType merged{"merged", false,
                                mixed->type};
   const auto catalog =
-      types::card_catalog({a, merged, unconnected, path}, /*inputs=*/true);
+      types::card_catalog({a, merged, unconnected}, /*inputs=*/true);
   std::string root;
   ASSERT_TRUE(types::schema_bfbs(catalog, &root, &error)) << error;
   EXPECT_EQ(root, "inputs.Inputs");
   EXPECT_NE(catalog.find("table ValueBox2"), std::string::npos);
   EXPECT_NE(catalog.find(
                 "nested_flatbuffer: \"inputs.merged.tsugumi.merge.t1.Value\""),
-            std::string::npos);
-  EXPECT_NE(catalog.find("path:string (id: 2, tsugumi: \"path\")"),
             std::string::npos);
   EXPECT_EQ(catalog.find("unused:"), std::string::npos);
   EXPECT_EQ(catalog.find("required"), std::string::npos);

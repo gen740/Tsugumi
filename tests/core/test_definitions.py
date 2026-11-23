@@ -411,13 +411,12 @@ def test_output_types_lists_and_rewrites_a_port(tmp_path, core_factory):
            "table Outputs { msg:Msg (required); /* note */ other:Msg; }\nroot_type Outputs;\n")
     res = c.call("OutputTypesRequest", text=fbs)
     assert text(res.rootType) == "demo.Outputs" and len(bytes(res.bfbs)) > 0 and res.text is None
-    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path", kind=1)  # Path
+    changed = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Path")
     out = text(changed.text)
-    assert 'msg:string (required, tsugumi: "path");' in out and "other:Msg;" in out and "// kept" in out
-    assert 'attribute "tsugumi";' in out
+    assert "msg:Path (required);" in out and "other:Msg;" in out and "// kept" in out
     bad = c.call("OutputTypesRequest", text=fbs, port="msg", typeName="demo.Missing")
     assert bad.text is None and bad.error
-    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg", kind=2)
+    restored = c.call("OutputTypesRequest", text=out, port="msg", typeName="demo.Msg")
     assert 'msg:Msg (required);' in text(restored.text)
 
 

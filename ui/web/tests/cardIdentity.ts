@@ -41,7 +41,7 @@ const project = serialize(session.project), layout = serialize(session.layout), 
 const closeView = session.liveViews.observe(a, () => {})
 const views = session.liveViews.get(a)!
 views.declare([{ name: 'chart', type: 'html', blob: '/nix/store/chart' }])
-views.data('chart', Uint8Array.of(42))
+const originalView = views.views[0]
 await session.applyMutation(x => x.updateMeta(a, m => m.set('description', '集計の説明')))
 assert.equal(session.displayName(a), a)
 assert.equal(session.nodeData(a).title, a)
@@ -51,7 +51,7 @@ assert.equal(session.nodeData(a, { meta: parse('{"name":""}') }).title, a)
 assert.equal(serialize(session.project), project)
 assert.equal(serialize(session.layout), layout)
 assert.equal(session.definitionDir(a), dir)
-assert.deepEqual(views.views[0]?.latest, Uint8Array.of(42))
+assert.equal(views.views[0], originalView)
 closeView()
 assert.equal(text(requests[0].name), 'aggregate')
 assert.ok(saves >= 2)

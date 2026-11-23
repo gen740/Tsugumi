@@ -38,39 +38,6 @@ def run(input):
     return Output(out=TxtT(value=f"worker {WORKER} calls {calls}"))
 """
 
-PATH_OUTPUT = 'attribute "tsugumi"; table Outputs { doc:string (tsugumi: "path"); } root_type Outputs;'
-
-# Writes its Path output under the working directory.
-MAKE_MAIN = """import os, random
-from card import Output
-
-def run(input):
-    assert not os.path.exists("/proc/self/fd/900"), "a passed descriptor was left open"
-    with open("a.txt", "w") as f:
-        f.write(f"line {random.getrandbits(32)}\\n")
-    return Output(doc="a.txt")
-"""
-
-# Reads its Path input, keeps every line it saw (state kept by the resident
-# worker) and must not be able to change the input.
-READ_MAIN = """from card import Output
-from t.Num import NumT
-
-lines = []
-
-def run(input):
-    with open(input.doc) as f:
-        lines.append(f.readline())
-    try:
-        with open(input.doc, "a") as f:
-            f.write("x")
-    except OSError:
-        pass
-    else:
-        raise RuntimeError("the input file was writable")
-    return Output(out=NumT(value=len(lines)))
-"""
-
 # Without reuseWorker (the default): a new process per call, each starting with calls = 1.
 FRESH_MAIN = """import random
 from card import Output
@@ -117,23 +84,6 @@ def test_resident_worker_serves_later_runs(env):
     assert pa == pb and a.endswith("calls 1") and b.endswith("calls 2"), (a, b)
     assert not invocations(c, first, "count")[0].workerReused
     assert invocations(c, second, "count")[0].workerReused
-
-
-def test_path_inputs_keep_the_worker_and_stay_read_only(env):
-    c = load(env, {"trigger": {"type": "trigger"}, "make": python_card(MAKE_MAIN, outputs=PATH_OUTPUT),
-                   "read": python_card(READ_MAIN, inputs=["doc"], reuseWorker=True, recordIO=True)},
-             [card("start", "trigger"), card("make", "make"), card("read", "read")],
-             [conn("make", "doc", "read", "doc")])
-    first, st = run_and_wait(c, "start")
-    detail = {k: c.call("RunRecordRequest", runId=first, card=path(k)).status for k in ("make", "read")}
-    assert st.state == RunState.succeeded, ({k: v.failure and text(v.failure.diagnostic) for k, v in detail.items()},
-                                            log(c, first, "make", 2), log(c, first, "read", 2))
-    second, st = run_and_wait(c, "start")
-    assert st.state == RunState.succeeded, log(c, second, "read", 2)
-    # Another input path (another run's output) and the same worker: the list goes on.
-    assert decode_scalar(read_output(c, second, card="read"), "uint64") == 2
-    assert invocations(c, second, "read")[0].workerReused
-    assert c.call("RunRecordRequest", runId=second, card=path("make")).status.state == CardState.succeeded
 
 
 def test_fresh_worker_per_call(env):

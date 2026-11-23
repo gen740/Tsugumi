@@ -20,8 +20,7 @@ from Tsugumi.RPC.RunEventValue import RunEventValue
 
 
 NUMBER = 'table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;'
-DIRECTORY = ('attribute "tsugumi"; '
-             'table Outputs { out:string (tsugumi: "path"); } root_type Outputs;')
+DIRECTORY = 'table Doc {} table Outputs { out:Doc; } root_type Outputs;'
 
 
 def mock_plan(runs, *, execution_list=False, **options):
@@ -184,17 +183,16 @@ def test_singleton_run_list_and_vector_value_have_different_execution_shapes(cor
     """A vector remains one value, while a singleton run list stays a one-item execution batch."""
     from harness.native_card import STATIC_RESULT_ENTRY, native_card
     from harness.values import encode_message
-    from Tsugumi.Data.PortKind import PortKind
 
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project)
     vector = 'table Vector { items:[ulong]; } table Outputs { out:Vector (required); } root_type Outputs;'
     vector_run = native_card(tmp_path / "vector", STATIC_RESULT_ENTRY, [
-        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", vector,
+        ("out", encode_message(tmp_path / "encode", vector,
                                                     {"items": [1, 2, 3]}, root_type="Vector")),
     ])
     work_run = native_card(tmp_path / "work", STATIC_RESULT_ENTRY, [
-        ("out", PortKind.FlatBuffer, encode_message(tmp_path / "encode", NUMBER,
+        ("out", encode_message(tmp_path / "encode", NUMBER,
                                                     {"value": 42}, root_type="Number")),
     ])
     graph.card("vector", {"type": "code", "sandbox": {"filesystem": False}}, outputs=vector,

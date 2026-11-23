@@ -63,21 +63,6 @@ import Testing
     #expect(missing[2].difference == .unknown && missing[2].right == nil)
   }
 
-  @Test func retainedCopyIdentityDoesNotChangeTheRecordedValue() {
-    func record(_ id: String, _ bytes: [UInt8]) -> ComparedRunCard {
-      let value = Tsugumi_Data_NamedValueT()
-      value.name = "photons"; value.rootType = "Counts"; value.inlineBytes = bytes; value.artifactId = id
-      let result = Tsugumi_RPC_RecordResultT()
-      result.record = Tsugumi_RPC_InvocationRecordT()
-      result.record?.outputs = [value]
-      return ComparedRunCard(summary: Tsugumi_RPC_InvocationSummaryT(), record: result)
-    }
-    let a = record("copy-left", [1, 2]), b = record("copy-right", [1, 2])
-    #expect(RunComparison.values(true, a, b).first?.changed == false)
-    #expect(a.record?.record?.outputs.first??.artifactId == "copy-left")
-    b.record?.record?.outputs.first??.inlineBytes = [1, 3]
-    #expect(RunComparison.values(true, a, b).first?.changed == true)
-  }
   @Test func omittedValuesCompareByContentHashAndType() {
     let a = Tsugumi_Data_NamedValueT(), b = Tsugumi_Data_NamedValueT()
     a.sizeBytes = 4096; b.sizeBytes = 4096

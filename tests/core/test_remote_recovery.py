@@ -18,9 +18,10 @@ import pytest
 from harness import remote_worker as R
 from harness.fixtures import add_worker, worker_project
 from harness.scenario import Project
-from projects import FILE_FBS, start_run, wait_invocation, wait_run, wait_run_notification
+from harness.scenario import FILE_OUTPUT
+from projects import start_run, wait_invocation, wait_run, wait_run_notification
 from Tsugumi.Data.CardState import CardState
-from Tsugumi.Data.DisplayRunState import DisplayRunState
+from tsugumi.ArtifactId import ArtifactIdT
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.LogStream import LogStream
 from Tsugumi.Data.RemoteExecutionState import RemoteExecutionState
@@ -89,32 +90,29 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.log_offsets = []
         self.live_displays = {}
 
-    def finish(self, job, *, result_fault=None, logs=None, log_truncated=False,
-               forwarded_path=None):
+    def finish(self, job, *, result_fault=None, logs=None, log_truncated=False):
         def blob(data):
             digest = hashlib.sha256(data).hexdigest()
             self.results[digest] = data
             return digest
 
-        # A Path output carries its job-relative path; "path" drops it.
-        output = WorkerOutputT(name="doc", path=None if result_fault == "path" else "out/result.txt")
-        if forwarded_path is not None:
-            output.path = forwarded_path
-            output.forwardedFrom = "in"
-        result = WorkerResultT(outputs=[output])
+        artifact_id = job[:32]
+        artifact = ArtifactIdT(bytes=list(bytes.fromhex(artifact_id)))
+        output = WorkerOutputT(name="doc", artifacts=[artifact])
+        created = [] if result_fault == "artifact" else [artifact]
+        result = WorkerResultT(outputs=[output], created=created)
         message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerResult, value=result)
         buffer = flatbuffers.Builder(128)
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
         files = {
             "environment": R.pack(R.ResultEnvironmentT(
                 paths=["/nix/store/00000000000000000000000000000000-mock"],
-                directories=["out"] if forwarded_path is None else [],
+                directories=["artifacts", f"artifacts/{artifact_id}"],
                 built=True, logTruncated=log_truncated,
             )),
             "logs": R.log_entries((LogStream.standard_output, "one recovered message\n")),
         }
-        if forwarded_path is None:
-            files = {"files/out/result.txt": b"retained after shutdown\n", **files}
+        files = {f"files/artifacts/{artifact_id}/result.txt": b"retained after shutdown\n", **files}
         if logs is not None:
             files["logs"] = logs
         if result_fault == "display":
@@ -123,7 +121,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
             files["logs"] = b"invalid frame"
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
-            entries[0]["path"] = "files/out/../../escape"
+            entries[0]["path"] = "files/artifacts/../../escape"
         if result_fault == "size":
             entries[0]["size"] += 1
         if result_fault == "oversize":
@@ -291,7 +289,7 @@ def remote_gateway(monkeypatch):
 
 def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     client.ensure_subscription()
     rev = client.call("ProjectInspectRequest").rev
@@ -339,8 +337,7 @@ def test_stop_is_accepted_while_worker_selection_catalog_is_pending(project, rem
 def running_job(project, remote_gateway, core_factory, tmp_path, request):
     daemon = core_factory(mocked_builds=True)
     client = daemon.connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, executionService="cluster",
-                   retainArtifact=True, artifactOutput="doc",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     limit = getattr(request, "param", 128 << 20)
     if hasattr(request, "param"):
@@ -373,7 +370,7 @@ def running_job(project, remote_gateway, core_factory, tmp_path, request):
 def test_incompatible_remote_gateway_prevents_upload(project, remote_gateway, core_factory, tmp_path, field, value):
     remote_gateway.probe_overrides[field] = value
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
@@ -390,7 +387,7 @@ def test_resource_limits_use_live_worker_not_catalog(project, remote_gateway, co
         remote_gateway.catalog_contract = 99
     remote_gateway.resource_limits = live_resources
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, executionService="cluster",
                    sandbox={"limits": {"cpu": 0.5, "memoryMiB": 256}})
     run_id = start_run(client, "work", propagate=False)
     if live_resources:
@@ -412,7 +409,7 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
     settings = {} if requested_system is None else {"system": requested_system}
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster", **settings)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
@@ -431,7 +428,7 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
     """A target-system evaluation error is visible before any upload or submission."""
     client = core_factory(mocked_builds=True).connect()
     Project(project).card("work", {"type": "code", "sandbox": {}, "executionService": "cluster"},
-                          outputs=FILE_FBS, plan={"error": "package is unavailable on this platform"}).save(client)
+                          outputs=FILE_OUTPUT, plan={"error": "package is unavailable on this platform"}).save(client)
     run_id = start_run(client, "work", propagate=False)
     status = wait_run(client, run_id)
     assert status.state == RunState.failed
@@ -443,7 +440,7 @@ def test_evaluation_failure_prevents_transfer(project, remote_gateway, core_fact
 def test_remote_job_without_resource_limits(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.resource_limits = False
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     assert live.executionResources is None
@@ -453,39 +450,9 @@ def test_remote_job_without_resource_limits(project, remote_gateway, core_factor
     assert wait_run(client, run_id).state == RunState.succeeded
 
 
-@pytest.mark.parametrize("forwarded_path", ["inputs/0/report.txt", "inputs/0/other.txt"])
-def test_remote_path_forwarding_requires_the_exact_input(project, remote_gateway, core_factory,
-                                                       tmp_path, forwarded_path):
-    client = core_factory(mocked_builds=True).connect()
-    graph = Project(project).card("source", {
-        "type": "input", "params": {"value": "report.txt"}, "_params": '{ value = ""; }',
-        "retainArtifact": True,
-    }, outputs=FILE_FBS, sources={"report.txt": "forwarded bytes"})
-    add_worker(graph, "work", tmp_path / "package", [], outputs=FILE_FBS,
-               inputs=[{"name": "in"}], sandbox={}, executionService="cluster",
-               retainArtifact=True)
-    graph.connect("source", "doc", "work", "in").save(client)
-
-    run_id = start_run(client, "source", propagate=True)
-    live = wait_for_state(client, run_id, RemoteExecutionState.running)
-    remote_gateway.finish(text(live.executionJobId), forwarded_path=forwarded_path)
-    status = wait_run(client, run_id)
-    if forwarded_path != "inputs/0/report.txt":
-        assert status.state == RunState.failed
-        assert status.failure.kind == FailureKind.output_invalid
-        return
-    assert status.state == RunState.succeeded
-    record = client.call("RunRecordRequest", runId=run_id, card=path("work"), invocation=1).record
-    original, = record.inputs
-    output, = record.outputs
-    assert output.filePath == original.filePath
-    assert Path(text(output.filePath)).read_text() == "forwarded bytes"
-
-
 def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster",
-                   retainArtifact=True, artifactOutput="doc")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
     subscription = text(client.open().subscriptionId)
     client.call("ViewSetVisibleRequest", subscriptionId=subscription, cards=[path("work")])
     run_id = start_run(client, "work", propagate=False)
@@ -494,19 +461,13 @@ def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remo
     view = "unmatched/remote-view"
     payload = b"remote-view\x00\xff\xfe"
     remote_gateway.live_displays[job_id] = [WorkerDisplayT(view=view, bytes=payload)]
-    started = client.wait_notification(
-        lambda n: n.valueType == NotificationPayload.DisplayRunStateChanged, timeout=10)
     shown = client.wait_notification(lambda n: n.valueType == NotificationPayload.DisplayUpdated, timeout=10)
-    assert started.value.state == DisplayRunState.started and text(started.value.runId) == run_id
-    assert started.seq < shown.seq
     update = shown.value.display
     assert update.card.segments == [b"work"]
-    assert text(update.runId) == run_id and text(update.view) == view and bytes(update.bytes) == payload
+    assert text(update.view) == view and bytes(update.bytes) == payload
+    client.call("ViewCreditRequest", subscriptionId=subscription, card=update.card,
+                view=view, bytes=len(payload), creditId=update.creditId)
     remote_gateway.finish(job_id)
-    ended = client.wait_notification(
-        lambda n: n.valueType == NotificationPayload.DisplayRunStateChanged, timeout=10)
-    assert ended.value.state == DisplayRunState.ended and text(ended.value.runId) == run_id
-    assert shown.seq < ended.seq
     assert wait_run(client, run_id).state == RunState.succeeded
     assert all(payload not in blob for blob in remote_gateway.results.values())
     saved = client.call("RunRecordRequest", runId=run_id, card=path("work")).record
@@ -516,7 +477,7 @@ def test_remote_status_relay_keeps_binary_view_data_out_of_results(project, remo
 @pytest.mark.parametrize("field", ["outputLimitBytes", "outputLimitEntries"])
 def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_gateway, core_factory, tmp_path, field):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster")
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster")
     snapshot = client.call("ProjectInspectRequest")
     config = json.loads(text(snapshot.projectJson))
     config[field] = 0
@@ -531,7 +492,7 @@ def test_remote_result_cannot_exceed_the_project_output_budget(project, remote_g
     assert result.state == RunState.failed and result.failure.kind == FailureKind.output_invalid
 
 
-@pytest.mark.parametrize("fault", ["path", "escape", "size", "oversize", "log", "display"])
+@pytest.mark.parametrize("fault", ["artifact", "escape", "size", "oversize", "log", "display"])
 def test_invalid_remote_results_do_not_publish_outputs(running_job, fault):
     """The core validates output bytes and result members before publishing an artifact."""
     gateway, _, client, run_id, job_id = running_job
@@ -678,7 +639,7 @@ def test_network_cut_within_same_core_life_resumes(running_job):
                          ids=["pending-status", "pending-submit"])
 def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gateway, core_factory, tmp_path, operation):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     if operation == R.RequestBody.StatusRequest:
         run_id = start_run(client, "work", propagate=False)
@@ -700,7 +661,7 @@ def test_stop_cancels_remote_job_before_the_pending_reply(project, remote_gatewa
 
 def test_stop_reaches_worker_before_submit_is_applied(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    executionService="cluster")
     remote_gateway.stall_operation = R.RequestBody.SubmitRequest
     remote_gateway.stall = "blackhole"
@@ -804,7 +765,7 @@ def test_remote_truncation_metadata_survives_import_and_restart(running_job):
 def test_grade_condition_selects_and_records_registered_worker(project, remote_gateway, core_factory, tmp_path):
     remote_gateway.grade = 0x8000000000000000
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    workerCondition={"language": "simple", "expression": "x & 0x8000000000000000 != 0"})
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
@@ -818,7 +779,7 @@ def test_grade_condition_selects_and_records_registered_worker(project, remote_g
 
 def test_grade_condition_without_registered_match_fails_before_submission(project, remote_gateway, core_factory, tmp_path):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={},
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={},
                    workerCondition={"language": "simple", "expression": "x > 1"})
     plan = client.call("RunPlanRequest", card=path("work"), propagate=False)
     assert any(text(d.code) == "invalid_setting" for d in plan.diagnostics)
@@ -830,7 +791,7 @@ def test_grade_condition_without_registered_match_fails_before_submission(projec
 @pytest.mark.parametrize("run_budget,build_budget", [(None, None), (2, 3)])
 def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_factory, tmp_path, run_budget, build_budget):
     client = core_factory(mocked_builds=True).connect()
-    worker_project(client, project, tmp_path, [], outputs=FILE_FBS, sandbox={}, executionService="cluster",
+    worker_project(client, project, tmp_path, [], outputs=FILE_OUTPUT, sandbox={}, executionService="cluster",
                    timeoutSeconds=run_budget, buildTimeoutSeconds=build_budget)
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)

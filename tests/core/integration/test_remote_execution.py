@@ -8,7 +8,6 @@ Use tsugumi-test-env and pytest -m environment.
 """
 
 import errno
-import hashlib
 import json
 import os
 import secrets
@@ -30,7 +29,6 @@ from harness.host import Host
 from harness.real_cards import PYTHON_BINDINGS, log, python_run
 from harness.values import collected_items
 from projects import (
-    FILE_FBS,
     card,
     conn,
     run_and_wait,
@@ -286,12 +284,13 @@ def remote_gates(tmp_path, remote_daemon):
 
 
 def fixture(project):
+    schema = "table Text { value:string; } table Outputs { doc:Text (required); } root_type Outputs;"
     body = GATE_HELPER + """
 import os
 import platform
 from pathlib import Path
-from shutil import copyfile
 from card import Output
+from Text import TextT
 
 def run(input):
     wait_for_release()
@@ -299,24 +298,20 @@ def run(input):
     assert not Path("/etc/hostname").exists()
     assert "TSUGUMI_REMOTE_PRIVATE_KEY" not in os.environ
     print("remote-card-stdout")
-    output = Path("copied.txt")
-    copyfile(input.in_, output)
-    return Output(doc=output)
+    return Output(doc=TextT(value=input.in_.Value()))
 """
-    source = {"type": "input", "_params": '{ value = "payload.txt"; }',
-              "_outputs": FILE_FBS}
+    source = {"type": "input", "_params": '{ value = "remote-input-roundtrip"; }',
+              "_outputs": schema}
     settings = {
-        "type": "code", "inputs": [{"name": "in"}], "_outputs": FILE_FBS,
-        "executionService": "remote-test",
-        "retainArtifact": True, "artifactOutput": "doc", "recordIO": True, "timeoutSeconds": 600,
+        "type": "code", "inputs": [{"name": "in"}], "_outputs": schema,
+        "executionService": "remote-test", "recordIO": True, "timeoutSeconds": 600,
     }
     definitions = {
         "input": source,
         "slow": {**settings, "_nix": entry(python_run(body))},
     }
     write(project, definitions, [card("source", "input"), card("slow", "slow")],
-          [conn("source", "doc", "slow", "in")],
-          {"definitions/input/payload.txt": "remote-input-roundtrip\n"})
+          [conn("source", "doc", "slow", "in")])
 
 
 def check_success(client, run_id, name, system):
@@ -326,12 +321,9 @@ def check_success(client, run_id, name, system):
     assert summary.executionState == RemoteExecutionState.succeeded
     assert text(summary.executionService) == "remote-test"
     assert text(summary.executionSystem) == system
-    artifacts = client.call("ArtifactListRequest", runId=run_id, card=path(name)).artifacts
-    assert len(artifacts) == 1
-    content = client.call("ArtifactReadRequest", artifactId=text(artifacts[0].artifactId), limitBytes=1024)
-    assert bytes(content.bytes) == b"remote-input-roundtrip\n"
-    member, = artifacts[0].members
-    assert text(member.hash) == hashlib.sha256(bytes(content.bytes)).hexdigest()
+    received, = record.inputs
+    sent, = record.outputs
+    assert bytes(sent.inlineBytes) == bytes(received.inlineBytes)
     logs = client.call("LogRangeRequest", runId=run_id, card=path(name), invocation=1, stream=LogStream.standard_output)
     assert text(logs.text) == "remote-card-stdout\n"
     environments = client.call("RunEnvironmentsRequest", runId=run_id).environments
@@ -487,42 +479,6 @@ def run(input):
     downstream = client.call("RunInvocationsRequest", runId=run_id, card=path("collect"))
     blocked, = downstream.records
     assert blocked.state == CardState.blocked and not downstream.batches
-
-
-@pytest.mark.parametrize("link", [False, True])
-def test_remote_snapshots_only_declared_regular_outputs(project, core_factory, remote_broker, tmp_path, link):
-    body = rf"""
-import os
-from pathlib import Path
-from card import Output
-
-def run(input):
-    report = Path("report")
-    report.mkdir()
-    (report / "data").write_text("safe\n")
-    if {link!r}:
-        (report / "link").symlink_to("data")
-    os.mkfifo("undeclared-fifo")
-    Path("undeclared-file").write_text("unused")
-    return Output(doc=report)
-"""
-    schema = FILE_FBS
-    definition = {"type": "code", "executionService": "remote-test", "retainArtifact": True,
-                  "recordIO": True, "timeoutSeconds": 600, "_outputs": schema,
-                  "_nix": entry(python_run(body))}
-    write(project, {"copy": definition}, [card("copy", "copy")], [])
-    scratch = tmp_path / "scratch"
-    c = core_factory(args=["--run-scratch-dir", str(scratch)]).connect()
-    run_id, st = run_and_wait(c, "copy")
-    if link:
-        assert st.state == RunState.failed and st.failure.kind == FailureKind.output_invalid
-        return
-    assert st.state == RunState.succeeded, log(c, run_id, "copy", 2)
-    record = c.call("RunRecordRequest", runId=run_id, card=path("copy")).record
-    saved = Path(text(record.outputs[0].filePath))
-    assert (saved / "data").read_text() == "safe\n"
-    invocation = scratch / "runs" / run_id / "work/copy/1"
-    assert not list(invocation.rglob("undeclared-*"))
 
 
 def test_call_timeout_is_separate_from_build_and_transfers(project, core_factory, remote_broker):

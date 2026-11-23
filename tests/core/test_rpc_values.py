@@ -8,7 +8,6 @@ from harness.observations import read_output
 from harness.scenario import Project, run, wait_run
 from harness.values import encode_message, reference_json
 from tsugumi_client import path, text
-from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
 
 
@@ -65,7 +64,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
     return 0;
 }
-""", [("out", PortKind.FlatBuffer, payload)])
+""", [("out", payload)])
     client = core_factory(mocked_builds=True).connect()
     Project(project).card("work", {"type": "code", "recordIO": True, "sandbox": {
         "filesystem": False, "pid": False, "ipc": False, "identity": False,

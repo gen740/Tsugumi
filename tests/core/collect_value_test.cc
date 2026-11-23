@@ -8,6 +8,7 @@
 
 #include "tsugumi/document/collect_type.hh"
 #include "tsugumi/protocol/card_generated.h"
+#include "tsugumi/workerd/value_wire.hh"
 
 namespace tsugumi {
 namespace {
@@ -19,7 +20,7 @@ auto output_port() -> types::PortType {
   std::string error;
   auto type = collect_output_type(error);
   EXPECT_TRUE(type) << error;
-  return {"out", PortKind::FlatBuffer, false, std::move(type)};
+  return {"out", false, std::move(type)};
 }
 
 auto envelopes(const Value& value) -> const Envelopes* {
@@ -35,28 +36,24 @@ TEST(CollectValue, EmptyListHasEmptyItems) {
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, {}, cancel);
   EXPECT_EQ(value.name, "out");
-  EXPECT_EQ(value.kind, PortKind::FlatBuffer);
   EXPECT_EQ(value.type, output.type);
   ASSERT_TRUE(types::verify(*output.type, value.bytes));
   ASSERT_NE(envelopes(value), nullptr);
   EXPECT_EQ(envelopes(value)->size(), 0u);
 }
 
-TEST(CollectValue, PreservesOpaqueBytesAndPathsInArrivalOrder) {
+TEST(CollectValue, PreservesOpaqueEnvelopesAndGrantsInArrivalOrder) {
   const auto output = output_port();
-  ASSERT_TRUE(output.type);
+  const ArtifactKey first(16, 'a'), second(16, 'b');
   const std::vector<Value> members{
-      {"file", PortKind::Path, nullptr, {}, {}, {}, "/run/out/report.txt"},
-      {"reading",
-       PortKind::FlatBuffer,
-       nullptr,
-       std::string("opaque\0", 7),
-       {}},
-      {"folder", PortKind::Path, nullptr, {}, {}, {}, "/run/out/data"},
+      {"file", nullptr, "", "schema-a", {first}},
+      {"reading", nullptr, std::string("opaque\0", 7), "schema-b", {}},
+      {"folder", nullptr, "", "schema-c", {first, second}},
   };
   const std::atomic<bool> cancel{false};
   const auto value = collect_values(output, members, cancel);
   ASSERT_TRUE(types::verify(*output.type, value.bytes));
+  EXPECT_EQ(value.artifacts, (std::vector<ArtifactKey>{first, second}));
   const auto* items = envelopes(value);
   ASSERT_NE(items, nullptr);
   ASSERT_EQ(items->size(), members.size());
@@ -64,17 +61,13 @@ TEST(CollectValue, PreservesOpaqueBytesAndPathsInArrivalOrder) {
     const auto* item = items->Get(i);
     const auto& member = members[i];
     EXPECT_EQ(item->name()->str(), member.name);
-    EXPECT_EQ(item->kind(), member.kind);
-    if (member.kind == PortKind::Path) {
-      EXPECT_EQ(item->path()->str(), member.path);
-      EXPECT_EQ(item->bytes(), nullptr);
-    } else {
-      EXPECT_EQ(item->path(), nullptr);
-      ASSERT_NE(item->bytes(), nullptr);
-      const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
-      EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
+    EXPECT_EQ(item->schema()->str(), member.schema);
+    EXPECT_EQ(wire::artifact_ids(item->artifacts()), member.artifacts);
+    ASSERT_NE(item->bytes(), nullptr);
+    const auto* data = reinterpret_cast<const char*>(item->bytes()->data());
+    EXPECT_EQ(std::string_view(data, item->bytes()->size()), member.bytes);
+    if (!member.bytes.empty())
       EXPECT_EQ((data - value.bytes.data()) % FLATBUFFERS_MAX_ALIGNMENT, 0);
-    }
   }
 }
 
@@ -92,12 +85,10 @@ TEST(CollectValue, RejectsACollectedVectorLargerThan16MiB) {
   const auto output = output_port();
   const std::vector<Value> members{
       {"first",
-       PortKind::FlatBuffer,
        nullptr,
        std::string(size_t{9} << 20, 'a'),
        {}},
       {"second",
-       PortKind::FlatBuffer,
        nullptr,
        std::string(size_t{9} << 20, 'a'),
        {}},

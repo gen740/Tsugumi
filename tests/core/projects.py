@@ -22,11 +22,6 @@ table Outputs { msg:Msg (required); cond:Cond; }
 root_type Outputs;
 """
 
-FILE_FBS = """
-table Outputs { doc:string (required, tsugumi: "path"); }
-root_type Outputs;
-attribute "tsugumi";
-"""
 
 SINK = {"type": "collect"}
 
@@ -205,7 +200,7 @@ def wait_for_display(c, run_id, check=lambda _: True):
     def matches(note):
         if note.valueType == NotificationPayload.DisplayUpdated:
             display = note.value.display
-            return text(display.runId) == run_id and check(display)
+            return check(display)
         return (note.valueType == NotificationPayload.RunEvent
                 and text(note.value.runId) == run_id
                 and note.value.valueType == RunEventValue.RunFinished)
