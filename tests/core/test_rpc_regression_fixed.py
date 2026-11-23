@@ -15,7 +15,7 @@ from Tsugumi.RPC.RunRecordCategory import RunRecordCategory
 def file_fanout_project(root: Path) -> None:
     write(root,
           defs={"trigger": {"type": "trigger"},
-                "doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "data/report.txt"}],
+                "doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "data/report.txt"}}],
                         "_outputs": FILE_FBS, "retainArtifact": True},
                 "sink": dict(SINK, retainArtifact=True)},
           cards=[card("src", "doc"), card("a", "sink"), card("b", "sink")],
@@ -77,7 +77,7 @@ def test_rerun_from_saved_file_inputs_with_much_shorter_paths(tmp_path, core_fac
     src = "source-" + "x" * 80
     root = tmp_path / "p"
     write(root,
-          defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
+          defs={"doc": {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "report.txt"}}],
                         "_outputs": FILE_FBS, "retainArtifact": True},
                 "join": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}]},
                 "sink": dict(SINK, retainArtifact=True)},
@@ -105,8 +105,8 @@ def test_direct_fanout_preserves_precise_numbers(tmp_path, core_factory):
     write(root,
           defs={"trigger": {"type": "trigger"},
                 "reading": {"type": "input",
-                            "params": [{"name": "rate", "type": "double", "data": 0.042169650342858},
-                                       {"name": "tiny", "type": "double", "data": 1e-20}],
+                            "params": [{"name": "rate", "type": "double", "data": {"double": 0.042169650342858}},
+                                       {"name": "tiny", "type": "double", "data": {"double": 1e-20}}],
                             "_outputs": """
 namespace nums;
 table Reading { rate:double; tiny:double; }

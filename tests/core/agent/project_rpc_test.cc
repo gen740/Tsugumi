@@ -28,7 +28,7 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   StartProject();
   const auto folder = directory.path / "sample-template";
   Write(folder / "start/_card.json",
-        R"({"type":"input","params":[{"name":"value","type":"double","data":1}]})");
+        R"({"type":"input","params":[{"name":"value","type":"double","data":{"double":1}}]})");
   Write(folder / "start/_outputs.fbs",
         "namespace sample; table Value { value:double; } "
         "table Outputs { value:Value (required); } root_type Outputs;");
@@ -37,8 +37,8 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   Write(
       folder / "tsugumi.json",
       R"({"canvas":{"cards":[{"id":"start"},{"id":"plan"}],"connections":[{"from":{"card":"start","port":"value"},"to":{"card":"plan","port":""}}]}})");
-  Write(folder / "layout.json",
-        R"({"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}})");
+  Write(folder / "layout.bin",
+        FixtureLayout(R"({"cards":{"start":{"x":0,"y":0},"plan":{"x":250,"y":30}}})"));
   H::TemplateAddT addition;
   addition.name = "Shared name";
   H::TemplateFolderT local;
@@ -132,10 +132,13 @@ TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
             "source");
   EXPECT_EQ(Read(disk / "definitions" / endpoint(1, "to") / "src/notes.txt"),
             "host source");
-  const auto layout = json::Object(Read(disk / "layout.json"));
-  const auto positions = json::Object(layout.at("cards"));
-  EXPECT_EQ(std::stod(json::Object(positions.at(endpoint(0, "to"))).at("x")),
-            260);
+  const auto layout = json::Object(FixtureLayoutText(Read(disk / "layout.bin")));
+  const auto positions = json::Array(layout.at("cards"));
+  const auto plan = std::find_if(positions.begin(), positions.end(), [&](const auto& raw) {
+    return json::Text(json::Object(raw), "key") == endpoint(0, "to");
+  });
+  ASSERT_NE(plan, positions.end());
+  EXPECT_EQ(std::stod(json::Object(*plan).at("x")), 260);
 
   copy.name = "../outside";
   body.Set(copy);
@@ -293,7 +296,7 @@ TEST_F(AgentProjectFixture, HostSettingsOwnProjectAndAttachedFolderGrants) {
 TEST_F(AgentProjectFixture, MissingCollectSchemaReportsTypedFailureAndPath) {
   Write(directory.path / "project/definitions/share/_card.json",
         R"({"type":"collect"})");
-  Write(directory.path / "project/definitions/share/_meta.json", "{}");
+  Write(directory.path / "project/definitions/share/README.md", "{}");
   StartProject();
   const auto conversation = Conversation("missing-schema");
   Grant(conversation);
@@ -1731,7 +1734,7 @@ TEST_F(AgentProjectFixture,
   // model-facing file pages intentionally no longer fill this much context.
   Write(directory.path / "project/definitions/long/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/long/_meta.json",
+  Write(directory.path / "project/definitions/long/README.md",
         R"({"description":)" + Quote(std::string(50000, 'x')) + "}");
   StartProject();
   const auto conversation = Conversation("context-refusal");
@@ -2511,7 +2514,7 @@ TEST_F(AgentProjectFixture,
            Quote(document) +
            "}},{\"value_type\":\"PutDefinition\",\"value\":{\"id\":\"work\","
            "\"card_json\":" +
-           Quote(body) + ",\"keep_meta\":true}}]}";
+           Quote(body) + ",\"keep_readme\":true}}]}";
   };
   const auto network = save(R"({"type":"draft","grants":{"network":true}})");
   const auto sandbox = save(R"({"type":"draft","sandbox":{"filesystem":false}})");
@@ -2874,13 +2877,13 @@ TEST_F(AgentProjectFixture,
        HelperScopesGuardInspectionFilesSavesRunsRecordsAndLogs) {
   Write(directory.path / "project/definitions/allowed/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/allowed/_meta.json",
+  Write(directory.path / "project/definitions/allowed/README.md",
         R"({"description":"VISIBLE_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/secret/_card.json",
         R"({"type":"draft"})");
   Write(directory.path / "project/definitions/writer/_card.json",
         R"({"type":"draft"})");
-  Write(directory.path / "project/definitions/secret/_meta.json",
+  Write(directory.path / "project/definitions/secret/README.md",
         R"({"description":"HIDDEN_CARD_SENTINEL"})");
   Write(directory.path / "project/definitions/outer/_card.json",
         R"({"type":"subgraph","external":"different-directory"})");

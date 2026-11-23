@@ -1,6 +1,6 @@
 # The sandbox contract
 
-**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21. The P1 sandbox work and the ABI 9 cutover implement it.
+**Status.** The owner decided this contract on 2026-11-13 and 2026-11-21. The P1 sandbox work and the Card ABI cutover implement it.
 Each **Before P1** note records the behavior at `24fc2d2c`, the revision the contract was written against, as evidence of what changed. [Security §4](security.md#4-card-worker--tsugumid) describes the current implementation. [Open](#open) lists the remaining decision.
 
 ## The worker builds what the Card sees
@@ -12,7 +12,7 @@ Each **Before P1** note records the behavior at `24fc2d2c`, the revision the con
 - Each kind of worker implements the contract with its own means: bubblewrap on Linux, and Seatbelt with the environment on native macOS.
 - The environment, `HOME`, `TMPDIR` and the working directory are fixed for the lifetime of the process.
 - The contract states what the worker **provides**. It does not defend against the Card's own code: `main.so` shares the worker's address space.
-- Nothing about identity is left for the Card to see. `tsugumid`, not the worker, stamps display messages with the Card and the run, and `WorkerCall` carries no `run_id`, invocation or Card ([Card ABI 9](CardABI.md#effects-and-their-lifetimes)).
+- Nothing about identity is left for the Card to see. `tsugumid`, not the worker, stamps display messages with the Card and the run, and `WorkerCall` carries no `run_id`, invocation or Card ([Card ABI](CardABI.md#effects-and-their-lifetimes)).
 - The "container" worker kind, which does not exist, is dropped. The tests use the shared VM.
 - The Card's process gets no implicit shell and no implicit `PATH`: there is no `/bin/sh` for it to rely on. A Card that runs other programs declares them to its language SDK's builder (for example `tools = [ pkgs.coreutils ];`), the builder installs them in the Card package's `bin` folder, and the worker sets `PATH` to that folder alone (and leaves it unset when there is none). [The language SDK guides](https://github.com/gen740/tsugumi-kit) describe the attribute.
 
@@ -50,7 +50,7 @@ Each **Before P1** note records the behavior at `24fc2d2c`, the revision the con
 
 Where the worker can remap paths (bubblewrap on Linux, the shared VM and remote workers), `/tmp` is the same place as `TMPDIR`: a disk-backed directory that Tsugumi manages (scratch bound at `/tmp`), not bubblewrap's in-memory tmpfs. Programs that hard-code `/tmp` need no special care there. On native macOS only `TMPDIR` is guaranteed.
 
-New Path outputs are created under the working directory. A Card can also return a staged input path unchanged. [Card ABI 9](CardABI.md#path-ports)
+New Path outputs are created under the working directory. A Card can also return a staged input path unchanged. [Card ABI](CardABI.md#path-ports)
 
 **Before P1 (`24fc2d2c`).**
 

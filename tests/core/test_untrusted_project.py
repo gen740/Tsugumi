@@ -9,6 +9,7 @@ from harness.observations import read_pages
 from harness.scenario import Project, run, wait_run
 from projects import builtin_project, put
 from tsugumi_client import RpcFailure, change, new_id, path, text
+from harness.document import layout_bytes
 from Tsugumi.Data.RunState import RunState
 
 DIRECTORY_OUTPUT = ('attribute "tsugumi"; '
@@ -30,13 +31,13 @@ def test_a_source_save_cannot_write_outside_the_project(core_factory, project, t
         target = str(tmp_path / "outside.txt")
     with pytest.raises(RpcFailure) as failure:
         client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test", changes=[
-            change("SetLayout", json=json.dumps({"cards": {"work": {"x": 999, "y": 999}}})),
+            change("SetLayout", layout=layout_bytes({"cards": {"work": {"x": 999, "y": 999}}})),
             change("PutSource", path=target, bytes=b"untrusted"),
         ])
     assert failure.value.kind == kind
     after = client.call("ProjectInspectRequest")
     assert after.rev == before.rev
-    assert text(after.layoutJson) == text(before.layoutJson)
+    assert bytes(after.layout or []) == bytes(before.layout or [])
     assert read_pages(client, "ProjectFileReadRequest", path="definitions/work/keep.txt") == b"original"
 
 

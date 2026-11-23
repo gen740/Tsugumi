@@ -1,23 +1,27 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "n_boot",
+      "type": "uint64",
+      "data": {
+        "uint64": 500
+      }
+    },
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": {
+        "uint64": 7
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "plate"
     },
     {
       "name": "fit"
-    }
-  ],
-  "params": [
-    {
-      "name": "n_boot",
-      "type": "uint64",
-      "data": 500
-    },
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": 7
     }
   ]
 }

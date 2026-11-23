@@ -11,12 +11,16 @@ import { ComparedCardView, ComparedMembers, RunComparisonView, RunScopes, Versio
 const summary = (runId: string, card: string, state = D.CardState.succeeded) => Object.assign(new R.InvocationSummaryT(), {
   runId, card: cardPath(card.split('/')), invocation: 1n, state, durationMs: 10n,
 })
-const record = (runId: string, card: string, params: string, state = D.CardState.succeeded) => Object.assign(new R.RecordResultT(), {
-  record: Object.assign(new R.InvocationRecordT(), { summary: summary(runId, card, state), paramsJson: params, recordIo: true }),
+const params = (values: Record<string, string>) =>
+  Object.assign(new D.InvocationParamsT(), {
+    entries: Object.entries(values).map(([name, value]) => Object.assign(new D.InvocationParamT(), { name, value })),
+  })
+const record = (runId: string, card: string, values: Record<string, string>, state = D.CardState.succeeded) => Object.assign(new R.RecordResultT(), {
+  record: Object.assign(new R.InvocationRecordT(), { summary: summary(runId, card, state), params: params(values), recordIo: true }),
   status: Object.assign(new R.HistoryStateT(), { state }), aggregate: Object.assign(new R.AggregateT(), { calls: 1n, succeeded: 1n }), exists: true,
 })
-const a = record('left', 'bands', '{"low":600,"boundary":1650}')
-const b = record('right', 'bands', '{"low":600,"boundary":1800}')
+const a = record('left', 'bands', { low: '600', boundary: '1650' })
+const b = record('right', 'bands', { low: '600', boundary: '1800' })
 const calls: string[] = []
 const rows = await loadRunComparison({
   async latestInvocations(run) { calls.push('latest:' + run); return Object.assign(new R.InvocationPageT(), {
@@ -26,7 +30,7 @@ const rows = await loadRunComparison({
     assert.equal(invocation, 1n); assert.equal(follow, false)
     calls.push('record:' + run + '/' + card.join('/'))
     if (card[0] === 'stopped') throw new Error('record unavailable')
-    return card[0] === 'bands' ? run === 'left' ? a : b : record(run, card[0], '{}', card[0] === 'failed' ? D.CardState.failed : D.CardState.succeeded)
+    return card[0] === 'bands' ? run === 'left' ? a : b : record(run, card[0], {}, card[0] === 'failed' ? D.CardState.failed : D.CardState.succeeded)
   },
 }, 'left', 'right')
 const compared = new Map(rows.map(row => [row.card, row]))
@@ -50,7 +54,7 @@ for (const name of ['boundary', 'low']) {
   assert.equal(field.difference, 'changed')
 }
 // A record that holds no parameters says nothing about them: not a list of removed ones.
-const unrecorded = record('left', 'bands', '{}'); unrecorded.record!.paramsJson = null
+const unrecorded = record('left', 'bands', {}); unrecorded.record!.params = null
 for (const name of ['low', 'boundary']) assert.equal(byName(comparedParams(unrecorded, b), name).difference, 'unknown')
 const v = Object.assign(new D.NamedValueT(), { name: 'photons', rootType: 'Counts', inlineBytes: [1, 2, 3], sizeBytes: 3n })
 a.record!.outputs = [v]; b.record!.outputs = [Object.assign(new D.NamedValueT(), v, { inlineBytes: [1, 2, 4] })]
@@ -69,7 +73,7 @@ assert.equal(valueDifference(v, omitted(null, 3n)), 'unknown', 'inline on one si
 assert.equal(valueDifference(v, Object.assign(new D.NamedValueT(), v, { rootType: 'Other' })), 'changed', 'a type change is a difference')
 assert.equal(valueDifference(v, undefined), 'unknown')
 {
-  const x = record('left', 'big', '{}'), y = record('right', 'big', '{}')
+  const x = record('left', 'big', {}), y = record('right', 'big', {})
   x.record!.outputs = [omitted()]; y.record!.outputs = [omitted()]
   x.truncated = y.truncated = true
   const field = comparedValues('outputs', x, y)[0]
@@ -100,7 +104,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   assert.equal(valueDifference(undefined, x), 'unknown')
   assert.equal(valueDifference(undefined, undefined), 'same')
   for (const side of ['inputs', 'outputs'] as const) {
-    const left = record('left', 'files', '{}'), right = record('right', 'files', '{}')
+    const left = record('left', 'files', {}), right = record('right', 'files', {})
     left.record![side] = [x]
     assert.equal(comparedValues(side, left, right)[0].difference, 'unknown')
     assert.equal(comparedValues(side, undefined, left)[0].difference, 'unknown')
@@ -110,7 +114,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 // Execution conditions beyond parameters: environment, service, emulation and input sources.
 {
   const side = (run: string, env: string | null, emulator: string | null, executionService: string | null = null) => {
-    const r = record(run, 'bands', '{}')
+    const r = record(run, 'bands', {})
     Object.assign(r.record!.summary!, { environmentId: env, emulator, executionService })
     return { summary: r.record!.summary!, record: r }
   }
@@ -172,9 +176,9 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 
 // A Card called several times in a run is compared by its last call, and says so.
 {
-  const many = record('left', 'loop', '{}')
+  const many = record('left', 'loop', {})
   many.record!.summary!.invocation = 3n; many.aggregate!.calls = 3n
-  const once = record('right', 'loop', '{}')
+  const once = record('right', 'loop', {})
   const html = renderToStaticMarkup(<ComparedCardView row={{ card: 'loop', left: { summary: many.record!.summary!, record: many }, right: { summary: once.record!.summary!, record: once } }} />)
   assert.ok(html.includes('#3') && html.includes('#1'), 'the two sides identify the compared invocations')
 }
@@ -276,7 +280,7 @@ assert.equal(valueDifference(v, undefined), 'unknown')
 
   // The view shows the last member, then the member chosen by name on both sides.
   const recorded = (run: string, m: R.InvocationSummaryT) => Object.assign(new R.RecordResultT(), {
-    record: Object.assign(new R.InvocationRecordT(), { summary: m, paramsJson: `{"run":"${run}","at":${m.invocation}}`, recordIo: true }), exists: true,
+    record: Object.assign(new R.InvocationRecordT(), { summary: m, params: params({ run: JSON.stringify(run), at: m.invocation.toString() }), recordIo: true }), exists: true,
   })
   const reads: string[] = []
   const rpc = {

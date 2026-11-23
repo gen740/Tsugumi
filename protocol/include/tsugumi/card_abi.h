@@ -8,7 +8,7 @@
 extern "C" {
 #endif
 
-#define TSUGUMI_ABI_VERSION 9u
+#define TSUGUMI_ABI_VERSION 0u
 
 typedef struct tsugumi_bytes {
   const uint8_t* data;

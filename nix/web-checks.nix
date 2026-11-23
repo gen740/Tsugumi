@@ -6,6 +6,7 @@
   chromium,
   dejavu_fonts,
   fetchurl,
+  flatbuffers,
   makeFontsConf,
   unzip,
   runCommand,
@@ -24,6 +25,7 @@ in
 runCommand "tsugumi-web-checks"
   {
     nativeBuildInputs = [
+      flatbuffers
       nodejs
     ]
     ++ lib.optional stdenv.hostPlatform.isDarwin unzip;

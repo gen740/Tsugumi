@@ -84,8 +84,8 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [7, 8]))
     graph.card("values", {"type": "input", "recordIO": True, "params": [
-        {"name": "left", "type": "uint64", "sweep": [1, 2]},
-        {"name": "right", "type": "uint64", "sweep": [10, 20, 30]},
+        {"name": "left", "type": "uint64", "sweep": [{"uint64": 1}, {"uint64": 2}]},
+        {"name": "right", "type": "uint64", "sweep": [{"uint64": 10}, {"uint64": 20}, {"uint64": 30}]},
     ]}, outputs=PAIR)
     graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("starts", "out", "values", "start").connect("values", "out", "collect", "in")
@@ -101,7 +101,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     assert [row.implementationIndex for row in page.records] == list(range(1, 7)) * 2
     assert [row.batchIndex for row in page.records] == list(range(1, 13))
     first = client.call("RunRecordRequest", runId=run_id, card=path("values"), invocation=2).record
-    assert json.loads(text(first.paramsJson)) == {"left": 1, "right": 20}
+    assert {text(p.name): json.loads(text(p.value)) for p in first.params.entries} == {"left": 1, "right": 20}
     assert recorded_input_json(client, tmp_path / "decode", run_id, "values", invocation=7, port="start") == {
         "value": 8}
     assert collected(client, tmp_path / "decode", run_id) == [{"left": a, "right": b} for a, b in pairs] * 2
@@ -112,11 +112,11 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("one", {"type": "input", "recordIO": True,
-                       "params": [{"name": "value", "type": "uint64", "sweep": [5]}]}, outputs=NUMBER)
+                       "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 5}]}]}, outputs=NUMBER)
     graph.card("vector", {"type": "input", "recordIO": True,
-                          "params": [{"name": "items", "type": "uint64[]", "data": [1, 2, 3]}]}, outputs=VECTOR)
+                          "params": [{"name": "items", "type": "uint64[]", "data": {"uint64s": [1, 2, 3]}}]}, outputs=VECTOR)
     graph.card("lists", {"type": "input", "recordIO": True,
-                         "params": [{"name": "items", "type": "uint64[]", "sweep": [[1, 2], [], [3]]}]},
+                         "params": [{"name": "items", "type": "uint64[]", "sweep": [{"uint64s": [1, 2]}, {"uint64s": []}, {"uint64s": [3]}]}]},
                outputs=VECTOR)
     for name in ("one", "vector", "lists"):
         graph.card(f"collect-{name}", {"type": "collect", "recordIO": True})
@@ -163,7 +163,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [0, 1]))
     graph.card("values", {"type": "input", "params": [
-        {"name": "value", "type": "uint64", "sweep": list(range(200))}]}, outputs=NUMBER)
+        {"name": "value", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(200))]}]}, outputs=NUMBER)
     graph.connect("starts", "out", "values", "start").save(client)
 
     run_id = run(client, "starts", propagate=True)
@@ -175,14 +175,14 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
 
 
 @pytest.mark.parametrize("definition,message", [
-    ({"type": "input", "params": [{"name": "value", "type": "uint64", "data": 1, "sweep": [1]}]},
+    ({"type": "input", "params": [{"name": "value", "type": "uint64", "data": {"uint64": 1}, "sweep": [{"uint64": 1}]}]},
      "not both"),
-    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [1, -2]}]},
-     "sweep[1]: expected uint64"),
-    ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": list(range(17))},
-                                      {"name": "right", "type": "uint64", "sweep": list(range(16))}]},
+    ({"type": "input", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"int64": -2}]}]},
+     'sweep[1]: a uint64 value is written as {"uint64": ...}'),
+    ({"type": "input", "params": [{"name": "left", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(17))]},
+                                      {"name": "right", "type": "uint64", "sweep": [{"uint64": value} for value in list(range(16))]}]},
      "at most 256"),
-    ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [1, 2]}],
+    ({"type": "code", "params": [{"name": "value", "type": "uint64", "sweep": [{"uint64": 1}, {"uint64": 2}]}],
       "_nix": "{ pkgs, inputs, params, ... }: { run = pkgs.emptyDirectory; }"},
      "sweep is for Input Cards"),
 ])

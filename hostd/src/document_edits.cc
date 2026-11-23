@@ -19,17 +19,24 @@ auto Endpoint(const std::string& card, const std::string& port) -> std::string {
 }
 
 // Reuse a boundary port when several wires name the same inner endpoint.
-auto BoundaryPort(json::Members& ports, const std::string& endpoint)
+// Ports are a project's boundary entries: {name, card, port}.
+auto BoundaryPort(std::vector<std::string>& ports, const std::string& endpoint)
     -> std::string {
   const auto end = json::Object(endpoint);
-  for (const auto& [name, value] : ports)
-    if (json::Text(json::Object(value), "card") == json::Text(end, "card") &&
-        json::Text(json::Object(value), "port") == json::Text(end, "port"))
-      return name;
+  std::set<std::string> names;
+  for (const auto& raw : ports) {
+    const auto value = json::Object(raw);
+    if (json::Text(value, "card") == json::Text(end, "card") &&
+        json::Text(value, "port") == json::Text(end, "port"))
+      return json::Text(value, "name");
+    names.insert(json::Text(value, "name"));
+  }
   const auto stem = json::Text(end, "card") + "_" + json::Text(end, "port");
   auto name = stem;
-  for (size_t i = 2; ports.contains(name); ++i) name = stem + std::to_string(i);
-  ports[name] = endpoint;
+  for (size_t i = 2; names.contains(name); ++i) name = stem + std::to_string(i);
+  auto entry = end;
+  entry["name"] = json::Quote(name);
+  ports.push_back(json::Encode(entry));
   return name;
 }
 }  // namespace
@@ -60,7 +67,7 @@ auto MakeSubgraph(const std::string& project,
     }
   }
   if (found != selected) throw std::runtime_error("A selected Card is missing");
-  json::Members inputs, outputs;
+  std::vector<std::string> inputs, outputs;
   for (const auto& raw : json::Array(json::Get(graph, "connections", "[]"))) {
     auto wire = json::Object(raw);
     const auto from = json::Object(json::Get(wire, "from"));
@@ -80,14 +87,16 @@ auto MakeSubgraph(const std::string& project,
   if (outer.contains("boundary")) {
     auto boundary = json::Object(outer.at("boundary"));
     for (const auto& side : {"inputs", "outputs"}) {
-      auto ports = json::Object(json::Get(boundary, side, "{}"));
-      for (auto& [name, raw] : ports) {
-        (void)name;
-        if (selected.contains(json::Text(json::Object(raw), "card")))
-          raw = Endpoint(
-              id,
-              BoundaryPort(
-                  std::string_view(side) == "inputs" ? inputs : outputs, raw));
+      auto ports = json::Array(json::Get(boundary, side, "[]"));
+      for (auto& raw : ports) {
+        auto entry = json::Object(raw);
+        if (!selected.contains(json::Text(entry, "card"))) continue;
+        const auto inner_end = Endpoint(json::Text(entry, "card"),
+                                        json::Text(entry, "port"));
+        entry["card"] = json::Quote(id);
+        entry["port"] = json::Quote(BoundaryPort(
+            std::string_view(side) == "inputs" ? inputs : outputs, inner_end));
+        raw = json::Encode(entry);
       }
       boundary[side] = json::Encode(ports);
     }
@@ -112,8 +121,8 @@ auto MakeSubgraph(const std::string& project,
 }
 auto CopyDocuments(const std::string& state,
                    const std::vector<std::string>& paths,
-                   const std::string& from, const std::string& to,
-                   const std::string& name) -> DocumentCopy {
+                   const std::string& from, const std::string& to)
+    -> DocumentCopy {
   const auto root = json::Object(state);
   const auto externals = json::Object(json::Get(root, "externals", "{}"));
   json::Members definitions, copied_externals;
@@ -130,14 +139,18 @@ auto CopyDocuments(const std::string& state,
       if (!prefix.starts_with(source)) continue;
       copied_externals[target + prefix.substr(source.size())] = raw;
       documents.insert(prefix + "tsugumi.json");
-      documents.insert(prefix + "layout.json");
+      documents.insert(prefix + "layout.bin");
       for (const auto& path : paths) {
+        // The notes' text travels in the copied layout view.
+        if (path.starts_with(prefix + "notes/")) documents.insert(path);
         if (!path.starts_with(prefix + "definitions/")) continue;
         const auto rest = path.substr(prefix.size() + 12);
         const auto slash = rest.find('/');
         if (slash == std::string::npos) continue;
         const auto doc = rest.substr(slash + 1);
-        if (doc == "_card.json" || doc == "_meta.json") documents.insert(path);
+        if (doc == "_card.json" || doc == "README.md" ||
+            doc == "_comments.json")
+          documents.insert(path);
       }
     }
     for (const auto& path : paths)
@@ -164,20 +177,19 @@ auto CopyDocuments(const std::string& state,
                              : json::Object(externals.at(source_prefix));
     auto draft = json::Object(
         json::Object(json::Get(project, "definitions", "{}")).at(id));
-    auto meta = json::Object(json::Get(draft, "meta", "{}"));
-    meta["name"] =
-        json::Quote(name.empty() ? json::Text(meta, "name", id) : name);
-    if (meta.contains("comments")) {
-      auto comments = json::Array(meta.at("comments"));
+    // A copy's comments are its own, numbered again.
+    if (draft.contains("comments")) {
+      auto document = json::Object(draft.at("comments"));
+      auto comments = json::Array(json::Get(document, "comments", "[]"));
       uint64_t comment_id = 0;
       for (auto& raw : comments) {
         auto comment = json::Object(raw);
         comment["id"] = json::Quote(std::to_string(++comment_id));
         raw = json::Encode(comment);
       }
-      meta["comments"] = json::Encode(comments);
+      document["comments"] = json::Encode(comments);
+      draft["comments"] = json::Encode(document);
     }
-    draft["meta"] = json::Encode(meta);
     auto card = json::Object(draft.at("card"));
     const auto external = json::Text(card, "external");
     if (!external.empty()) {
@@ -190,7 +202,8 @@ auto CopyDocuments(const std::string& state,
     for (const auto& path : paths) {
       if (!path.starts_with(from)) continue;
       const auto rel = path.substr(from.size());
-      if (rel != "_card.json" && rel != "_meta.json") file(path, to + rel);
+      if (rel != "_card.json" && rel != "README.md" && rel != "_comments.json")
+        file(path, to + rel);
     }
   } else {
     copy_external(from, to);

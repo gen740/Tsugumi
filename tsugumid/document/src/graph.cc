@@ -1,6 +1,7 @@
 #include "tsugumi/document/graph.hh"
 
 #include <algorithm>
+#include <charconv>
 #include <cmath>
 #include <deque>
 #include <limits>
@@ -11,6 +12,7 @@
 #include <tuple>
 
 #include "tsugumi/document/collect_type.hh"
+#include "tsugumi/util/json_object.hh"
 
 namespace tsugumi {
 
@@ -123,53 +125,143 @@ std::string param_fbs_type(ParamType t) {
 
 namespace {
 
-template <class E>
-bool decodes_as(const hosq::json::GenericDom<>& v) {
-  E e;
-  return !schema::decode(v, e);
+namespace D = Tsugumi::Document;
+using document_text::str;
+
+// The ParamValue field of each param type.
+auto param_field(ParamType t) -> const char* {
+  switch (t) {
+    case ParamType::Bool:
+      return "bool";
+    case ParamType::Int64:
+      return "int64";
+    case ParamType::UInt64:
+      return "uint64";
+    case ParamType::Double:
+      return "double";
+    case ParamType::String:
+      return "string";
+    case ParamType::BoolArray:
+      return "bools";
+    case ParamType::Int64Array:
+      return "int64s";
+    case ParamType::UInt64Array:
+      return "uint64s";
+    case ParamType::DoubleArray:
+      return "doubles";
+    case ParamType::StringArray:
+      return "strings";
+  }
+  return "string";
+}
+
+auto number_json(double v) -> std::string {
+  char buffer[64];
+  const auto [end, ec] = std::to_chars(buffer, buffer + sizeof buffer, v);
+  std::string out(buffer, ec == std::errc() ? end : buffer);
+  if (out.find_first_of(".eE") == std::string::npos) out += ".0";
+  return out;
+}
+
+template <class T, class F>
+auto list_json(const std::vector<T>& values, F each) -> std::string {
+  std::string out = "[";
+  for (size_t i = 0; i < values.size(); ++i) {
+    if (i) out += ',';
+    out += each(values[i]);
+  }
+  return out + ']';
 }
 
 }  // namespace
 
-std::optional<std::string> check_param_value(
-    ParamType t, const hosq::json::GenericDom<>& v) {
-  namespace sv = schema::v;
-  bool ok = false;
+std::optional<std::string> check_param_value(ParamType t,
+                                             const D::ParamValue& v) {
+  const std::pair<const char*, bool> set[] = {
+      {"bool", v.bool_().has_value()},
+      {"int64", v.int64().has_value()},
+      {"uint64", v.uint64().has_value()},
+      {"double", v.double_().has_value()},
+      {"string", v.string() != nullptr},
+      {"bools", v.bools() != nullptr},
+      {"int64s", v.int64s() != nullptr},
+      {"uint64s", v.uint64s() != nullptr},
+      {"doubles", v.doubles() != nullptr},
+      {"strings", v.strings() != nullptr},
+  };
+  const std::string field = param_field(t);
+  for (const auto& [name, present] : set) {
+    if (name == field && !present)
+      return "expected the " + field + " field for type " +
+             param_type_name(t);
+    if (name != field && present)
+      return std::string("a ") + param_type_name(t) + " value is written as {\"" +
+             field + "\": ...}, not " + name;
+  }
+  const auto finite = [](double d) { return std::isfinite(d); };
+  if ((v.double_() && !finite(*v.double_())) ||
+      (v.doubles() && !std::all_of(v.doubles()->begin(), v.doubles()->end(),
+                                   finite)))
+    return "doubles must be finite";
+  return std::nullopt;
+}
+
+auto param_value_json(ParamType t, const ParamValue& v) -> std::string {
+  const auto boolean = [](bool b) -> std::string { return b ? "true" : "false"; };
   switch (t) {
     case ParamType::Bool:
-      ok = decodes_as<sv::Bool>(v);
-      break;
+      return boolean(v.bool_.value_or(false));
     case ParamType::Int64:
-      ok = decodes_as<sv::Int64>(v);
-      break;
+      return std::to_string(v.int64.value_or(0));
     case ParamType::UInt64:
-      ok = decodes_as<sv::Uint64>(v);
-      break;
+      return std::to_string(v.uint64.value_or(0));
     case ParamType::Double:
-      ok = decodes_as<schema::Number>(v);
-      break;
+      return number_json(v.double_.value_or(0));
     case ParamType::String:
-      ok = decodes_as<sv::String>(v);
-      break;
-    case ParamType::BoolArray:
-      ok = decodes_as<sv::Array<sv::Bool>>(v);
-      break;
+      return json::Quote(v.string);
+    case ParamType::BoolArray: {
+      std::vector<bool> values(v.bools.begin(), v.bools.end());
+      return list_json(values, boolean);
+    }
     case ParamType::Int64Array:
-      ok = decodes_as<sv::Array<sv::Int64>>(v);
-      break;
+      return list_json(v.int64s, [](int64_t x) { return std::to_string(x); });
     case ParamType::UInt64Array:
-      ok = decodes_as<sv::Array<sv::Uint64>>(v);
-      break;
+      return list_json(v.uint64s, [](uint64_t x) { return std::to_string(x); });
     case ParamType::DoubleArray:
-      ok = decodes_as<sv::Array<schema::Number>>(v);
-      break;
+      return list_json(v.doubles, number_json);
     case ParamType::StringArray:
-      ok = decodes_as<sv::Array<sv::String>>(v);
-      break;
+      return list_json(v.strings,
+                       [](const std::string& x) { return json::Quote(x); });
   }
-  if (ok) return std::nullopt;
-  return std::string("expected ") + param_type_name(t) +
-         " (integers must be in range, no implicit conversion)";
+  return "null";
+}
+
+namespace {
+// A Nix source's package overrides as the attribute set default.nix reads:
+// package -> {override, overrideAttrs}.
+auto overrides_json(const D::NixSource& source) -> std::string {
+  json::Members packages;
+  if (const auto* list = source.overrides())
+    for (const auto* o : *list) {
+      json::Members entry;
+      std::string text;
+      if (o->override()) {
+        o->override_flexbuffer_root().ToString(true, true, text);
+        entry["override"] = text;
+      }
+      if (o->overrideAttrs()) {
+        text.clear();
+        o->overrideAttrs_flexbuffer_root().ToString(true, true, text);
+        entry["overrideAttrs"] = text;
+      }
+      packages[o->package()->str()] = json::Encode(entry);
+    }
+  return json::Encode(packages);
+}
+}  // namespace
+
+auto param_value_label(ParamType t, const ParamValue& v) -> std::string {
+  return t == ParamType::String ? v.string : param_value_json(t, v);
 }
 
 bool has_value_sweep(const Settings& settings) {
@@ -199,12 +291,7 @@ ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
     if (values.empty()) throw std::out_of_range("empty value sweep");
     it->data = values.at(index % values.size());
     index /= values.size();
-    // Strings read as they are; other values as their JSON text.
-    schema::v::String string;
-    const std::string value = schema::decode(*it->data, string)
-                                  ? schema::text(*it->data)
-                                  : std::string(string.value());
-    parts.push_back(it->name + "=" + value);
+    parts.push_back(it->name + "=" + param_value_label(it->type, *it->data));
     it->sweep.reset();
   }
   for (auto it = parts.rbegin(); it != parts.rend(); ++it)
@@ -213,20 +300,18 @@ ValueSweepMember value_sweep_member(const Settings& settings, uint64_t index) {
 }
 
 CardType card_type_of(const DefinitionDoc& def) {
-  const auto* name = schema::get(def.card.type);
-  const auto type = name ? parse_card_type(*name) : std::nullopt;
-  if (!type) throw std::logic_error("card definition without a valid type");
-  return *type;
+  const auto type = def.card().type();
+  const auto parsed =
+      type ? parse_card_type(D::EnumNameCardType(*type)) : std::nullopt;
+  if (!parsed) throw std::logic_error("card definition without a valid type");
+  return *parsed;
 }
 
 std::vector<std::string> fork_outputs(const DefinitionDoc& def) {
-  const auto* outputs = schema::get(def.card.outputs);
+  const auto* outputs = def.card().outputs();
   if (!outputs) return {"a", "b"};
   std::vector<std::string> names;
-  for (const auto& o : *outputs) {
-    const auto* name = schema::get(o.name);
-    names.push_back(name ? *name : "");
-  }
+  for (const auto* o : *outputs) names.push_back(o->name()->str());
   return names;
 }
 
@@ -277,7 +362,7 @@ class Builder {
 
   std::shared_ptr<Resolution> run() {
     res_ = std::make_shared<Resolution>();
-    scope(doc_.project, "", {}, 0);
+    scope(doc_.project(), "", {}, 0);
     connect_all();
     res_->incoming.resize(res_->nodes.size());
     res_->outgoing.resize(res_->nodes.size());
@@ -303,51 +388,41 @@ class Builder {
     std::string to_port;
   };
 
-  void timeout(Node& n, const char* key, const hosq::json::GenericDom<>* v,
+  void timeout(Node& n, const char* key, std::optional<uint64_t> v,
                std::optional<uint64_t>& out) {
     if (!v) return;
-    if (schema::is_null(*v)) {
-      out.reset();  // explicit null: no deadline
-      return;
-    }
-    schema::v::Uint64 u;
-    if (!schema::decode(*v, u) && u.value() > 0)
-      out = u.value();
+    if (*v > 0)
+      out = *v;
     else
-      n.diags.push_back(
-          diag(n.path, "invalid_setting",
-               std::string(key) + " must be a positive integer or null"));
+      n.diags.push_back(diag(n.path, "invalid_setting",
+                             std::string(key) + " must be a positive integer"));
   }
 
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || schema::get(def->card.external)) return;
-    const auto& d = def->card;
-    auto str = [&](const auto& f, std::string& out) {
-      if (const auto* v = schema::get(f)) out = *v;
+    if (!def || def->card().external()) return;
+    const auto& d = def->card();
+    auto boolean = [&](std::optional<bool> v, bool& out) {
+      if (v) out = *v;
     };
-    auto boolean = [&](const auto& f, bool& out) {
-      if (const auto* v = schema::get(f)) out = *v;
-    };
-    str(d.symbol, s.symbol);
-    if (const auto* ins = schema::get(d.inputs);
-        ins && n.kind != CardType::Draft) {
+    if (d.symbol()) s.symbol = d.symbol()->str();
+    if (const auto* ins = d.inputs(); ins && n.kind != CardType::Draft) {
       std::set<std::string> seen;
-      for (const auto& in : *ins) {
-        const auto* name = schema::get(in.name);
-        if (!name || !valid_id(*name)) {
+      for (const auto* in : *ins) {
+        const auto name = in->name()->str();
+        if (!valid_id(name)) {
           n.diags.push_back(diag(n.path, "invalid_setting",
                                  "inputs entries need a valid name"));
           continue;
         }
-        if (!seen.insert(*name).second)
+        if (!seen.insert(name).second)
           n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate input " + *name));
-        n.input_defs.push_back({*name});
+              diag(n.path, "invalid_setting", "duplicate input " + name));
+        n.input_defs.push_back({name});
       }
     }
-    if (const auto* v = schema::get(d.max_runs)) {
+    if (const auto v = d.maxRuns()) {
       if (*v > 0)
         s.max_runs = *v;
       else
@@ -355,24 +430,20 @@ class Builder {
             diag(n.path, "invalid_setting",
                  "maxRuns must be a positive integer (0 is rejected)"));
     }
-    timeout(n, "timeoutSeconds", schema::get(d.timeout_seconds),
-            s.timeout_seconds);
-    timeout(n, "buildTimeoutSeconds", schema::get(d.build_timeout_seconds),
+    timeout(n, "timeoutSeconds", d.timeoutSeconds(), s.timeout_seconds);
+    timeout(n, "buildTimeoutSeconds", d.buildTimeoutSeconds(),
             s.build_timeout_seconds);
-    boolean(d.record_logs, s.record_logs);
-    boolean(d.record_io, s.record_io);
-    boolean(d.retain_artifact, s.retain_artifact);
-    if (const auto* sandbox = schema::get(d.sandbox)) {
-      boolean(sandbox->filesystem, s.sandbox.filesystem);
-      boolean(sandbox->pid, s.sandbox.pid);
-      boolean(sandbox->ipc, s.sandbox.ipc);
-      boolean(sandbox->identity, s.sandbox.identity);
-      if (const auto* limits = schema::get(sandbox->limits)) {
-        if (const auto* v = schema::get(limits->cpu);
-            v && !schema::is_null(*v)) {
-          schema::Number cpu;
-          if (schema::decode(*v, cpu) || !std::isfinite(*cpu) || *cpu <= 0 ||
-              *cpu > 256)
+    boolean(d.recordLogs(), s.record_logs);
+    boolean(d.recordIO(), s.record_io);
+    boolean(d.retainArtifact(), s.retain_artifact);
+    if (const auto* sandbox = d.sandbox()) {
+      boolean(sandbox->filesystem(), s.sandbox.filesystem);
+      boolean(sandbox->pid(), s.sandbox.pid);
+      boolean(sandbox->ipc(), s.sandbox.ipc);
+      boolean(sandbox->identity(), s.sandbox.identity);
+      if (const auto* limits = sandbox->limits()) {
+        if (const auto cpu = limits->cpu()) {
+          if (!std::isfinite(*cpu) || *cpu <= 0 || *cpu > 256)
             n.diags.push_back(
                 diag(n.path, "invalid_setting",
                      "sandbox.limits.cpu must be in (0, 256] or null"));
@@ -380,11 +451,8 @@ class Builder {
             s.sandbox.limits.cpu_millis =
                 static_cast<uint32_t>(std::ceil(*cpu * 1000));
         }
-        if (const auto* v = schema::get(limits->memory_mib);
-            v && !schema::is_null(*v)) {
-          schema::v::Uint64 mib;
-          if (schema::decode(*v, mib) || *mib == 0 ||
-              *mib > (uint64_t{1} << 20))
+        if (const auto mib = limits->memoryMiB()) {
+          if (*mib == 0 || *mib > (uint64_t{1} << 20))
             n.diags.push_back(diag(n.path, "invalid_setting",
                                    "sandbox.limits.memoryMiB must be a "
                                    "positive integer up to 1048576 or null"));
@@ -393,13 +461,15 @@ class Builder {
         }
       }
     }
-    boolean(d.reuse_worker, s.reuse_worker);
-    const auto* grants = schema::get(d.grants);
+    boolean(d.reuseWorker(), s.reuse_worker);
+    const auto* grants = d.grants();
     if (grants) {
-      boolean(grants->network, s.grants.network);
-      boolean(grants->gui, s.grants.gui);
+      boolean(grants->network(), s.grants.network);
+      boolean(grants->gui(), s.grants.gui);
     }
-    if (const auto* v = schema::get(d.execution_service)) {
+    if (const auto* service = d.executionService()) {
+      const auto value = service->str();
+      const auto* v = &value;
       if (n.kind != CardType::Code)
         n.diags.push_back(
             diag(n.path, "invalid_setting",
@@ -410,9 +480,9 @@ class Builder {
       else
         s.execution_service = *v;
     }
-    if (const auto* condition = schema::get(d.worker_condition)) {
+    if (const auto* condition = d.workerCondition()) {
       auto compiled = worker_condition::compile(
-          {*condition->language, *condition->expression});
+          {condition->language()->str(), condition->expression()->str()});
       if (const auto* diagnostic =
               std::get_if<worker_condition::Diagnostic>(&compiled))
         n.diags.push_back(diag(n.path, "invalid_setting",
@@ -426,9 +496,10 @@ class Builder {
     }
     const bool remote = s.execution_service != kLocalExecutionService &&
                         s.execution_service != "auto";
-    if (const auto* secrets = schema::get(d.secrets)) {
+    if (const auto* secrets = d.secrets()) {
       std::set<std::string> names;
-      for (const auto& name : *secrets) {
+      for (const auto* entry : *secrets) {
+        const auto name = entry->str();
         if (!valid_secret_name(name)) {
           n.diags.push_back(diag(n.path, "invalid_setting",
                                  "secrets entries must match "
@@ -444,7 +515,9 @@ class Builder {
         s.secrets.push_back(name);
       }
     }
-    if (const auto* v = schema::get(d.system)) {
+    if (const auto* system = d.system()) {
+      const auto value = system->str();
+      const auto* v = &value;
       if (!remote && *v == native_system())
         s.system.clear();
       else if (*v == "x86_64-linux" || *v == "aarch64-linux")
@@ -454,15 +527,16 @@ class Builder {
             n.path, "invalid_setting",
             "system must be the native system, x86_64-linux or aarch64-linux"));
     }
-    if (const auto* v = schema::get(d.artifact_output)) s.artifact_output = *v;
-    const auto* folders = grants ? schema::get(grants->host_paths) : nullptr;
+    if (const auto* v = d.artifactOutput()) s.artifact_output = v->str();
+    const auto* folders = grants ? grants->hostPaths() : nullptr;
     if (folders) {
       std::set<std::string> names;
-      for (const auto& f : *folders) {
-        const auto* path = schema::get(f.path);
-        const auto* name = schema::get(f.name);
-        if (!path || path->empty() || path->front() != '/' || !name ||
-            !valid_id(*name)) {
+      for (const auto* f : *folders) {
+        const auto path_value = f->path()->str();
+        const auto name_value = f->name()->str();
+        const auto* path = &path_value;
+        const auto* name = &name_value;
+        if (path->empty() || path->front() != '/' || !valid_id(*name)) {
           n.diags.push_back(diag(
               n.path, "invalid_setting",
               "grants.hostPaths entries need an absolute path and a name"));
@@ -474,8 +548,7 @@ class Builder {
                    "duplicate host path grant variable for " + *name));
           continue;
         }
-        const auto* w = schema::get(f.write);
-        s.grants.host_paths.push_back({*path, *name, w && *w});
+        s.grants.host_paths.push_back({*path, *name, f->write().value_or(false)});
       }
     }
     if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
@@ -489,56 +562,56 @@ class Builder {
 
   void read_params(Node& n, const DefinitionDoc* def) {
     std::set<std::string> names;
-    if (const auto* list = schema::get(def->card.params)) {
-      for (const auto& p : *list) {
-        const auto* name = schema::get(p.name);
-        const auto* type = schema::get(p.type);
-        if (!name || !valid_id(*name) || !type) {
+    if (const auto* list = def->card().params()) {
+      for (const auto* p : *list) {
+        const auto name = p->name()->str();
+        const auto type = p->type()->str();
+        if (!valid_id(name)) {
           n.diags.push_back(
-              diag(n.path, "invalid_param", "params need a name and type"));
+              diag(n.path, "invalid_param", "params need a valid name"));
           continue;
         }
-        auto pt = parse_param_type(*type);
+        auto pt = parse_param_type(type);
         if (!pt) {
           n.diags.push_back(diag(n.path, "invalid_param",
                                  "Card " + path_key(n.path) + ": param " +
-                                     *name + " has unknown type " + *type +
+                                     name + " has unknown type " + type +
                                      "; write params[].type as bool, int64, "
                                      "uint64, double, string, "
                                      "or one of these with [] for a list"));
           continue;
         }
-        if (!names.insert(*name).second) {
+        if (!names.insert(name).second) {
           n.diags.push_back(
-              diag(n.path, "invalid_param", "duplicate param " + *name));
+              diag(n.path, "invalid_param", "duplicate param " + name));
           continue;
         }
         ParamDef d;
-        d.name = *name;
+        d.name = name;
         d.type = *pt;
-        if (const auto* nix = schema::get(p.nix)) d.nix = *nix;
-        if (const auto* sweep = schema::get(p.sweep)) {
+        d.nix = p->nix().value_or(false);
+        if (const auto* sweep = p->sweep()) {
           if (n.kind != CardType::Input) {
             n.diags.push_back(
                 diag(n.path, "invalid_param",
                      "param " + d.name +
                          ": sweep is for Input Cards; a Code Card lists its "
                          "implementations in the run list of default.nix"));
-          } else if (schema::get(p.data)) {
+          } else if (p->data()) {
             n.diags.push_back(
                 diag(n.path, "invalid_param",
                      "param " + d.name +
                          ": write data for one value or sweep for one "
                          "invocation per value, not both"));
           } else {
-            std::vector<hosq::json::GenericDom<>> values;
+            std::vector<ParamValue> values;
             std::optional<std::string> error;
             for (size_t i = 0; i < sweep->size() && !error; ++i) {
-              error = check_param_value(d.type, (*sweep)[i]);
+              error = check_param_value(d.type, *sweep->Get(i));
               if (error)
                 error = "sweep[" + std::to_string(i) + "]: " + *error;
               else
-                values.push_back((*sweep)[i]);
+                values.push_back(*std::unique_ptr<ParamValue>(sweep->Get(i)->UnPack()));
             }
             if (error)
               n.diags.push_back(diag(n.path, "invalid_param",
@@ -547,12 +620,12 @@ class Builder {
               d.sweep = std::move(values);
           }
         }
-        if (const auto* data = schema::get(p.data)) {
+        if (const auto* data = p->data()) {
           if (auto err = check_param_value(d.type, *data))
             n.diags.push_back(
                 diag(n.path, "invalid_param", "param " + d.name + ": " + *err));
           else
-            d.data = *data;
+            d.data = *std::unique_ptr<ParamValue>(data->UnPack());
         }
         n.settings.params.push_back(std::move(d));
       }
@@ -615,12 +688,9 @@ class Builder {
     DefinitionDoc d;
     const std::string& id = n.path.back();
     try {
-      d.card = parse_card_json(id, *card);
-      d.card_json = *card;
-      if (auto meta = read_(n.def_dir + "_meta.json")) {
-        check_meta_json(*meta);
-        d.meta_json = *meta;
-      }
+      auto parsed = parse_card_json(id, *card);
+      d.card_buffer = std::move(parsed.buffer);
+      d.card_json = std::move(parsed.text);
     } catch (const DocumentError& e) {
       n.diags.push_back(
           diag(n.path, "invalid_document", e.what(), true, n.def_dir));
@@ -632,29 +702,27 @@ class Builder {
 
   // One project's canvas: the root project (prefix "") or an external
   // ("externals/<p>/", nested further inside its own externals).
-  void scope(const schema::Project& project, const std::string& prefix,
+  void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
-    std::string pkgs = project.pkgs_path->value_or("tsugumi:default");
+    std::string pkgs =
+        project.pkgsPath() ? project.pkgsPath()->str() : "tsugumi:default";
     std::vector<NixSourceRef> sources;
-    if (project.nix_sources->has_value())
-      for (const auto& s : project.nix_sources->value()) {
-        sources.push_back(
-            {s.name->value(), s.type->value(), s.ref->value(),
-             schema::get(s.overrides)
-                 ? schema::canonical_text(*schema::get(s.overrides))
-                 : "{}"});
-      }
-    for (const auto& card : project.canvas->value().cards->value()) {
+    if (const auto* list = project.nixSources())
+      for (const auto* s : *list)
+        sources.push_back({s->name()->str(), s->type()->str(),
+                           s->ref()->str(), overrides_json(*s)});
+    for (const auto* card : *project.canvas()->cards()) {
+      const auto id = card->id()->str();
       Node n;
       n.path = scope_path;
-      n.path.push_back(card.id->value());
-      n.def_dir = prefix + "definitions/" + card.id->value() + "/";
+      n.path.push_back(id);
+      n.def_dir = prefix + "definitions/" + id + "/";
       n.project_dir = prefix;
       n.pkgs_path = pkgs;
       n.nix_sources = sources;
       const DefinitionDoc* def = nullptr;
       if (prefix.empty()) {
-        auto it = doc_.definitions.find(card.id->value());
+        auto it = doc_.definitions.find(id);
         if (it != doc_.definitions.end()) def = &it->second;
       } else {
         def = external_definition(n);
@@ -664,15 +732,15 @@ class Builder {
       n.kind = def ? card_type_of(*def) : CardType::Draft;
       // The accepted Document owns this resolution. Edits only affect later
       // runs.
-      n.settings.record_logs = project.record_logs->value_or(true);
-      n.settings.record_io = project.record_io->value_or(false);
-      n.settings.retain_artifact = project.retain_artifact->value_or(false);
+      n.settings.record_logs = project.recordLogs().value_or(true);
+      n.settings.record_io = project.recordIO().value_or(false);
+      n.settings.retain_artifact = project.retainArtifact().value_or(false);
       n.settings.log_limit_bytes =
-          project.log_limit_bytes->value_or(schema::kDefaultLogLimitBytes);
-      n.settings.output_limit_bytes = project.output_limit_bytes->value_or(
-          schema::kDefaultOutputLimitBytes);
-      n.settings.output_limit_entries = project.output_limit_entries->value_or(
-          schema::kDefaultOutputLimitEntries);
+          project.logLimitBytes().value_or(kDefaultLogLimitBytes);
+      n.settings.output_limit_bytes =
+          project.outputLimitBytes().value_or(kDefaultOutputLimitBytes);
+      n.settings.output_limit_entries =
+          project.outputLimitEntries().value_or(kDefaultOutputLimitEntries);
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -744,12 +812,12 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      const auto* link = def ? schema::get(def->card.external) : nullptr;
+      const auto* link = def ? def->card().external() : nullptr;
       res_->nodes.push_back(std::move(n));
 
       if (link) {
         // A Card in Card: the project externals/<link>/ of this project.
-        std::string ext = prefix + "externals/" + *link + "/";
+        std::string ext = prefix + "externals/" + link->str() + "/";
         res_->nodes[idx].external = ext;
         auto text = read_(ext + "tsugumi.json");
         if (!text) {
@@ -762,11 +830,14 @@ class Builder {
                    "Card in Card nesting deeper than 15", true, ext));
         } else {
           try {
-            auto inner = parse_external_project(ext + "tsugumi.json", *text);
-            if (const auto* b = schema::get(inner.boundary))
-              res_->nodes[idx].boundary = *b;
-            projects_.push_back(std::move(inner));
-            scope(projects_.back(), ext, inner_scope, depth + 1);
+            projects_.push_back(
+                parse_external_project(ext + "tsugumi.json", *text).buffer);
+            const auto& inner =
+                document_text::root<D::Project>(projects_.back());
+            if (const auto* b = inner.boundary())
+              res_->nodes[idx].boundary =
+                  *std::unique_ptr<D::BoundaryT>(b->UnPack());
+            scope(inner, ext, inner_scope, depth + 1);
           } catch (const DocumentError& e) {
             res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph",
                                                   e.what(), true,
@@ -775,13 +846,13 @@ class Builder {
         }
       }
     }
-    for (const auto& c : project.canvas->value().connections->value()) {
+    for (const auto* c : *project.canvas()->connections()) {
       RawEdge e;
       e.scope = scope_path;
-      e.from = c.from->value().card->value();
-      e.from_port = c.from->value().port->value();
-      e.to = c.to->value().card->value();
-      e.to_port = c.to->value().port->value();
+      e.from = c->from()->card()->str();
+      e.from_port = c->from()->port()->str();
+      e.to = c->to()->card()->str();
+      e.to_port = c->to()->port()->str();
       raw_.push_back(std::move(e));
     }
   }
@@ -796,13 +867,11 @@ class Builder {
       Node& n = res_->nodes[it->second];
       if (n.kind != CardType::Subgraph) return std::make_pair(it->second, port);
       const auto* b = n.boundary ? &*n.boundary : nullptr;
-      const auto* side =
-          b ? (output ? schema::get(b->outputs) : schema::get(b->inputs))
-            : nullptr;
-      const schema::Endpoint* ep = nullptr;
+      const auto* side = b ? (output ? &b->outputs : &b->inputs) : nullptr;
+      const D::BoundaryPortT* ep = nullptr;
       if (side)
-        for (const auto& [name, e] : side->entries())
-          if (name == port) ep = &e;
+        for (const auto& e : *side)
+          if (e->name == port) ep = e.get();
       if (!ep) {
         if (diagnose)
           n.diags.push_back(diag(n.path, "unknown_port",
@@ -810,8 +879,8 @@ class Builder {
                                      (output ? "output " : "input ") + port));
         return std::nullopt;
       }
-      path.push_back(ep->card->value());
-      port = ep->port->value();
+      path.push_back(ep->card);
+      port = ep->port;
       if (!res_->index.count(path_key(path))) {
         if (diagnose)
           n.diags.push_back(diag(n.path, "unknown_card",
@@ -832,12 +901,11 @@ class Builder {
     for (auto& n : res_->nodes) {
       if (n.kind != CardType::Subgraph) continue;
       if (const auto* b = n.boundary ? &*n.boundary : nullptr) {
-        if (const auto* ins = schema::get(b->inputs))
-          for (const auto& [name, _] : ins->entries())
-            n.inputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
-        if (const auto* outs = schema::get(b->outputs))
-          for (const auto& [name, _] : outs->entries())
-            n.outputs.push_back({name, PortKind::FlatBuffer, false, nullptr});
+        for (const auto& port : b->inputs)
+          n.inputs.push_back({port->name, PortKind::FlatBuffer, false, nullptr});
+        for (const auto& port : b->outputs)
+          n.outputs.push_back(
+              {port->name, PortKind::FlatBuffer, false, nullptr});
       }
     }
     for (const auto& node : res_->nodes) {
@@ -876,17 +944,17 @@ class Builder {
         } else {
           const auto direction = output ? "output" : "input";
           fix = card + " has no " + direction + " port " +
-                schema::text(schema::string_value(port));
+                json::Quote(port);
           std::string ports;
           if (output) {
             for (const auto& p : node.outputs) {
               if (!ports.empty()) ports += ", ";
-              ports += schema::text(schema::string_value(p.name));
+              ports += json::Quote(p.name);
             }
           } else {
             for (const auto& p : node.inputs) {
               if (!ports.empty()) ports += ", ";
-              ports += schema::text(schema::string_value(p.name));
+              ports += json::Quote(p.name);
             }
           }
           if (!ports.empty())
@@ -894,8 +962,7 @@ class Builder {
           if (!output && node.kind == CardType::Code &&
               (!port.empty() || ports.empty()))
             fix += "; add {\"name\": " +
-                   schema::text(
-                       schema::string_value(port.empty() ? "source" : port)) +
+                   json::Quote(port.empty() ? "source" : port) +
                    "} to " + node.def_dir +
                    "_card.json inputs and write to.port with that name";
           else if (ports.empty())
@@ -1234,7 +1301,7 @@ class Builder {
   const Document& doc_;
   const SourceReader& read_;
   std::deque<DefinitionDoc> external_defs_;
-  std::deque<schema::Project> projects_;
+  std::deque<std::string> projects_;  // nested tsugumi.json buffers
   std::shared_ptr<Resolution> res_;
   std::vector<RawEdge> raw_;
   std::set<std::string> derive_failed_;

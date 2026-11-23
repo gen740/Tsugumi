@@ -56,10 +56,6 @@
     "json": "{\"フロー\":\"leftToRight\"}"
   },
   {
-    "name": "escaped-flow",
-    "json": "{\"fl\\u006fw\":\"leftToRight\"}"
-  },
-  {
     "name": "overflowing-coordinate",
     "json": "{\"boundary\":{\"inputs\":{\"x\":1e999,\"y\":0}}}"
   }

@@ -1,9 +1,10 @@
 // The confirmed project document. A Document is immutable once published; the
 // mutation lane builds a new one for every committed transaction.
 //
-// The canonical text of each document file is the validated JSON as accepted
-// (from the client or from disk). The typed model is decoded from it and is
-// used for every structural and semantic check.
+// tsugumi.json, _card.json and _comments.json are JSON text read with the
+// FlatBuffers parser against protocol/*_document.fbs; the text kept and saved
+// is the canonical text printed from the parsed buffer. layout.bin is a
+// FlatBuffers binary the UIs own. Every check reads the parsed buffers.
 #pragma once
 
 #include <cstdint>
@@ -19,7 +20,7 @@
 #include <vector>
 
 #include "tsugumi/document/definition_values.hh"
-#include "tsugumi/document/schema.hh"
+#include "tsugumi/document/text.hh"
 
 namespace tsugumi {
 
@@ -38,20 +39,34 @@ struct Diag {
 struct SourceEntry {
   std::string hash;
   uint64_t size = 0;
-  // Accepted bytes for nested document files carried in snapshots and deltas.
-  std::shared_ptr<const std::string> document_json = nullptr;
+  // Bytes of a file carried in snapshots and deltas: a nested project's
+  // documents, and the canvas notes (notes/<id>.md).
+  std::shared_ptr<const std::string> document = nullptr;
 };
 
 inline constexpr size_t kMaxDocumentJsonBytes = 8u << 20;
 
-auto external_document_source(const std::string& path, std::string bytes)
+auto external_document_source(const std::string& path, std::string bytes,
+                              bool canonicalize = false)
     -> SourceEntry;
+// A canvas note (notes/<id>.md), carried with its text.
+auto note_source(const std::string& path, std::string bytes) -> SourceEntry;
 
-// definitions/<id>/_card.json and optional _meta.json.
+inline constexpr uint64_t kDefaultLogLimitBytes = uint64_t{128} << 20;
+inline constexpr uint64_t kMaxLogLimitBytes = uint64_t{1} << 30;
+inline constexpr uint64_t kDefaultOutputLimitBytes = uint64_t{64} << 30;
+inline constexpr uint64_t kDefaultOutputLimitEntries = 1000;
+
+// definitions/<id>/: _card.json, and the optional README.md and
+// _comments.json.
 struct DefinitionDoc {
-  schema::CardDefinition card;
-  std::string card_json;
-  std::optional<std::string> meta_json;
+  std::string card_buffer;  // _card.json as a FlatBuffer
+  std::string card_json;    // its canonical text
+  std::optional<std::string> readme;
+  std::optional<std::string> comments_json;  // canonical text
+  auto card() const -> const Tsugumi::Document::Card& {
+    return document_text::root<Tsugumi::Document::Card>(card_buffer);
+  }
 };
 
 struct Resolution;  // graph.hh
@@ -60,9 +75,9 @@ struct Document {
   uint64_t rev = 0;
   uint64_t execution_rev = 0;
   std::string execution_fingerprint;
-  schema::Project project;
-  std::string project_json;
-  std::string layout_json;
+  std::string project_buffer;  // tsugumi.json as a FlatBuffer
+  std::string project_json;    // its canonical text
+  std::string layout;          // layout.bin; empty when there is none
   std::map<std::string, DefinitionDoc> definitions;
   std::map<std::string, SourceEntry> sources;  // relative path -> entry
   // Hash of the bytes on disk for every document file we wrote or read.
@@ -72,7 +87,14 @@ struct Document {
   // equal resolutions (metadata and layout changes keep the previous one).
   std::string resolution_key;
 
-  static auto is_card_meta_file(const std::string& rel) -> bool;
+  auto project() const -> const Tsugumi::Document::Project& {
+    return document_text::root<Tsugumi::Document::Project>(project_buffer);
+  }
+
+  // A Card's README.md or _comments.json: never part of execution.
+  static auto is_card_note_file(const std::string& rel) -> bool;
+  // notes/<id>.md: a canvas note's Markdown.
+  static auto is_note_file(const std::string& rel) -> bool;
   static bool is_document_file(const std::string& rel);
   static auto is_external_document_file(std::string_view path) -> bool;
   auto check_document_size() const -> void;
@@ -104,15 +126,26 @@ class DocumentError : public std::runtime_error {
 // The initial tsugumi.json, available before a project daemon exists.
 auto initial_project_json(const std::string& name) -> std::string;
 
-// Strictly decodes and shape-checks one document part. Throws
-// DocumentError(invalid_document) with the byte offset on errors.
-schema::Project parse_project_json(const std::string& text);
-schema::CardDefinition parse_card_json(const std::string& id,
-                                       const std::string& text);
-void check_meta_json(const std::string& text);
+// A parsed document: its buffer and its canonical text.
+struct ParsedDocument {
+  std::string buffer;
+  std::string text;
+};
+
+// Parses and checks one document part. Throws DocumentError(invalid_document)
+// naming the file, line and column on errors.
+auto parse_project_json(const std::string& text) -> ParsedDocument;
+auto parse_card_json(const std::string& id, const std::string& text)
+    -> ParsedDocument;
+auto parse_comments_json(const std::string& rel, const std::string& text)
+    -> ParsedDocument;
+// Checks a README.md (see readme.hh).
+void check_readme(const std::string& rel, const std::string& text);
+// Verifies a layout.bin.
+void check_layout(const std::string& rel, const std::string& bytes);
 // The tsugumi.json of an external project (externals/.../tsugumi.json).
-schema::Project parse_external_project(const std::string& rel,
-                                       const std::string& text);
+auto parse_external_project(const std::string& rel, const std::string& text)
+    -> ParsedDocument;
 
 // Hard structural checks over the whole (final) document: unique ids, a
 // definition for every card, connections between existing cards.
@@ -123,8 +156,6 @@ std::shared_ptr<Document> load_from_disk(const std::filesystem::path& root);
 
 // Fingerprint of everything that influences computation (not layout).
 std::string execution_fingerprint(const Document& doc);
-
-constexpr const char* kEmptyLayout = "{}";
 
 // One file system operation produced by a transaction.
 // A private streamed file. Failed staging removes it; after a durable journal

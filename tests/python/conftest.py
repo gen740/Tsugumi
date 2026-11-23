@@ -38,10 +38,13 @@ EMPTY_PROJECT = {
 def write_project(root: Path, project: dict | None = None, layout: dict | None = None) -> None:
     root.mkdir(parents=True, exist_ok=True)
     (root / "tsugumi.json").write_text(json.dumps(project or EMPTY_PROJECT))
-    (root / "layout.json").write_text(json.dumps(layout or {}))
+    if layout is not None:
+        from harness.document import write_layout
+        write_layout(root, layout)
 
 
 from harness.daemon import Daemon as CoreDaemon
+from harness.control import read_ready
 
 
 class Daemon(CoreDaemon):
@@ -184,7 +187,7 @@ class VMEnv:
         _, self.id, url, control = line.split(" ", 3)
         self.port = int(url.split(":")[2].split("/")[0])
         self.control = Path(control)
-        self.ready = json.loads((self.control / "server.ready").read_text())
+        self.ready = read_ready(self.control / "server.ready")
         return self
 
     def client(self):

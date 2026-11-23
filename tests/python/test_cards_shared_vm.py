@@ -1,7 +1,7 @@
 """Code Card behaviour in the real environment (TSUGUMI_TEST_SHARED_VM=1; the
 shared VM): backpressure stalls, cancellation, isolation, delegated limits,
 Nix upstream references, stages and caching, the process a Card runs in,
-unselected branches and worker crashes. The Cards are small ABI 9 Python
+unselected branches and worker crashes. The Cards are small Python
 Cards; what an SDK offers is checked in the kit."""
 
 from __future__ import annotations
@@ -76,7 +76,7 @@ def test_backpressure_stall_ends_the_run(env):
         "seed": python_card(ONE_MAIN),
         "loop": {"type": "merge", "inputs": [{"name": "init"}, {"name": "again"}], "maxRuns": 1000},
         "step": python_card(ONE_MAIN, inputs=["x"], maxRuns=1000, reuseWorker=True),
-        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+        "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
         "branch": {"type": "branch"},
     }
     c = load(env, defs,
@@ -318,7 +318,7 @@ def test_unselected_branch_is_not_evaluated(env):
 { run = builtins.throw "must never be evaluated"; }
 '''}
     defs = {"trigger": {"type": "trigger"},
-            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": False}], "_outputs": FLAG},
+            "flag": {"type": "input", "params": [{"name": "value", "type": "bool", "data": {"bool": False}}], "_outputs": FLAG},
             "branch": {"type": "branch"}, "broken": broken}
     c = load(env, defs,
              [card("start", "trigger"),

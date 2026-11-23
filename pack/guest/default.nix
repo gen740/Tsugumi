@@ -54,6 +54,7 @@ let
   schema = runCommand "tsugumi-rpc-schema" { nativeBuildInputs = [ flatbuffers ]; } ''
     mkdir -p $out
     flatc -b --schema --bfbs-builtins -I ${tsugumid.src}/protocol -o $out ${tsugumid.src}/protocol/tsugumi.fbs
+    cp ${tsugumid.src}/protocol/runtime_state.fbs $out/
   '';
   baseEtc = [
     (writeTextDir "etc/hosts" "127.0.0.1 localhost\n")
@@ -139,7 +140,8 @@ let
     export PATH=${lib.makeBinPath tools}
     export HOME=/root TMPDIR=/tmp USER=root
     export TSUGUMID=${tsugumid}/bin/tsugumid TSUGUMI_RPC=${tsugumid}/bin/tsugumi-rpc
-    export TSUGUMI_SCHEMA=${schema}/tsugumi.bfbs FLATC=${flatbuffers}/bin/flatc
+    export TSUGUMI_SCHEMA=${schema}/tsugumi.bfbs TSUGUMI_STATE_SCHEMA=${schema}/runtime_state.fbs
+    export FLATC=${flatbuffers}/bin/flatc
     exec </dev/console >/dev/console 2>&1
     mode=${mode}
     stage() { echo "PACK-STAGE $*"; }
@@ -207,7 +209,7 @@ let
       mkdir -p /pack/result
       cp -a /mnt/payload/project /work/project
       chmod -R u+w /work/project
-      PACK_WORK=/work PACK_PREPARED=/mnt/payload/cards.jsonl \
+      PACK_WORK=/work PACK_PREPARED=/mnt/payload/cards.bin \
         python3 ${./run.py} /work/project /pack/request.json /pack/result 2>&1 | tee /pack/result/run.log
       status=''${PIPESTATUS[0]}
     ''

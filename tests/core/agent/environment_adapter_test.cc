@@ -6,6 +6,8 @@
 #include <atomic>
 #include <utility>
 
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
 #include "../agent_fixture_server.hh"
 #include "host/environment.hh"
 #include "tsugumi/document/host_requirements.hh"
@@ -48,10 +50,17 @@ class HelperDouble final : public host::EnvironmentProcess {
                                    launch.arguments.end(), "--control-dir");
     if (control == launch.arguments.end())
       throw std::runtime_error("missing control");
-    if (verify)
-      Write(
-          std::filesystem::path(*std::next(control)) / "server.ready",
-          R"({"protocol":1,"pid":42,"endpoint":"ws://localhost:1/rpc","token":"fixture","project_id":"project","server_instance_id":"instance","unix_socket":"fixture"})");
+    if (verify) {
+      Tsugumi::State::ServerReadyT ready;
+      ready.protocol = 1;
+      ready.pid = 42;
+      ready.endpoint = "ws://localhost:1/rpc";
+      ready.token = "fixture";
+      ready.project_id = "project";
+      ready.unix_socket = "fixture";
+      Write(std::filesystem::path(*std::next(control)) / "server.ready",
+            flat::encode<Tsugumi::State::ServerReady>(ready));
+    }
     Write(launch.log, log);
     running = !die;
     if (std::exchange(lose_reply_once, false))

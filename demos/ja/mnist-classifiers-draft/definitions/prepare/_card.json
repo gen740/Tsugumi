@@ -1,27 +1,33 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "seed",
+      "type": "uint64",
+      "data": {
+        "uint64": 0
+      }
+    },
+    {
+      "name": "train_size",
+      "type": "uint64",
+      "data": {
+        "uint64": 5000
+      }
+    },
+    {
+      "name": "test_size",
+      "type": "uint64",
+      "data": {
+        "uint64": 1000
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "dataset"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "subset",
-  "params": [
-    {
-      "name": "seed",
-      "type": "uint64",
-      "data": 0
-    },
-    {
-      "name": "train_size",
-      "type": "uint64",
-      "data": 5000
-    },
-    {
-      "name": "test_size",
-      "type": "uint64",
-      "data": 1000
-    }
-  ]
+  "artifactOutput": "subset"
 }

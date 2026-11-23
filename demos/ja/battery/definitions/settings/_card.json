@@ -4,37 +4,51 @@
     {
       "name": "seed",
       "type": "uint64",
-      "data": 7
+      "data": {
+        "uint64": 7
+      }
     },
     {
       "name": "days",
       "type": "uint64",
-      "data": 7
+      "data": {
+        "uint64": 7
+      }
     },
     {
       "name": "capacity_kwh",
       "type": "double",
-      "data": 10.0
+      "data": {
+        "double": 10.0
+      }
     },
     {
       "name": "power_kw",
       "type": "double",
-      "data": 3.0
+      "data": {
+        "double": 3.0
+      }
     },
     {
       "name": "round_trip_efficiency",
       "type": "double",
-      "data": 0.9
+      "data": {
+        "double": 0.9
+      }
     },
     {
       "name": "export_ratio",
       "type": "double",
-      "data": 0.5
+      "data": {
+        "double": 0.5
+      }
     },
     {
       "name": "soc_step_kwh",
       "type": "double",
-      "data": 0.1
+      "data": {
+        "double": 0.1
+      }
     }
   ]
 }

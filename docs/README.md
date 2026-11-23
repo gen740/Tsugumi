@@ -38,7 +38,7 @@ Start from the document that fits what you want to read. To read with moving fig
 | [security.md](security.md) | What is and is not protected, the four isolation boundaries (VM, project, Card, RPC), API keys, where data is kept, and known limitations |
 | [HostPresentation.md](HostPresentation.md) | Host formatting tools, deterministic editor support and language-dependent version presentation |
 | [CoreAndSDK.md](CoreAndSDK.md) | The core knows no language: what the core needs from a language SDK, templates and the Card's views |
-| [CardABI.md](CardABI.md) | Card ABI 9: its fixed schemas, outputs, effects (`send`, cancellation and deadline) and what it leaves out |
+| [CardABI.md](CardABI.md) | Card ABI: its fixed schemas, outputs, effects (`send`, cancellation and deadline) and what it leaves out |
 | [SandboxContract.md](SandboxContract.md) | What the worker builds for a Card (directories, inputs, outputs, grants, sandbox options, secrets) |
 | [Protocol.md](Protocol.md) | The project RPC requests and notifications (generated from `protocol/tsugumi.fbs`) |
 | [Glossary.md](Glossary.md) | Card, Draft, Run, invocation, version and other terms |

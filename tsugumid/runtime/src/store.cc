@@ -175,14 +175,17 @@ auto Store::allocate_card_id(const std::string& stem,
   auto doc = current();
   std::set<std::string> canvas_ids;
   if (project_path.empty()) {
-    for (const auto& card : doc->project.canvas->value().cards->value())
-      canvas_ids.insert(fold(card.id->value()));
+    for (const auto* card : *doc->project().canvas()->cards())
+      canvas_ids.insert(fold(card->id()->str()));
   } else if (doc->sources.count(project_path + "tsugumi.json")) {
     auto project = parse_external_project(
         project_path + "tsugumi.json",
         read_source(*doc, project_path + "tsugumi.json"));
-    for (const auto& card : project.canvas->value().cards->value())
-      canvas_ids.insert(fold(card.id->value()));
+    for (const auto* card :
+         *document_text::root<Tsugumi::Document::Project>(project.buffer)
+              .canvas()
+              ->cards())
+      canvas_ids.insert(fold(card->id()->str()));
   }
   if (project_path.empty())
     for (const auto& [id, definition] : doc->definitions) {
@@ -276,7 +279,7 @@ SourceReader source_reader(const stdfs::path& root, const Document& doc,
           pending](const std::string& rel) -> std::optional<std::string> {
     auto it = doc.sources.find(rel);
     if (it == doc.sources.end()) return std::nullopt;
-    if (it->second.document_json) return *it->second.document_json;
+    if (it->second.document) return *it->second.document;
     if (pending) {
       for (const auto& op : *pending)
         if (op.path == rel)
@@ -473,7 +476,7 @@ std::string Store::read_source(const Document& doc,
   if (it == doc.sources.end())
     throw Failed(FailureKind::not_found, rel + " is not a source",
                  {{"path", rel}});
-  if (it->second.document_json) return *it->second.document_json;
+  if (it->second.document) return *it->second.document;
   auto data = fs::read_file(opts_.root / rel);
   if (!data || crypto::sha256_hex(*data) != it->second.hash)
     throw Failed(FailureKind::external_change,
@@ -557,12 +560,16 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     switch (c.kind) {
       case K::SetProject:
         wrap([&] {
-          doc->project = parse_project_json(c.json);
-          doc->project_json = c.json;
+          auto parsed = parse_project_json(c.json);
+          doc->project_buffer = std::move(parsed.buffer);
+          doc->project_json = std::move(parsed.text);
         });
         break;
       case K::SetLayout:
-        wrap([&] { doc->layout_json = c.json; });
+        wrap([&] {
+          check_layout("layout.bin", c.json);
+          doc->layout = c.json;
+        });
         break;
       case K::PutDefinition: {
         if (!valid_id(c.id))
@@ -570,17 +577,25 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
                        "invalid definition id " + c.id);
         DefinitionDoc d;
         wrap([&] {
-          d.card = parse_card_json(c.id, c.json);
-          d.card_json = c.json;
-          if (c.meta_json) {
-            check_meta_json(*c.meta_json);
-            d.meta_json = *c.meta_json;
-          } else if (c.keep_meta) {
-            if (auto old = doc->definitions.find(c.id);
-                old != doc->definitions.end() && old->second.meta_json) {
-              d.meta_json = old->second.meta_json;
-            }
+          auto parsed = parse_card_json(c.id, c.json);
+          d.card_buffer = std::move(parsed.buffer);
+          d.card_json = std::move(parsed.text);
+          const auto old = doc->definitions.find(c.id);
+          const auto* was =
+              old == doc->definitions.end() ? nullptr : &old->second;
+          const auto dir = def_dir(c.id);
+          if (c.readme) {
+            check_readme(dir + "README.md", *c.readme);
+            d.readme = *c.readme;
+          } else if (c.keep_readme && was) {
+            d.readme = was->readme;
           }
+          if (c.comments_json)
+            d.comments_json =
+                parse_comments_json(dir + "_comments.json", *c.comments_json)
+                    .text;
+          else if (c.keep_comments && was)
+            d.comments_json = was->comments_json;
         });
         doc->definitions[c.id] = std::move(d);
         break;
@@ -690,21 +705,38 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
   }
   wrap([&] { check_structure(*doc); });
 
-  for (const auto& [path, content] : files) {
-    if (!content || !Document::is_external_document_file(path)) continue;
+  // Files carried with their bytes: nested projects' documents and notes.
+  const auto carried = [](const std::string& path, std::string bytes) {
+    return Document::is_external_document_file(path)
+               ? external_document_source(path, std::move(bytes), true)
+               : note_source(path, std::move(bytes));
+  };
+  for (auto& [path, content] : files) {
+    if (!content || !(Document::is_external_document_file(path) ||
+                      Document::is_note_file(path)))
+      continue;
     wrap([&] {
-      doc->sources.at(path) = external_document_source(path, *content);
+      auto source = carried(path, std::move(*content));
+      content = *source.document;
+      doc->sources.at(path) = std::move(source);
     });
   }
-  for (const auto& [path, file] : streamed) {
-    if (!Document::is_external_document_file(path)) continue;
+  for (auto it = streamed.begin(); it != streamed.end();) {
+    const auto& [path, file] = *it;
+    if (!(Document::is_external_document_file(path) ||
+          Document::is_note_file(path))) {
+      ++it;
+      continue;
+    }
     wrap([&] {
       if (file->size > kMaxDocumentJsonBytes)
         throw DocumentError("resource_limit",
-                            path + " exceeds the document JSON limit");
-      doc->sources.at(path) =
-          external_document_source(path, fs::read_file_or_throw(file->path));
+                            path + " exceeds the document limit");
+      auto source = carried(path, fs::read_file_or_throw(file->path));
+      files[path] = *source.document;
+      doc->sources.at(path) = std::move(source);
     });
+    it = streamed.erase(it);
   }
   wrap([&] { doc->check_document_size(); });
   if (doc->sources.size() > kMaxManifestEntries)
@@ -719,29 +751,44 @@ Store::Staged Store::stage(const std::vector<ChangeIn>& changes,
     files["tsugumi.json"] = doc->project_json;
     st.delta.project_changed = true;
   }
-  if (doc->layout_json != base->layout_json) {
-    files["layout.json"] = doc->layout_json;
+  if (doc->layout != base->layout) {
+    if (doc->layout.empty())
+      files["layout.bin"] = std::nullopt;
+    else
+      files["layout.bin"] = doc->layout;
     st.delta.layout_changed = true;
   }
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
-    bool fresh = old == base->definitions.end();
-    bool card_changed = fresh || old->second.card_json != d.card_json;
-    bool meta_changed = fresh || old->second.meta_json != d.meta_json;
-    if (card_changed) files[def_dir(id) + "_card.json"] = d.card_json;
-    if (meta_changed) {
-      if (d.meta_json)
-        files[def_dir(id) + "_meta.json"] = *d.meta_json;
-      else if (old != base->definitions.end() && old->second.meta_json)
-        files[def_dir(id) + "_meta.json"] = std::nullopt;
+    const DefinitionDoc* was =
+        old == base->definitions.end() ? nullptr : &old->second;
+    bool changed = false;
+    if (!was || was->card_json != d.card_json) {
+      files[def_dir(id) + "_card.json"] = d.card_json;
+      changed = true;
     }
-    if (card_changed || meta_changed) st.delta.definitions_upsert.push_back(id);
+    const auto optional_file = [&](const char* name,
+                                   const std::optional<std::string>& now,
+                                   const std::optional<std::string>& before) {
+      if (now == before) return;
+      changed = true;
+      if (now)
+        files[def_dir(id) + name] = *now;
+      else if (before)
+        files[def_dir(id) + name] = std::nullopt;
+    };
+    optional_file("README.md", d.readme,
+                  was ? was->readme : std::optional<std::string>());
+    optional_file("_comments.json", d.comments_json,
+                  was ? was->comments_json : std::optional<std::string>());
+    if (changed) st.delta.definitions_upsert.push_back(id);
   }
   for (const auto& [id, d] : base->definitions) {
     if (doc->definitions.count(id)) continue;
     st.delta.definitions_removed.push_back(id);
     files[def_dir(id) + "_card.json"] = std::nullopt;
-    if (d.meta_json) files[def_dir(id) + "_meta.json"] = std::nullopt;
+    if (d.readme) files[def_dir(id) + "README.md"] = std::nullopt;
+    if (d.comments_json) files[def_dir(id) + "_comments.json"] = std::nullopt;
   }
   for (const auto& [path, content] : files) {
     if (Document::is_document_file(path)) continue;
@@ -833,12 +880,13 @@ Store::Staged Store::stage_reload(const std::string& op_id,
   st.delta.op_id = op_id;
   st.delta.origin = origin;
   st.delta.project_changed = doc->project_json != base->project_json;
-  st.delta.layout_changed = doc->layout_json != base->layout_json;
+  st.delta.layout_changed = doc->layout != base->layout;
   for (const auto& [id, d] : doc->definitions) {
     auto old = base->definitions.find(id);
     if (old == base->definitions.end() ||
         old->second.card_json != d.card_json ||
-        old->second.meta_json != d.meta_json)
+        old->second.readme != d.readme ||
+        old->second.comments_json != d.comments_json)
       st.delta.definitions_upsert.push_back(id);
   }
   for (const auto& [id, _] : base->definitions)

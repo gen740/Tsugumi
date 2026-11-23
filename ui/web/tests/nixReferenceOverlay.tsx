@@ -34,7 +34,7 @@ const shown = () => new Map(nixReferences(session).map(r => [r.target, r.source]
 
 // Wiring changes arrive as the resolution of a document delta: the
 // overlay is what that resolution says, with nothing kept from before.
-inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layoutJson: '{}', resolution: all({}) }))
+inner.apply(Object.assign(new R.ProjectSnapshotT(), { rev: 1n, projectJson: project, layout: [], resolution: all({}) }))
 assert.deepEqual(shown(), new Map())
 delta(all({ analysis: [{ target: ['source'], name: 'source' }] }))
 assert.deepEqual(shown(), new Map([['source', 'analysis']]))

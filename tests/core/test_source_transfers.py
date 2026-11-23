@@ -2,12 +2,15 @@
 
 import hashlib
 import json
+
 import re
 import sys
 
 import pytest
 
 from tsugumi_client import RpcFailure, change, make, new_id, text
+from harness.control import read_startup_error
+from harness.document import build_buffer, layout_bytes
 
 
 def setup(project):
@@ -29,9 +32,9 @@ def save(client, transfers, **kwargs):
 def test_oversized_save_reply_leaves_transferred_document_unwritten(project, core_factory, tmp_path):
     client = core_factory().connect()
     before = client.call("ProjectInspectRequest")
-    source = tmp_path / "layout.json"
-    source.write_text("{}" + " " * (7 << 20))
-    path = "externals/inner/layout.json"
+    source = tmp_path / "layout.bin"
+    source.write_bytes(layout_bytes({}) + bytes(7 << 20))
+    path = "externals/inner/layout.bin"
     item = transfer(source, path)
     op_id = new_id()
     # The transferred text isn't part of the incoming frame; the reply has
@@ -63,39 +66,40 @@ def test_accumulating_saves_leave_the_snapshot_openable(project, core_factory):
     client = daemon.connect()
     before = client.call("ProjectInspectRequest")
     view_id = new_id()
-    view = "{}" + " " * ((1 << 20) - 2)
-    client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, viewJson=view)
+    view = build_buffer("tsugumi", "Tsugumi.RPC.ClientView", {})
+    view += bytes((1 << 20) - len(view))
+    client.call("ViewSaveRequest", viewId=view_id, baseViewRev=0, view=view)
     rev = before.rev
     for i in range(2):
         saved = client.call(
             "ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test",
-            changes=[change("PutSource", path=f"externals/{i}/layout.json",
-                            bytes=b"{}" + b" " * ((3 << 20) - 2))])
+            changes=[change("PutSource", path=f"externals/{i}/layout.bin",
+                            bytes=layout_bytes({}) + bytes((3 << 20) - 32))])
         rev = saved.rev
-    path = "externals/last/layout.json"
+    path = "externals/last/layout.bin"
     with pytest.raises(RpcFailure) as error:
         client.call(
             "ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="test",
             changes=[change("PutSource", path=path,
-                            bytes=b"{}" + b" " * ((7 << 18) - 2))])
+                            bytes=layout_bytes({}) + bytes((7 << 18) - 32))])
     assert error.value.kind == "resource_limit"
     assert not (project / path).exists()
     daemon.restart()
     reopened = daemon.connect()
     assert reopened.call("ProjectInspectRequest").rev == rev
     snapshot = reopened.call("ProjectOpenRequest", viewId=view_id).snapshot
-    assert snapshot.rev == rev and text(snapshot.viewJson) == view
+    assert snapshot.rev == rev and bytes(snapshot.view) == view
 
 
 def test_reload_stops_at_the_document_budget_and_identifies_the_path(project, core_factory):
     daemon = core_factory()
     client = daemon.connect()
     before = client.call("ProjectInspectRequest")
-    paths = {f"externals/{name}/layout.json" for name in ("a", "b", "c")}
+    paths = {f"externals/{name}/layout.bin" for name in ("a", "b", "c")}
     for relative in paths:
         path = project / relative
         path.parent.mkdir(parents=True)
-        path.write_text("{}" + " " * ((3 << 20) - 2))
+        path.write_bytes(layout_bytes({}) + bytes((3 << 20) - 32))
     with pytest.raises(RpcFailure) as error:
         client.call("ProjectReloadRequest", baseRev=before.rev,
                     opId=new_id(), origin="test")
@@ -105,7 +109,7 @@ def test_reload_stops_at_the_document_budget_and_identifies_the_path(project, co
     daemon.stop()
     daemon.start(expect_exit=True)
     assert daemon.proc.returncode != 0
-    startup = json.loads((daemon.control / "server.startup-error.json").read_text())
+    startup = read_startup_error(daemon.control / "server.startup-error")
     assert startup["kind"] == "resource_limit"
     assert any(path in startup["message"] for path in paths)
 
@@ -239,8 +243,8 @@ def test_transfer_permission_widening_still_requires_explicit_approval(project, 
     from projects import SINK, card, card_in_card, conn, write
 
     write(project, {"src": {"type": "input", "params": [
-        {"name": "text", "type": "string", "data": "x"},
-        {"name": "value", "type": "bool", "data": True}],
+        {"name": "text", "type": "string", "data": {"string": "x"}},
+        {"name": "value", "type": "bool", "data": {"bool": True}}],
         "_outputs": "table Msg { text:string; } table Outputs { msg:Msg (required); } root_type Outputs;"},
         "sink": SINK}, [card_in_card("inner", [card("src", "src"), card("out", "sink")],
             [conn("src", "msg", "out", "in")], {"inputs": {}, "outputs": {}})], [])

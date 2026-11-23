@@ -48,6 +48,7 @@
 #include <thread>
 
 #include "nix_eval.hh"
+#include "tsugumi/protocol/nix_evaluator_generated.h"
 #include "tsugumi/util/process.hh"
 #include "tsugumi/workerd/log_limits.hh"
 #include "tsugumi/workerd/store.hh"
@@ -57,6 +58,18 @@ extern char** environ;
 namespace tsugumi {
 
 namespace {
+
+namespace E = Tsugumi::NixEvaluator;
+
+auto write_build_log(std::string_view line, bool truncated) -> void {
+  flatbuffers::FlatBufferBuilder builder;
+  const auto text = truncated ? flatbuffers::Offset<flatbuffers::String>{}
+                              : builder.CreateString(line);
+  builder.FinishSizePrefixed(E::CreateBuildLog(builder, text, truncated));
+  nix::writeFull(STDOUT_FILENO,
+                 {reinterpret_cast<const char*>(builder.GetBufferPointer()),
+                  builder.GetSize()});
+}
 
 // Observe below Nix's allow-list, including negative lookups and directory
 // enumeration. Keep observations for the entire EvalState: cached imports and
@@ -337,19 +350,11 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
       nix::settings.getWorkerSettings().maxBuildJobs.set(argv[3], false);
     if (*argv[4])
       nix::settings.getLocalSettings().buildCores.set(argv[4], false);
-    // A JSON string retains embedded newlines in a single log entry. The
-    // parent can discard an oversized frame without trying to decode it.
     nix::logger = std::make_unique<NixLogSink>(
         [truncated = false](const std::string& line) mutable {
           if (truncated) return;
-          if (line.size() >= kInvocationLogLimitBytes) {
-            nix::writeFull(STDERR_FILENO, "null\n");
-            truncated = true;
-            return;
-          }
-          auto frame = nlohmann::json(line).dump();
-          frame += '\n';
-          nix::writeFull(STDERR_FILENO, frame);
+          truncated = line.size() >= kInvocationLogLimitBytes;
+          write_build_log(line, truncated);
         });
     auto store = nix::openStore();
     store->buildPaths({nix::DerivedPath::Built{
@@ -363,7 +368,7 @@ auto NixEvaluator::build_client(int argc, char** argv) -> std::optional<int> {
     nix::logger->log(nix::lvlError, diagnostic);
     // Keep the build diagnostic available even if the history log filled up.
     if (diagnostic.size() < kInvocationLogLimitBytes)
-      nix::writeFull(STDOUT_FILENO, diagnostic);
+      nix::writeFull(STDERR_FILENO, diagnostic);
     return 1;
   }
 }
@@ -807,32 +812,28 @@ struct EvaluationState {
         [&](proc::LineChunk chunk) {
           if (!c.log) return;
           std::vector<std::string> output;
-          for (const auto& line : chunk.lines) {
-            if (line == "null\n") {
-              chunk.truncated = true;
-              break;
-            }
-            if (line.starts_with('"')) {
-              auto entry = nlohmann::json::parse(line, nullptr, false);
-              if (auto* text = entry.get_ptr<std::string*>()) {
-                output.push_back(std::move(*text));
-                continue;
-              }
-            }
-            // Keep diagnostics printed before the child installs its logger.
-            output.push_back(tsugumi::text::replace_invalid_utf8(line));
+          for (const auto& frame : chunk.lines) {
+            const auto* start = reinterpret_cast<const uint8_t*>(frame.data());
+            flatbuffers::Verifier verifier(start, frame.size());
+            if (!verifier.VerifySizePrefixedBuffer<E::BuildLog>(nullptr))
+              throw std::runtime_error("invalid Nix build log frame");
+            const auto* log =
+                flatbuffers::GetSizePrefixedRoot<E::BuildLog>(start);
+            if (log->truncated()) chunk.truncated = true;
+            if (log->line()) output.push_back(log->line()->str());
           }
           c.log({output, chunk.truncated});
         },
-        kInvocationLogLimitBytes);
+        kInvocationLogLimitBytes + 64, std::chrono::seconds(1),
+        proc::LogFraming::stdout_size_prefixed);
     if (result.cancelled) throw NixInterrupted(false, "Nix cancelled");
     if (result.timed_out)
       throw NixInterrupted(true, "Nix exceeded buildTimeoutSeconds");
     if (!proc::exited_ok(result.status))
-      throw std::runtime_error(result.out.empty()
-                                   ? "Nix build failed: " +
-                                         proc::describe(result.status)
-                                   : result.out);
+      throw std::runtime_error(
+          result.out.empty()
+              ? "Nix build failed: " + proc::describe(result.status)
+              : tsugumi::text::replace_invalid_utf8(result.out));
   }
   static auto realise_native(const NixCall& c, NixResult r) -> NixResult {
     auto store = nix::openStore();
@@ -913,12 +914,29 @@ struct EvaluationState {
   }
 };
 
-auto receive(nix::Source& source) -> nlohmann::json {
-  return nlohmann::json::parse(nix::readString(source));
+template <class Table>
+auto receive(nix::Source& source) -> typename Table::NativeTableType {
+  const auto bytes = nix::readString(source);
+  flatbuffers::Verifier verifier(
+      reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size());
+  if (!verifier.VerifyBuffer<Table>(nullptr))
+    throw std::runtime_error("invalid Nix evaluator message");
+  typename Table::NativeTableType result;
+  flatbuffers::GetRoot<Table>(bytes.data())->UnPackTo(&result);
+  return result;
 }
 
-auto send(nix::FdSink& sink, const nlohmann::json& message) -> void {
-  sink << message.dump();
+template <class Table, class Message>
+auto send(nix::FdSink& sink, Message&& message, std::string system = {}) -> void {
+  typename Table::NativeTableType envelope;
+  if constexpr (std::is_same_v<Table, E::Request>)
+    envelope.system = std::move(system);
+  envelope.body.Set(std::forward<Message>(message));
+  flatbuffers::FlatBufferBuilder builder;
+  builder.Finish(Table::Pack(builder, &envelope));
+  sink << std::string_view(
+      reinterpret_cast<const char*>(builder.GetBufferPointer()),
+      builder.GetSize());
   sink.flush();
 }
 
@@ -940,19 +958,28 @@ auto executable_path() -> std::filesystem::path {
 auto evaluator_main() -> void {
   nix::FdSource source(kEvaluatorSocket);
   nix::FdSink sink(kEvaluatorSocket);
-  auto init = receive(source);
+  auto init = receive<E::Request>(source);
+  const auto* settings = init.body.AsInitialize();
+  if (!settings) throw std::runtime_error("missing Nix evaluator settings");
   EvaluationState eval;
-  eval.entry_text = init.at("entry");
-  eval.allowed = init.at("allowed").get<std::vector<std::string>>();
-  eval.epoch = init.at("epoch");
-  auto loop = [&](const nlohmann::json& req) -> nlohmann::json {
+  eval.entry_text = settings->entry;
+  eval.allowed = settings->allowed;
+  eval.epoch = settings->epoch;
+  auto evaluate = [&](const E::RequestT& request) {
     NixCall call;
-    call.system = req.at("system");
+    call.system = request.system;
     const std::function<void(const std::string&)> log =
-        [&](const std::string& line) { send(sink, {{"log", line}}); };
+        [&](const std::string& line) {
+          E::LogT log;
+          log.line = line;
+          send<E::Reply>(sink, std::move(log));
+        };
     const NixLogSink::BuildActivity builds = [&](const std::string& drv,
                                                  bool active) {
-      send(sink, {{"build", drv}, {"active", active}});
+      E::BuildT build;
+      build.drv = drv;
+      build.active = active;
+      send<E::Reply>(sink, std::move(build));
     };
     g_logger->set_thread(&log);
     g_logger->set_thread_builds(&builds);
@@ -960,54 +987,64 @@ auto evaluator_main() -> void {
       g_logger->set_thread(nullptr);
       g_logger->set_thread_builds(nullptr);
     });
-    const auto& op = req.at("op");
-    if (op == "evaluate") {
-      call.pin_url = req.at("pin_url");
-      call.pin_hash = req.at("pin_hash");
-      call.args = req.at("args");
-      call.max_implementations = req.at("max_implementations");
+    if (const auto* op = request.body.AsEvaluate()) {
+      call.pin_url = op->pin_url;
+      call.pin_hash = op->pin_hash;
+      call.args = op->args;
+      call.max_implementations = op->max_implementations;
       const auto result = eval.evaluate(call);
-      return {{"drv", result.derivation.path},
-              {"out", result.derivation.output},
-              {"execution_list", result.execution_list},
-              {"implementation_count", result.implementation_count},
-              {"implementation_labels", result.implementation_labels},
-              {"epoch", result.evaluation_epoch}};
+      E::EvaluationT reply;
+      reply.drv = result.derivation.path;
+      reply.out = result.derivation.output;
+      reply.execution_list = result.execution_list;
+      reply.implementation_count = result.implementation_count;
+      reply.implementation_labels = result.implementation_labels;
+      reply.epoch = result.evaluation_epoch;
+      send<E::Reply>(sink, std::move(reply));
+    } else if (const auto* op = request.body.AsFlake()) {
+      call.source_overrides = op->overrides;
+      auto result = eval.flake(call, op->ref);
+      E::FlakeInfoT reply;
+      reply.ref = std::move(result.ref);
+      reply.rev = std::move(result.rev);
+      reply.nar_hash = std::move(result.nar_hash);
+      reply.packages = std::move(result.packages);
+      reply.nix_json = std::move(result.json);
+      send<E::Reply>(sink, std::move(reply));
+    } else if (const auto* op = request.body.AsReuse()) {
+      NixResult result;
+      result.evaluation_epoch = op->epoch;
+      result.derivation.path = op->drv;
+      result.derivation.output = op->out;
+      E::ReusableT reply;
+      reply.value = eval.reuse(result);
+      send<E::Reply>(sink, std::move(reply));
+    } else {
+      throw std::runtime_error("unknown Nix evaluator operation");
     }
-    if (op == "flake") {
-      call.source_overrides = req.at("overrides");
-      auto result = eval.flake(call, req.at("ref").get<std::string>());
-      return {{"ref", result.ref},
-              {"rev", result.rev},
-              {"nar_hash", result.nar_hash},
-              {"packages", result.packages},
-              {"json", result.json}};
-    }
-    if (op != "reuse") throw std::runtime_error("unknown evaluation operation");
-    NixResult result;
-    result.evaluation_epoch = req.at("epoch");
-    result.derivation.path = req.at("drv");
-    result.derivation.output = req.at("out");
-    return eval.reuse(result);
+  };
+  auto send_error = [&](std::string text, bool limit) {
+    E::ErrorT reply;
+    reply.message = std::move(text);
+    reply.limit = limit;
+    send<E::Reply>(sink, std::move(reply));
   };
   for (;;) {
-    nlohmann::json request;
+    E::RequestT request;
     try {
-      request = receive(source);
+      request = receive<E::Request>(source);
     } catch (const nix::EndOfFile&) {
       return;
     }
-    nlohmann::json response;
     try {
-      response = {{"result", loop(request)}};
+      evaluate(request);
     } catch (const NixImplementationLimit& e) {
-      response = {{"limit", e.what()}};
+      send_error(e.what(), true);
     } catch (const nix::BaseError& e) {
-      response = {{"error", message(e)}};
+      send_error(message(e), false);
     } catch (const std::exception& e) {
-      response = {{"error", e.what()}};
+      send_error(e.what(), false);
     }
-    send(sink, response);
   }
 }
 
@@ -1069,9 +1106,9 @@ struct NixEvaluator::Impl {
     roots->addTempRoot(roots->parseStorePath(path));
   }
 
-  template <class F>
-  auto exchange(const NixCall& call, nlohmann::json request, F result)
-      -> decltype(result(std::declval<const nlohmann::json&>())) {
+  template <class Request, class Result>
+  auto exchange(const NixCall& call, Request request, Result result)
+      -> decltype(result(std::declval<E::ReplyBodyUnion&>())) {
     std::unique_lock lock(mu);
     const auto waiter = waiters.emplace(waiters.end());
     Finally dequeue([&] {
@@ -1090,7 +1127,7 @@ struct NixEvaluator::Impl {
     if (interrupted(call, nullptr)) throw interruption(call);
     lock.unlock();
 
-    nlohmann::json reply;
+    E::ReplyT reply;
     try {
       const bool start = pid < 0;
       if (start) open();
@@ -1098,25 +1135,23 @@ struct NixEvaluator::Impl {
       if (interrupted(call, nullptr)) throw interruption(call);
       nix::FdSink sink(socket.get());
       nix::FdSource source(socket.get());
-      if (start)
-        send(sink, {{"entry", entry},
-                    {"allowed", allowed},
-                    {"epoch", last_epoch + 1}});
-      request["system"] = call.system;
-      send(sink, request);
+      if (start) {
+        E::InitializeT settings;
+        settings.entry = entry;
+        settings.allowed = allowed;
+        settings.epoch = last_epoch + 1;
+        send<E::Request>(sink, std::move(settings));
+      }
+      send<E::Request>(sink, std::move(request), call.system);
       for (;;) {
-        reply = receive(source);
-        if (reply.contains("build")) {
-          if (call.on_build)
-            call.on_build(reply.at("build").get<std::string>(),
-                          reply.at("active").get<bool>());
+        reply = receive<E::Reply>(source);
+        if (const auto* build = reply.body.AsBuild()) {
+          if (call.on_build) call.on_build(build->drv, build->active);
           continue;
         }
-        if (!reply.contains("log")) break;
-        if (call.log) {
-          const auto line = reply.at("log").get<std::string>();
-          call.log({std::span(&line, 1)});
-        }
+        const auto* log = reply.body.AsLog();
+        if (!log) break;
+        if (call.log) call.log({std::span(&log->line, 1)});
       }
     } catch (const std::exception& e) {
       close();
@@ -1128,12 +1163,12 @@ struct NixEvaluator::Impl {
       close();
       throw interruption(call);
     }
-    if (reply.contains("limit"))
-      throw NixImplementationLimit(reply.at("limit").get<std::string>());
-    if (reply.contains("error"))
-      throw std::runtime_error(reply.at("error").get<std::string>());
+    if (const auto* error = reply.body.AsError()) {
+      if (error->limit) throw NixImplementationLimit(error->message);
+      throw std::runtime_error(error->message);
+    }
     CallScope scope(call);
-    return translated(call, [&] { return result(reply.at("result")); });
+    return translated(call, [&] { return result(reply.body); });
   }
 };
 
@@ -1181,59 +1216,58 @@ NixEvaluator::~NixEvaluator() = default;
 auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
   if (call.system.empty())
     throw std::runtime_error("execution target system is unknown");
-  return impl_->exchange(
-      call,
-      {{"op", "evaluate"},
-       {"pin_url", call.pin_url},
-       {"pin_hash", call.pin_hash},
-       {"args", call.args},
-       {"max_implementations", call.max_implementations}},
-      [&](const auto& data) {
-        NixResult result;
-        result.derivation = {data.at("drv"), data.at("out"), call.system};
-        result.execution_list = data.at("execution_list");
-        result.implementation_count = data.at("implementation_count");
-        result.implementation_labels =
-            data.at("implementation_labels")
-                .template get<std::vector<std::string>>();
-        result.evaluation_epoch = data.at("epoch");
-        impl_->last_epoch =
-            std::max(impl_->last_epoch, result.evaluation_epoch);
-        impl_->hold(result.derivation.path);
-        return result;
-      });
+  E::EvaluateT request;
+  request.pin_url = call.pin_url;
+  request.pin_hash = call.pin_hash;
+  request.args = call.args;
+  request.max_implementations = call.max_implementations;
+  return impl_->exchange(call, std::move(request), [&](auto& reply) {
+    const auto* data = reply.AsEvaluation();
+    if (!data) throw std::runtime_error("missing Nix evaluation reply");
+    NixResult result;
+    result.derivation = {data->drv, data->out, call.system};
+    result.execution_list = data->execution_list;
+    result.implementation_count = data->implementation_count;
+    result.implementation_labels = data->implementation_labels;
+    result.evaluation_epoch = data->epoch;
+    impl_->last_epoch = std::max(impl_->last_epoch, result.evaluation_epoch);
+    impl_->hold(result.derivation.path);
+    return result;
+  });
 }
 
 auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
-  return impl_->exchange(call,
-                         {{"op", "reuse"},
-                          {"epoch", result.evaluation_epoch},
-                          {"drv", result.derivation.path},
-                          {"out", result.derivation.output}},
-                         [&](const nlohmann::json& data) {
-                           const bool reusable = data.get<bool>();
-                           if (reusable) {
-                             impl_->hold(result.derivation.path);
-                             impl_->hold(result.derivation.output);
-                           }
-                           return reusable;
-                         });
+  E::ReuseT request;
+  request.epoch = result.evaluation_epoch;
+  request.drv = result.derivation.path;
+  request.out = result.derivation.output;
+  return impl_->exchange(call, std::move(request), [&](auto& reply) {
+    const auto* data = reply.AsReusable();
+    if (!data) throw std::runtime_error("missing Nix reuse reply");
+    if (data->value) {
+      impl_->hold(result.derivation.path);
+      impl_->hold(result.derivation.output);
+    }
+    return data->value;
+  });
 }
 
 auto NixEvaluator::flake(const NixCall& call, const std::string& ref)
     -> FlakeInfo {
-  return impl_->exchange(
-      call,
-      {{"op", "flake"}, {"ref", ref}, {"overrides", call.source_overrides}},
-      [&](const nlohmann::json& data) {
-        FlakeInfo info{data.at("ref"), data.at("rev"), data.at("nar_hash"),
-                       data.at("packages").get<std::vector<std::string>>(),
-                       data.at("json")};
-        for (const auto& [attr, p] :
-             nlohmann::json::parse(info.json).at("packages").items())
-          impl_->hold(p.at("drv").get<std::string>());
-        return info;
-      });
+  E::FlakeT request;
+  request.ref = ref;
+  request.overrides = call.source_overrides;
+  return impl_->exchange(call, std::move(request), [&](auto& reply) {
+    auto* data = reply.AsFlakeInfo();
+    if (!data) throw std::runtime_error("missing Nix flake reply");
+    FlakeInfo info{std::move(data->ref), std::move(data->rev),
+                   std::move(data->nar_hash), std::move(data->packages),
+                   std::move(data->nix_json)};
+    for (const auto& [attr, package] :
+         nlohmann::json::parse(info.json).at("packages").items())
+      impl_->hold(package.at("drv").get<std::string>());
+    return info;
+  });
 }
 
 auto NixEvaluator::make_available(const NixCall& call,

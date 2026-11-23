@@ -99,7 +99,7 @@ function SideStatus({ side }: { side?: ComparedCard }) {
     {(side.error || s(v.failure?.diagnostic)) && <p role="alert">{side.error || s(v.failure?.diagnostic)}</p>}
     {side.record?.record?.recordIo === false && <p className="secondary">{L('入出力は記録されていません')}</p>}
     {side.record?.truncated && <p className="secondary">{L('大きな値は概要のみ表示しています。')}</p>}
-    {side.record && !s(side.record.record?.paramsJson) && <p className="secondary">{L('パラメータの記録がありません')}</p>}
+    {side.record && !side.record.record?.params && <p className="secondary">{L('パラメータの記録がありません')}</p>}
   </div>
 }
 

@@ -187,11 +187,11 @@ public extension RPCClient {
     let _: Tsugumi_RPC_AckT = try await call(.viewsetvisiblerequest, r)
   }
 
-  func saveView(viewId: UUID, baseRev: UInt64, view: String) async throws -> Tsugumi_RPC_ViewSaveResultT {
+  func saveView(viewId: UUID, baseRev: UInt64, view: [UInt8]) async throws -> Tsugumi_RPC_ViewSaveResultT {
     let r = Tsugumi_RPC_ViewSaveRequestT()
     r.viewId = viewId.uuidString.lowercased()
     r.baseViewRev = baseRev
-    r.viewJson = view
+    r.view = view
     return try await call(.viewsaverequest, r)
   }
 
@@ -300,17 +300,20 @@ public extension RPCClient {
 
 /// DocumentChange builders.
 public enum Change {
-  public static func setLayout(_ json: String) -> Tsugumi_RPC_DocumentChangeT {
+  public static func setLayout(_ bytes: [UInt8]) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_SetLayoutT()
-    v.json = json
+    v.layout = bytes
     return wrap(v, .setlayout)
   }
 
-  public static func putDefinition(id: String, cardJSON: String, metaJSON: String?) -> Tsugumi_RPC_DocumentChangeT {
+  public static func putDefinition(id: String, cardJSON: String, readme: String? = nil, commentsJSON: String? = nil, keepNotes: Bool = false) -> Tsugumi_RPC_DocumentChangeT {
     let v = Tsugumi_RPC_PutDefinitionT()
     v.id = id
     v.cardJson = cardJSON
-    v.metaJson = metaJSON
+    v.readme = readme
+    v.commentsJson = commentsJSON
+    v.keepReadme = keepNotes
+    v.keepComments = keepNotes
     return wrap(v, .putdefinition)
   }
 

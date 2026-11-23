@@ -27,8 +27,8 @@ auto MakeSubgraph(const std::string& project,
 
 auto CopyDocuments(const std::string& state,
                    const std::vector<std::string>& paths,
-                   const std::string& from, const std::string& to,
-                   const std::string& name) -> DocumentCopy;
+                   const std::string& from, const std::string& to)
+    -> DocumentCopy;
 
 auto ConnectDocuments(const std::string& state, const std::string& from_card,
                       const std::string& from_port, const std::string& to_card,

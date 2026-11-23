@@ -1,3 +1,6 @@
+#include "tsugumi/protocol/runtime_state_generated.h"
+#include "tsugumi/util/flat_file.hh"
+#include "tsugumi/util/json_object.hh"
 #include "agent_fixture_server.hh"
 
 #include <arpa/inet.h>
@@ -241,8 +244,20 @@ auto WaitForPath(const std::filesystem::path& path,
 auto Readiness(ChildProcess& process, const std::filesystem::path& path,
                const std::filesystem::path& log) -> std::string {
   if (WaitForPath(path, [&] { return std::filesystem::is_regular_file(path); },
-                  process.Pid()))
-    return Read(path);
+                  process.Pid())) {
+    const auto bytes = Read(path);
+    if (path.filename() != "server.ready") return bytes;
+    const auto ready = flat::decode<Tsugumi::State::ServerReady>(bytes);
+    if (!ready) throw std::runtime_error("invalid project readiness");
+    return json::Encode(json::Members{
+        {"endpoint", json::Quote(ready->endpoint)},
+        {"token", json::Quote(ready->token)},
+        {"project_id", json::Quote(ready->project_id)},
+        {"unix_socket", json::Quote(ready->unix_socket)},
+        {"protocol", std::to_string(ready->protocol)},
+        {"pid", std::to_string(ready->pid)},
+    });
+  }
   throw std::runtime_error("daemon exited during startup:\n" + Read(log));
 }
 

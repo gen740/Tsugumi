@@ -84,9 +84,9 @@ struct CardDatabaseView: View {
         Text("Card「\(id)」の定義（definitions/\(id)/）です。").font(.callout).foregroundStyle(.secondary)
         Text("_card.json（設定・params・入力）").font(.headline)
         CodeEditor(text: $cardText, language: "json").frame(minHeight: 180)
-        Text("_meta.json（説明・計画・追加コンテキスト、任意）").font(.headline)
-        CodeEditor(text: $metaText, language: "json").frame(minHeight: 80, maxHeight: 140)
-        RevisionEditNotice(edit: revisionEdit, text: { "_card.json\n" + cardText + "\n_meta.json\n" + metaText },
+        Text("README.md（説明・計画、任意）").font(.headline)
+        CodeEditor(text: $metaText, language: "md").frame(minHeight: 80, maxHeight: 140)
+        RevisionEditNotice(edit: revisionEdit, text: { "_card.json\n" + cardText + "\nREADME.md\n" + metaText },
                            overwrite: { Task { await apply(id, overwrite: true) } }, reload: { load() })
         if let parseError { Label(parseError, systemImage: "xmark.octagon").foregroundStyle(.red) }
         if let message { Text(message).font(.callout).foregroundStyle(.secondary) }
@@ -114,7 +114,7 @@ struct CardDatabaseView: View {
   private func load() {
     guard let id = selected else { return }
     cardText = session.definitions[id]?.serialized() ?? "{}"
-    metaText = session.definitionMeta[id]?.serialized() ?? ""
+    metaText = Documents.splitCardNotes(session.definitionMeta[id]).readme ?? ""
     baseCard = cardText
     baseMeta = metaText
     revisionEdit.reload(session.rev)
@@ -131,10 +131,10 @@ struct CardDatabaseView: View {
     let sentCard = cardText, sentMeta = metaText
     do {
       let card = try JSONValue.parse(sentCard)
-      let meta = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : try JSONValue.parse(sentMeta)
+      let meta: JSONValue? = sentMeta.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? nil : .string(sentMeta)
       parseError = nil
       guard await revisionEdit.replaceDocuments(session, overwrite: overwrite, [
-        ("definitions/\(id)/_card.json", card), ("definitions/\(id)/_meta.json", meta),
+        ("definitions/\(id)/_card.json", card), ("definitions/\(id)/README.md", meta),
       ]) else { return }
       guard selected == id else { return }
       baseCard = sentCard
@@ -421,7 +421,7 @@ private struct GeneralProjectSettings: View {
   }
 }
 
-/// How the project's Cards are laid out (layout.json, applied at once).
+/// How the project's Cards are laid out (layout.bin, applied at once).
 private struct CanvasProjectSettings: View {
   let session: ProjectSession
 
@@ -430,7 +430,7 @@ private struct CanvasProjectSettings: View {
       Picker("流れの向き", selection: Binding(get: { session.flow }, set: { session.setFlow($0) })) {
         ForEach(FlowDirection.allCases) { Text($0.label).tag($0) }
       }
-      .help("このプロジェクトの Card を並べた向きです（layout.json に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
+      .help("このプロジェクトの Card を並べた向きです（layout.bin に保存され、すぐ反映されます）。線の引き方と「整列」がこの向きに合わせます。")
       Label("変えると Card の配置と線が合わなくなることがあります（「整列」で並べ直せます）。", systemImage: "exclamationmark.triangle")
         .font(.caption).foregroundStyle(.orange)
     }

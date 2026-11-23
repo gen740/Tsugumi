@@ -23,10 +23,9 @@ def make(root: Path) -> None:
         "canvas": {"cards": [{"id": "start"}, {"id": "load"}, {"id": "show"}], "connections": [
             {"from": {"card": "start", "port": "out"}, "to": {"card": "load", "port": "start"}},
             {"from": {"card": "load", "port": "events"}, "to": {"card": "show", "port": "in"}}]}}))
-    put(root / "layout.json", "{}")
     put(root / "definitions" / "start" / "_card.json", json.dumps({"type": "trigger"}))
     put(root / "definitions" / "load" / "_card.json", json.dumps({
-        "type": "input", "retainArtifact": True, "params": [{"name": "value", "type": "string", "data": "data/events.txt"}]}))
+        "type": "input", "retainArtifact": True, "params": [{"name": "value", "type": "string", "data": {"string": "data/events.txt"}}]}))
     put(root / "definitions" / "load" / "_outputs.fbs", FILE_FBS)
     put(root / "definitions" / "load" / "data" / "events.txt", "photon 1\nphoton 2\n")
     put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, retainArtifact=True)))
@@ -75,17 +74,17 @@ def test_input_card_hands_a_project_file_on(tmp_path, core_factory):
     assert shown.endswith("/events.txt") and "definitions/load/data" not in shown, shown
 
 
-def test_put_definition_can_keep_the_meta(tmp_path, core_factory):
-    """Settings change without writing the intent (_meta.json) again."""
+def test_put_definition_can_keep_the_readme(tmp_path, core_factory):
+    """Settings change without writing the intent (README.md) again."""
     root = tmp_path / "p"
     make(root)
-    meta = {"description": "観測データを読む", "content": "露光補正はしない"}
-    put(root / "definitions" / "load" / "_meta.json", json.dumps(meta, ensure_ascii=False))
+    readme = "---\ndescription: 観測データを読む\n---\n\n露光補正はしない"
+    put(root / "definitions" / "load" / "README.md", readme)
     c = core_factory(project_root=root, mocked_builds=True).connect()
     snap = c.call("ProjectInspectRequest")
-    card = {"type": "input", "params": [{"name": "value", "type": "string", "data": "data/events.txt"}],
+    card = {"type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "data/events.txt"}}],
             "maxRuns": 2}
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepMeta=True)])
-    assert json.loads(bytes(c.call("ProjectFileReadRequest", path="definitions/load/_meta.json").bytes)) == meta
+           changes=[change("PutDefinition", id="load", cardJson=json.dumps(card), keepReadme=True, keepComments=True)])
+    assert bytes(c.call("ProjectFileReadRequest", path="definitions/load/README.md").bytes).decode() == readme
     assert json.loads(bytes(c.call("ProjectFileReadRequest", path="definitions/load/_card.json").bytes))["maxRuns"] == 2

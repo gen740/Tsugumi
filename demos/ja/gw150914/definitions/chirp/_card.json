@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "whitened"
-    }
-  ],
   "params": [
     {
       "name": "nperseg",
       "type": "int64",
-      "data": 256
+      "data": {
+        "int64": 256
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "whitened"
     }
   ]
 }

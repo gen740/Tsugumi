@@ -4,17 +4,23 @@
     {
       "name": "seed",
       "type": "uint64",
-      "data": 7
+      "data": {
+        "uint64": 7
+      }
     },
     {
       "name": "walkers",
       "type": "uint64",
-      "data": 400
+      "data": {
+        "uint64": 400
+      }
     },
     {
       "name": "steps",
       "type": "uint64",
-      "data": 200
+      "data": {
+        "uint64": 200
+      }
     }
   ]
 }

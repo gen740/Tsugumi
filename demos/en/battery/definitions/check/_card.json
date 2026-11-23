@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "scenario"
-    }
-  ],
   "params": [
     {
       "name": "brute_hours",
       "type": "uint64",
-      "data": 10
+      "data": {
+        "uint64": 10
+      }
     },
     {
       "name": "brute_from_hour",
       "type": "uint64",
-      "data": 12
+      "data": {
+        "uint64": 12
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "scenario"
     }
   ]
 }

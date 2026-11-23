@@ -49,7 +49,7 @@ await session.save()
 const remote = renderToStaticMarkup(<CardSettingsEditor session={session} card={card} onClose={() => {}} />)
 assert.match(remote, /<option value="worker" selected="">worker/)
 assert.doesNotMatch(remote, /<option value="aarch64-linux"/)
-assert.match(remote, /<input(?=[^>]*name="cpu")(?=[^>]*value="1")[^>]*>/)
+assert.match(remote, /<input(?=[^>]*name="cpu")(?=[^>]*value="1(?:\.0)?")[^>]*>/)
 assert.match(remote, /<input(?=[^>]*name="memoryMiB")(?=[^>]*value="1024")[^>]*>/)
 
 session.executionServices = session.executionServices.filter((entry) => entry.id === 'local')

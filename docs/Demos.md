@@ -7,9 +7,9 @@ Draft entries with a finished counterpart declare both language-qualified counte
 
 Operations on screen are in [Usage](Usage.md); kinds of Card and the rules of execution are in [Features](features.md#2-cards-and-workflows).
 
-## TODO: port the demos to Card ABI 9
+## TODO: port the demos to the current Card ABI
 
-The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for Card ABI 8: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
+The demos under `demos/en` and `demos/ja`, including the Drafts, are still written for the previous Card ABI: Bash bodies, the `Report` object, run-start hooks, an output directory and displays kept in the run history. They do not build with the current language SDKs, and the descriptions below are of that version. They will be ported once the recording of displays is designed. Until then, nothing in the display path is recorded ([Views](CardGuide.md#views)), and no output port is added to the demos to carry what used to live only in a display.
 
 | Demo | Subject | What it shows |
 | --- | --- | --- |
@@ -40,7 +40,7 @@ The demos under `demos/en` and `demos/ja`, including the Drafts, are still writt
 | [MNIST · comparing classifiers (Draft)](#mnist--comparing-classifiers-draft-mnist-classifiers-draft) | Classifying handwritten digits (seven methods) | From a plan implemented up to the data, helpers implement seven classifiers at the same time and the Agent puts the comparison together |
 
 The arrows in the diagrams are a Card's wires (`output port → input port`). The kinds of Card are trigger (where a run starts), input (an input whose value is edited on the Canvas), branch (conditional branching), fork (the same value to several Cards), merge, subgraph (Card in Card) and code Cards ([supported languages](CardGuide.md#inputs-and-outputs)).
-Every Card has a summary in `_meta.json`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
+Every Card has a summary in `README.md`, readable on the Canvas (by hovering, for trigger, merge and branch) and in the Card's settings.
 
 ## The basics
 

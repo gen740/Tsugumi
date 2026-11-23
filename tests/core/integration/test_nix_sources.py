@@ -146,7 +146,7 @@ def test_an_opt_in_stops_at_its_project(core_factory, tmp_path):
     write(root, DEFS, [card("start", "start"),
                        card_in_card("inner", [card("c", "reads")], [], {"inputs": {"start": {"card": "c", "port": "start"}}, "outputs": {}})],
           [conn("start", "out", "inner", "start")])
-    opt_in(root, [dict(SOURCE, overrides={"ciao": {"overrideAttrs": {"name": "outer-only"}}})])
+    opt_in(root, [dict(SOURCE, overrides=[{"package": "ciao", "overrideAttrs": {"name": "outer-only"}}])])
     run(core_factory, root, "inner", "c", expected=RunState.failed)
 
 
@@ -221,14 +221,14 @@ def test_external_package_customization_preserves_original_and_changes_derivatio
     }
     write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
     opt_in(root, [dict(SOURCE, name="original"),
-                  dict(SOURCE, name="customized", overrides={"ciao": {"overrideAttrs": {"name": "custom-ciao"}}})])
+                  dict(SOURCE, name="customized", overrides=[{"package": "ciao", "overrideAttrs": {"name": "custom-ciao"}}])])
     assert "ciao-4.18.0 custom-ciao 1" in run(core_factory, root, "c")[0]
 
 
 def test_customization_reports_unknown_packages(core_factory, tmp_path):
     """An unknown overridden package fails with a usable explanation."""
     root = tmp_path / "unknown-package"
-    project(root, "reads", [dict(SOURCE, overrides={"missing": {"overrideAttrs": {"name": "custom"}}})])
+    project(root, "reads", [dict(SOURCE, overrides=[{"package": "missing", "overrideAttrs": {"name": "custom"}}])])
     assert "unknown package missing" in run(core_factory, root, "c", expected=RunState.failed)[1]
 
 
@@ -241,7 +241,7 @@ def test_changing_overrides_requires_user_approval(core_factory, tmp_path):
     doc["nixSources"] = [SOURCE]
     save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
     doc["nixSources"] = [dict(SOURCE)]
-    doc["nixSources"][0]["overrides"] = {"ciao": {"overrideAttrs": {"version": "1", "name": "changed"}}}
+    doc["nixSources"][0]["overrides"] = [{"package": "ciao", "overrideAttrs": {"version": "1", "name": "changed"}}]
     with pytest.raises(RpcFailure) as error:
         save(c, [change("SetProject", json=json.dumps(doc))], origin="agent")
     assert error.value.kind == "approval_required"
@@ -272,9 +272,9 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
             }'''),
         }
         write(root, definitions, [card("start", "start"), card("c", "inspect")], [conn("start", "out", "c", "start")])
-        custom = {"sample": {"override": {"message": "custom", "src": fetched("source.txt")},
-                             "overrideAttrs": {"patches": [fetched("patch.txt")]}}}
-        opt_in(root, [dict(source, overrides=custom), dict(source, name="original")])
+        custom = {"package": "sample", "override": {"message": "custom", "src": fetched("source.txt")},
+                  "overrideAttrs": {"patches": [fetched("patch.txt")]}}
+        opt_in(root, [dict(source, overrides=[custom]), dict(source, name="original")])
         c = core_factory(project_root=root).connect()
         def output():
             run_id, status = run_and_wait(c, ["start"])
@@ -283,13 +283,13 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
         assert output() == "custom\npinned source\npinned patch\noriginal\n"
         # The same process has cached both packages. A new override must not
         # reuse the earlier customized result or alter the unmodified source.
-        custom["sample"]["override"]["message"] = "changed"
+        custom["override"]["message"] = "changed"
         doc = json.loads(text(c.call("ProjectInspectRequest").projectJson))
-        doc["nixSources"][0]["overrides"] = custom
+        doc["nixSources"][0]["overrides"] = [custom]
         save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
         assert output() == "changed\npinned source\npinned patch\noriginal\n"
-        custom["sample"]["override"]["src"]["fetchurl"]["sha256"] = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-        doc["nixSources"][0]["overrides"] = custom
+        custom["override"]["src"]["fetchurl"]["sha256"] = "sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+        doc["nixSources"][0]["overrides"] = [custom]
         save(c, [change("SetProject", json=json.dumps(doc))], origin="user")
         run_id, status = run_and_wait(c, ["start"])
         assert status.state == RunState.failed
@@ -298,20 +298,24 @@ def test_overridable_fixture_builds_with_pinned_source_and_patch(core_factory, t
 
 
 @pytest.mark.parametrize("customization", [
-    {"ciao": {"override": {}}},
-    {"ciao": {"overrideAttrs": {"src": {"fetchurl": {"url": "https://invalid.example/source"}}}}},
+    {"package": "ciao", "override": {}},
+    {"package": "ciao", "overrideAttrs": {"src": {"fetchurl": {"url": "https://invalid.example/source"}}}},
 ])
 def test_unsupported_customization_has_an_actionable_error(core_factory, tmp_path, customization):
     """Unsupported functions and unpinned fetches explain which configuration to change."""
     root = tmp_path / "unsupported"
-    project(root, "reads", [dict(SOURCE, overrides=customization)])
+    project(root, "reads", [dict(SOURCE, overrides=[customization])])
     _, error = run(core_factory, root, "c", expected=RunState.failed)
-    expected = "does not support override" if "override" in customization["ciao"] else "fetchurl needs url and sha256"
+    expected = "does not support override" if "override" in customization else "fetchurl needs url and sha256"
     assert expected in error
 
 
-@pytest.mark.parametrize("overrides", [[], "let pkgs = import <nixpkgs>; in pkgs", {"ciao": {"override": "x: x"}},
-                                       {"ciao": {"overrideAttrs": {}, "unknown": {}}}])
+@pytest.mark.parametrize("overrides", [
+    {},
+    "let pkgs = import <nixpkgs>; in pkgs",
+    [{"package": "ciao", "override": "x: x"}],
+    [{"package": "ciao", "overrideAttrs": {}, "unknown": {}}],
+])
 def test_invalid_override_shapes_are_rejected_before_saving(core_factory, tmp_path, overrides):
     """The customization boundary accepts JSON argument maps, never arbitrary Nix expressions."""
     root = tmp_path / "invalid-override"

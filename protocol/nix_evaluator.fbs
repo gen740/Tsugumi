@@ -1,0 +1,60 @@
+// Private messages between tsugumid and its libnix evaluator subprocess.
+namespace Tsugumi.NixEvaluator;
+
+table Initialize {
+  entry:string (required);
+  allowed:[string];
+  epoch:ulong;
+}
+
+table Evaluate {
+  pin_url:string (required);
+  pin_hash:string (required);
+  args:string (required);
+  max_implementations:uint;
+}
+
+table Reuse {
+  epoch:ulong;
+  drv:string (required);
+  out:string (required);
+}
+
+table Flake {
+  ref:string (required);
+  // Approved arguments for Nix's override and overrideAttrs.
+  overrides:string;
+}
+
+union RequestBody { Initialize, Evaluate, Reuse, Flake }
+
+table Request {
+  system:string;
+  body:RequestBody (required);
+}
+
+table Evaluation {
+  drv:string (required);
+  out:string (required);
+  execution_list:bool;
+  implementation_count:uint;
+  implementation_labels:[string];
+  epoch:ulong;
+}
+table Reusable { value:bool; }
+table FlakeInfo {
+  ref:string (required);
+  rev:string;
+  nar_hash:string;
+  packages:[string];
+  // Evaluated package manifest consumed by Nix.
+  nix_json:string (required);
+}
+table Log { line:string; }
+// Size-prefixed stdout frames from the build client.
+table BuildLog { line:string; truncated:bool; }
+table Build { drv:string (required); active:bool; }
+table Error { message:string; limit:bool; }
+
+union ReplyBody { Evaluation, Reusable, FlakeInfo, Log, Build, Error }
+table Reply { body:ReplyBody (required); }

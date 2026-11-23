@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "cleaned"
-    }
-  ],
   "params": [
     {
       "name": "min_distance",
       "type": "uint64",
-      "data": 5
+      "data": {
+        "uint64": 5
+      }
     },
     {
       "name": "min_area",
       "type": "uint64",
-      "data": 30
+      "data": {
+        "uint64": 30
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "cleaned"
     }
   ]
 }

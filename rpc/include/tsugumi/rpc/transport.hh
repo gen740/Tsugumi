@@ -80,8 +80,9 @@ struct ServerOptions {
   std::string tcp_host = "0.0.0.0";
   int tcp_port = -1;  // <0: no WebSocket listener
   std::vector<std::string> allowed_origins;
-  // Launcher-owned control file lets another UI attach to a resident project.
-  std::string origins_file;
+  // Origins the launcher allows later, so another UI can attach to a resident
+  // project: asked for an origin outside allowed_origins.
+  std::function<bool(const std::string& origin)> origin_allowed;
   bool allow_missing_origin = false;
   TransportLimits limits;
 };

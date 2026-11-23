@@ -82,7 +82,7 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         self.stalls_expected = 1
         self.stall_lock = threading.Lock()
         self.resume = threading.Event()
-        # A running job's JSONL log, served by status requests from the
+        # A running job's framed log, served by status requests from the
         # core's cursor; hidden ones appear only once the job has stopped.
         self.live_logs = {}
         self.hidden_live_logs = False
@@ -106,28 +106,28 @@ class Gateway(socketserver.ThreadingUnixStreamServer):
         buffer = flatbuffers.Builder(128)
         buffer.Finish(message.Pack(buffer), file_identifier=b"TSW1")
         files = {
-            "environment.json": json.dumps({
-                "paths": ["/nix/store/00000000000000000000000000000000-mock"],
-                "directories": ["out"] if forwarded_path is None else [],
-                "built": True, "log_truncated": log_truncated,
-            }).encode(),
-            "logs.jsonl": b'{"stream":1,"text":"one recovered message\\n"}\n',
+            "environment": R.pack(R.ResultEnvironmentT(
+                paths=["/nix/store/00000000000000000000000000000000-mock"],
+                directories=["out"] if forwarded_path is None else [],
+                built=True, logTruncated=log_truncated,
+            )),
+            "logs": R.log_entries((LogStream.standard_output, "one recovered message\n")),
         }
         if forwarded_path is None:
             files = {"files/out/result.txt": b"retained after shutdown\n", **files}
         if logs is not None:
-            files["logs.jsonl"] = logs
+            files["logs"] = logs
         if result_fault == "display":
             files["display.fb"] = b"old display result"
         if result_fault == "log":
-            files["logs.jsonl"] = b'{"stream":1,"text":"message"} trailing data\n'
+            files["logs"] = b"invalid frame"
         entries = [{"size": len(data), "sha256": blob(data), "path": path} for path, data in files.items()]
         if result_fault == "escape":
             entries[0]["path"] = "files/out/../../escape"
         if result_fault == "size":
             entries[0]["size"] += 1
         if result_fault == "oversize":
-            next(entry for entry in entries if entry["path"] == "logs.jsonl")["size"] = (128 << 20) + 1
+            next(entry for entry in entries if entry["path"] == "logs")["size"] = (128 << 20) + 1
         manifest = R.pack(R.ResultManifestT(outputs=[R.ResultFileT(**entry) for entry in entries],
             invocationResultSha256=blob(bytes(buffer.Output()))))
         self.receipts[job] = {**self.receipts[job], "state": "succeeded", "result_sha256": blob(manifest)}
@@ -419,10 +419,10 @@ def test_target_comes_from_fresh_probe(project, remote_gateway, core_factory, tm
     spec = remote_gateway.specs[text(live.executionJobId)]
     assert R.string(spec.system) == text(live.executionSystem) == "aarch64-linux"
     assert R.string(spec.derivation).endswith(".drv")
-    invocation = json.loads(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
-    assert invocation["archive_sha256"] in [R.string(d) for d in spec.inputBlobs]
-    assert invocation["call_sha256"] in [R.string(d) for d in spec.inputBlobs]
-    assert remote_gateway.blob_contents[invocation["archive_sha256"]] == b"test Nix derivation archive"
+    invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(spec.invocationSha256)])
+    assert R.string(invocation.archiveSha256) in [R.string(d) for d in spec.inputBlobs]
+    assert R.string(invocation.callSha256) in [R.string(d) for d in spec.inputBlobs]
+    assert remote_gateway.blob_contents[R.string(invocation.archiveSha256)] == b"test Nix derivation archive"
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
 
@@ -458,7 +458,7 @@ def test_remote_path_forwarding_requires_the_exact_input(project, remote_gateway
                                                        tmp_path, forwarded_path):
     client = core_factory(mocked_builds=True).connect()
     graph = Project(project).card("source", {
-        "type": "input", "params": [{"name": "value", "type": "string", "data": "report.txt"}],
+        "type": "input", "params": [{"name": "value", "type": "string", "data": {"string": "report.txt"}}],
         "retainArtifact": True,
     }, outputs=FILE_FBS, sources={"report.txt": "forwarded bytes"})
     add_worker(graph, "work", tmp_path / "package", [], outputs=FILE_FBS,
@@ -551,16 +551,15 @@ def test_rolled_back_remote_journal_leaves_no_gap(running_job, project):
             BEGIN SELECT RAISE(ABORT, 'test invocation write failed'); END
         """)
     rolled_back = "remote journal entry that must roll back"
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.journal,
-                                            "text": rolled_back + "\n"}) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.journal, rolled_back + "\n")))
     assert wait_run(client, run_id).state == RunState.failed
 
     for scope in ({}, {"card": path("work")}, {"card": path("work"), "invocation": 1}):
         journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal, **scope)
         saved = text(journal.text)
-        entries = [json.loads(line) for line in saved.splitlines()]
         assert rolled_back not in saved
-        assert any(entry["event"] == "failed" for entry in entries)
+        assert any(line.partition(" · ")[2].startswith("failed: ")
+                   for line in saved.splitlines())
         assert journal.sizeBytes == journal.nextOffset == len(saved.encode())
 
 
@@ -568,8 +567,7 @@ def test_large_remote_build_entry_supports_small_backward_reads(running_job):
     gateway, _, client, run_id, job_id = running_job
     # Put a multibyte character across the on-disk chunk boundary.
     content = ("x" * 65535 + "雪\n" + "é\n" * 410000 + "end\n").encode()
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": content.decode()}, ensure_ascii=False) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, content.decode())))
     assert wait_run(client, run_id).state == RunState.succeeded
 
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
@@ -586,8 +584,7 @@ def test_large_remote_build_entry_supports_small_backward_reads(running_job):
 
 def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
     gateway, _, client, run_id, job_id = running_job
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": "x" * 70000}) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, "x" * 70000)))
     assert wait_run(client, run_id).state == RunState.succeeded
     with sqlite3.connect(project / ".tsugumi" / "runs.sqlite") as db:
         db.execute("UPDATE logs SET inv_off=inv_off+10 WHERE run_id=? AND stream=? AND inv_off=65536",
@@ -602,8 +599,7 @@ def test_log_read_reports_corrupt_chunk_offsets(running_job, project):
 def test_long_terminal_redraw_is_consistent_in_forward_and_reverse_pages(running_job):
     gateway, _, client, run_id, job_id = running_job
     raw = "first\na" + "x" * (3 << 20) + "\r雪\nend\n"
-    gateway.finish(job_id, logs=(json.dumps({"stream": LogStream.build,
-                                            "text": raw}, ensure_ascii=False) + "\n").encode())
+    gateway.finish(job_id, logs=R.log_entries((LogStream.build, raw)))
     assert wait_run(client, run_id).state == RunState.succeeded
 
     args = dict(runId=run_id, card=path("work"), invocation=1, stream=LogStream.build)
@@ -776,7 +772,7 @@ def test_core_shutdown_releases_an_unresponsive_gateway(running_job, mode, opera
 def test_remote_truncation_metadata_survives_import_and_restart(running_job):
     gateway, daemon, client, run_id, job_id = running_job
     limit = 6
-    logs = b'{"stream":1,"text":"remote output"}\n'
+    logs = R.log_entries((LogStream.standard_output, "remote output"))
     gateway.live_logs[job_id] = logs
     client.wait_notification(
         lambda n: n.valueType == NotificationPayload.LogAvailable
@@ -839,8 +835,8 @@ def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_f
     run_id = start_run(client, "work", propagate=False)
     live = wait_for_state(client, run_id, RemoteExecutionState.running)
     spec = remote_gateway.specs[text(live.executionJobId)]
-    invocation = json.loads(remote_gateway.blob_contents[text(spec.invocationSha256)])
-    call = WorkerMessageT.InitFromPackedBuf(remote_gateway.blob_contents[invocation["call_sha256"]])
+    invocation = R.InvocationT.InitFromPackedBuf(remote_gateway.blob_contents[text(spec.invocationSha256)])
+    call = WorkerMessageT.InitFromPackedBuf(remote_gateway.blob_contents[R.string(invocation.callSha256)])
     assert call.value.deadlineMs == (run_budget * 1000 if run_budget is not None else None)
     assert (0 < spec.buildTimeoutMs <= build_budget * 1000) if build_budget else spec.buildTimeoutMs == 0
     # Spending more than the call budget in transport/queue polling must not
@@ -848,9 +844,6 @@ def test_remote_separates_build_and_call_budgets(project, remote_gateway, core_f
     remote_gateway.finish(text(live.executionJobId))
     assert wait_run(client, run_id).state == RunState.succeeded
 
-
-def log_entries(*entries):
-    return b"".join((json.dumps({"stream": stream, "text": value}) + "\n").encode() for stream, value in entries)
 
 
 def recorded_log(client, run_id, stream):
@@ -868,7 +861,7 @@ def wait_recorded_log(client, run_id, stream, expected, timeout=10):
 def test_running_remote_log_arrives_once_across_reconnects(running_job):
     """Logs arrive while the job runs; the result's log only adds what is new."""
     gateway, _, client, run_id, job_id = running_job
-    first = log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
+    first = R.log_entries((LogStream.standard_output, "first line\n"), (LogStream.build, "building\n"))
     gateway.live_logs[job_id] = first
     wait_recorded_log(client, run_id, LogStream.standard_output, "first line\n")
     wait_recorded_log(client, run_id, LogStream.build, "building\n")
@@ -876,12 +869,12 @@ def test_running_remote_log_arrives_once_across_reconnects(running_job):
 
     gateway.online = False
     wait_for_state(client, run_id, RemoteExecutionState.disconnected)
-    second = first + log_entries((LogStream.standard_output, "after reconnect\n"))
+    second = first + R.log_entries((LogStream.standard_output, "after reconnect\n"))
     gateway.live_logs[job_id] = second
     gateway.online = True
     wait_recorded_log(client, run_id, LogStream.standard_output, "first line\nafter reconnect\n")
 
-    complete = second + log_entries((LogStream.standard_error, "only in the result\n"))
+    complete = second + R.log_entries((LogStream.standard_error, "only in the result\n"))
     gateway.finish(job_id, logs=complete)
     assert wait_run(client, run_id).state == RunState.succeeded
     assert recorded_log(client, run_id, LogStream.standard_output) == "first line\nafter reconnect\n"
@@ -896,7 +889,7 @@ def test_running_remote_log_arrives_once_across_reconnects(running_job):
 def test_stopped_remote_job_keeps_its_collected_log(running_job):
     gateway, _, client, run_id, job_id = running_job
     gateway.hidden_live_logs = True
-    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "before cancel\n"))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "before cancel\n"))
     assert client.call("RunCancelRequest", runId=run_id).state == RunState.cancelling
     assert wait_run(client, run_id).state == RunState.cancelled
     assert recorded_log(client, run_id, LogStream.standard_output) == "before cancel\n"
@@ -905,9 +898,9 @@ def test_stopped_remote_job_keeps_its_collected_log(running_job):
 
 def test_remote_result_must_extend_the_recorded_log(running_job):
     gateway, _, client, run_id, job_id = running_job
-    gateway.live_logs[job_id] = log_entries((LogStream.standard_output, "recorded\n"))
+    gateway.live_logs[job_id] = R.log_entries((LogStream.standard_output, "recorded\n"))
     wait_recorded_log(client, run_id, LogStream.standard_output, "recorded\n")
-    gateway.finish(job_id, logs=log_entries((LogStream.standard_output, "replaced\n")))
+    gateway.finish(job_id, logs=R.log_entries((LogStream.standard_output, "replaced\n")))
     assert wait_run(client, run_id).state == RunState.failed
     assert recorded_log(client, run_id, LogStream.standard_output) == "recorded\n"
     assert not client.call("RunRecordRequest", runId=run_id, card=path("work")).record.outputs

@@ -1,7 +1,6 @@
 // A comparison reads retained records only; it never loads them onto the canvas.
 import { D, R, RPCClient, s, segs } from '../wire/rpc'
 import { describeValue } from '../wire/flatjson'
-import { isObj, serialize, tryParse } from '../../shared/json'
 import { L } from '../i18n'
 import { errorText } from './session'
 
@@ -35,11 +34,9 @@ const names = (a: Iterable<string>, b: Iterable<string>) => [...new Set([...a, .
 
 /** Parameters pair by name. A side whose record holds no parameters cannot be compared. */
 export function comparedParams(left?: R.RecordResultT, right?: R.RecordResultT): ComparedField[] {
-  const values = (r?: R.RecordResultT) => {
-    const json = tryParse(s(r?.record?.paramsJson))
-    return new Map(isObj(json) ? json.entries().map(([k, v]) => [k, serialize(v).trim()]) : [])
-  }
-  const unrecorded = (r?: R.RecordResultT) => !!r?.record && r.record.paramsJson === null
+  const values = (r?: R.RecordResultT) =>
+    new Map((r?.record?.params?.entries ?? []).map(p => [s(p.name), s(p.value)]))
+  const unrecorded = (r?: R.RecordResultT) => !!r?.record && r.record.params === null
   const a = values(left), b = values(right), unknown = unrecorded(left) || unrecorded(right)
   return names(a.keys(), b.keys()).map(name => ({
     name, left: a.get(name), right: b.get(name), difference: unknown ? 'unknown' : a.get(name) === b.get(name) ? 'same' : 'changed',

@@ -41,6 +41,7 @@
 #include "tsugumi/rpc/frame.hh"
 #include "tsugumi/rpc/peer_tls.hh"
 #include "tsugumi/rpc/unix_socket.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/workerd/invocation.hh"
@@ -389,12 +390,13 @@ class Daemon {
           status.secrets_wanted = stdfs::exists(
               journal->job_path(q.job_id) / "work" / kSecretsWanted, ec);
           const auto bytes =
-              fs::read_file(journal->job_path(q.job_id) / "work/progress.json");
-          remote::TransferJson progress;
-          if (bytes && !schema::decode(*bytes, progress)) {
-            status.transfer_name = *progress.name;
-            status.transfer_done = *progress.done;
-            status.transfer_total = *progress.total;
+              fs::read_file(journal->job_path(q.job_id) / "work/progress");
+          if (const auto progress =
+                  bytes ? remote::decode<R::TransferProgress>(*bytes)
+                        : std::nullopt) {
+            status.transfer_name = progress->name;
+            status.transfer_done = progress->done;
+            status.transfer_total = progress->total;
           }
         }
         const bool finished = status.state == R::JobState::Succeeded;
@@ -860,9 +862,11 @@ auto run(Config config) -> int {
   Daemon daemon(config);
   Fd unixfd(unix_listener(config.unix_socket));
   Fd tcpfd(tcp_listener(config));
-  fs::write_atomic(config.root / "worker.ready.json",
-                   "{\"port\":" + std::to_string(config.port) +
-                       ",\"pid\":" + std::to_string(::getpid()) + "}",
+  Tsugumi::RemoteWorker::WorkerReadyT ready;
+  ready.port = config.port;
+  ready.pid = static_cast<uint64_t>(::getpid());
+  fs::write_atomic(config.root / "worker.ready",
+                   flat::encode<Tsugumi::RemoteWorker::WorkerReady>(ready),
                    0600);
   ::signal(SIGTERM, stop);
   ::signal(SIGINT, stop);

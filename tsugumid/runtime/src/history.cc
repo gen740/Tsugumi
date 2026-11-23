@@ -9,10 +9,10 @@
 #include <functional>
 #include <system_error>
 
-#include "runtime_schema.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/log.hh"
 #include "wire.hh"
 
@@ -24,138 +24,144 @@ namespace {
 std::string key(const CardPath& p) { return path_key(p); }
 CardPath unkey(const std::string& s) { return path_from_key(s); }
 
-std::string waiting_json(const std::vector<WaitingInputData>& w) {
-  schema::WaitingList list;
+namespace S = Tsugumi::State;
+
+std::string waiting_bytes(const std::vector<WaitingInputData>& w) {
+  S::WaitingInputsT list;
   for (const auto& wi : w) {
-    schema::WaitingJson j;
-    *j.port = wi.port;
+    auto j = std::make_unique<S::WaitingInputT>();
+    j->port = wi.port;
     for (const auto& u : wi.upstream) {
-      schema::UpstreamJson uj;
-      *uj.card = key(u.card);
-      *uj.port = u.port;
-      j.upstream->push_back(std::move(uj));
+      auto uj = std::make_unique<S::UpstreamT>();
+      uj->card = key(u.card);
+      uj->port = u.port;
+      j->upstream.push_back(std::move(uj));
     }
-    list.items->push_back(std::move(j));
+    list.inputs.push_back(std::move(j));
   }
-  return schema::encode(list);
+  return flat::encode<S::WaitingInputs>(list);
 }
 
 std::vector<WaitingInputData> waiting_from(const std::string& s) {
   std::vector<WaitingInputData> out;
-  schema::WaitingList list;
-  if (s.empty() || schema::decode(s, list)) return out;
-  for (const auto& wi : *list.items) {
+  const auto list = flat::decode<S::WaitingInputs>(s);
+  if (!list) return out;
+  for (const auto& wi : list->inputs) {
     WaitingInputData w;
-    w.port = *wi.port;
-    for (const auto& u : *wi.upstream)
-      w.upstream.push_back({unkey(*u.card), *u.port});
+    w.port = wi->port;
+    for (const auto& u : wi->upstream)
+      w.upstream.push_back({unkey(u->card), u->port});
     out.push_back(std::move(w));
   }
   return out;
 }
 
-std::string detail_json(const InvocationSummaryData& s) {
-  schema::InvocationDetailJson d;
-  auto& stages = d.stages->emplace();
+std::string detail_bytes(const InvocationSummaryData& s) {
+  S::InvocationDetailT d;
   for (const auto& st : s.stages) {
-    schema::StageJson j;
-    *j.phase = static_cast<int>(st.phase);
-    *j.outcome = static_cast<int>(st.outcome);
-    *j.start = st.start;
-    *j.end = st.end.value_or(-1);
-    stages.push_back(std::move(j));
+    auto j = std::make_unique<S::StageT>();
+    j->phase = static_cast<int>(st.phase);
+    j->outcome = static_cast<int>(st.outcome);
+    j->start = st.start;
+    if (st.end) j->end = *st.end;
+    d.stages.push_back(std::move(j));
   }
-  *d.worker_reused = s.worker_reused ? (*s.worker_reused ? 1 : 0) : -1;
-  *d.outputs_sent = s.outputs_sent;
-  *d.ready_at = s.ready_at.value_or(-1);
-  *d.emulator = s.emulator;
-  *d.environment_id = s.environment_id;
-  *d.params = s.params_json;
-  *d.execution_service = s.execution_service;
-  *d.execution_job_id = s.execution_job_id;
-  *d.execution_system = s.execution_system;
-  *d.execution_cpu_millis =
+  if (s.worker_reused) d.worker_reused = *s.worker_reused;
+  d.outputs_sent = s.outputs_sent;
+  if (s.ready_at) d.ready_at = *s.ready_at;
+  d.emulator = s.emulator;
+  d.environment_id = s.environment_id;
+  if (s.params) {
+    d.params = std::make_unique<Tsugumi::Data::InvocationParamsT>();
+    for (const auto& [name, value] : *s.params) {
+      auto param = std::make_unique<Tsugumi::Data::InvocationParamT>();
+      param->name = name;
+      param->value = value;
+      d.params->entries.push_back(std::move(param));
+    }
+  }
+  d.execution_service = s.execution_service;
+  d.execution_job_id = s.execution_job_id;
+  d.execution_system = s.execution_system;
+  d.execution_cpu_millis =
       s.execution_resources ? s.execution_resources->cpu_millis : 0;
-  *d.execution_memory_bytes =
+  d.execution_memory_bytes =
       s.execution_resources ? s.execution_resources->memory_bytes : 0;
-  *d.execution_state =
-      s.execution_state ? static_cast<int64_t>(*s.execution_state) : -1;
-  *d.batch_activation = s.batch_activation.value_or(0);
-  *d.batch_index = s.batch_index.value_or(0);
-  *d.batch_size = s.batch_size.value_or(0);
-  *d.implementation_index = s.implementation_index.value_or(0);
-  *d.implementation_label = s.implementation_label;
-  *d.secrets = s.secrets;
-  return schema::encode(d);
+  d.execution_state =
+      s.execution_state ? static_cast<int32_t>(*s.execution_state) : -1;
+  d.batch_activation = s.batch_activation.value_or(0);
+  d.batch_index = s.batch_index.value_or(0);
+  d.batch_size = s.batch_size.value_or(0);
+  d.implementation_index = s.implementation_index.value_or(0);
+  d.implementation_label = s.implementation_label;
+  d.secrets = s.secrets;
+  return flat::encode<S::InvocationDetail>(d);
 }
 
-void detail_into(const std::string& text, InvocationSummaryData& s) {
-  schema::InvocationDetailJson d;
-  if (text.empty() || schema::decode(text, d)) return;
+void detail_into(const std::string& bytes, InvocationSummaryData& s) {
+  const auto decoded = flat::decode<S::InvocationDetail>(bytes);
+  if (!decoded) return;
+  const auto& d = *decoded;
   s.stages.clear();
-  if (const auto* stages = schema::get(d.stages))
-    for (const auto& j : *stages) {
-      StageTimeData st;
-      st.phase = static_cast<Phase>(*j.phase);
-      st.outcome = static_cast<StageOutcome>(*j.outcome);
-      st.start = *j.start;
-      if (*j.end >= 0) st.end = *j.end;
-      s.stages.push_back(st);
-    }
-  if (auto reused = d.worker_reused->value_or(-1); reused >= 0)
-    s.worker_reused = reused == 1;
-  if (const auto* outputs = schema::get(d.outputs_sent))
-    s.outputs_sent = *outputs;
-  if (const auto* secrets = schema::get(d.secrets)) s.secrets = *secrets;
-  if (auto ready = d.ready_at->value_or(-1); ready >= 0) s.ready_at = ready;
-  s.emulator = d.emulator->value_or("");
-  s.environment_id = d.environment_id->value_or("");
-  s.params_json = d.params->value_or("");
-  if (const auto* service = schema::get(d.execution_service))
-    s.execution_service = *service;
-  s.execution_job_id = d.execution_job_id->value_or("");
-  s.execution_system = d.execution_system->value_or("");
-  const auto cpu = d.execution_cpu_millis->value_or(0);
-  const auto memory = d.execution_memory_bytes->value_or(0);
+  for (const auto& j : d.stages) {
+    StageTimeData st;
+    st.phase = static_cast<Phase>(j->phase);
+    st.outcome = static_cast<StageOutcome>(j->outcome);
+    st.start = j->start;
+    if (j->end) st.end = *j->end;
+    s.stages.push_back(st);
+  }
+  if (d.worker_reused) s.worker_reused = *d.worker_reused;
+  s.outputs_sent = d.outputs_sent;
+  s.secrets = d.secrets;
+  if (d.ready_at) s.ready_at = *d.ready_at;
+  s.emulator = d.emulator;
+  s.environment_id = d.environment_id;
+  if (d.params) {
+    auto& params = s.params.emplace();
+    for (const auto& param : d.params->entries)
+      params.emplace_back(param->name, param->value);
+  }
+  if (!d.execution_service.empty()) s.execution_service = d.execution_service;
+  s.execution_job_id = d.execution_job_id;
+  s.execution_system = d.execution_system;
+  const auto cpu = d.execution_cpu_millis;
+  const auto memory = d.execution_memory_bytes;
   if ((cpu || memory) && cpu <= UINT32_MAX)
     s.execution_resources =
         ExecutionResources{static_cast<uint32_t>(cpu), memory};
-  const auto state = d.execution_state->value_or(-1);
+  const auto state = d.execution_state;
   if (state >= 0 &&
-      state <= static_cast<int64_t>(RemoteExecutionState::interrupted))
+      state <= static_cast<int32_t>(RemoteExecutionState::interrupted))
     s.execution_state = static_cast<RemoteExecutionState>(state);
-  if (const auto activation = d.batch_activation->value_or(0); activation > 0)
-    s.batch_activation = activation;
-  if (const auto index = d.batch_index->value_or(0);
-      index > 0 && index <= UINT32_MAX)
-    s.batch_index = static_cast<uint32_t>(index);
-  if (const auto size = d.batch_size->value_or(0);
-      size > 0 && size <= UINT32_MAX)
-    s.batch_size = static_cast<uint32_t>(size);
-  if (const auto implementation = d.implementation_index->value_or(0);
-      implementation > 0 && implementation <= UINT32_MAX)
-    s.implementation_index = static_cast<uint32_t>(implementation);
-  s.implementation_label = d.implementation_label->value_or("");
+  if (d.batch_activation > 0) s.batch_activation = d.batch_activation;
+  if (d.batch_index > 0 && d.batch_index <= UINT32_MAX)
+    s.batch_index = static_cast<uint32_t>(d.batch_index);
+  if (d.batch_size > 0 && d.batch_size <= UINT32_MAX)
+    s.batch_size = static_cast<uint32_t>(d.batch_size);
+  if (d.implementation_index > 0 && d.implementation_index <= UINT32_MAX)
+    s.implementation_index = static_cast<uint32_t>(d.implementation_index);
+  s.implementation_label = d.implementation_label;
 }
 
-std::string sources_json(const std::vector<InputSourceData>& s) {
-  schema::InputSourceList list;
+std::string sources_bytes(const std::vector<InputSourceData>& s) {
+  S::InputSourcesT list;
   for (const auto& x : s) {
-    schema::InputSourceJson j;
-    *j.port = x.port;
-    *j.card = key(x.card);
-    *j.invocation = x.invocation;
-    list.items->push_back(std::move(j));
+    auto j = std::make_unique<S::InputSourceT>();
+    j->port = x.port;
+    j->card = key(x.card);
+    j->invocation = x.invocation;
+    list.sources.push_back(std::move(j));
   }
-  return schema::encode(list);
+  return flat::encode<S::InputSources>(list);
 }
 
 std::vector<InputSourceData> sources_from(const std::string& s) {
   std::vector<InputSourceData> out;
-  schema::InputSourceList list;
-  if (s.empty() || schema::decode(s, list)) return out;
-  for (const auto& x : *list.items)
-    out.push_back({*x.port, unkey(*x.card), *x.invocation});
+  const auto list = flat::decode<S::InputSources>(s);
+  if (!list) return out;
+  for (const auto& x : list->sources)
+    out.push_back({x->port, unkey(x->card), x->invocation});
   return out;
 }
 
@@ -246,11 +252,11 @@ InvocationSummaryData inv_row(sql::Db& db, const sql::Stmt& st,
   s.ended_at = st.opt_i64(5);
   s.duration_ms = st.opt_u64(6);
   s.failure = col_failure(st, 7);
-  s.waiting = waiting_from(st.text(8));
+  s.waiting = waiting_from(st.blob(8));
   if (cached_col >= 0 && !st.is_null(cached_col))
     s.build_cached = st.i64(cached_col) != 0;
   if (detail_col >= 0 && !st.is_null(detail_col))
-    detail_into(st.text(detail_col), s);
+    detail_into(st.blob(detail_col), s);
   if (service_col >= 0 && !st.is_null(service_col))
     s.execution_service = st.text(service_col);
   return s;
@@ -486,7 +492,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
 CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(run_batches(
   run_id TEXT NOT NULL, card TEXT NOT NULL, activation INTEGER NOT NULL, invocation_count INTEGER NOT NULL,
-  execution_list INTEGER NOT NULL, complete INTEGER NOT NULL, failed INTEGER NOT NULL, outputs TEXT NOT NULL,
+  execution_list INTEGER NOT NULL, complete INTEGER NOT NULL, failed INTEGER NOT NULL, outputs BLOB NOT NULL,
   PRIMARY KEY(run_id, card, activation));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p +
@@ -495,8 +501,8 @@ CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(invocations(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
   state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, ended_at INTEGER,
-  duration_ms INTEGER, failure BLOB, waiting TEXT, record_io INTEGER NOT NULL,
-  input_sources TEXT, build_cached INTEGER, detail TEXT,
+  duration_ms INTEGER, failure BLOB, waiting BLOB, record_io INTEGER NOT NULL,
+  input_sources BLOB, build_cached INTEGER, detail BLOB, environment_id TEXT NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS )SQL" +
          p +
@@ -537,7 +543,7 @@ CREATE TABLE IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts(
   artifact_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL,
   invocation INTEGER NOT NULL, output TEXT NOT NULL, directory INTEGER NOT NULL, name TEXT NOT NULL,
-  members TEXT NOT NULL);
+  members BLOB NOT NULL);
 CREATE INDEX IF NOT EXISTS )SQL" +
          p + R"SQL(artifacts_run ON artifacts(run_id, card, invocation);
 )SQL";
@@ -545,8 +551,9 @@ CREATE INDEX IF NOT EXISTS )SQL" +
 
 // Version of the local history's tables (PRAGMA user_version).
 // Includes the definition paths recorded when a run is accepted, the log line
-// index, and Path values recorded as their path text.
-constexpr int kHistoryVersion = 18;
+// index, Path values recorded as their path text, and FlatBuffers values
+// (protocol/runtime_state.fbs) in place of JSON text.
+constexpr int kHistoryVersion = 19;
 }  // namespace
 
 auto History::open_live_logs() -> std::unique_ptr<sql::Db> {
@@ -606,8 +613,8 @@ CREATE TABLE IF NOT EXISTS active_environments(
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS statuses(
   run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
-  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting TEXT,
-  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL, detail TEXT NOT NULL,
+  state INTEGER NOT NULL, phase INTEGER, started_at INTEGER, failure BLOB, waiting BLOB,
+  updated_at INTEGER NOT NULL, execution_service TEXT NOT NULL, detail BLOB NOT NULL,
   PRIMARY KEY(run_id, card, invocation));
 CREATE TABLE IF NOT EXISTS remote_jobs(
   job_id TEXT PRIMARY KEY, run_id TEXT NOT NULL, card TEXT NOT NULL, invocation INTEGER NOT NULL,
@@ -617,7 +624,7 @@ CREATE TABLE IF NOT EXISTS remote_releases(
   job_id TEXT PRIMARY KEY, service TEXT NOT NULL,
   instance TEXT NOT NULL, fingerprint TEXT NOT NULL, delete_data INTEGER NOT NULL);
 CREATE TABLE IF NOT EXISTS last_inputs(
-  card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs TEXT NOT NULL);
+  card TEXT PRIMARY KEY, run_id TEXT NOT NULL, invocation INTEGER NOT NULL, inputs BLOB NOT NULL);
 CREATE TABLE IF NOT EXISTS receipts(
   op_id TEXT PRIMARY KEY, kind TEXT NOT NULL, digest TEXT NOT NULL, result BLOB NOT NULL);
 )SQL");
@@ -855,10 +862,10 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
     st.bind_null(5);
   st.bind(6, s.started_at);
   bind_failure(st, 7, s.failure);
-  st.bind(8, waiting_json(s.waiting))
+  st.bind_blob(8, waiting_bytes(s.waiting))
       .bind(9, now_ms())
       .bind(10, s.execution_service)
-      .bind(11, detail_json(s))
+      .bind_blob(11, detail_bytes(s))
       .run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, s.run_id)
@@ -867,13 +874,13 @@ void History::put_status(sql::Db& db, const InvocationSummaryData& s) {
 }
 
 auto History::put_batch(sql::Db& db, const RunBatchData& batch) -> void {
-  schema::BatchOutputList outputs;
+  S::BatchOutputsT outputs;
   for (const auto& output : batch.outputs) {
-    schema::BatchOutputJson entry;
-    *entry.port = output.port;
-    *entry.count = output.count;
-    *entry.execution_list = output.execution_list;
-    outputs.outputs->push_back(std::move(entry));
+    auto entry = std::make_unique<S::BatchOutputT>();
+    entry->port = output.port;
+    entry->count = output.count;
+    entry->execution_list = output.execution_list;
+    outputs.outputs.push_back(std::move(entry));
   }
   const auto card = key(batch.card);
   db.prepare("INSERT OR REPLACE INTO run_batches VALUES(?,?,?,?,?,?,?,?)")
@@ -884,7 +891,7 @@ auto History::put_batch(sql::Db& db, const RunBatchData& batch) -> void {
       .bind(5, batch.execution_list)
       .bind(6, batch.complete)
       .bind(7, batch.failed)
-      .bind(8, schema::encode(outputs))
+      .bind_blob(8, flat::encode<S::BatchOutputs>(outputs))
       .run();
   db.prepare("INSERT OR IGNORE INTO run_cards(run_id, card) VALUES(?,?)")
       .bind(1, batch.run_id)
@@ -897,7 +904,7 @@ auto History::interrupt_batches(sql::Db& db, const std::string& run_id)
   db.prepare(
         "UPDATE run_batches SET complete=1, failed=1, outputs=? WHERE "
         "run_id=? AND complete=0")
-      .bind(1, schema::encode(schema::BatchOutputList{}))
+      .bind_blob(1, flat::encode<S::BatchOutputs>({}))
       .bind(2, run_id)
       .run();
 }
@@ -928,8 +935,8 @@ void History::complete_invocation(sql::Db& db,
       "INSERT OR REPLACE INTO invocations(run_id, card, "
       "invocation, state, phase, started_at, ended_at, "
       "duration_ms, failure, waiting, record_io, "
-      "input_sources, build_cached, detail) "
-      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
+      "input_sources, build_cached, detail, environment_id) "
+      "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)");
   st.bind(1, s.run_id)
       .bind(2, key(s.card))
       .bind(3, s.invocation)
@@ -940,15 +947,14 @@ void History::complete_invocation(sql::Db& db,
     st.bind_null(5);
   st.bind(6, s.started_at).bind(7, s.ended_at).bind(8, s.duration_ms);
   bind_failure(st, 9, s.failure);
-  st.bind(10, waiting_json(s.waiting))
+  st.bind_blob(10, waiting_bytes(s.waiting))
       .bind(11, r.record_io)
-      .bind(12, sources_json(r.input_sources));
+      .bind_blob(12, sources_bytes(r.input_sources));
   if (s.build_cached)
     st.bind(13, *s.build_cached);
   else
     st.bind_null(13);
-  st.bind(14, detail_json(s));
-  st.run();
+  st.bind_blob(14, detail_bytes(s)).bind(15, s.environment_id).run();
   // The completion removes exactly this invocation's progress status, never a
   // newer one.
   db.prepare(
@@ -1034,23 +1040,24 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
                              const std::string& run_id, uint64_t activation,
                              const std::vector<SavedInputGroup>& groups)
     -> void {
-  schema::SavedInputList list;
+  S::SavedInputsT list;
   for (const auto& group : groups) {
-    schema::SavedInputGroupJson entry;
-    *entry.port = group.port;
-    *entry.execution_list = group.execution_list;
-    *entry.partial_result = group.partial_result;
+    auto entry = std::make_unique<S::SavedInputGroupT>();
+    entry->port = group.port;
+    entry->execution_list = group.execution_list;
+    entry->partial_result = group.partial_result;
     for (const auto& v : group.values) {
-      schema::SavedInputJson j;
+      auto j = std::make_unique<S::SavedInputT>();
       const bool path = v.kind == PortKind::Path;
-      *j.kind = static_cast<int>(v.kind);
-      *j.schema = !path && v.type ? put_schema(db, *v.type) : "";
-      *j.root_type = !path && v.type ? v.type->root_type : "";
-      *j.data_b64 = crypto::base64(path ? v.path : v.bytes);
-      *j.recorded_path = v.recorded_path.value_or("");
-      entry.values->push_back(std::move(j));
+      const auto& data = path ? v.path : v.bytes;
+      j->kind = static_cast<int>(v.kind);
+      j->schema = !path && v.type ? put_schema(db, *v.type) : "";
+      j->root_type = !path && v.type ? v.type->root_type : "";
+      j->data.assign(data.begin(), data.end());
+      j->recorded_path = v.recorded_path.value_or("");
+      entry->values.push_back(std::move(j));
     }
-    list.groups->push_back(std::move(entry));
+    list.groups.push_back(std::move(entry));
   }
   db.prepare(
         "INSERT OR REPLACE INTO last_inputs(card, run_id, invocation, "
@@ -1058,18 +1065,18 @@ auto History::put_last_input(sql::Db& db, const CardPath& card,
       .bind(1, key(card))
       .bind(2, run_id)
       .bind(3, activation)
-      .bind(4, schema::encode(list))
+      .bind_blob(4, flat::encode<S::SavedInputs>(list))
       .run();
 }
 
 void History::put_artifact(sql::Db& db, const ArtifactData& a) {
-  schema::MemberList m;
+  S::ArtifactMembersT m;
   for (const auto& x : a.members) {
-    schema::MemberJson j;
-    *j.path = x.path;
-    *j.size = x.size_bytes;
-    *j.hash = x.hash;
-    m.items->push_back(std::move(j));
+    auto j = std::make_unique<S::ArtifactMemberT>();
+    j->path = x.path;
+    j->size = x.size_bytes;
+    j->hash = x.hash;
+    m.members.push_back(std::move(j));
   }
   db.prepare(
         "INSERT INTO artifacts(artifact_id, run_id, card, invocation, "
@@ -1082,7 +1089,7 @@ void History::put_artifact(sql::Db& db, const ArtifactData& a) {
       .bind(5, a.output)
       .bind(6, a.directory)
       .bind(7, a.name)
-      .bind(8, schema::encode(m))
+      .bind_blob(8, flat::encode<S::ArtifactMembers>(m))
       .run();
   db.prepare("UPDATE runs SET has_artifacts=1 WHERE run_id=?")
       .bind(1, a.run_id)
@@ -1261,14 +1268,14 @@ auto batch_row(const sql::Stmt& row, const std::string& run_id)
   batch.execution_list = row.i64(3) != 0;
   batch.complete = row.i64(4) != 0;
   batch.failed = row.i64(5) != 0;
-  schema::BatchOutputList outputs;
-  if (schema::decode(row.text(6), outputs))
+  const auto outputs = flat::decode<S::BatchOutputs>(row.blob(6));
+  if (!outputs)
     throw std::runtime_error("invalid outputs in run batch history");
-  for (const auto& entry : *outputs.outputs) {
-    if (*entry.count > UINT32_MAX)
+  for (const auto& entry : outputs->outputs) {
+    if (entry->count > UINT32_MAX)
       throw std::runtime_error("invalid output count in run batch history");
-    batch.outputs.push_back({*entry.port, static_cast<uint32_t>(*entry.count),
-                             *entry.execution_list});
+    batch.outputs.push_back({entry->port, static_cast<uint32_t>(entry->count),
+                             entry->execution_list});
   }
   return batch;
 }
@@ -1326,7 +1333,7 @@ std::optional<InvocationRecordData> History::invocation(
   InvocationRecordData r;
   r.summary = inv_row(db, st, run_id, 11, 12);
   r.record_io = st.i64(9) != 0;
-  r.input_sources = sources_from(st.text(10));
+  r.input_sources = sources_from(st.blob(10));
   return r;
 }
 
@@ -1531,7 +1538,7 @@ void History::update_detail(sql::Db& db, const InvocationSummaryData& s) {
   db.prepare(
         "UPDATE invocations SET detail=? WHERE run_id=? AND card=? AND "
         "invocation=?")
-      .bind(1, detail_json(s))
+      .bind_blob(1, detail_bytes(s))
       .bind(2, s.run_id)
       .bind(3, key(s.card))
       .bind(4, s.invocation)
@@ -1547,41 +1554,37 @@ std::optional<History::LastInput> History::last_input(sql::Db& db,
   LastInput li;
   li.run_id = st.text(0);
   li.invocation = st.u64(1);
-  schema::SavedInputList list;
-  if (schema::decode(st.text(2), list)) return std::nullopt;
+  const auto list = flat::decode<S::SavedInputs>(st.blob(2));
+  if (!list) return std::nullopt;
   std::map<std::pair<std::string, std::string>, types::TypeRef> loaded_types;
-  for (const auto& entry : *list.groups) {
+  for (const auto& entry : list->groups) {
     SavedInputGroup group{
-        *entry.port, *entry.execution_list, {}, *entry.partial_result};
-    for (const auto& value : *entry.values) {
-      if (!*value.kind || !*value.schema || !*value.root_type || !*value.data_b64)
-        return std::nullopt;
+        entry->port, entry->execution_list, {}, entry->partial_result};
+    for (const auto& value : entry->values) {
       Value v;
       v.name = group.port;
-      v.kind = static_cast<PortKind>(**value.kind);
+      v.kind = static_cast<PortKind>(value->kind);
+      const std::string data(value->data.begin(), value->data.end());
+      if (!value->recorded_path.empty()) v.recorded_path = value->recorded_path;
       if (v.kind == PortKind::Path) {
-        if (!crypto::base64_decode(**value.data_b64, v.path)) return std::nullopt;
-        if (const auto* path = schema::get(value.recorded_path); path && !path->empty())
-          v.recorded_path = *path;
+        v.path = data;
         group.values.push_back(std::move(v));
         continue;
       }
       auto [type, inserted] = loaded_types.try_emplace(
-          std::make_pair(**value.schema, **value.root_type));
+          std::make_pair(value->schema, value->root_type));
       if (inserted) {
         auto schema_row = db.prepare("SELECT bfbs FROM schemas WHERE hash=?");
-        schema_row.bind(1, **value.schema);
+        schema_row.bind(1, value->schema);
         if (!schema_row.step()) return std::nullopt;
         auto decoded = std::make_shared<types::Type>();
         decoded->bfbs = schema_row.blob(0);
-        decoded->hash = **value.schema;
-        decoded->root_type = **value.root_type;
+        decoded->hash = value->schema;
+        decoded->root_type = value->root_type;
         type->second = std::move(decoded);
       }
-      if (!crypto::base64_decode(**value.data_b64, v.bytes)) return std::nullopt;
+      v.bytes = data;
       v.type = type->second;
-      if (const auto* path = schema::get(value.recorded_path); path && !path->empty())
-        v.recorded_path = *path;
       group.values.push_back(std::move(v));
     }
     li.groups.push_back(std::move(group));
@@ -1599,10 +1602,9 @@ ArtifactData artifact_row(const sql::Stmt& st) {
   a.output = st.text(4);
   a.directory = st.i64(5) != 0;
   a.name = st.text(6);
-  schema::MemberList list;
-  if (!schema::decode(st.text(7), list))
-    for (const auto& m : *list.items)
-      a.members.push_back({*m.path, *m.size, *m.hash});
+  if (const auto list = flat::decode<S::ArtifactMembers>(st.blob(7)))
+    for (const auto& m : list->members)
+      a.members.push_back({m->path, m->size, m->hash});
   return a;
 }
 }  // namespace
@@ -1799,19 +1801,20 @@ LogRead History::read_log(sql::Db& db, const std::string& run_id,
 }
 
 std::string History::make_cursor(int64_t hi, const std::string& after) const {
-  schema::CursorJson c;
-  *c.hi = hi;
-  *c.after = after;
-  return crypto::base64(schema::encode(c));
+  S::CursorT c;
+  c.hi = hi;
+  c.after = after;
+  return crypto::base64(flat::encode<S::Cursor>(c));
 }
 
 std::pair<int64_t, std::string> History::open_cursor(
     const std::string& cursor) const {
   std::string raw;
-  schema::CursorJson c;
-  if (!crypto::base64_decode(cursor, raw) || schema::decode(raw, c))
-    throw Failed(FailureKind::invalid_cursor, "malformed cursor");
-  return {*c.hi, *c.after};
+  const auto c = crypto::base64_decode(cursor, raw)
+                     ? flat::decode<S::Cursor>(raw)
+                     : std::nullopt;
+  if (!c) throw Failed(FailureKind::invalid_cursor, "malformed cursor");
+  return {c->hi, c->after};
 }
 
 auto History::file_referencing_runs(sql::Db& db, const std::string& run_id)

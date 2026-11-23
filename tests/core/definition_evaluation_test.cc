@@ -59,7 +59,7 @@ class DefinitionEvaluation : public ::testing::Test {
     std::filesystem::create_directories(root / "source");
     fs::write_atomic(root / "source" / "value", "first");
     const auto project = parse_project_json(initial_project_json("evaluation"));
-    const auto pin = project.pkgs_path->value();
+    const auto pin = document_text::root<Tsugumi::Document::Project>(project.buffer).pkgsPath()->str();
     const auto split = pin.find('#');
     call.pin_url = pin.substr(0, split);
     call.pin_hash = pin.substr(split + 1);

@@ -147,7 +147,6 @@ TEST_P(RpcCli, OrdersUnionsWithinProjectChangeArrays) {
   Write(
       directory.path / "project/tsugumi.json",
       R"({"name":"Before","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(directory.path / "project/layout.json", "{}");
   project.Start({TSUGUMI_PROJECT_BINARY, "--scratch-dir",
                  (directory.path / "scratch").string(), "--run-scratch-dir",
                  (directory.path / "run-scratch").string(), "--project",
@@ -224,7 +223,6 @@ TEST_P(RpcCliDeepSocket, ServesAndConnectsInAFolderDeeperThanSunPath) {
   Write(
       directory.path / "project/tsugumi.json",
       R"({"name":"Deep","pkgsPath":"tsugumi:default","canvas":{"cards":[],"connections":[]}})");
-  Write(directory.path / "project/layout.json", "{}");
   project.Start(
       {TSUGUMI_PROJECT_BINARY, "--scratch-dir",
        (directory.path / "scratch").string(), "--run-scratch-dir",

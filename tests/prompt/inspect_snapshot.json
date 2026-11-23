@@ -5,7 +5,7 @@
     "rev": 0,
     "execution_rev": 0,
     "project_json": "{\"name\": \"probe\", \"pkgsPath\": \"tsugumi:default\", \"canvas\": {\"cards\": [{\"id\": \"initial\"}], \"connections\": []}}",
-    "layout_json": "{}",
+    "layout": "{}",
     "definitions": [
       {
         "id": "initial",

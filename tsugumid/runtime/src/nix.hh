@@ -15,8 +15,8 @@
 
 #include "model.hh"
 #include "nix_eval.hh"
-#include "runtime_schema.hh"
 #include "tsugumi/document/graph.hh"
+#include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/workerd/card_plan.hh"
 
 namespace tsugumi {
@@ -128,7 +128,8 @@ class NixRunner {
   // entries, and deleted Cards are pruned.
   std::mutex evaluations_mu_;
   std::map<std::string, std::pair<EvaluationKey, NixResult>> evaluations_;
-  std::optional<std::map<std::string, schema::PreparedCard>> prepared_;
+  std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>>
+      prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;
   std::set<std::string> written_;

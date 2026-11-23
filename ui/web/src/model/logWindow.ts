@@ -68,12 +68,7 @@ function terminalFragments(text: string, offset: number, startsLine: boolean) {
 }
 
 function journalLine(text: string): string | undefined {
-  try {
-    const v = JSON.parse(text)
-    if (v?.phase === 'validate' || v?.phase === 'save') return `${v.phase} · ${v.event ?? ''}: ${v.message ?? ''}`
-  } catch (error) {
-    if (!(error instanceof SyntaxError)) throw error
-  }
+  if (text.startsWith('validate · ') || text.startsWith('save · ')) return text
 }
 
 function page(slice: LogSlice, form: LogForm): Page {

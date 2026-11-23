@@ -19,7 +19,7 @@ import fs from 'node:fs'
 import { createRequire } from 'node:module'
 import path from 'node:path'
 import { fileURLToPath, pathToFileURL } from 'node:url'
-import { preparePlayer, finalsFromRun, flowOf, readJson, readProject, stepsFromRun } from './build.mjs'
+import { preparePlayer, finalsFromRun, flowOf, readJson, readLayout, readProject, stepsFromRun } from './build.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const SITE = path.dirname(HERE)
@@ -914,7 +914,7 @@ function innerDemo(demo, card) {
   const inner = path.join(root, 'externals', ext)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)
-  const layout = readJson(path.join(inner, 'layout.json'), {})
+  const layout = readLayout(inner)
   for (const c of cards) Object.assign(c, layout.cards?.[c.id] ?? { x: 0, y: 0 })
   const recorded = readJson(path.join(DATA, 'assets', `${demo}.run.json`))
   const timeline = Object.fromEntries(Object.entries(recorded.timeline).filter(([k]) => k.startsWith(`${card}/`)).map(([k, v]) => [k.slice(card.length + 1), v]))
@@ -924,7 +924,7 @@ function innerDemo(demo, card) {
     id: `${demo}-${card}`, title: outer.title, flow: flowOf(layout, cards, wires), draftOnly: false, cards, wires, notes: [],
     // The run control shows the whole run's time at its end, as the app does inside a Card in Card.
     run: { ...outer.run, totalMs: outer.run.totalMs }, steps: steps.map((s) => ({ ...s, say: '' })), final: finalsFromRun(cards, timeline), outputs: {},
-    boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) => [side, Object.fromEntries(Object.entries(ports).map(([name, v]) => [name, { ...v,
+    boundary: Object.fromEntries(Object.entries(doc.boundary ?? {}).map(([side, ports]) => [side, Object.fromEntries(ports.map(({ name, ...v }) => [name, { ...v,
       type: (side === 'inputs' ? outer.cards.find((c) => c.id === card)?.inputs : outer.cards.find((c) => c.id === card)?.outputs)?.find((p) => p.name === name)?.typeName }]))])),
     outer, card,
   }

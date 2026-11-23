@@ -1,4 +1,0 @@
-{
-  "description": "Check the result in C++",
-  "content": "Implement in C++. Display number.value as text. There are no output ports.\n\nPlanned inputs:\n- number: Integer value"
-}

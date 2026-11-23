@@ -1,4 +1,0 @@
-{
-  "description": "Multiply the borrowed value in Rust",
-  "content": "Implement in Rust. Multiply number.value by the uint64 parameter factor (default 3), display the product, and return out. Copy the pinned Cargo scaffold from demos/en/rust-pipeline/definitions/scale. Use namespace t; table Number { value:ulong; } table Outputs { out:Number (required); } root_type Outputs;\n\nPlanned inputs:\n- number: Integer value\n\nPlanned outputs:\n- out: Integer value"
-}

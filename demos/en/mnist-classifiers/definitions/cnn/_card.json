@@ -1,25 +1,31 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "channels",
       "type": "uint64",
-      "data": 16
+      "data": {
+        "uint64": 16
+      }
     },
     {
       "name": "epochs",
       "type": "uint64",
-      "data": 8
+      "data": {
+        "uint64": 8
+      }
     },
     {
       "name": "seed",
       "type": "uint64",
-      "data": 0
+      "data": {
+        "uint64": 0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

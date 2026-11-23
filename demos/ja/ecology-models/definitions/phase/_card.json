@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "fits"
-    }
-  ],
   "params": [
     {
       "name": "years",
       "type": "uint64",
-      "data": 100
+      "data": {
+        "uint64": 100
+      }
     },
     {
       "name": "dt",
       "type": "double",
-      "data": 0.05
+      "data": {
+        "double": 0.05
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "fits"
     }
   ]
 }

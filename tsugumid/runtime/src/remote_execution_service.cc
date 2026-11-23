@@ -8,6 +8,7 @@
 #include <optional>
 
 #include "remote_invocation.hh"
+#include "tsugumi/workerd/invocation.hh"
 #include "service.hh"
 #include "store.hh"
 #include "tsugumi/util/crypto.hh"
@@ -51,23 +52,20 @@ class LiveRemoteLog {
     if (reply.log.empty()) return false;
     received_ += reply.log.size();
     pending_ += reply.log;
-    size_t start = 0;
-    for (size_t end; (end = pending_.find('\n', start)) != std::string::npos;
-         start = end + 1) {
-      const std::string_view line(pending_.data() + start, end - start);
-      std::pair<LogStream, std::string> entry;
-      try {
-        entry = decode_remote_log_entry(line);
-      } catch (const std::exception&) {
-        // The completed result's log decides; its import reports the error.
-        closed_ = true;
-        return false;
-      }
-      hash_.update(pending_.data() + start, end - start + 1);
-      recorded_ += end - start + 1;
-      if (sink_) sink_(entry.first, entry.second);
+    size_t used = 0;
+    try {
+      used = remote::decode_log_entries(
+          pending_, [&](LogStream kind, std::string text, std::string_view raw) {
+            hash_.update(raw.data(), raw.size());
+            recorded_ += raw.size();
+            if (sink_) sink_(kind, text);
+          });
+    } catch (const std::exception&) {
+      // The completed result's log decides; its import reports the error.
+      closed_ = true;
+      return false;
     }
-    pending_.erase(0, start);
+    pending_.erase(0, used);
     return reply.log_size > received_;
   }
 

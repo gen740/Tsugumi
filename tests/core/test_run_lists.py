@@ -161,9 +161,8 @@ def test_empty_batch_is_delivered_to_collect_without_starting_a_worker(core_fact
         assert batch.complete and batch.executionList and batch.invocationCount == 0
     assert collected(client, tmp_path / "decode", run_id) == []
     journal = client.call("LogRangeRequest", runId=run_id, stream=LogStream.journal)
-    lines = [json.loads(line) for line in text(journal.text).splitlines()]
-    assert any(diagnostic in line["message"] and "left activation 1" in line["message"]
-               for line in lines)
+    assert any(diagnostic in line and "left activation 1" in line
+               for line in text(journal.text).splitlines())
 
     assert not any(
         note.valueType == NotificationPayload.RunEvent
@@ -282,7 +281,7 @@ def test_implementation_limit_applies_before_running_batch(core_factory, project
     graph.save(client)
 
     if prepared:
-        cards = tmp_path / "cards.jsonl"
+        cards = tmp_path / "cards.bin"
         daemon.stop()
         daemon.args = ["--prepare-cards", str(cards)]
         daemon.start(expect_exit=True)

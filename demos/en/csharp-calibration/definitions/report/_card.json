@@ -5,6 +5,6 @@
       "name": "numbers"
     }
   ],
-  "artifactOutput": "report",
-  "retainArtifact": true
+  "retainArtifact": true,
+  "artifactOutput": "report"
 }

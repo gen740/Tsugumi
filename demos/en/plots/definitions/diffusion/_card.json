@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "walks"
-    }
-  ],
   "params": [
     {
       "name": "frames",
       "type": "uint64",
-      "data": 60
+      "data": {
+        "uint64": 60
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "walks"
     }
   ]
 }

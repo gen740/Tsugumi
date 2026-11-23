@@ -73,7 +73,7 @@ TEST_F(AgentExcludeTest, NestedCardSelectorsFollowTheActualExternalFolder) {
 TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
   AgentExclude policy(
       root,
-      R"({"agentExclude":["definitions/hidden","definitions/public/_meta.json"]})");
+      R"({"agentExclude":["definitions/hidden","definitions/public/README.md"]})");
   for (const auto* tool : {"project_file_list", "project_file_read",
                            "project_file_stat", "project_file_format"})
     Refused([&] {
@@ -81,7 +81,7 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
                           {{"path", R"("definitions/hidden/src/main.py")"}});
     });
   const auto filtered = policy.Filter(
-      R"({"entries":[{"path":"definitions/hidden/src/main.py"},{"path":"definitions/public/main.py"}],"definitions":[{"id":"hidden","card_json":"SECRET"},{"id":"public","card_json":"{\"type\":\"code\"}","meta_json":"SECRET"}],"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"hidden\"},{\"id\":\"public\"}],\"connections\":[]}}"})");
+      R"({"entries":[{"path":"definitions/hidden/src/main.py"},{"path":"definitions/public/main.py"}],"definitions":[{"id":"hidden","card_json":"SECRET"},{"id":"public","card_json":"{\"type\":\"code\"}","readme":"SECRET"}],"project_json":"{\"canvas\":{\"cards\":[{\"id\":\"hidden\"},{\"id\":\"public\"}],\"connections\":[]}}"})");
   EXPECT_EQ(filtered.find("SECRET"), std::string::npos);
   EXPECT_EQ(filtered.find("hidden"), std::string::npos);
   EXPECT_NE(filtered.find("public"), std::string::npos);
@@ -93,13 +93,13 @@ TEST_F(AgentExcludeTest, FileFamiliesAndSnapshotOmitHiddenContent) {
 TEST_F(AgentExcludeTest, NestedDocumentTextRequiresTheScopedFileRead) {
   AgentExclude policy(root, "{}");
   const auto filtered = j::Object(policy.Filter(
-      R"({"sources":[{"path":"externals/sub/tsugumi.json","hash":"h","document_json":"{\"name\":\"Private workflow\"}"}]})"));
+      R"({"sources":[{"path":"externals/sub/tsugumi.json","hash":"h","document":"{\"name\":\"Private workflow\"}"}]})"));
   const auto sources = j::Array(filtered.at("sources"));
   ASSERT_EQ(sources.size(), 1u);
   const auto source = j::Object(sources.front());
   EXPECT_EQ(j::Text(source, "path"), "externals/sub/tsugumi.json");
   EXPECT_EQ(j::Text(source, "hash"), "h");
-  EXPECT_FALSE(source.contains("document_json"));
+  EXPECT_FALSE(source.contains("document"));
 }
 
 TEST_F(AgentExcludeTest, AttachmentsAndDemoToolsShareTheRealPathBoundary) {
@@ -331,7 +331,7 @@ TEST_F(AgentExcludeTest,
   const auto demo = temporary.path / "demo";
   Write(demo / "tsugumi.json", initial_project_json("Demo"));
   Write(demo / "definitions/group/_card.json", R"({"type":"subgraph","external":"nested"})");
-  Write(demo / "definitions/group/_meta.json", R"({"name":"Group"})");
+  Write(demo / "definitions/group/README.md", "Group");
   Write(demo / "externals/nested/tsugumi.json", initial_project_json("Nested"));
   Write(demo / "externals/nested/definitions/leaf/_card.json",
         R"({"type":"draft"})");
@@ -362,7 +362,7 @@ TEST_F(AgentExcludeTest,
       type = "ProjectSnapshot";
       value = {{"rev", "1"},
                {"project_json", j::Quote(initial_project_json("Open"))},
-               {"layout_json", "\"{}\""},
+               {"layout", "\"{}\""},
                {"definitions", "[]"},
                {"sources", "[]"}};
     } else if (method == "project_save") {

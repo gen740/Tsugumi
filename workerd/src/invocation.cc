@@ -185,7 +185,7 @@ auto relay_display(const WorkerDisplayData& display) -> void {
 }
 
 auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
-                const remote::InvocationJson& invocation,
+                const remote::RW::InvocationT& invocation,
                 const stdfs::path& input, const stdfs::path& directory,
                 const stdfs::path& store, const stdfs::path& group,
                 const WorkerStoreResult& env, const WorkerProc::LogSink& log,
@@ -194,7 +194,7 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
   schema::CardPlan plan;
   if (schema::decode_card_plan(env.plan, plan))
     throw Failed(FailureKind::nix_failed, "invalid remote Card build plan");
-  const auto index = *invocation.implementation_index;
+  const auto index = invocation.implementation_index;
   const auto& runs = *schema::get(plan.runs);
   const auto* worker_binary = schema::get(plan.worker);
   if (index == 0 || index > runs.size() || !worker_binary ||
@@ -285,46 +285,48 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
       throw std::runtime_error("remote input blob was not submitted");
     return blobs / digest;
   };
-  remote::InvocationJson invocation;
-  if (schema::decode(read(blob(job->invocation_sha256), kWorkerLimit),
-                     invocation))
-    throw std::runtime_error("invalid remote invocation manifest");
+  const auto decoded = remote::decode<remote::RW::Invocation>(
+      read(blob(job->invocation_sha256), kWorkerLimit));
+  if (!decoded) throw std::runtime_error("invalid remote invocation manifest");
+  const auto& invocation = *decoded;
   int64_t last_progress = 0;
   const auto progress = [&](const stdfs::path& name, uint64_t done,
                             uint64_t total) {
     const auto now = now_ms();
     if (done && done != total && now - last_progress < 100) return;
     last_progress = now;
-    remote::TransferJson value;
-    *value.name = name.generic_string();
-    *value.done = done;
-    *value.total = total;
-    fs::write_atomic(directory / "progress.json", schema::encode(value), 0600);
+    remote::RW::TransferProgressT value;
+    value.name = name.generic_string();
+    value.done = done;
+    value.total = total;
+    fs::write_atomic(directory / "progress",
+                     remote::encode<remote::RW::TransferProgress>(value), 0600);
   };
   const auto input = directory / "staged";
   stdfs::create_directories(input);
-  for (const auto& dir : *invocation.directories)
+  for (const auto& dir : invocation.directories)
     stdfs::create_directories(input / remote::relative_path(dir));
-  for (const auto& file : *invocation.files) {
-    const auto path = input / remote::relative_path(*file.path);
-    const auto source = blob(*file.sha256);
+  for (const auto& entry : invocation.files) {
+    const auto& file = *entry;
+    const auto path = input / remote::relative_path(file.path);
+    const auto source = blob(file.sha256);
     stdfs::create_directories(path.parent_path());
     uint64_t done = 0;
     if (const auto size = fs::link_beneath(blobs, source.filename(), path)) {
       done = *size;
-      progress(*file.path, done, *file.size);
+      progress(file.path, done, file.size);
     } else {
-      progress(*file.path, 0, *file.size);
+      progress(file.path, 0, file.size);
       fs::copy_beneath(blobs, source.filename(), path,
                        [&](std::string_view chunk) {
                          done += chunk.size();
-                         progress(*file.path, done, *file.size);
+                         progress(file.path, done, file.size);
                        });
     }
-    if (done != *file.size)
+    if (done != file.size)
       throw std::runtime_error("remote invocation input size does not match");
   }
-  const auto frame = read(blob(*invocation.call_sha256), kWorkerLimit);
+  const auto frame = read(blob(invocation.call_sha256), kWorkerLimit);
   flatbuffers::Verifier verifier(reinterpret_cast<const uint8_t*>(frame.data()),
                                  frame.size());
   if (!W::VerifyWorkerMessageBuffer(verifier))
@@ -335,14 +337,14 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
 
   const auto result_dir = directory / "result";
   stdfs::create_directories(result_dir);
-  std::ofstream logs(result_dir / "logs.jsonl", std::ios::binary);
+  std::ofstream logs(result_dir / "logs", std::ios::binary);
   InvocationLog invocation_log(kRemoteLogTransportBytes);
   const auto truncation_marker = directory / "log-truncated";
   auto log = [&](LogStream stream, const std::string& text) {
     if (invocation_log.truncated()) return;
     if (auto entry = invocation_log.append(stream, text)) {
       // Flush each entry so status requests can collect it while it runs.
-      logs << *entry << '\n' << std::flush;
+      logs << *entry << std::flush;
     } else {
       const int fd = ::open(truncation_marker.c_str(),
                             O_WRONLY | O_CREAT | O_CLOEXEC | O_NOFOLLOW, 0600);
@@ -355,7 +357,7 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
   // inputs and results remain in job scratch, outside the store.
   try {
     environment = RemoteWorkerStore::realise(
-        ArchiveDerivationTransport(blob(*invocation.archive_sha256)), store,
+        ArchiveDerivationTransport(blob(invocation.archive_sha256)), store,
         WorkerDerivation{derivation, output, job->system},
         [&](const std::string& line) { log(LogStream::build, line); },
         job->build_timeout_ms);
@@ -371,20 +373,20 @@ auto invoke(const stdfs::path& directory, const stdfs::path& blobs,
                                             : FailureKind::worker_failed,
                                         error.what());
   }
-  remote::EnvironmentJson info;
-  *info.paths = std::move(environment.closure);
-  *info.built = environment.built;
-  *info.log_truncated = invocation_log.truncated();
-  *info.directories = std::vector<std::string>{};
+  remote::RW::ResultEnvironmentT info;
+  info.paths = std::move(environment.closure);
+  info.built = environment.built;
+  info.log_truncated = invocation_log.truncated();
   const auto files = result_dir / "files";
   if (outcome.failure) stdfs::remove_all(files);
   if (stdfs::is_directory(files)) {
     for (const auto& entry : stdfs::recursive_directory_iterator(files))
       if (stdfs::is_directory(entry.symlink_status()))
-        info.directories->push_back(
+        info.directories.push_back(
             entry.path().lexically_relative(files).generic_string());
   }
-  fs::write_atomic(result_dir / "environment.json", schema::encode(info), 0600);
+  fs::write_atomic(result_dir / "environment",
+                   remote::encode<remote::RW::ResultEnvironment>(info), 0600);
   fs::write_atomic(result_dir / "worker.fb", make_result(outcome), 0600);
 }
 

@@ -1,20 +1,24 @@
 {
   "type": "input",
-  "inputs": [
-    {
-      "name": "start"
-    }
-  ],
   "params": [
     {
       "name": "name",
       "type": "string",
-      "data": "dopamine"
+      "data": {
+        "string": "dopamine"
+      }
     },
     {
       "name": "smiles",
       "type": "string",
-      "data": "NCCc1ccc(O)c(O)c1"
+      "data": {
+        "string": "NCCc1ccc(O)c(O)c1"
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "start"
     }
   ]
 }

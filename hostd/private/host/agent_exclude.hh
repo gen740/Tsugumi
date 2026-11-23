@@ -31,6 +31,9 @@ class AgentExclude {
       -> std::string;
   auto FileText(const std::string& path, const std::string& raw) const
       -> std::string;
+  // A layout JSON view without the places of hidden Cards.
+  auto LayoutText(const std::string& view, const std::string& prefix = "") const
+      -> std::string;
   auto Paths() const -> const std::vector<std::filesystem::path>& {
     return paths_;
   }

@@ -1,17 +1,19 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "min_total",
+      "type": "uint64",
+      "data": {
+        "uint64": 10
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "airway"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "counts",
-  "params": [
-    {
-      "name": "min_total",
-      "type": "uint64",
-      "data": 10
-    }
-  ]
+  "artifactOutput": "counts"
 }

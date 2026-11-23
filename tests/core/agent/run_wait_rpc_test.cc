@@ -9,7 +9,7 @@ TEST_F(AgentProjectFixture,
   Write(root / "definitions/load/_card.json", R"({"type":"trigger"})");
   Write(
       root / "definitions/source/_card.json",
-      R"({"type":"input","params":[{"name":"value","type":"double","data":1}]})");
+      R"({"type":"input","params":[{"name":"value","type":"double","data":{"double":1}}]})");
   Write(root / "definitions/source/_outputs.fbs",
         "table Value { value:double; } table Outputs { out:Value (required); } "
         "root_type Outputs;");
@@ -64,7 +64,7 @@ class AgentRunWaitFixture : public AgentProjectFixture {
     const auto saved = Tool(conversation, "project_save",
                             "{\"base_rev\":" + Quote(rev) + R"(,"changes":[
       {"value_type":"SetProject","value":{"json":"{\"name\":\"wait\",\"pkgsPath\":\"tsugumi:default\",\"canvas\":{\"cards\":[{\"id\":\"work\"}],\"connections\":[]}}"}},
-      {"value_type":"PutDefinition","value":{"id":"work","card_json":"{\"type\":\"code\"}","meta_json":"{\"description\":\"Wait fixture\",\"context\":\"Run completion\"}"}},
+      {"value_type":"PutDefinition","value":{"id":"work","card_json":"{\"type\":\"code\"}","readme":"---\ndescription: Wait fixture\n---\n\nRun completion"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/_outputs.fbs","bytes":"table Outputs {} root_type Outputs;"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/default.nix","bytes":"{}"}},
       {"value_type":"PutSource","value":{"path":"definitions/work/mock-build.json","bytes":"{\"gate\":\"run-wait\",\"error\":\"fixture completion\"}"}}

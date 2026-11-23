@@ -16,16 +16,13 @@ struct RemoteInvocationResult {
   bool built = false;
 };
 
-// The prefix of a job's JSONL log that the core already recorded while the
-// job ran: its length and SHA-256. Import verifies and skips it.
+// The prefix of a job's log (its size-prefixed entries) that the core already
+// recorded while the job ran: its length and SHA-256. Import verifies and
+// skips it.
 struct RemoteLogPrefix {
   uint64_t bytes = 0;
   std::string sha256;
 };
-
-// Decodes one JSONL log entry (without its newline). Throws when invalid.
-auto decode_remote_log_entry(std::string_view line)
-    -> std::pair<LogStream, std::string>;
 
 auto stage_remote_archive(const RemoteJobClient& client,
                           const std::string& service,

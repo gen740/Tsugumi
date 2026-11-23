@@ -25,6 +25,10 @@ from Tsugumi.RemoteWorker.JobSecretsRequest import JobSecretsRequestT
 from Tsugumi.RemoteWorker.JobSpec import JobSpecT
 from Tsugumi.RemoteWorker.JobState import JobState
 from Tsugumi.RemoteWorker.JobStatus import JobStatusT
+from Tsugumi.RemoteWorker.Invocation import InvocationT
+from Tsugumi.RemoteWorker.InvocationFile import InvocationFileT
+from Tsugumi.RemoteWorker.JournalState import JournalStateT
+from Tsugumi.RemoteWorker.LogEntry import LogEntryT
 from Tsugumi.RemoteWorker.Message import MessageT
 from Tsugumi.RemoteWorker.Payload import Payload
 from Tsugumi.RemoteWorker.ProbeRequest import ProbeRequestT
@@ -35,12 +39,13 @@ from Tsugumi.RemoteWorker.ReplyBody import ReplyBody
 from Tsugumi.RemoteWorker.Request import RequestT
 from Tsugumi.RemoteWorker.RequestBody import RequestBody
 from Tsugumi.RemoteWorker.ResultFile import ResultFileT
+from Tsugumi.RemoteWorker.ResultEnvironment import ResultEnvironmentT
 from Tsugumi.RemoteWorker.ResultManifest import ResultManifestT
 from Tsugumi.RemoteWorker.StatusRequest import StatusRequestT
 from Tsugumi.RemoteWorker.SubmitRequest import SubmitRequestT
 from Tsugumi.RemoteWorker.Target import TargetT
 
-WORKER_CONTRACT = 14
+WORKER_CONTRACT = 15
 
 __all__ = ['BrokerRequestT', 'AckT', 'BlobChunkT', 'CancelRequestT', 'CapabilitiesT', 'CardSecretT', 'CardSecretsT', 'CatalogRequestT', 'CatalogT', 'ErrorCode', 'FailureT', 'GetBlobRequestT', 'JobSecretsRequestT', 'JobSpecT', 'JobState', 'JobStatusT', 'MessageT', 'Payload', 'ProbeRequestT', 'PutBlobRequestT', 'ReleaseRequestT', 'ReplyBody', 'ReplyT', 'RequestBody', 'RequestT', 'ResultFileT', 'ResultManifestT', 'StatusRequestT', 'SubmitRequestT', 'TargetT', 'broker_request', 'exact', 'failure', 'frame', 'pack', 'read', 'read_broker_request', 'reply', 'request', 'string']
 
@@ -85,6 +90,24 @@ def pack(obj, identifier=None):
     b = flatbuffers.Builder(128)
     b.Finish(obj.Pack(b), file_identifier=identifier)
     return bytes(b.Output())
+
+
+def log_entries(*entries):
+    frames = []
+    for stream, message in entries:
+        b = flatbuffers.Builder(128)
+        b.FinishSizePrefixed(LogEntryT(stream=stream, text=message.encode()).Pack(b))
+        frames.append(bytes(b.Output()))
+    return b"".join(frames)
+
+
+def read_logs(buffer):
+    offset = 0
+    while offset < len(buffer):
+        size, = struct.unpack_from("<I", buffer, offset)
+        entry = LogEntryT.InitFromPackedBuf(buffer, offset + 4)
+        yield entry.stream, bytes(entry.text).decode()
+        offset += 4 + size
 
 
 def frame(message):

@@ -30,7 +30,7 @@ const definition = (id: string, card: string) => Object.assign(new R.DefinitionT
 const s = new ProjectSession('/p', 'k', 'p')
 const inner = s as unknown as { apply(snapshot: R.ProjectSnapshotT, reset: boolean): void }
 inner.apply(Object.assign(new R.ProjectSnapshotT(), {
-  rev: 1n, layoutJson: '{}',
+  rev: 1n, layout: [],
   projectJson: '{"name":"t","canvas":{"cards":[{"id":"old"},{"id":"future"},{"id":"loose"},{"id":"plan"},{"id":"step"}],"connections":[]}}',
   definitions: [
     definition('old', '{"inputs":[{"name":"in"}]}'),

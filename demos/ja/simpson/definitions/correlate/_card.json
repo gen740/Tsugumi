@@ -1,17 +1,19 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "stratify",
+      "type": "string",
+      "data": {
+        "string": "species"
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "penguins"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "correlations",
-  "params": [
-    {
-      "name": "stratify",
-      "type": "string",
-      "data": "species"
-    }
-  ]
+  "artifactOutput": "correlations"
 }

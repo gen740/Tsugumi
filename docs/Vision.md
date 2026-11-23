@@ -70,7 +70,7 @@ How it works today: [Security and isolation](security.md), [What is sent to the 
 
 For problems of work tied to one person, an approach that keeps the intention of the processing and an environment that can run it together is effective.
 
-A Tsugumi project is an ordinary folder of the processing's definitions, source code and layout (`layout.json`), and can be managed with Git as it is.
+A Tsugumi project is an ordinary folder of the processing's definitions, source code and layout (`layout.bin`), and can be managed with Git as it is.
 Depending on the settings, the run history (`.tsugumi/runs.sqlite`) and artifacts travel with the project, so the person taking over has the material to follow past runs and try other conditions.
 
 For example, when handing over a monthly aggregation, describe the assumptions about the input data, the rules for exceptions and the outputs to check, Card by Card.

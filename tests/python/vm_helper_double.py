@@ -18,6 +18,7 @@ import threading
 
 sys.path.insert(0, os.environ["TSUGUMI_PY_BINDINGS"])
 import flatbuffers
+from Tsugumi.State.ServerReady import ServerReady
 from Tsugumi.VMGuest.ProjectPhase import ProjectPhase
 from Tsugumi.VMGuest.ProjectStatus import ProjectStatusT
 from Tsugumi.VMHost.Event import EventT
@@ -112,7 +113,7 @@ def status(key):
     result.pid = child.pid if result.running else 0
     if result.running:
         try:
-            result.endpoint = json.loads((controls[key] / "server.ready").read_text())["endpoint"]
+            result.endpoint = text(ServerReady.GetRootAs((controls[key] / "server.ready").read_bytes()).Endpoint())
         except FileNotFoundError:
             pass
     return result

@@ -1,25 +1,27 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "estimators",
+      "type": "string[]",
+      "data": {
+        "strings": [
+          "DL",
+          "HE",
+          "HS",
+          "SJ",
+          "ML",
+          "REML",
+          "PM"
+        ]
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "trials"
     }
   ],
   "retainArtifact": true,
-  "artifactOutput": "sensitivity",
-  "params": [
-    {
-      "name": "estimators",
-      "type": "string[]",
-      "data": [
-        "DL",
-        "HE",
-        "HS",
-        "SJ",
-        "ML",
-        "REML",
-        "PM"
-      ]
-    }
-  ]
+  "artifactOutput": "sensitivity"
 }

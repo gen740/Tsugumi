@@ -11,6 +11,15 @@ include "worker_types.fbs";
 
 namespace Tsugumi.Data;
 
+/// Values captured at run start, formatted for the comparison view.
+table InvocationParam {
+  name:string (required);
+  value:string (required);
+}
+table InvocationParams {
+  entries:[InvocationParam];
+}
+
 // A Card path of permanent identifiers, such as ["nested", "step"].
 // Human names are separate; segments never contain '/'.
 // The empty path addresses only the graph root and never a Card.

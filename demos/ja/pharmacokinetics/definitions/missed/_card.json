@@ -1,20 +1,24 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "curves"
-    }
-  ],
   "params": [
     {
       "name": "missed_at_h",
       "type": "double",
-      "data": 72.0
+      "data": {
+        "double": 72.0
+      }
     },
     {
       "name": "missed_count",
       "type": "uint64",
-      "data": 1
+      "data": {
+        "uint64": 1
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "curves"
     }
   ]
 }

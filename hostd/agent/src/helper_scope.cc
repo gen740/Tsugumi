@@ -8,6 +8,7 @@
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/save.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/fs.hh"
 
 namespace tsugumi::agent {
@@ -334,7 +335,8 @@ auto HelperScope::FailureResult(const std::string& result,
           dot != std::string::npos && dot > 0 && dot + 1 < decoded.size() &&
           std::isalpha(static_cast<unsigned char>(decoded[dot + 1])) &&
           decoded != "from.port" && decoded != "to.port" &&
-          decoded != "_card.json" && decoded != "_meta.json" &&
+          decoded != "_card.json" && decoded != "README.md" &&
+          decoded != "_comments.json" &&
           decoded != "_outputs.fbs" && decoded != "tsugumi.json";
       const bool path = decoded.find('/') != std::string::npos || filename;
       bool visible_pointer = false;
@@ -401,8 +403,8 @@ auto HelperScope::Graph(const std::string& text,
   if (project.contains("boundary")) {
     const auto boundary = json::Object(project.at("boundary"));
     visible["boundary"] = json::Encode(
-        json::Members{{"inputs", json::Get(boundary, "inputs", "{}")},
-                      {"outputs", json::Get(boundary, "outputs", "{}")}});
+        json::Members{{"inputs", json::Get(boundary, "inputs", "[]")},
+                      {"outputs", json::Get(boundary, "outputs", "[]")}});
   }
   return json::Encode(host::FilterProjectGraph(
       std::move(visible),
@@ -450,21 +452,33 @@ auto HelperScope::ExpandSave(json::Members args, const Reader& read) const
       const auto bb = json::Object(json::Get(before, "boundary", "{}"));
       const auto ab = json::Object(json::Get(after, "boundary", "{}"));
       auto boundary = json::Object(json::Get(full, "boundary", "{}"));
+      auto index = [](const auto& graph, const char* side) {
+        json::Members ports;
+        for (const auto& raw : json::Array(json::Get(graph, side, "[]"))) {
+          const auto name = json::Text(json::Object(raw), "name");
+          if (!ports.emplace(name, raw).second) Deny("duplicate boundary port");
+        }
+        return ports;
+      };
       for (const auto* side : {"inputs", "outputs"}) {
-        const auto bp = json::Object(json::Get(bb, side, "{}")),
-                   ap = json::Object(json::Get(ab, side, "{}"));
+        const auto bp = index(bb, side), ap = index(ab, side);
         if (bp.size() != ap.size()) Deny("changing boundary port names");
-        auto ports = json::Object(json::Get(boundary, side, "{}"));
-        for (const auto& [name, raw] : ap) {
+        auto ports = json::Array(json::Get(boundary, side, "[]"));
+        for (auto& raw : ports) {
+          const auto name = json::Text(json::Object(raw), "name");
+          if (!ap.contains(name)) continue;
           if (!bp.contains(name)) Deny("adding a boundary port");
-          if (!host::DocumentsEqual(bp.at(name), raw)) {
+          const auto& next = ap.at(name);
+          if (!host::DocumentsEqual(bp.at(name), next)) {
             Require(logical + json::Text(json::Object(bp.at(name)), "card"),
                     true);
-            Require(logical + json::Text(json::Object(raw), "card"), true);
-            ports[name] = raw;
+            Require(logical + json::Text(json::Object(next), "card"), true);
+            raw = next;
           }
         }
-        boundary[side] = json::Encode(ports);
+        for (const auto& [name, _] : ap)
+          if (!bp.contains(name)) Deny("adding a boundary port");
+        if (boundary.contains(side)) boundary[side] = json::Encode(ports);
       }
       if (bb.size() != ab.size()) Deny("changing boundary fields");
       full["boundary"] = json::Encode(boundary);
@@ -581,7 +595,10 @@ auto HelperScope::CheckCurrentSave(const json::Members& args,
     const auto path =
         type == "SetProject" ? "tsugumi.json" : json::Text(value, "path");
     if (type == "SetLayout" ||
-        (type == "PutSource" && path.ends_with("/layout.json")))
+        (type == "PutSource" &&
+         (Document::is_note_file(path) ||
+          (path.ends_with("/layout.bin") &&
+           Document::is_external_document_file(path)))))
       continue;
     if (type == "SetProject" ||
         (type == "PutSource" && path.ends_with("/tsugumi.json"))) {
@@ -663,8 +680,8 @@ auto HelperScope::Check(const std::string& tool, const json::Members& args,
         if (type == "PutSource" && path.ends_with("/tsugumi.json")) continue;
         File(path, true, read);
         if (type != "RemoveSource" && path.ends_with("/_card.json") &&
-            comments::is_meta(path.substr(0, path.size() - 10) +
-                                    "_meta.json")) {
+            comments::is_comments(path.substr(0, path.size() - 10) +
+                                  "_comments.json")) {
           const host::SourcePatches patches;
           const auto card =
               type == "PutSource"
@@ -786,7 +803,7 @@ auto HelperScope::SaveResult(const std::string& result,
     delta["diagnostics"] = "[]";
     if (delta.contains("project_json"))
       delta["project_json"] = filtered.at("project_json");
-    delta.erase("layout_json");
+    delta.erase("layout");
     for (const auto* field : {"definitions_removed", "sources_removed"}) {
       std::vector<std::string> kept;
       for (const auto& raw : json::Array(json::Get(delta, field, "[]"))) {
@@ -862,7 +879,7 @@ auto HelperScope::Inspect(const std::string& result, const Reader& read) const
   filtered["sources"] = json::Encode(sources);
   filtered["resolution"] = json::Encode(resolution);
   filtered["diagnostics"] = "[]";
-  filtered["layout_json"] = json::Quote("{}");
+  filtered["layout"] = json::Quote("{}");
   filtered["run"] = "{}";
   filtered["project_json"] =
       json::Quote(Graph(json::Text(snapshot, "project_json", "{}"), ""));

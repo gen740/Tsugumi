@@ -1,35 +1,45 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "f_low",
       "type": "double",
-      "data": 35.0
+      "data": {
+        "double": 35.0
+      }
     },
     {
       "name": "f_high",
       "type": "double",
-      "data": 350.0
+      "data": {
+        "double": 350.0
+      }
     },
     {
       "name": "t_event",
       "type": "double",
-      "data": 1126259462.4
+      "data": {
+        "double": 1126259462.400000095367
+      }
     },
     {
       "name": "before",
       "type": "double",
-      "data": 0.2
+      "data": {
+        "double": 0.2
+      }
     },
     {
       "name": "after",
       "type": "double",
-      "data": 0.05
+      "data": {
+        "double": 0.05
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

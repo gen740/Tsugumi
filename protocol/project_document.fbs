@@ -1,0 +1,84 @@
+// tsugumi.json: a project's canvas, Nix pin and project-wide settings.
+//
+// Saved as FlatBuffers JSON text (two-space indent, fields in this order) and
+// read with the FlatBuffers parser, which is the document's schema check. The
+// core checks only what a schema cannot say (ids, references, locked flake
+// references). Keys keep the document's camelCase spelling.
+
+namespace Tsugumi.Document;
+
+table Endpoint {
+  card:string (required);
+  port:string (required);
+}
+
+table Connection {
+  from:Endpoint (required);
+  to:Endpoint (required);
+}
+
+/// A Card on the canvas. Its id is its name and the folder of its own
+/// definition (definitions/<id>/), which holds every setting.
+table CardInstance {
+  id:string (required);
+}
+
+table Graph {
+  cards:[CardInstance] (required);
+  connections:[Connection] (required);
+}
+
+/// One outer port of a project used as a Card in Card: its name and the port
+/// of one of its Cards.
+table BoundaryPort {
+  name:string (required);
+  card:string (required);
+  port:string (required);
+}
+
+table Boundary {
+  inputs:[BoundaryPort];
+  outputs:[BoundaryPort];
+}
+
+/// The arguments of one package's override and overrideAttrs, handed to Nix
+/// as they are written.
+table PackageOverride {
+  package:string (required);
+  override:[ubyte] (flexbuffer);
+  overrideAttrs:[ubyte] (flexbuffer);
+}
+
+/// A Nix source outside nixpkgs that this project opts in to. Its Cards read
+/// it as inputs.sources.<name>. `type` says how it is read: "flake" for now,
+/// whose `ref` is locked (a commit and its narHash).
+table NixSource {
+  name:string (required);
+  type:string (required);
+  ref:string (required);
+  overrides:[PackageOverride];
+}
+
+table Project {
+  name:string;
+  /// The Nixpkgs the project's Cards are built with. Required at the root;
+  /// a nested project (externals/) uses its parent's.
+  pkgsPath:string;
+  nixSources:[NixSource];
+  /// Additional literal project-relative files or folders kept in versions.
+  versionPaths:[string];
+  /// Host policy, carried without affecting execution.
+  agentExclude:[string];
+  recordLogs:bool = null;
+  recordIO:bool = null;
+  retainArtifact:bool = null;
+  logLimitBytes:ulong = null;
+  outputLimitBytes:ulong = null;
+  outputLimitEntries:ulong = null;
+  canvas:Graph (required);
+  /// The ports this project has as a Card in Card (an external of another
+  /// project).
+  boundary:Boundary;
+}
+
+root_type Project;

@@ -10,6 +10,9 @@ mkdir -p "$out"
 # First: its includes rewrite namespace index files (tsugumi/data) with only
 # the types it reaches, and the full schemas below write them again.
 flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/remote_worker.fbs"
+# The layout a project keeps (layout.bin); its fields keep the documents'
+# camelCase names, which flatc warns about.
+flatc --no-warnings --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/layout_document.fbs"
 for schema in tsugumi agent host; do
   flatc --ts --gen-all --gen-object-api --ts-no-import-ext -I "$root/protocol" -o "$out" "$root/protocol/$schema.fbs"
   flatc -b --schema --bfbs-comments --bfbs-builtins -I "$root/protocol" -o "$out" "$root/protocol/$schema.fbs"

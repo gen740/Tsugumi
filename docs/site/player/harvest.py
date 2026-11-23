@@ -67,7 +67,6 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
             p = dst / name
             p.parent.mkdir(parents=True, exist_ok=True)
             p.write_text(content)
-        (dst / "layout.json").write_text("{}")
     else:
         shutil.copytree(ROOT / "demos" / "en" / demo, dst)
     if not sandbox:

@@ -90,7 +90,7 @@ Processing is split into small Cards so that people can understand the decisions
 
 In analysis you often try a threshold or a display condition over and over without changing the code. If all of these were build inputs, splitting the processing finely would mean waiting for rebuilds.
 
-Tsugumi passes Nix only the parameters marked `nix: true` (`params` of `default.nix`) and keeps run-time-only parameters out of the build inputs; the others reach the Card as its params buffer when it runs. `_meta.json` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
+Tsugumi passes Nix only the parameters marked `nix: true` (`params` of `default.nix`) and keeps run-time-only parameters out of the build inputs; the others reach the Card as its params buffer when it runs. `README.md` and `_card.json`, which hold a Card's description and settings, are not passed whole either; the build gets the sources, types and Nix parameters it needs. Reusing build results is left to Nix's derivations and store.
 
 The layout on screen is kept apart from the computation's definition, too: a save that changes the computation while a run is going is refused, but moving Cards is accepted. **Trying a condition, changing code and tidying the screen each cause only the work they need.**
 
@@ -147,7 +147,7 @@ Trying code interactively, representing processing as a graph, and managing depe
 | Represent the relationships of processing as a graph | Make the displayed connections the basis of type derivation and the rules of execution |
 | Manage versions of environments, code and experiments | Tie runs to versions of the code, and start the next attempt from a past version |
 
-Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI 9](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
+Each mechanism behind this has its own document: Card isolation in [Security and isolation](security.md), the Card ABI between the worker and a Card's shared library in [Card ABI](CardABI.md), the rules for branches, merges and loops in [Execution semantics](features.md#execution-semantics-scheduler), and saving as text files in [project files](CardGuide.md#a-cards-folder).
 
 **What Tsugumi aims for is a research environment in which people and AI design, run and keep thinking on the same structure.**
 With that structure, researchers can return to the trials an AI pushed forward and test their own questions as concrete changes.

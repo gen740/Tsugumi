@@ -1,0 +1,84 @@
+// layout.bin: where the UIs place a project's Cards, notes and groups.
+//
+// A FlatBuffers binary the UIs own: machine-written presentation that never
+// affects execution. The core verifies the buffer and versions it, without
+// interpreting it. A note's text is Markdown in notes/<id>.md; the layout
+// keeps its place.
+// Field names match the JSON view hostd edits.
+
+namespace Tsugumi.Layout;
+
+file_identifier "TSGL";
+file_extension "bin";
+
+table Position {
+  x:double = null;
+  y:double = null;
+}
+
+/// One Card's place, by its path key ("a/b" inside a Card in Card).
+table CardPlace {
+  key:string (required);
+  x:double = null;
+  y:double = null;
+  /// Display only; the Card still runs.
+  collapsed:bool = null;
+  /// The visual order of its ports by name; connections stay unchanged.
+  inputOrder:[string];
+  outputOrder:[string];
+}
+
+/// Where the inner canvas of a Card in Card shows its boundary bars ("This
+/// Card's input" / "output"); placed automatically when absent.
+table BoundaryPlace {
+  /// The scope's path key; absent for a project's own boundary.
+  scope:string;
+  inputs:Position;
+  outputs:Position;
+}
+
+/// A canvas note. Its Markdown text is notes/<id>.md.
+table NotePlace {
+  id:string (required);
+  /// The graph scope's path key ("" = root).
+  scope:string;
+  color:string;
+  x:double = null;
+  y:double = null;
+  width:double = null;
+  height:double = null;
+  /// The text size of the note (default 13).
+  fontSize:double = null;
+}
+
+table GroupPort {
+  card:string (required);
+  port:string (required);
+}
+
+/// Visual grouping only: never changes execution order or the graph.
+table CardGroup {
+  id:string (required);
+  scope:string;
+  name:string;
+  color:string;
+  /// Instance ids within the scope.
+  cards:[string];
+  /// Outputs shown on the group frame.
+  outputs:[GroupPort];
+}
+
+table Layout {
+  /// The direction the Cards were laid out in: "topToBottom" or
+  /// "leftToRight".
+  flow:string;
+  cards:[CardPlace];
+  /// The boundary bars of the Card in Card scopes, by scope.
+  boundaries:[BoundaryPlace];
+  /// A Card in Card's own layout: its boundary bars.
+  boundary:BoundaryPlace;
+  notes:[NotePlace];
+  groups:[CardGroup];
+}
+
+root_type Layout;

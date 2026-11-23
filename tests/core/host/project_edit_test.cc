@@ -86,12 +86,12 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   // a Draft. No intermediate one-end document is sent to core.
   Document doc;
   doc.project_json = project;
-  doc.project = parse_project_json(project);
+  doc.project_buffer = parse_project_json(project).buffer;
   for (const auto& [id, raw] :
        {std::pair{"knn", "{\"type\":\"code\"}"}, {"compare", "{\"type\":\"draft\"}"}}) {
     DefinitionDoc definition;
     definition.card_json = raw;
-    definition.card = parse_card_json(id, raw);
+    definition.card_buffer = parse_card_json(id, raw).buffer;
     doc.definitions[id] = std::move(definition);
   }
   doc.sources["definitions/knn/_outputs.fbs"] = {"test-outputs", 0};
@@ -122,7 +122,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
       value = {
           {"rev", "\"7\""},
           {"project_json", json::Quote(before)},
-          {"layout_json", "\"{}\""},
+          {"layout", "\"{}\""},
           {"definitions",
            R"([{"id":"knn","card_json":"{\"type\":\"draft\"}"},{"id":"compare","card_json":"{\"type\":\"draft\"}"}])"}};
     } else {
@@ -231,18 +231,18 @@ TEST(ProjectEditDiagnostics, NamesTheWireEndAndTheDefinitionFieldsToWrite) {
     Document doc;
     doc.project_json =
         R"({"pkgsPath":"tsugumi:default","canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":"source"}}]}})";
-    doc.project = parse_project_json(doc.project_json);
+    doc.project_buffer = parse_project_json(doc.project_json).buffer;
     const auto add = [&](const std::string& id, const std::string& raw) {
       DefinitionDoc definition;
       definition.card_json = raw;
-      definition.card = parse_card_json(id, raw);
+      definition.card_buffer = parse_card_json(id, raw).buffer;
       doc.definitions[id] = std::move(definition);
     };
     add("knn", R"({"type":"trigger"})");
     add("compare",
         std::string(scenario) == "draft" ? R"({"type":"draft"})"
         : std::string(scenario) == "unknown_param"
-            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":3}]})"
+            ? R"({"type":"code","inputs":[{"name":"source"}],"params":[{"name":"k","type":"number","data":{"double":3}}]})"
             : R"({"type":"code","inputs":[]})");
     const auto resolved = resolve(
         doc, [](const auto&) -> std::optional<std::string> { return {}; });
@@ -384,9 +384,17 @@ TEST(ProjectEdit, AuthorizesEveryReadBeforeMaterializingIt) {
                Failure);
   EXPECT_FALSE(read);
 }
-TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
-  const std::string path = "definitions/a/_meta.json";
-  const std::string meta = R"({"comments":[{"id":"c","text":"first"}]})";
+TEST(ProjectEdit, FirstCommentUndoAndRedoAddressItsId) {
+  const std::string path = "definitions/a/_comments.json";
+  const std::string first = R"({"comments":[{"id":"c","text":"first"}]})";
+  const auto saved_comments = [](const json::Members& plan) {
+    const auto change = json::Object(json::Array(plan.at("changes")).at(0));
+    const auto value = json::Object(change.at("value"));
+    return json::Text(value, "comments_json");
+  };
+  const auto comments = [](const std::string& text) {
+    return json::Array(json::Object(text).at("comments"));
+  };
   SaveBase base;
   base.snapshot["rev"] = "0";
   base.files["definitions/a/_card.json"] = R"({"type":"draft"})";
@@ -398,7 +406,7 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   create.old_value = std::make_unique<H::ProjectValueT>();
   create.new_value = std::make_unique<H::ProjectValueT>();
   create.new_value->present = true;
-  create.new_value->json = meta;
+  create.new_value->json = first;
   H::ProjectEditsT edits;
   auto entry = std::make_unique<H::ProjectEditT>();
   entry->value.Set(std::move(create));
@@ -406,28 +414,35 @@ TEST(ProjectEdit, MetadataCreationUndoHasARedo) {
   const auto plan = PrepareProjectEdits(edits, base, read);
   const auto undo = ReverseProjectChanges(plan, base, read);
   ASSERT_EQ(undo.edits.size(), 1u);
-  ASSERT_NE(undo.edits.front()->value.AsProjectFileRemove(), nullptr);
-  base.files[path] = meta;
+  const auto* remove = undo.edits.front()->value.AsProjectFieldEdit();
+  ASSERT_NE(remove, nullptr);
+  ASSERT_EQ(remove->selector.size(), 2u);
+  EXPECT_EQ(remove->selector[0]->field, "comments");
+  EXPECT_EQ(json::Text(json::Object(remove->selector[1]->match_json), "id"), "c");
+  base.files[path] = first;
   const auto undone = PrepareProjectEdits(undo, base, read);
+  const auto empty = saved_comments(undone);
+  EXPECT_TRUE(comments(empty).empty());
   const auto redo = ReverseProjectChanges(undone, base, read);
   ASSERT_EQ(redo.edits.size(), 1u);
-  const auto* put = redo.edits.front()->value.AsProjectFilePut();
-  ASSERT_NE(put, nullptr);
-  EXPECT_EQ(put->file_path, path);
-  EXPECT_TRUE(put->expect_missing);
-  EXPECT_EQ(std::string(put->bytes.begin(), put->bytes.end()), meta);
-  base.files.erase(path);
-  const auto redone = PrepareProjectEdits(redo, base, read);
-  const auto changes = json::Array(redone.at("changes"));
-  ASSERT_EQ(changes.size(), 1u);
-  EXPECT_EQ(
-      json::Text(json::Object(json::Get(json::Object(changes[0]), "value")),
-                 "meta_json"),
-      meta);
+  base.files[path] = empty;
+  const auto restored =
+      comments(saved_comments(PrepareProjectEdits(redo, base, read)));
+  ASSERT_EQ(restored.size(), 1u);
+  const auto comment = json::Object(restored.front());
+  EXPECT_EQ(json::Text(comment, "id"), "c");
+  EXPECT_EQ(json::Text(comment, "text"), "first");
+
+  base.files[path] =
+      R"({"comments":[{"id":"c","text":"first"},{"id":"later","text":"another"}]})";
+  const auto remaining =
+      comments(saved_comments(PrepareProjectEdits(undo, base, read)));
+  ASSERT_EQ(remaining.size(), 1u);
+  EXPECT_EQ(json::Text(json::Object(remaining.front()), "id"), "later");
 }
 
 TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
-  const std::string path = "definitions/a/_meta.json";
+  const std::string path = "definitions/a/_comments.json";
   const std::string meta = R"({"comments":[{"id":"c","text":"last"}]})";
   SaveBase base;
   base.snapshot["rev"] = "0";
@@ -451,7 +466,7 @@ TEST(ProjectEdit, LastCommentDeletesMetadataWithAFileGuard) {
   ASSERT_EQ(changes.size(), 1u);
   const auto definition =
       json::Object(json::Get(json::Object(changes[0]), "value"));
-  EXPECT_FALSE(definition.contains("meta_json"));
+  EXPECT_FALSE(definition.contains("comments_json"));
   EXPECT_EQ(json::Text(definition, "card_json"),
             base.files.at("definitions/a/_card.json"));
   base.files[path] = R"({"comments":[{"id":"c","text":"changed"}]})";
@@ -469,12 +484,12 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
     H::ProjectEditsT edits;
     auto entry = std::make_unique<H::ProjectEditT>();
     if (kind == Tsugumi::Data::FailureKind::value_conflict) {
-      auto field = Field({"content"}, "\"stale\"", "\"mine\"");
-      field.file_path = "definitions/a/_meta.json";
+      auto field = Field({"comments"}, "[]", "[]");
+      field.file_path = "definitions/a/_comments.json";
       entry->value.Set(std::move(field));
     } else {
       H::ProjectFileRemoveT remove;
-      remove.file_path = "definitions/a/_meta.json";
+      remove.file_path = "definitions/a/_comments.json";
       remove.expected_hash = crypto::sha256_hex("stale");
       entry->value.Set(std::move(remove));
     }
@@ -489,7 +504,7 @@ TEST(ProjectEdit, HostConflictsUseTheTypedOperationOutcome) {
             R"({"reply":"OperationResult","value":{"state":"unknown"}})", {}};
       EXPECT_EQ(method, "project_inspect");
       return OperationReply{
-          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout_json":"{}","definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","meta_json":"{}"}]}})",
+          R"({"reply":"ProjectSnapshot","value":{"rev":0,"project_json":"{}","layout":[],"definitions":[{"id":"a","card_json":"{\"type\":\"code\"}","comments_json":"{\"comments\":[{\"id\":\"current\",\"text\":\"current\"}]}"}]}})",
           {}};
     };
     const auto conflict =

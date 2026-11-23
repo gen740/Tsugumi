@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <cstring>
+#include <ctime>
 #include <deque>
 #include <fstream>
 #include <future>
@@ -17,14 +18,12 @@
 #include "nix.hh"
 #include "remote_execution_service.hh"
 #include "run_scratch.hh"
-#include "runtime_schema.hh"
 #include "service.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
-#include "tsugumi/util/json.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/workerd/log.hh"
-#include "version_record.hh"
 #include "wire.hh"
 
 namespace tsugumi {
@@ -140,22 +139,26 @@ std::string journal_line(const char* phase, const char* event,
                          const std::optional<CardPath>& card,
                          std::optional<uint64_t> inv,
                          const std::string& message) {
-  if (card) {
-    schema::CardJournalLine l;
-    *l.time_ms = now_ms();
-    *l.phase = phase;
-    *l.event = event;
-    *l.card = *card;
-    *l.invocation = inv.value_or(0);
-    *l.message = message;
-    return schema::encode(l) + "\n";
+  std::string line = std::string(phase) + " · " + event + ": ";
+  for (char c : message) {
+    if (c == '\n')
+      line += "\\n";
+    else if (c == '\r')
+      line += "\\r";
+    else if (c == '\\')
+      line += "\\\\";
+    else
+      line += c;
   }
-  schema::RunJournalLine l;
-  *l.time_ms = now_ms();
-  *l.phase = phase;
-  *l.event = event;
-  *l.message = message;
-  return schema::encode(l) + "\n";
+  const auto now = std::time(nullptr);
+  std::tm utc{};
+  gmtime_r(&now, &utc);
+  char timestamp[32]{};
+  std::strftime(timestamp, sizeof timestamp, "%Y-%m-%dT%H:%M:%SZ", &utc);
+  line += " [";
+  if (card)
+    line += path_key(*card) + " #" + std::to_string(inv.value_or(0)) + ", ";
+  return line + timestamp + "]\n";
 }
 
 const char* phase_name(Phase p) {
@@ -171,6 +174,16 @@ const char* phase_name(Phase p) {
     default:
       return "run";
   }
+}
+
+auto recorded_params(const std::vector<ParamDef>& params)
+    -> std::vector<std::pair<std::string, std::string>> {
+  std::vector<std::pair<std::string, std::string>> result;
+  for (const auto& param : params)
+    if (param.data)
+      result.emplace_back(param.name,
+                          param_value_json(param.type, *param.data));
+  return result;
 }
 
 // Opens stage `p` of an invocation, closing a still open previous stage as
@@ -1305,7 +1318,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
     InvocationSummaryData s;
     s.run_id = run_id_;
     s.card = node.path;
-    s.params_json = NixRunner::params_json(node, false);
+    s.params = recorded_params(node.settings.params);
     s.invocation = w.invocation;
     s.batch_activation = w.activation;
     s.started_at = now_ms();
@@ -1329,7 +1342,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       auto member = value_sweep_member(node.settings, *w.sweep_index);
       s.implementation_index = static_cast<uint32_t>(*w.sweep_index + 1);
       s.implementation_label = std::move(member.label);
-      s.params_json = NixRunner::params_json(member.params, false);
+      s.params = recorded_params(member.params);
     }
     std::vector<Value> inputs;
     std::vector<InputSourceData> sources;
@@ -1816,16 +1829,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                     const types::PortType& port,
                     const std::vector<ParamDef>& params) -> Value {
     const auto parameter = std::ranges::find(params, "value", &ParamDef::name);
-    schema::v::String relv;
     if (parameter == params.end() || !parameter->data ||
-        schema::decode(*parameter->data, relv))
+        parameter->type != ParamType::String)
       throw Failed(FailureKind::invalid_path,
                    "input " + port.name + " needs a path string `value`");
+    const std::string& relv = parameter->data->string;
     // Card-local by default; project: explicitly selects the Card's own
     // project, including when that project is an external.
-    const bool project_relative = relv.value().starts_with("project:");
-    const std::string file =
-        project_relative ? relv.value().substr(8) : relv.value();
+    const bool project_relative = relv.starts_with("project:");
+    const std::string file = project_relative ? relv.substr(8) : relv;
     const std::string rel =
         (project_relative ? node.project_dir : node.def_dir) + file;
     // A folder is every project source below it.
@@ -1895,15 +1907,15 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
                          "output " + port.name + " has no type");
           // Message fields are filled from params of the same name.
           const auto* root = port.type->root();
-          std::vector<std::pair<std::string, const hosq::json::GenericDom<>*>>
-              members;
+          std::vector<ParamDef> fields;
           for (const auto& prm : params)
-            if (prm.data && root->fields()->LookupByKey(prm.name.c_str()))
-              members.emplace_back(prm.name, &*prm.data);
+            if (root->fields()->LookupByKey(prm.name.c_str()))
+              fields.push_back(prm);
           std::string bytes;
           std::string err;
           if (!types::json_to_flatbuffer(
-                  *port.type, schema::object_text(members), &bytes, &err))
+                  *port.type, NixRunner::params_json(fields, false), &bytes,
+                  &err))
             throw Failed(FailureKind::output_invalid,
                          "input " + port.name + ": " + err);
           p.outputs.push_back(
@@ -2061,33 +2073,33 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
   // outputs do: they are in the run's record.
   auto record(const std::vector<CardState>& final) const -> std::string {
     const auto* target = doc_->resolution->find(p_.card);
-    version_record::Run record;
-    *record.whole = p_.card.empty() || (p_.propagate && target &&
-                                        target->kind == CardType::Trigger);
-    *record.card = path_key(p_.card);
-    *record.propagate = p_.propagate;
+    Tsugumi::RPC::VersionRunFactsT record;
+    record.whole = p_.card.empty() || (p_.propagate && target &&
+                                      target->kind == CardType::Trigger);
+    record.card = path_key(p_.card);
+    record.propagate = p_.propagate;
     for (const auto& n : nodes_) {
       if (!n.in_targets || n.node->is_virtual) continue;
       const auto key = path_key(n.node->path);
       if (n.recorded_invocations > 0 &&
-          !(*record.whole && n.node->kind == CardType::Trigger)) {
-        version_record::Count count;
-        *count.card = key;
-        *count.count = n.recorded_invocations;
-        record.ran->push_back(std::move(count));
-        *record.saved_inputs |= n.saved_inputs;
+          !(record.whole && n.node->kind == CardType::Trigger)) {
+        auto count = std::make_unique<Tsugumi::RPC::VersionInvocationCountT>();
+        count->card = key;
+        count->count = n.recorded_invocations;
+        record.ran.push_back(std::move(count));
+        record.saved_inputs |= n.saved_inputs;
       }
       if (n.last_failure && n.last_failure->kind != FailureKind::cancelled) {
-        version_record::Failure failure;
-        *failure.card = key;
-        *failure.kind = failure_kind_name(n.last_failure->kind);
-        record.failed->push_back(std::move(failure));
+        auto failure = std::make_unique<Tsugumi::RPC::VersionRunFailureT>();
+        failure->card = key;
+        failure->kind = failure_kind_name(n.last_failure->kind);
+        record.failures.push_back(std::move(failure));
       } else if (n.activations == 0 && (final[n.idx] == CardState::blocked ||
                                         final[n.idx] == CardState::cancelled)) {
-        record.never->push_back(key);
+        record.never.push_back(key);
       }
     }
-    return schema::encode(record);
+    return flat::encode<Tsugumi::RPC::VersionRunFacts>(record);
   }
 
   void finalize() {
@@ -2151,7 +2163,7 @@ class RunExec : public std::enable_shared_from_this<RunExec> {
       InvocationRecordData rec;
       rec.summary.run_id = run_id_;
       rec.summary.card = n.node->path;
-      rec.summary.params_json = NixRunner::params_json(*n.node, false);
+      rec.summary.params = recorded_params(n.node->settings.params);
       rec.summary.invocation = n.invocations + 1;
       rec.summary.state = st;
       rec.summary.waiting = waiting[n.idx];

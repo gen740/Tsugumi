@@ -1,5 +1,0 @@
-{
-  "description": "Volcano plot",
-  "content": "Counts genes up and down at the fdr and lfc thresholds, and draws a volcano plot naming the genes listed in known.",
-  "outputs": []
-}

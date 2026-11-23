@@ -32,7 +32,7 @@ come later.
    list shape. A Card that does not build fails the export and is named.
 3. **Write the payload.** The Cards' runtime closures, minus what the app's
    runner image already holds, go into `payload.erofs` with those records
-   (`cards.jsonl`) and the staged Project. No nixpkgs sources, derivations
+   (`cards.bin`) and the staged Project. No nixpkgs sources, derivations
    or Nix database: nothing in the app evaluates.
 4. **Write the app.** `Contents/MacOS/<Name>` is a copy of the signed
    `tsugumi-pack` executable; `Contents/Resources` holds `vmlinux`,
@@ -138,7 +138,7 @@ it whenever `pack/` or the native runtime changes).
 
 `demos/en/cell-count` (seven Python and Bash Cards), exported and
 run on an M-series Mac (14 CPUs; the guest gets 8 GiB), 2026-11-18. This
-measurement predates Card ABI 9. The demo is still ABI 8 and does not build
+measurement predates the current Card ABI. The demo still uses the previous ABI and does not build
 now. TODO: repeat the check once the demos are ported
 ([Demos](../docs/Demos.md)).
 

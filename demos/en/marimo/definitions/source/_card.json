@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "start"
-    }
-  ],
   "params": [
     {
       "name": "measurement",
       "type": "double",
-      "data": 7
+      "data": {
+        "double": 7.0
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "start"
     }
   ]
 }

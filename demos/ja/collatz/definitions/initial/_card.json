@@ -4,7 +4,9 @@
     {
       "name": "value",
       "type": "uint64",
-      "data": 27
+      "data": {
+        "uint64": 27
+      }
     }
   ]
 }

@@ -39,8 +39,9 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
   ASSERT_NE(pin, nullptr);
   EXPECT_EQ(
       pin->nixpkgs_pin()->str(),
-      parse_project_json(Read(source / "tsugumi.json")).pkgs_path->value());
-  EXPECT_NE(Read(source / "layout.json").find("leftToRight"),
+      document_text::root<Tsugumi::Document::Project>(
+      parse_project_json(Read(source / "tsugumi.json")).buffer).pkgsPath()->str());
+  EXPECT_NE(Read(source / "layout.bin").find("leftToRight"),
             std::string::npos);
   const std::string custom =
       R"({"name":"custom","pkgsPath":"explicit-pin","canvas":{"cards":[],"connections":[]}})";
@@ -58,7 +59,8 @@ TEST(HostProjectFiles, DemoCopyKeepsItsDocumentInBothLanguages) {
   for (const auto& language : {"ja", "en"}) {
     const auto demos = dir.path / "demos";
     auto document = initial_project_json(language);
-    const auto pin = parse_project_json(document).pkgs_path->value();
+    const auto pin = document_text::root<Tsugumi::Document::Project>(
+        parse_project_json(document).buffer).pkgsPath()->str();
     document.replace(document.find(pin), pin.size(), "demo-specific-pin");
     Write(demos / language / "sample/tsugumi.json", document);
     Write(demos / language / "index.json",

@@ -170,7 +170,7 @@ struct Export {
       if type == "trigger" { triggers.append(id) }
       let params = (definition["params"] as? [[String: Any]] ?? []).map { p -> [String: Any] in
         var entry: [String: Any] = ["name": p["name"] ?? "", "type": p["type"] ?? ""]
-        entry["default"] = p["data"]
+        entry["default"] = (p["data"] as? [String: Any])?.values.first
         if p["nix"] as? Bool == true || !["code", "input"].contains(type) { entry["fixed"] = true }
         return entry
       }

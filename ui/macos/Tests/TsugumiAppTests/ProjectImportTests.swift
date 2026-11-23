@@ -7,7 +7,7 @@ import Testing
 // service fixture so another suite cannot switch its state directory, and so
 // the test never connects to a resident desktop service from another build.
 extension ChatResumeTests {
-  @Test func aCardsSummaryIsInItsMetaWhateverItsKind() async throws {
+  @Test func aCardsSummaryIsInItsReadmeWhateverItsKind() async throws {
     try await withFixture { t in
       let s = withTestCardIds(t.session)
       let dir = s.identity.url, other = try SyncTests.project()
@@ -27,9 +27,9 @@ extension ChatResumeTests {
       s.start()
       try await SyncTests.connected(s)
       func written(_ id: String) throws -> String? {
-        let url = dir.appendingPathComponent("definitions/\(id)/_meta.json")
+        let url = dir.appendingPathComponent("definitions/\(id)/README.md")
         guard FileManager.default.fileExists(atPath: url.path) else { return nil }
-        return try JSONValue.parse(String(decoding: Data(contentsOf: url), as: UTF8.self))["description"]?.string
+        return Documents.parseReadme(try String(contentsOf: url, encoding: .utf8)).description
       }
 
       // The editor captures its base before the open's derivation completes.
@@ -37,7 +37,8 @@ extension ChatResumeTests {
       for await _ in entered.stream { break }
       let openedRev = s.rev
       let projectBytes = try Data(contentsOf: dir.appendingPathComponent("tsugumi.json"))
-      let layoutBytes = try Data(contentsOf: dir.appendingPathComponent("layout.json"))
+      let layoutURL = dir.appendingPathComponent("layout.bin")
+      let layoutBytes = try? Data(contentsOf: layoutURL)
       let code = CardEditorModel(session: s, cardKey: "a")
       code.meta = .object([("description", .string("logs the value"))])
       let second = try t.makeSession()
@@ -50,7 +51,7 @@ extension ChatResumeTests {
       #expect(s.position("a") == second.position("a"))
       #expect(!s.dirty && !second.dirty)
       #expect(try Data(contentsOf: dir.appendingPathComponent("tsugumi.json")) == projectBytes)
-      #expect(try Data(contentsOf: dir.appendingPathComponent("layout.json")) == layoutBytes)
+      #expect((try? Data(contentsOf: layoutURL)) == layoutBytes)
       #expect(await code.apply())
       #expect(s.rev == openedRev + 1)
       #expect(s.saveError == nil)

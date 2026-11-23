@@ -1,4 +1,5 @@
 import Foundation
+import FlatBuffers
 import TsugumiRPC
 import TsugumiAgentClient
 import TsugumiLauncher
@@ -49,7 +50,7 @@ import TsugumiLauncher
   let snapshot = Tsugumi_RPC_ProjectSnapshotT()
   let ids = cards.map { #"{"id":"\#($0.id)"}"# }.joined(separator: ",")
   snapshot.rev = 0; snapshot.projectJson = #"{"name":"t","canvas":{"cards":[\#(ids)],"connections":[]}}"#
-  snapshot.layoutJson = layout
+  snapshot.layout = fixtureLayout(layout)
   snapshot.definitions = cards.map { card in
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = card.id; definition.cardJson = card.card
     return definition
@@ -57,4 +58,46 @@ import TsugumiLauncher
   snapshot.run = Tsugumi_RPC_RunStatusT()
   session.receiveProjectSnapshot(snapshot, projectId: "p")
   return session
+}
+
+func fixtureLayout(_ text: String) -> [UInt8] {
+  guard let view = try? JSONValue.parse(text) else { return [] }
+  var layout = Tsugumi_Layout_LayoutT()
+  layout.flow = view["flow"]?.string
+  layout.boundary = nil
+  layout.cards = (view["cards"]?.object ?? []).map { id, placement in
+    let card = Tsugumi_Layout_CardPlaceT()
+    card.key = id
+    card.x = placement["x"]?.double
+    card.y = placement["y"]?.double
+    card.collapsed = placement["collapsed"]?.bool
+    card.inputOrder = placement["inputOrder"]?.array?.compactMap(\.string) ?? []
+    card.outputOrder = placement["outputOrder"]?.array?.compactMap(\.string) ?? []
+    return card
+  }
+  layout.notes = (view["notes"]?.array ?? []).map { value in
+    let note = Tsugumi_Layout_NotePlaceT()
+    note.id = value["id"]?.string ?? ""
+    note.scope = value["scope"]?.string
+    note.color = value["color"]?.string
+    note.x = value["x"]?.double
+    note.y = value["y"]?.double
+    note.width = value["width"]?.double
+    note.height = value["height"]?.double
+    note.fontSize = value["fontSize"]?.double
+    return note
+  }
+  layout.groups = (view["groups"]?.array ?? []).map { value in
+    let group = Tsugumi_Layout_CardGroupT()
+    group.id = value["id"]?.string ?? ""
+    group.scope = value["scope"]?.string
+    group.name = value["name"]?.string
+    group.color = value["color"]?.string
+    group.cards = value["cards"]?.array?.compactMap(\.string) ?? []
+    return group
+  }
+  var builder = FlatBufferBuilder(initialSize: 256)
+  let root = Tsugumi_Layout_Layout.pack(&builder, obj: &layout)
+  Tsugumi_Layout_Layout.finish(&builder, end: root)
+  return builder.sizedByteArray
 }

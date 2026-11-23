@@ -1,5 +1,14 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "title",
+      "type": "string",
+      "data": {
+        "string": "Analysis report"
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "data"
@@ -7,12 +16,5 @@
   ],
   "recordIO": true,
   "retainArtifact": true,
-  "artifactOutput": "report",
-  "params": [
-    {
-      "name": "title",
-      "type": "string",
-      "data": "Analysis report"
-    }
-  ]
+  "artifactOutput": "report"
 }

@@ -128,7 +128,7 @@ struct GroupFrameView: View {
 }
 
 /// Markdown sticky note (with TeX math); it does not take part in runs. Its
-/// text size is its own (`fontSize` in layout.json).
+/// text size is its own (`fontSize` in the layout).
 struct StickyNoteView: View {
   let note: JSONValue
   var selected = false
@@ -225,7 +225,7 @@ struct NoteEditor: View {
     width = n?["width"]?.double ?? 240
     height = n?["height"]?.double ?? 120
     fontSize = n?["fontSize"]?.double ?? 13
-    let file = (session.projectPrefix(session.scopeHolding("notes", noteId) ?? []) ?? "") + "layout.json"
+    let file = (session.projectPrefix(session.scopeHolding("notes", noteId) ?? []) ?? "") + "layout.bin"
     edit.beginField(value, session: session, file: file, selector: [.string("notes"), .object([("id", .string(noteId))])], value: n)
   }
 
@@ -311,7 +311,7 @@ struct GroupEditor: View {
       guard let c = o["card"]?.string, let p = o["port"]?.string else { return nil }
       return "\(c)\t\(p)"
     })
-    let file = (session.projectPrefix(scope) ?? "") + "layout.json"
+    let file = (session.projectPrefix(scope) ?? "") + "layout.bin"
     edit.beginField(value, session: session, file: file, selector: [.string("groups"), .object([("id", .string(groupId))])], value: g)
   }
 

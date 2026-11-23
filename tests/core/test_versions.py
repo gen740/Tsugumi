@@ -15,8 +15,10 @@ import pytest
 from harness.daemon import ROOT
 from harness.file_events import wait_for_file
 from projects import SINK, MSG_FBS, builtin_project, card, conn, run_and_wait, write
+from harness.document import set_param as set_typed_param
 from tsugumi_client import RpcFailure, _request_class, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
+from harness.document import build_buffer, positions, write_layout
 
 
 def git(root, *args) -> str:
@@ -41,15 +43,15 @@ def notes(c, root, commit: str, n: int = 0, *, run_ids=()) -> list:
 def set_text(c, value: str):
     snap = c.call("ProjectInspectRequest")
     body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == "src")
-    next(p for p in body["params"] if p["name"] == "text")["data"] = value
+    set_typed_param(body, "text", value)
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="test",
-           changes=[change("PutDefinition", id="src", cardJson=json.dumps(body), keepMeta=True)])
+           changes=[change("PutDefinition", id="src", cardJson=json.dumps(body), keepReadme=True, keepComments=True)])
 
 
 def src_text(c) -> str:
     snap = c.call("ProjectInspectRequest")
     body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == "src")
-    return next(p for p in body["params"] if p["name"] == "text")["data"]
+    return next(p for p in body["params"] if p["name"] == "text")["data"]["string"]
 
 
 def test_runs_commit_note_and_branch(tmp_path, core_factory):
@@ -242,7 +244,12 @@ def test_a_demo_history_becomes_its_versions(tmp_path, core_factory):
         "branches": {"main": "final", "try-other-text": "try"},
         "head": "main",
     }
-    (root / ".tsugumi-history.json").write_text(json.dumps(history))
+    history["branches"] = [{"name": name, "commit": commit} for name, commit in history["branches"].items()]
+    for commit in history["commits"]:
+        if "files" in commit:
+            commit["files"] = [{"path": path, "bytes": list(content.encode())}
+                               for path, content in commit["files"].items()]
+    (root / ".tsugumi-history").write_bytes(build_buffer("runtime_state", "Tsugumi.State.History", history))
     daemon = core_factory(project_root=root)
     c = daemon.connect()
     c.call("VersionInitRequest", opId=new_id(), origin="test")
@@ -314,7 +321,7 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     independent = [f"more{i}" for i in range(7)]
     write(root,
           defs={"trigger": {"type": "trigger"},
-                "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": "first"}], "_outputs": MSG_FBS},
+                "source": {"type": "input", "params": [{"name": "text", "type": "string", "data": {"string": "first"}}], "_outputs": MSG_FBS},
                 "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
                 "sink": dict(SINK, maxRuns=4)},
           cards=[card("start", "trigger"), card("src", "source"), card("both", "merge"), card("sink", "sink")] + [card(name, "source") for name in independent],
@@ -351,7 +358,7 @@ def test_a_run_record_is_independent_of_the_connection(tmp_path, core_factory):
     for run_id, expected_value in ((first_run, "second"), (second_run, "third")):
         row = restored.call("RunRecordRequest", runId=run_id, card=path("src"))
         assert text(row.run.status.runId) == run_id
-        assert json.loads(text(row.record.paramsJson))["text"] == expected_value
+        assert {text(p.name): json.loads(text(p.value)) for p in row.record.params.entries}["text"] == expected_value
 
 
 def test_a_run_note_names_a_card_that_ran_and_failed(tmp_path, core_factory):
@@ -390,9 +397,8 @@ def test_a_versions_canvas_says_what_each_card_is(tmp_path, core_factory):
     assert {k: text(v.kind) for k, v in cards.items()} == {
         "start": "trigger", "src": "input", "out": "collect", "wide": "merge", "b": "branch", "m": "merge", "f": "fork"}
     assert (cards["wide"].fan, cards["m"].fan, cards["f"].fan, cards["b"].fan, cards["out"].fan) == (3, 2, 2, 0, 0)
-    raw_layout = '{"cards":{"out":{"x":3,"y":7,"collapsed":true}},"future":1}'
-    (root / "layout.json").write_text(raw_layout)
-    assert text(c.call("VersionCanvasRequest", commit=commit_all(root)).layoutJson) == raw_layout
+    write_layout(root, {"cards": {"out": {"x": 3, "y": 7, "collapsed": True}}})
+    assert bytes(c.call("VersionCanvasRequest", commit=commit_all(root)).layout) == (root / "layout.bin").read_bytes()
     # An older version keeps what its Cards were.
     wide.write_text(json.dumps({"type": "merge", "inputs": [{"name": "a"}]}))
     now = {text(k.id): k for k in c.call("VersionCanvasRequest", commit=commit_all(root)).cards}
@@ -424,11 +430,11 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
     # keeps its own Cards.
     set_text(c, "second")
     (root / "definitions" / "src" / "data" / "secret.csv").write_text("patient,3\n")
-    (root / "layout.json").write_text(json.dumps({"cards": {k: {"x": i * 100, "y": 7} for i, k in enumerate(at)}}))
+    write_layout(root, {"cards": {k: {"x": i * 100, "y": 7} for i, k in enumerate(at)}})
     c.call("ProjectReloadRequest", opId=new_id(), origin="test", baseRev=c.call("ProjectInspectRequest").rev)
     _, st = run_and_wait(c, "start")
     second = text(st.commit)
-    placed = json.loads(text(c.call("VersionCanvasRequest", commit=second).layoutJson))["cards"]
+    placed = positions(c.call("VersionCanvasRequest", commit=second).layout)
     assert placed["src"]["y"] == 7 and placed["out"]["x"] == 200
     # Core records neutral kinds without parameter or source values.
     factual = c.call("VersionNoteRequest", commit=second)
@@ -438,7 +444,11 @@ def test_a_version_has_its_canvas_and_neutral_change_record(tmp_path, core_facto
               "changed": [{"card": text(x.card), "kinds": [text(k) for k in x.kinds or []]} for x in facts.changed or []],
               "workflow": facts.workflow}
     assert record == {"added": [], "removed": [], "changed": [{"card": "src", "kinds": ["parameters"]}], "workflow": False}
-    assert json.loads(git(root, "notes", "--ref=tsugumi-record", "show", second)) == record
+    from Tsugumi.RPC.VersionChanges import VersionChanges
+    raw_note = subprocess.check_output(["git", "-C", str(root), "notes", "--ref=tsugumi-record", "show", second])
+    cached = VersionChanges.GetRootAs(raw_note)
+    assert cached.Changed(0).Card() == b"src"
+    assert cached.Changed(0).Kinds(0) == b"parameters"
     assert all(text(run.state) == "succeeded" for run in notes(c, root, second, 1))
     # A commit that is not there is refused, and nothing is kept.
     try:

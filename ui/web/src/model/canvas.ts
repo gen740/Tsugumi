@@ -156,7 +156,7 @@ export class Scene {
     const bx = box ?? { x: 0, y: 0, width: 240, height: 120 }
     const width = Math.max(bx.width, Math.max(ins.length, outs.length) * 110 + 40)
     const x = bx.x + bx.width / 2 - width / 2
-    // Placed above / below the inner Cards unless moved (layout.json "boundary").
+    // Placed above / below the inner Cards unless moved (layout.bin "boundary").
     const placed = (side: 'inputs' | 'outputs', auto: Pt): Pt => {
       const p = { ...(this.session.boundaryPosition(this.scope, side) ?? auto) }
       const d = this.drag.boundary

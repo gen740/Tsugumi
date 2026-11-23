@@ -1,15 +1,17 @@
 {
   "type": "code",
-  "inputs": [
-    {
-      "name": "data"
-    }
-  ],
   "params": [
     {
       "name": "k",
       "type": "uint64",
-      "data": 3
+      "data": {
+        "uint64": 3
+      }
+    }
+  ],
+  "inputs": [
+    {
+      "name": "data"
     }
   ]
 }

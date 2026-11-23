@@ -310,7 +310,7 @@ struct GraphCanvas: View {
       .modifier(CommandHandlers(canvas: self))
       .overlay(alignment: .topLeading) {
         if let draft = session.inlineDraft {
-          RevisionEditNotice(edit: draft.revision, text: { draft.name + "\n" + draft.content },
+          RevisionEditNotice(edit: draft.revision, text: { draft.content },
             overwrite: { Task { _ = await session.finishDraftEdit(overwrite: true) } },
             reload: { Task { await session.startDraftEdit(draft.card, revision: draft.revision) } })
             .padding(12).frame(maxWidth: 520)
@@ -620,7 +620,7 @@ struct GraphCanvas: View {
     if box.isNull { box = CGRect(x: 0, y: 0, width: 240, height: 120) }
     let width = max(box.width, CGFloat(max(ins.count, outs.count)) * 110 + 40)
     let x = box.midX - width / 2
-    // Placed above / below the inner Cards unless moved (layout.json "boundaries").
+    // Placed above / below the inner Cards unless moved (the layout's "boundaries").
     func placed(_ side: String, _ auto: CGPoint) -> CGPoint {
       var p = auto
       if let v = session.boundaryPosition(tab.scope, side) { p = v }
@@ -678,7 +678,7 @@ struct GraphCanvas: View {
           x = snapToGrid(x, prefs.gridSize)
           y = snapToGrid(y, prefs.gridSize)
         }
-        // Layout only (the external's layout.json).
+        // Layout only (the external's layout).
         session.setBoundaryPosition(tab.scope, input ? "inputs" : "outputs", CGPoint(x: x.rounded(), y: y.rounded()))
       }
   }
@@ -774,11 +774,8 @@ struct GraphCanvas: View {
   /// Writing this Card's Draft, when it is the one being written.
   private func draftEdit(_ k: CardKey) -> DraftEdit? {
     guard let e = session.inlineDraft, e.card == k else { return nil }
-    return DraftEdit(name: Binding(get: { session.inlineDraft?.card == k ? session.inlineDraft?.name ?? "" : "" },
-                                  set: { if session.inlineDraft?.card == k { session.inlineDraft?.name = $0 } }),
-                     content: Binding(get: { session.inlineDraft?.card == k ? session.inlineDraft?.content ?? "" : "" },
+    return DraftEdit(content: Binding(get: { session.inlineDraft?.card == k ? session.inlineDraft?.content ?? "" : "" },
                                       set: { if session.inlineDraft?.card == k { session.inlineDraft?.content = $0 } }),
-                     nameProblem: session.draftNameProblem(k, e.name),
                      onDone: { byKey in
                        finishDraftEdit(e.revision)
                        if byKey { canvasFocused = true }

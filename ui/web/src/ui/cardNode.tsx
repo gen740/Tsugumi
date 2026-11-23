@@ -51,8 +51,7 @@ const fade = (c: string, opacity: number) => `color-mix(in srgb, ${colorVar(c)} 
 export interface DraftEdit {
   draft: InlineDraft
   /** Why the Card cannot take the name typed so far. */
-  nameProblem?: string
-  onChange: (change: Partial<Pick<InlineDraft, 'name' | 'content'>>) => void
+  onChange: (change: Partial<Pick<InlineDraft, 'content'>>) => void
   /** Done, the focus having moved elsewhere (undefined) or by the keyboard (true). */
   onDone: (byKey?: boolean) => void
 }
@@ -165,26 +164,23 @@ export function CardNodeView(p: CardNodeProps) {
 }
 
 function useDraftFields(edit: DraftEdit | undefined) {
-  const name = useRef<HTMLInputElement>(null)
   const content = useRef<HTMLTextAreaElement>(null)
   const editing = !!edit
-  // The content is what is written first: a name is not needed.
+  // A Draft's name is its id; what is written is its content.
   useEffect(() => {
     if (!editing) return
     const c = content.current
     c?.focus({ preventScroll: true })
     c?.setSelectionRange(c.value.length, c.value.length)
   }, [editing])
-  const keys = (e: React.KeyboardEvent, field: 'name' | 'content') => {
+  const keys = (e: React.KeyboardEvent, _field: 'content') => {
     if (!edit || e.nativeEvent.isComposing) return
     if (e.key === 'Escape' || (e.key === 'Enter' && (e.metaKey || e.ctrlKey))) edit.onDone(true)
-    else if (field === 'name' && e.key === 'Enter') {
-      if (!edit.nameProblem) content.current?.focus({ preventScroll: true })
-    } else return
+    else return
     e.preventDefault()
     e.stopPropagation()
   }
-  return { name, content, keys }
+  return { content, keys }
 }
 
 const stopping = {
@@ -206,11 +202,7 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
       <div style={{ height: s(g.topLabels) }} />
       {g.untitled ? <div style={{ height: s(g.headerRow), flex: 'none' }} /> : <div className="cv-card-header" style={{ height: s(CardGeometry.header), padding: `0 ${s(9)}px`, gap: s(6) }}>
         <span className="secondary cv-center" style={{ width: s(15) }}><Icon name={data.symbol ?? KIND_ICON[data.kind]} size={font(12)} /></span>
-        {edit
-          ? <input ref={fields.name} className="cv-draft-name" style={{ fontSize: font(12) }} value={edit.draft.name} placeholder={L('名前')} spellCheck={false}
-              aria-label={L('Draft の名前')} aria-invalid={!!edit.nameProblem} {...stopping}
-              onChange={(e) => edit.onChange({ name: e.target.value })} onKeyDown={(e) => fields.keys(e, 'name')} />
-          : <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>}
+        <span className="cv-title" style={{ fontSize: font(12) }}>{data.untitled && !edit ? data.summary?.split('\n')[0] ?? data.title : data.title}</span>
         {!edit && <span style={{ flex: 1, minWidth: s(2) }} />}
         {data.permissions?.map((p) => (
           <Icon key={p} name={permissionInfo(p).icon} size={font(10)} title={permissionInfo(p).label}
@@ -236,7 +228,6 @@ function CardBody({ p, g }: { p: CardNodeProps; g: CardGeometry }) {
         <>
           {g.draft && (edit ? (
             <div className="cv-draft-edit" style={{ height: s(g.draftRow), padding: `0 ${s(10)}px ${s(8)}px`, gap: s(2) }} {...stopping}>
-              {edit.nameProblem && <span className="cv-draft-problem" role="alert" style={{ fontSize: font(9.5) }}>{edit.nameProblem}</span>}
               <textarea ref={fields.content} style={{ fontSize: font(11), lineHeight: `${s(14)}px` }} value={edit.draft.content}
                 placeholder={L('何を受け取り、何を出し、どう処理するかを書きます')} aria-label={L('Draft の内容')}
                 onChange={(e) => edit.onChange({ content: e.target.value })} onKeyDown={(e) => fields.keys(e, 'content')} />

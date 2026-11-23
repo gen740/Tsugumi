@@ -10,7 +10,10 @@
 #include "host/document_edits.hh"
 #include "host/failure.hh"
 #include "host/layout_saving.hh"
+#include "host/layout_file.hh"
+#include "host/save.hh"
 #include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 
 namespace tsugumi::host {
@@ -62,7 +65,7 @@ TEST(ProjectOperations, RevisionConflictReturnsBeforeAnotherSave) {
           {"rev", json::Quote(std::to_string(revision))},
           {"project_json",
            json::Quote(R"({"canvas":{"cards":[],"connections":[]}})")},
-          {"layout_json", "\"{}\""},
+          {"layout", "[]"},
           {"sources", R"([{"path":"definitions/a/main.py","hash":"hash"}])"}};
     } else if (method == "project_file_read") {
       reply = "FileContent";
@@ -71,6 +74,7 @@ TEST(ProjectOperations, RevisionConflictReturnsBeforeAnotherSave) {
           {"eof", "true"}};
     } else {
       EXPECT_EQ(method, "project_save");
+      std::map<std::string, std::string> layouts;
       EXPECT_EQ(json::Text(args, "op_id"), request.op_id);
       if (saves++ == 0) {
         intent = json::Text(args, "save_intent");
@@ -149,28 +153,35 @@ TEST(ProjectOperationUndo, UnrelatedWriterChangesSurviveAndConflictsBlockUndo) {
   }
 }
 
+auto LayoutChange(const std::string& view) -> json::Members {
+  const auto data = SplitLayoutView(view).layout;
+  const auto encoded = json::Encode(json::Members{
+      {"base64", json::Quote(crypto::base64(data))}});
+  return {{"changes", "[{\"value_type\":\"SetLayout\",\"value\":{\"layout\":" +
+                          encoded + "}}]"}};
+}
+
 TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
   SaveBase before;
   before.snapshot["rev"] = "1";
-  before.files["layout.json"] = R"({"groups":[{"id":"g","name":"old"}]})";
-  const json::Members forward{
-      {"changes",
-       R"([{"value_type":"SetLayout","value":{"json":"{\"groups\":[{\"id\":\"g\",\"name\":\"new\"},{\"id\":\"other\"}]}"}}])"}};
+  before.files["layout.bin"] = R"({"groups":[{"id":"g","name":"old"}]})";
+  const auto forward = LayoutChange(
+      R"({"groups":[{"id":"g","name":"new"},{"id":"other"}]})");
   // The actual operation only renamed g; the other group was already there
   // when host preparation observed the current document.
-  before.files["layout.json"] =
+  before.files["layout.bin"] =
       R"({"groups":[{"id":"g","name":"old"},{"id":"other"}]})";
   const auto read = [](const auto&) -> std::optional<std::string> {
     return std::nullopt;
   };
   const auto inverse = ReverseProjectChanges(forward, before, read);
   SaveBase current = before;
-  current.files["layout.json"] = R"({"groups":[{"id":"g","name":"new"}]})";
+  current.files["layout.bin"] = R"({"groups":[{"id":"g","name":"new"}]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
   EXPECT_EQ(json::Array(plan.at("changes")).size(), 1);
   const auto change = json::Object(json::Array(plan.at("changes")).front());
   const auto layout =
-      json::Object(json::Text(json::Object(change.at("value")), "json"));
+      json::Object(LayoutView(DecodeSourceBytes(json::Object(change.at("value")).at("layout"))));
   const auto groups = json::Array(layout.at("groups"));
   ASSERT_EQ(groups.size(), 1u);
   EXPECT_EQ(json::Text(json::Object(groups.front()), "id"), "g");
@@ -180,25 +191,24 @@ TEST(ProjectOperationUndo, RenameDoesNotResurrectAnotherWritersDeletedGroup) {
 TEST(ProjectOperationUndo, MoveUndoPreservesThePreviouslyAcceptedPortOrder) {
   SaveBase before;
   before.snapshot["rev"] = "1";
-  before.files["layout.json"] =
+  before.files["layout.bin"] =
       R"({"cards":{"a":{"x":10,"y":20,"inputOrder":["second","first"]}}})";
-  const json::Members move{
-      {"changes",
-       R"([{"value_type":"SetLayout","value":{"json":"{\"cards\":{\"a\":{\"x\":30,\"y\":20,\"inputOrder\":[\"first\",\"second\"]}}}"}}])"}};
+  const auto move = LayoutChange(
+      R"({"cards":{"a":{"x":30,"y":20,"inputOrder":["first","second"]}}})");
   const auto read = [](const auto&) -> std::optional<std::string> {
     return std::nullopt;
   };
   const auto inverse = ReverseProjectChanges(move, before, read);
   SaveBase current = before;
-  current.files["layout.json"] =
+  current.files["layout.bin"] =
       R"({"cards":{"a":{"x":30,"y":20,"inputOrder":["first","second"]}},"notes":[{"id":"other"}]})";
   const auto plan = PrepareProjectEdits(inverse, current, read);
-  const auto raw = json::Text(
-      json::Object(
-          json::Object(json::Array(plan.at("changes")).front()).at("value")),
-      "json");
-  EXPECT_NE(raw.find(R"("inputOrder":["second","first"])"), std::string::npos);
-  EXPECT_NE(raw.find(R"("x":10)"), std::string::npos);
+  const auto value = json::Object(
+      json::Object(json::Array(plan.at("changes")).front()).at("value"));
+  const auto raw = LayoutView(DecodeSourceBytes(value.at("layout")));
+  const auto place = json::Object(json::Object(json::Object(raw).at("cards")).at("a"));
+  EXPECT_EQ(json::Array(place.at("inputOrder")), json::Array(R"(["second","first"])"));
+  EXPECT_DOUBLE_EQ(std::stod(place.at("x")), 10);
   EXPECT_NE(raw.find(R"("id":"other")"), std::string::npos);
 }
 }  // namespace
@@ -237,13 +247,14 @@ TEST(ProjectOperations,
           {"rev", "1"},
           {"project_json",
            json::Quote(R"({"canvas":{"cards":[],"connections":[]}})")},
-          {"layout_json", json::Quote("{}")},
+          {"layout", "[]"},
           {"sources", R"([{"path":"definitions/a/main.py","hash":"hash"}])"}};
     } else if (method == "project_file_read") {
       type = "FileContent";
       value = {{"bytes", json::Quote("old")}, {"eof", "true"}};
     } else {
       EXPECT_EQ(method, "project_save");
+      std::map<std::string, std::string> layouts;
       if (!completed) {
         ++applications;
         metadata = args.at("operation_data");
@@ -308,23 +319,31 @@ class TransformationProject {
   std::map<std::string, std::string> files{
       {"tsugumi.json",
        R"({"name":"test","canvas":{"cards":[{"id":"a"},{"id":"sub"}],"connections":[]}})"},
-      {"layout.json",
+      {"layout.bin",
        R"({"cards":{"a":{"x":10,"y":20,"inputOrder":["q","p"]},"sub":{"x":200,"y":20}}})"},
       {"definitions/a/_card.json", R"({"type":"draft"})"},
-      {"definitions/a/_meta.json", R"({"name":"source"})"},
+      {"definitions/a/README.md", "---\ndescription: source\n---\n"},
       {"definitions/a/data.bin", std::string("\0\xff\x80\n", 4)},
       {"definitions/sub/_card.json", R"({"type":"subgraph","external":"inner"})"},
       {"externals/inner/tsugumi.json",
        R"({"name":"inner","canvas":{"cards":[{"id":"b"}],"connections":[]}})"},
-      {"externals/inner/layout.json", R"({"cards":{"b":{"x":1,"y":2}}})"},
+      {"externals/inner/layout.bin", R"({"cards":{"b":{"x":1,"y":2}}})"},
       {"externals/inner/definitions/b/_card.json", R"({"type":"subgraph","external":"deep"})"},
       {"externals/inner/externals/deep/tsugumi.json",
        R"({"canvas":{"cards":[{"id":"c"}],"connections":[]}})"},
-      {"externals/inner/externals/deep/layout.json", "{}"},
+      {"externals/inner/externals/deep/layout.bin", "{}"},
       {"externals/inner/externals/deep/definitions/c/_card.json",
        R"({"type":"draft"})"},
       {"externals/inner/externals/deep/definitions/c/raw.bin",
        std::string("\xff\0\x81", 3)}};
+  TransformationProject() {
+    for (auto& [path, bytes] : files) {
+      if (path.ends_with("layout.bin"))
+        bytes = LayoutView(SplitLayoutView(bytes).layout);
+      else if (path == "tsugumi.json" || path.starts_with("definitions/"))
+        bytes = Canonical(path, bytes);
+    }
+  }
   int saves = 0;
   OperationContext context{"ui", {}, {}, {}};
   auto Execute(H::ProjectOperationBodyUnion body) -> OperationReply {
@@ -339,7 +358,7 @@ class TransformationProject {
   }
   auto Apply(H::ProjectOperationBodyUnion body) -> H::ProjectEditsT {
     const auto reply = Execute(std::move(body));
-    EXPECT_EQ(json::Text(json::Object(reply.json), "reply"), "SaveResult");
+    EXPECT_EQ(json::Text(json::Object(reply.json), "reply"), "SaveResult") << reply.json;
     const auto value =
         json::Object(json::Get(json::Object(reply.json), "value"));
     const auto encoded = json::Object(value.at("operation_data"));
@@ -368,8 +387,46 @@ class TransformationProject {
   }
 
  private:
+  static auto Canonical(const std::string& path, const std::string& text) -> std::string {
+    using document_text::Schema;
+    std::optional<Schema> schema;
+    if (path.ends_with("tsugumi.json")) schema = Schema::Project;
+    if (path.ends_with("/_card.json")) schema = Schema::Card;
+    if (path.ends_with("/_comments.json")) schema = Schema::Comments;
+    try {
+      return schema ? document_text::print(
+                          *schema, document_text::parse(*schema, path, text))
+                    : text;
+    } catch (const DocumentError&) {
+      return text;
+    }
+  }
   auto Call(const std::string& method, const json::Members& args)
       -> OperationReply {
+    const auto encode = [](const std::string& bytes) {
+      return json::Encode(json::Members{{"base64", json::Quote(crypto::base64(bytes))}});
+    };
+    const auto decode = [](const std::string& data) {
+      if (data.starts_with('"')) return json::String(data);
+      std::string bytes;
+      EXPECT_TRUE(crypto::base64_decode(
+          json::Text(json::Object(data), "base64"), bytes));
+      return bytes;
+    };
+    const auto encode_layout = [&](const std::string& prefix) {
+      return encode(files.contains(prefix + "layout.bin")
+                        ? SplitLayoutView(files.at(prefix + "layout.bin")).layout
+                        : std::string());
+    };
+    const auto note_bytes = [&](const std::string& prefix) {
+      std::map<std::string, std::string> notes;
+      for (const auto& [path, text] : files)
+        if (const auto id = NoteId(prefix, path)) notes[*id] = text;
+      return notes;
+    };
+    const auto save_layout = [&](const std::string& prefix, const auto& bytes) {
+      files[prefix + "layout.bin"] = LayoutView(bytes, note_bytes(prefix));
+    };
     std::string type;
     json::Members value;
     if (method == "operation_get") {
@@ -379,17 +436,18 @@ class TransformationProject {
       type = "ProjectSnapshot";
       value = {{"rev", std::to_string(saves)},
                {"project_json", json::Quote(files.at("tsugumi.json"))},
-               {"layout_json", json::Quote(files.at("layout.json"))}};
+               {"layout", encode_layout("")}};
       json::Members definitions;
       std::vector<std::string> sources;
       for (const auto& [path, bytes] : files) {
-        if (path == "tsugumi.json" || path == "layout.json") continue;
+        if (path == "tsugumi.json" || path == "layout.bin") continue;
         if (path.starts_with("definitions/") &&
             std::count(path.begin(), path.end(), '/') == 2) {
           const auto slash = path.find('/', 12);
           const auto name = path.substr(slash + 1);
           const auto key = name == "_card.json"   ? "card_json"
-                           : name == "_meta.json" ? "meta_json"
+                           : name == "README.md" ? "readme"
+                           : name == "_comments.json" ? "comments_json"
                                                   : "";
           if (key != std::string("")) {
             const auto id = path.substr(12, slash - 12);
@@ -402,8 +460,10 @@ class TransformationProject {
         }
         json::Members source{{"path", json::Quote(path)},
                              {"hash", json::Quote(crypto::sha256_hex(bytes))}};
-        if (Document::is_external_document_file(path))
-          source["document_json"] = json::Quote(bytes);
+        if (Document::is_external_document_file(path) || Document::is_note_file(path)) {
+          source["document"] = path.ends_with("/layout.bin")
+              ? encode_layout(path.substr(0, path.size() - 10)) : encode(bytes);
+        }
         sources.push_back(json::Encode(source));
       }
       std::vector<std::string> list;
@@ -421,23 +481,26 @@ class TransformationProject {
                {"eof", "true"}};
     } else {
       EXPECT_EQ(method, "project_save");
+      std::map<std::string, std::string> layouts;
       EXPECT_EQ(json::UInt(args.at("base_rev")), saves);
       for (const auto& raw : json::Array(args.at("changes"))) {
         const auto change = json::Object(raw),
                    v = json::Object(change.at("value"));
         const auto kind = json::Text(change, "value_type");
-        if (kind == "SetProject" || kind == "SetLayout")
-          files[kind == "SetProject" ? "tsugumi.json" : "layout.json"] =
-              json::Text(v, "json");
+        if (kind == "SetProject")
+          files["tsugumi.json"] = Canonical("tsugumi.json", json::Text(v, "json"));
+        else if (kind == "SetLayout")
+          layouts[""] = decode(v.at("layout"));
         else if (kind == "PutDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
           for (const auto& [key, name] : {std::pair{"card_json", "_card.json"},
-                                          {"meta_json", "_meta.json"}}) {
+                                          {"readme", "README.md"},
+                                          {"comments_json", "_comments.json"}}) {
             const auto text = json::Text(v, key);
             if (text.empty())
               files.erase(dir + name);
             else
-              files[dir + name] = text;
+              files[dir + name] = Canonical(dir + name, text);
           }
         } else if (kind == "RemoveDefinition") {
           const auto dir = "definitions/" + json::Text(v, "id") + '/';
@@ -448,15 +511,19 @@ class TransformationProject {
           files.erase(json::Text(v, "path"));
         else {
           EXPECT_EQ(kind, "PutSource");
-          const auto data = json::Get(v, "bytes");
-          std::string bytes;
-          if (data.starts_with('"'))
-            bytes = json::String(data);
+          const auto bytes = decode(v.at("bytes"));
+          const auto path = json::Text(v, "path");
+          if (path.ends_with("/layout.bin"))
+            layouts[path.substr(0, path.size() - 10)] = bytes;
           else
-            EXPECT_TRUE(crypto::base64_decode(
-                json::Text(json::Object(data), "base64"), bytes));
-          files[json::Text(v, "path")] = bytes;
+            files[path] = Canonical(path, bytes);
         }
+      }
+      for (const auto& [prefix, bytes] : layouts) save_layout(prefix, bytes);
+      for (auto& [path, view] : files) {
+        if (!path.ends_with("layout.bin")) continue;
+        const auto prefix = path.substr(0, path.size() - 10);
+        view = LayoutView(SplitLayoutView(view).layout, note_bytes(prefix));
       }
       ++saves;
       type = "SaveResult";
@@ -473,7 +540,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
   for (const auto* action : {"move", "arrange", "duplicate", "subgraph"}) {
     SCOPED_TRACE(action);
     TransformationProject project;
-    project.files.erase(prefix + "layout.json");
+    project.files.erase(prefix + "layout.bin");
     auto positions = [&](const std::string& file) {
       return json::Object(json::Object(project.files.at(file)).at("cards"));
     };
@@ -489,7 +556,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       move.dx = 40;
       project.Apply(std::move(move));
       const auto moved =
-          json::Object(positions(prefix + "layout.json").at("b"));
+          json::Object(positions(prefix + "layout.bin").at("b"));
       EXPECT_DOUBLE_EQ(std::stod(moved.at("x")),
                        std::stod(before.at("x")) + 40);
       EXPECT_DOUBLE_EQ(std::stod(moved.at("y")), std::stod(before.at("y")));
@@ -498,7 +565,7 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       arrange.project_path = "externals/inner";
       arrange.action = H::ProjectLayoutAction::Arrange;
       project.Apply(std::move(arrange));
-      EXPECT_TRUE(json::Object(positions(prefix + "layout.json").at("b"))
+      EXPECT_TRUE(json::Object(positions(prefix + "layout.bin").at("b"))
                       .contains("x"));
     } else if (std::string_view(action) == "duplicate") {
       H::ProjectCopyT duplicate;
@@ -511,13 +578,13 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       const auto undo = project.Apply(std::move(duplicate));
       const auto after = json::Object(json::Object(CompleteLayout(
           project.files.at(prefix + "tsugumi.json"),
-          project.files.at(prefix + "layout.json"))).at("cards"));
-      EXPECT_EQ(json::Object(after.at("b")), before);
+          project.files.at(prefix + "layout.bin"))).at("cards"));
+      EXPECT_TRUE(DocumentsEqual(after.at("b"), json::Encode(before)));
       const auto copy = json::Object(after.at("duplicate"));
       EXPECT_DOUBLE_EQ(std::stod(copy.at("x")), std::stod(before.at("x")) + 30);
       EXPECT_DOUBLE_EQ(std::stod(copy.at("y")), std::stod(before.at("y")) + 30);
       project.Apply(undo);
-      const auto layout = project.files.find(prefix + "layout.json");
+      const auto layout = project.files.find(prefix + "layout.bin");
       const auto restored = CompleteLayout(
           project.files.at(prefix + "tsugumi.json"),
           layout == project.files.end() ? "{}" : layout->second);
@@ -531,10 +598,10 @@ TEST(ProjectOperationTransform, FirstLayoutActionsWorkInsideACardInCard) {
       subgraph.cards = {"b"};
       subgraph.id = "subgraph";
       project.Apply(std::move(subgraph));
-      const auto child = positions(prefix + "externals/subgraph/layout.json");
+      const auto child = positions(prefix + "externals/subgraph/layout.bin");
       EXPECT_TRUE(child.contains("b"));
       const auto outer =
-          json::Object(positions(prefix + "layout.json").at("subgraph"));
+          json::Object(positions(prefix + "layout.bin").at("subgraph"));
       EXPECT_DOUBLE_EQ(std::stod(outer.at("x")), std::stod(before.at("x")));
       EXPECT_DOUBLE_EQ(std::stod(outer.at("y")), std::stod(before.at("y")));
     }
@@ -551,19 +618,21 @@ TEST(ProjectOperationTransform, DeletingTheLastExternalReferenceAndUndo) {
   EXPECT_FALSE(project.files.contains("definitions/sub/_card.json"));
   EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
   project.Apply(restore_card);
-  EXPECT_EQ(project.files.at("definitions/sub/_card.json"),
-            R"({"type":"subgraph","external":"inner"})");
+  EXPECT_TRUE(DocumentsEqual(project.files.at("definitions/sub/_card.json"),
+                             R"({"type":"subgraph","external":"inner"})"));
 
   H::ProjectSelectionT remove_definition;
   remove_definition.action = H::ProjectSelectionAction::DeleteDefinitions;
   remove_definition.cards = {"spare"};
   project.Apply(remove_definition);
   EXPECT_FALSE(project.files.contains("definitions/spare/_card.json"));
-  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  EXPECT_TRUE(
+      DocumentsEqual(project.files.at("externals/inner/tsugumi.json"), inner));
   const auto restore_tree = project.Apply(remove_card);
   EXPECT_FALSE(project.files.contains("externals/inner/tsugumi.json"));
   project.Apply(restore_tree);
-  EXPECT_EQ(project.files.at("externals/inner/tsugumi.json"), inner);
+  EXPECT_TRUE(
+      DocumentsEqual(project.files.at("externals/inner/tsugumi.json"), inner));
 }
 TEST(ProjectOperationTransform, AgentCannotDropOrRelocateAnExcludedTree) {
   test::TemporaryDirectory temporary;
@@ -646,7 +715,6 @@ TEST(ProjectOperationTransform,
   H::ProjectMakeSubgraphT convert;
   convert.cards = {"a", "sub"};
   convert.id = "converted";
-  convert.name = "converted";
   auto inverse = project.Apply(convert);
   EXPECT_EQ(project.saves, 1);
   EXPECT_FALSE(project.files.contains("definitions/a/_card.json"));
@@ -706,8 +774,12 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
   } cleanup{directory};
   for (const auto& [path, bytes] : project.files) {
     std::filesystem::create_directories((directory / path).parent_path());
-    std::ofstream(directory / path, std::ios::binary)
-        .write(bytes.data(), bytes.size());
+    const auto data = path.ends_with("layout.bin")
+                          ? SplitLayoutView(bytes).layout
+                          : bytes;
+    if (!data.empty())
+      std::ofstream(directory / path, std::ios::binary)
+          .write(data.data(), data.size());
   }
   H::ProjectImportT imported;
   imported.path = directory.string();
@@ -722,7 +794,7 @@ TEST(ProjectOperationTransform, ImportIncludesNestedBinaryPlacementAndUndo) {
                              "deep/definitions/c/raw.bin"),
             std::string("\xff\0\x81", 3));
   const auto at = json::Object(
-      json::Object(json::Object(project.files.at("layout.json")).at("cards"))
+      json::Object(json::Object(project.files.at("layout.bin")).at("cards"))
           .at("imported"));
   EXPECT_EQ(std::stod(at.at("x")), 400);
   EXPECT_EQ(std::stod(at.at("y")), 600);
@@ -740,7 +812,7 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   project.files = {
       {"tsugumi.json",
        R"({"canvas":{"cards":[{"id":"a"},{"id":"b"},{"id":"d"}],"connections":[{"from":{"card":"a","port":"out"},"to":{"card":"d","port":"q"}},{"from":{"card":"b","port":"out"},"to":{"card":"d","port":"p"}}]}})"},
-      {"layout.json",
+      {"layout.bin",
        R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"x":100,"y":300}}})"},
       {"definitions/a/_card.json", R"({"type":"code"})"},
       {"definitions/b/_card.json", R"({"type":"code"})"},
@@ -772,15 +844,15 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   }
   auto order = [&]() {
     const auto positions =
-        json::Object(json::Object(project.files.at("layout.json")).at("cards"));
-    return json::Get(json::Object(positions.at("d")), "inputOrder", "[]");
+        json::Object(json::Object(project.files.at("layout.bin")).at("cards"));
+    return json::Encode(json::Array(json::Get(json::Object(positions.at("d")), "inputOrder", "[]")));
   };
   H::ProjectLayoutT untangle;
   untangle.action = H::ProjectLayoutAction::Untangle;
   untangle.scene = std::make_unique<H::LayoutSceneT>(scene);
   project.Apply(untangle);
   EXPECT_EQ(order(), R"(["q","p"])");
-  const auto accepted = project.files.at("layout.json");
+  const auto accepted = project.files.at("layout.bin");
   H::ProjectMoveT move;
   move.cards = {"a"};
   move.dx = 400;
@@ -789,20 +861,20 @@ TEST(ProjectOperationTransform, UntangleThenAtomicMoveAndUndoRetainPortOrder) {
   EXPECT_EQ(project.saves, 2);  // No later proposal/save can join this move.
   EXPECT_EQ(order(), R"(["p","q"])");
   project.Apply(undo_move);
-  EXPECT_TRUE(DocumentsEqual(project.files.at("layout.json"), accepted));
+  EXPECT_TRUE(DocumentsEqual(project.files.at("layout.bin"), accepted));
 
   const std::string unplaced =
       R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0}}})";
-  project.files["layout.json"] = unplaced;
+  project.files["layout.bin"] = unplaced;
   H::ProjectReplaceDocumentsT update;
   update.expected_rev = project.saves;
   auto layout = std::make_unique<H::ProjectDocumentT>();
-  layout->path = "layout.json";
+  layout->path = "layout.bin";
   layout->json =
       R"({"flow":"topToBottom","cards":{"a":{"x":0,"y":0},"b":{"x":200,"y":0},"d":{"inputOrder":["q","p"]}}})";
   update.documents.push_back(std::move(layout));
   project.Apply(std::move(update));
-  const auto saved = project.files.at("layout.json");
+  const auto saved = project.files.at("layout.bin");
   EXPECT_EQ(order(), R"(["q","p"])");
   const auto entry = [&](const std::string& layout) {
     return json::Object(json::Object(json::Object(layout).at("cards")).at("d"));
@@ -822,10 +894,10 @@ namespace tsugumi::host {
 namespace {
 TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
   TransformationProject project;
-  project.files["layout.json"] = "{}";
+  project.files["layout.bin"] = "{}";
   auto entity = [&](const std::string& field, const std::string& id) {
     H::ProjectFieldEditT edit;
-    edit.file_path = "layout.json";
+    edit.file_path = "layout.bin";
     auto step = std::make_unique<H::ProjectSelectorT>();
     step->field = field;
     edit.selector.push_back(std::move(step));
@@ -854,7 +926,7 @@ TEST(ProjectOperationTransform, FirstNotesAndGroupsUseIndependentEntityEdits) {
   entity("groups", "another");
   project.Apply(undo_note);
   project.Apply(undo_group);
-  const auto saved = json::Object(project.files.at("layout.json"));
+  const auto saved = json::Object(project.files.at("layout.bin"));
   EXPECT_EQ(json::Array(saved.at("notes")).size(), 1);
   EXPECT_EQ(
       json::Text(json::Object(json::Array(saved.at("notes")).front()), "id"),
@@ -924,8 +996,8 @@ TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
   H::ProjectReplaceDocumentsT body;
   body.expected_rev = 0;
   auto document = std::make_unique<H::ProjectDocumentT>();
-  document->path = "definitions/a/_meta.json";
-  document->json = R"({"name":"raw"})";
+  document->path = "definitions/a/README.md";
+  document->json = json::Quote("Raw notes.");
   body.documents.push_back(std::move(document));
   project.Apply(body);
   EXPECT_EQ(project.saves, 1);
@@ -937,7 +1009,7 @@ TEST(ProjectOperationCutover, RawDocumentsRefuseAnyStaleRevision) {
 }
 TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   TransformationProject project;
-  project.files["layout.json"] =
+  project.files["layout.bin"] =
       R"({"notes":[{"id":"n","text":"note","x":0,"y":0}],"groups":[{"id":"g","cards":["a","sub"]}]})";
   const auto before = project.files;
   H::ProjectSelectionT body;
@@ -948,7 +1020,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
   EXPECT_EQ(project.saves, 1);
   EXPECT_FALSE(project.files.contains(
       "externals/inner/externals/deep/definitions/c/raw.bin"));
-  const auto layout = json::Object(project.files.at("layout.json"));
+  const auto layout = json::Object(project.files.at("layout.bin"));
   EXPECT_TRUE(json::Array(layout.at("notes")).empty());
   EXPECT_FALSE(layout.contains("displays"));
   EXPECT_EQ(
@@ -975,7 +1047,7 @@ TEST(ProjectOperationCutover, MixedDeletionAndPlacementUseTheCurrentClosure) {
       std::stod(json::Get(
           json::Object(
               json::Object(
-                  json::Object(project.files.at("layout.json")).at("cards"))
+                  json::Object(project.files.at("layout.bin")).at("cards"))
                   .at("unplaced")),
           "x")),
       12);
@@ -985,13 +1057,13 @@ TEST(ProjectOperationCutover, ConcurrentFirstCommentsSelectTheirOwnEntities) {
   TransformationProject project;
   auto comment = [&](const std::string& id) {
     H::ProjectJSONEditT edit;
-    edit.file_path = "definitions/a/_meta.json";
+    edit.file_path = "definitions/a/_comments.json";
     edit.old_value = std::make_unique<H::ProjectValueT>();
-    edit.old_value->present = true;
-    edit.old_value->json = R"({"name":"source"})";
+    edit.old_value->present = false;
     edit.new_value = std::make_unique<H::ProjectValueT>(*edit.old_value);
+    edit.new_value->present = true;
     edit.new_value->json =
-        "{\"name\":\"source\",\"comments\":[{\"id\":" + json::Quote(id) +
+        "{\"comments\":[{\"id\":" + json::Quote(id) +
         ",\"text\":\"note\"}]}";
     H::ProjectEditsT body;
     auto entry = std::make_unique<H::ProjectEditT>();
@@ -1003,7 +1075,7 @@ TEST(ProjectOperationCutover, ConcurrentFirstCommentsSelectTheirOwnEntities) {
   comment("second");
   project.Apply(undo);
   const auto comments =
-      json::Array(json::Object(project.files.at("definitions/a/_meta.json"))
+      json::Array(json::Object(project.files.at("definitions/a/_comments.json"))
                       .at("comments"));
   ASSERT_EQ(comments.size(), 1);
   EXPECT_EQ(json::Text(json::Object(comments.front()), "id"), "second");

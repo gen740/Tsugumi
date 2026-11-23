@@ -17,18 +17,21 @@ final class RevisionEdit {
   /// Freeze the comparison values when the conflict is shown, not on retry.
   private func recordConflict(_ session: ProjectSession) {
     conflictRev = session.rev
-    conflictDocuments = ["tsugumi.json": session.project, "layout.json": session.layout]
+    conflictDocuments = ["tsugumi.json": session.project, "layout.bin": session.layout]
     func definitions(_ prefix: String, _ values: [String: DefinitionDraft]) {
       for (id, d) in values {
         let dir = prefix + "definitions/" + id + "/"
         conflictDocuments[dir + "_card.json"] = d.card
-        conflictDocuments[dir + "_meta.json"] = d.meta
+        let notes = Documents.splitCardNotes(d.meta)
+        conflictDocuments[dir + "#notes"] = d.meta
+        conflictDocuments[dir + "_comments.json"] = notes.comments
+        if let readme = notes.readme { conflictDocuments[dir + "README.md"] = .string(readme) }
       }
     }
     definitions("", session.definitionDrafts)
     for (prefix, external) in session.externals {
       conflictDocuments[prefix + "tsugumi.json"] = external.project
-      conflictDocuments[prefix + "layout.json"] = external.layout
+      conflictDocuments[prefix + "layout.bin"] = external.layout
       definitions(prefix, external.definitions)
     }
     conflictHashes = session.sources.mapValues { $0.hash }

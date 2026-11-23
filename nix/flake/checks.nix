@@ -19,7 +19,7 @@
         target = "tsugumi_document_edit_driver";
       };
       abi = pkgs.runCommand "tsugumi-kit-card-abi" { nativeBuildInputs = [ pkgs.python3 ]; } ''
-        python3 ${../check-card-abi.py} ${../../protocol} ${inputs.tsugumi-kit}/abi/9
+        python3 ${../check-card-abi.py} ${../../protocol} ${inputs.tsugumi-kit}/abi
         touch "$out"
       '';
     in

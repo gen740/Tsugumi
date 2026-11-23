@@ -96,7 +96,7 @@ def apply_request(project, request, inputs):
         target = project / "definitions" / card / "recipient" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        values[0]["data"] = f"recipient/{name}"
+        values[0]["data"] = {"string": f"recipient/{name}"}
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
     for card, values in request.get("params", {}).items():
         path, definition = definition_of(project, card)
@@ -108,7 +108,8 @@ def apply_request(project, request, inputs):
                 raise SystemExit(f"Card {card} has no parameter {name} (it has {', '.join(params) or 'none'})")
             if params[name].get("nix"):
                 raise SystemExit(f"{card}.{name} is fixed at export: it changes the Card's build")
-            params[name]["data"] = value
+            field = params[name]["type"].replace("[]", "s")
+            params[name]["data"] = {field: value}
         path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
 
 
@@ -152,7 +153,7 @@ def start_core(project, work):
     ready = control / "server.ready"
     for _ in range(600):
         if ready.exists():
-            return process, socket, json.loads(ready.read_text())["token"]
+            return process, socket
         if process.poll() is not None:
             break
         time.sleep(0.05)
@@ -270,11 +271,11 @@ def main():
         raise SystemExit("the Project has no trigger Card to start a run from")
     stage("core")
     began = time.monotonic()
-    core, socket, token = start_core(project, work)
+    core, socket = start_core(project, work)
     rpc = Rpc(f"unix:{socket}", os.environ["TSUGUMI_SCHEMA"])
     summary = {"start": start, "triggers": found, "params": request.get("params", {})}
     try:
-        rpc.call("SessionHelloRequest", {"token": token})
+        rpc.call("SessionHelloRequest", {})
         snapshot = rpc.call("ProjectInspectRequest", {})
         stage("run")
         accepted = rpc.call("RunRequest", {"base_rev": snapshot["rev"], "op_id": str(uuid.uuid4()), "origin": "pack",

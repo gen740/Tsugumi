@@ -19,6 +19,7 @@ import time
 
 import pytest
 from harness import remote_worker as R
+from Tsugumi.RemoteWorker.WorkerReady import WorkerReady
 from harness import peer_tls as TLS
 from harness.file_events import process_file, wait_for_exit
 from Tsugumi.Data.FailureKind import FailureKind
@@ -60,13 +61,13 @@ class Worker:
 
     def start(self):
         self.log = (self.root / "worker.log").open("ab")
-        ready = self.state / "worker.ready.json"
+        ready = self.state / "worker.ready"
         ready.unlink(missing_ok=True)
         self.process = subprocess.Popen(self.command, env=self.env, stdout=self.log, stderr=self.log)
         published = process_file(self.process, ready)
         if published is None:
             raise RuntimeError((self.root / "worker.log").read_text())
-        self.port = json.loads(published.read_text())["port"]
+        self.port = WorkerReady.GetRootAs(published.read_bytes()).Port()
         # Reconnect scenarios deliberately keep the same real endpoint.
         self.command[self.command.index("--port") + 1] = str(self.port)
 
@@ -90,12 +91,12 @@ class Worker:
 
         def read():
             try:
-                record = json.loads(path.read_text())
+                record = R.JournalStateT.InitFromPackedBuf(path.read_bytes())
             except FileNotFoundError:
                 return None
-            if record["state"] in states:
+            if record.state in states:
                 return record
-            assert record["state"] not in (R.JobState.Failed, R.JobState.Cancelled,
+            assert record.state not in (R.JobState.Failed, R.JobState.Cancelled,
                                            R.JobState.Succeeded, R.JobState.Interrupted,
                                            R.JobState.Released), record
             return None
@@ -240,14 +241,14 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
               output_budget=None):
     nix_directory = os.environ.get("TSUGUMI_NIX_DIR")
     if not nix_directory:
-        pytest.skip("needs the installed ABI 9 worker build sources")
+        pytest.skip("needs the installed worker build sources")
     expression = """
       { system, nixDirectory }:
       let
         pkgs = import (builtins.getFlake (toString ./.)).inputs.nixpkgs { inherit system; };
         worker = import (nixDirectory + "/worker/worker.nix") { inherit pkgs; };
         card = """ + card_package(body) + """;
-      in pkgs.writeText "remote-abi9-card-plan" (builtins.toJSON {
+      in pkgs.writeText "remote-card-plan" (builtins.toJSON {
         runs = [ "${card}" ];
         views = [];
         worker = "${worker}/bin/tsugumi-worker";
@@ -283,10 +284,10 @@ def card_spec(peer, job, body, *, deadline_ms=None, outputs=(), inputs=(), files
     )
     message = WorkerMessageT(callId=1, valueType=WorkerPayload.WorkerCall, value=call)
     call_digest = peer.upload(job, R.pack(message, b"TSW1"))
-    invocation = peer.upload(job, json.dumps({
-        "call_sha256": call_digest, "archive_sha256": archive_digest,
-        "files": list(files), "directories": [], "implementation_index": 1,
-    }).encode())
+    invocation = peer.upload(job, R.pack(R.InvocationT(
+        callSha256=call_digest, archiveSha256=archive_digest,
+        files=[R.InvocationFileT(**file) for file in files], implementationIndex=1,
+    )))
     return R.pack(R.JobSpecT(
         system=peer.caps.nativeSystem, derivation=derivation, output=output,
         invocationSha256=invocation, inputBlobs=[archive_digest, call_digest, invocation, *[file["sha256"] for file in files]],
@@ -368,12 +369,12 @@ read -r line < "$TEST_GATE"
             assert response.bodyType == R.ReplyBody.BlobChunk
             return bytes(response.body.bytes)
 
-        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(record["result"]))
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(record.result)))
         files = {R.string(file.path): R.string(file.sha256) for file in manifest.outputs}
-        assert json.loads(result_bytes(files["environment.json"]))["built"]
-        logs = map(json.loads, result_bytes(files["logs.jsonl"]).splitlines())
-        assert any(entry["stream"] == LogStream.standard_output and
-                   entry["text"].strip() == "deadline-card-started" for entry in logs)
+        assert R.ResultEnvironmentT.InitFromPackedBuf(result_bytes(files["environment"])).built
+        logs = R.read_logs(result_bytes(files["logs"]))
+        assert any(stream == LogStream.standard_output and text.strip() == "deadline-card-started"
+                   for stream, text in logs)
         result = WorkerMessageT.InitFromPackedBuf(result_bytes(R.string(manifest.invocationResultSha256)))
         assert result.valueType == WorkerPayload.WorkerFailure
         assert result.value.failure.kind == FailureKind.timeout, R.string(result.value.failure.diagnostic)
@@ -458,7 +459,7 @@ def test_real_remote_output_boundary(worker, case):
             assert response.bodyType == R.ReplyBody.BlobChunk
             return bytes(response.body.bytes)
 
-        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(record["result"]))
+        manifest = R.ResultManifestT.InitFromPackedBuf(result_bytes(R.string(record.result)))
         entries = {R.string(entry.path): R.string(entry.sha256) for entry in manifest.outputs}
         assert all("display" not in name for name in entries)
         result = WorkerMessageT.InitFromPackedBuf(
@@ -495,23 +496,25 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
     gate = tmp_path / "hold"
     os.mkfifo(gate)
     launcher = tools / "unshare"
-    entry = json.dumps({"stream": LogStream.standard_output, "text": "live entry\n"}).encode()
-    later = json.dumps({"stream": LogStream.standard_error, "text": "after restart\n"}).encode() + b"\n"
+    entry = R.log_entries((LogStream.standard_output, "live entry\n"))
+    later = R.log_entries((LogStream.standard_error, "after restart\n"))
+    entry_file = tmp_path / "entry"
+    entry_file.write_bytes(entry)
 
     def log_slice(job, offset, limit=1 << 20):
         reply = peer.call(R.RequestBody.StatusRequest, R.StatusRequestT(logOffset=offset, logLimit=limit), job=job)
         assert reply.bodyType == R.ReplyBody.JobStatus, vars(reply.body)
         return reply.body.logOffset, reply.body.logSize, bytes(reply.body.logBytes) if reply.body.logBytes is not None else b""
 
-    # Like the invocation, append a flushed JSONL entry to the job's log.
+    # Like the invocation, append a flushed log entry to the job's log.
     launcher.write_text('#!/bin/sh\nfor arg do test "$arg" != --check-namespace || exit 0; done\n'
                         'for arg do case "$arg" in */work) mkdir -p "$arg/result" && '
-                        'printf \'%s\\n\' "$TEST_ENTRY" >> "$arg/result/logs.jsonl";; esac; done\n'
+                        'cat "$TEST_ENTRY" >> "$arg/result/logs";; esac; done\n'
                         'echo partial-log\necho $$ > "$TEST_CHILD_PID"\nread -r line < "$TEST_GATE"\n')
     launcher.chmod(0o755)
     peer = Worker(tmp_path, binary, env={**os.environ,
         "PATH": str(tools) + os.pathsep + os.environ["PATH"],
-        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": entry.decode()})
+        "TEST_CHILD_PID": str(child_pid), "TEST_GATE": str(gate), "TEST_ENTRY": str(entry_file)})
     first, second = "7" * 64, "8" * 64
     directory = peer.state / "projects" / peer.scope / "jobs" / first
 
@@ -532,13 +535,13 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         pid = process_file(peer.process, child_pid, child)
         assert pid is not None and Path(f"/proc/{pid}").exists()
         # The running job's log arrives in slices bounded by the worker.
-        assert log_slice(first, 0, 5) == (0, len(entry) + 1, entry[:5])
-        assert log_slice(first, 5) == (5, len(entry) + 1, entry[5:] + b"\n")
+        assert log_slice(first, 0, 5) == (0, len(entry), entry[:5])
+        assert log_slice(first, 5) == (5, len(entry), entry[5:])
         peer.restart()
         # A cursor survives the listener restart and returns only new bytes.
-        cursor = len(entry) + 1
+        cursor = len(entry)
         assert log_slice(first, cursor) == (cursor, cursor, b"")
-        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+        with (directory / "work" / "result" / "logs").open("ab") as log:
             log.write(later)
         assert log_slice(first, cursor) == (cursor, cursor + len(later), later)
         acknowledged = peer.call(R.RequestBody.CancelRequest,
@@ -552,8 +555,8 @@ def test_cancel_after_listener_restart_stops_child_and_reuses_slot(tmp_path):
         assert blob.bodyType == R.ReplyBody.BlobChunk and bytes(blob.body.bytes) == b"orphan input"
         assert "partial-log" in (directory / "work" / "adapter.log").read_text()
         # Cancellation keeps the log until release, for the same core life only.
-        assert log_slice(first, 0) == (0, cursor + len(later), entry + b"\n" + later)
-        with (directory / "work" / "result" / "logs.jsonl").open("ab") as log:
+        assert log_slice(first, 0) == (0, cursor + len(later), entry + later)
+        with (directory / "work" / "result" / "logs").open("ab") as log:
             log.write(b"x" * (300 << 10))
         assert len(log_slice(first, 0)[2]) == 256 << 10
         # A new life cannot collect the old result, but can use the freed slot.
@@ -595,11 +598,11 @@ def test_bounded_frames_and_single_listener(worker):
     command[command.index("--port") + 1] = "0"
     command += ["--socket", str(worker.root / "duplicate.sock")]
     with subprocess.Popen(command, env=worker.env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL) as duplicate:
-        ready = worker.state / "worker.ready.json"
+        ready = worker.state / "worker.ready"
 
         def duplicate_ready():
-            published = json.loads(ready.read_text())
-            return published if published["pid"] == duplicate.pid else None
+            published = WorkerReady.GetRootAs(ready.read_bytes())
+            return published if published.Pid() == duplicate.pid else None
 
         started = process_file(duplicate, ready, duplicate_ready)
         if started:
@@ -683,9 +686,8 @@ def test_jobs_command_lists_and_removes_only_chosen_jobs(worker):
     queued, running = "d" * 64, "e" * 64
     for job, state in ((queued, R.JobState.Queued), (running, R.JobState.Running)):
         (project / "jobs" / job).mkdir(mode=0o700)
-        (project / "jobs" / job / "state").write_text(json.dumps({
-            "state": state, "fingerprint": "0" * 64, "result": "", "diagnostic": "",
-            "pid": 4242, "start": 1, "boot": "", "core_life_id": worker.core_life_id}))
+        (project / "jobs" / job / "state").write_bytes(R.pack(R.JournalStateT(
+            state=state, fingerprint="0" * 64, pid=4242, start=1, coreLifeId=worker.core_life_id)))
     lock = (project / "locks" / f"{running}.supervisor").open("w")
     fcntl.flock(lock, fcntl.LOCK_EX)
 

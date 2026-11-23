@@ -31,10 +31,10 @@ let
         package = {
           override =
             _:
-            throw "External package functions stay in their source evaluator. Set nixSources[].overrides.<package>.override in tsugumi.json (JSON arguments). packages already selects the target system.";
+            throw "External package functions stay in their source evaluator. Add an entry with package and override to nixSources[].overrides in tsugumi.json. packages already selects the target system.";
           overrideAttrs =
             _:
-            throw "Set nixSources[].overrides.<package>.overrideAttrs in tsugumi.json (JSON attributes; a pinned fetch is { fetchurl = { url; sha256; }; }). Functions cannot cross the source evaluator boundary.";
+            throw "Add an entry with package and overrideAttrs to nixSources[].overrides in tsugumi.json. A pinned fetch is { fetchurl = { url; sha256; }; }. Functions cannot cross the source evaluator boundary.";
           type = "derivation";
           inherit (p) name;
           outputName = p.output;

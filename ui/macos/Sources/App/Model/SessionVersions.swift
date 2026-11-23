@@ -24,7 +24,7 @@ extension ProjectSession {
     do {
       let raw = try await rpc.versionCanvas(commit: commit)
       let request = Tsugumi_Host_VersionCanvasRequestT()
-      request.layoutJson = raw.layoutJson
+      request.layout = raw.layout
       request.cards = raw.cards.compactMap { c in c.map { c in
         let value = Tsugumi_Host_VersionCanvasCardT(); value.id = c.id; value.kind = c.kind; value.fan = c.fan; return value
       } }

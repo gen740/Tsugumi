@@ -295,7 +295,7 @@ function EnvironmentProblemView({ session, onSwitchProject }: { session: Project
     const log = env.log ?? ''
     p = { icon: 'xmark.octagon.fill', color: 'red', title: L('実行環境を起動できませんでした'), message: env.message ?? '', recovery: env.recovery || undefined, log, canStop: true, cause: causeIn(log) }
     if (p.cause?.includes('cannot open the project')) {
-      p.recovery = L('プロジェクトのファイル（tsugumi.json・layout.json・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。')
+      p.recovery = L('プロジェクトのファイル（tsugumi.json・layout.bin・definitions の中）の書式を直してから、再試行してください。文書と実行履歴は消えません。')
     }
   } else if (env.state === 'stopped') {
     p = { icon: 'pause.circle.fill', color: 'secondary', title: L('実行環境は停止しています'), message: L('このプロジェクトの実行環境（tsugumid）は動いていません。起動すると編集と実行ができます。'), log: '', canStop: false }

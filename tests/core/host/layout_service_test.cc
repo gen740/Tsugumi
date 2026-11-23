@@ -1,3 +1,4 @@
+#include "host/layout_file.hh"
 #include "host/layout_service.hh"
 
 #include <gtest/gtest.h>
@@ -10,6 +11,7 @@
 
 #include "agent/catalog.hh"
 #include "host/layout_saving.hh"
+#include "host/save.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/json_object.hh"
 
@@ -197,7 +199,7 @@ TEST(HostLayout, ScenesPreserveLayoutConstraints) {
 
 TEST(HostLayout, OmittedVersionCanvasVectorsAreEmpty) {
   flatbuffers::FlatBufferBuilder b;
-  b.Finish(H::CreateVersionCanvasRequest(b, b.CreateString("{}")));
+  b.Finish(H::CreateVersionCanvasRequest(b, b.CreateVector(std::vector<uint8_t>{})));
   const auto result = VersionCanvas(
       *flatbuffers::GetRoot<H::VersionCanvasRequest>(b.GetBufferPointer()));
   EXPECT_TRUE(result.cards.empty());
@@ -208,7 +210,7 @@ TEST(HostLayout, OmittedVersionCanvasVectorsAreEmpty) {
 TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
   EXPECT_EQ(ValidateLayout(" { } "), " { } ");
   for (const auto* json :
-       {R"({"cards":{"a":{"x":1}}})", R"({"notes":[{"id":"n","x":1,"y":2}]})",
+       {R"({"cards":{"a":{"x":1}}})", R"({"notes":[{"id":"n","x":1}]})",
         R"({"displays":{"a":{"x":1,"y":2}}})", R"({"groups":[{"typo":true}]})",
         "[]"})
     EXPECT_THROW(ValidateLayout(json), LayoutFailure) << json;
@@ -216,7 +218,7 @@ TEST(HostLayout, SchemaRejectsIncompleteAndUnknownPresentationFields) {
 
 TEST(HostLayout, SavingClientRemovesOnlyDeletedCardReferences) {
   const auto text =
-      R"({"cards":{"a":{"x":1,"y":2},"a/child":{"x":3,"y":4},"ab":{"x":5,"y":6}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"groups":[{"cards":["a","ab"],"outputs":[{"card":"a","port":"x"},{"card":"ab","port":"y"}]}]})";
+      R"({"cards":{"a":{"x":1,"y":2},"a/child":{"x":3,"y":4},"ab":{"x":5,"y":6}},"boundaries":{"a":{"inputs":{"x":1,"y":2}}},"groups":[{"id":"g","cards":["a","ab"],"outputs":[{"card":"a","port":"x"},{"card":"ab","port":"y"}]}]})";
   const auto result = ::tsugumi::json::Object(ValidateLayout(text, {"a"}));
   EXPECT_EQ(::tsugumi::json::Object(result.at("cards")).size(), 1u);
   EXPECT_TRUE(::tsugumi::json::Object(result.at("cards")).contains("ab"));
@@ -235,7 +237,9 @@ auto canvas(const std::string& layout) -> H::VersionCanvasT {
                                       b.CreateString("merge"), 3);
   auto w =
       H::CreateVersionCanvasWire(b, b.CreateString("a"), b.CreateString("b"));
-  auto req = H::CreateVersionCanvasRequest(b, b.CreateString(layout),
+  const auto bytes = layout == "corrupt" ? layout : SplitLayoutView(layout).layout;
+  auto req = H::CreateVersionCanvasRequest(b, b.CreateVector(
+      reinterpret_cast<const uint8_t*>(bytes.data()), bytes.size()),
                                            b.CreateVector(std::vector{a, c}),
                                            b.CreateVector(std::vector{w}));
   b.Finish(req);
@@ -268,7 +272,7 @@ TEST(HostLayout, VersionCanvasCompletesOnlyMissingPositions) {
 }
 
 TEST(HostLayout, VersionCanvasFallsBackForMissingOrInvalidLayout) {
-  for (const auto* layout : {"{}", R"({"cards":[]})"}) {
+  for (const auto* layout : {"{}", "corrupt"}) {
     const auto result = canvas(layout);
     EXPECT_EQ(result.flow, "leftToRight");
     const auto& a = *result.cards.at(0);
@@ -304,7 +308,7 @@ TEST(HostLayoutSaving, RootCleanupIsPartOfTheSameSave) {
       args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", {}};
-        if (path == "layout.json")
+        if (path == "layout.bin")
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", {}};
         return std::nullopt;
       }));
@@ -313,9 +317,11 @@ TEST(HostLayoutSaving, RootCleanupIsPartOfTheSameSave) {
   ASSERT_EQ(changes.size(), 2u);
   const auto cleanup = ::tsugumi::json::Object(changes.at(1));
   EXPECT_EQ(::tsugumi::json::Text(cleanup, "value_type"), "SetLayout");
-  const auto layout = ::tsugumi::json::Object(::tsugumi::json::Text(
-      ::tsugumi::json::Object(cleanup.at("value")), "json"));
-  EXPECT_TRUE(::tsugumi::json::Object(layout.at("cards")).empty());
+  const auto value = ::tsugumi::json::Object(cleanup.at("value"));
+  const auto layout = ::tsugumi::json::Object(
+      LayoutView(DecodeSourceBytes(value.at("layout"))));
+  EXPECT_TRUE(::tsugumi::json::Object(
+      ::tsugumi::json::Get(layout, "cards", "{}")).empty());
 }
 
 TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
@@ -325,7 +331,7 @@ TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
       args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "externals/child/tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", "project"};
-        if (path == "externals/child/layout.json")
+        if (path == "externals/child/layout.bin")
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", "layout"};
         return std::nullopt;
       }));
@@ -334,14 +340,12 @@ TEST(HostLayoutSaving, ExternalCleanupRetainsSourceHashGuard) {
   const auto cleanup = ::tsugumi::json::Object(
       ::tsugumi::json::Get(::tsugumi::json::Object(changes.at(1)), "value"));
   EXPECT_EQ(::tsugumi::json::Text(cleanup, "path"),
-            "externals/child/layout.json");
+            "externals/child/layout.bin");
   EXPECT_EQ(::tsugumi::json::Text(cleanup, "base_hash"), "layout");
-  EXPECT_TRUE(
-      ::tsugumi::json::Object(
-          ::tsugumi::json::Get(
-              ::tsugumi::json::Object(::tsugumi::json::Text(cleanup, "bytes")),
-              "cards"))
-          .empty());
+  const auto layout = ::tsugumi::json::Object(
+      LayoutView(DecodeSourceBytes(cleanup.at("bytes"))));
+  EXPECT_TRUE(::tsugumi::json::Object(
+      ::tsugumi::json::Get(layout, "cards", "{}")).empty());
 }
 
 TEST(HostLayoutSaving, PatchesAreValidatedAndSourceLookalikesAreUnchanged) {
@@ -349,16 +353,16 @@ TEST(HostLayoutSaving, PatchesAreValidatedAndSourceLookalikesAreUnchanged) {
     return LayoutFile{"{}", "hash"};
   };
   const auto invalid =
-      R"({"changes":[{"value_type":"PatchSource","value":{"path":"externals/child/layout.json","base_hash":"hash","patches":[{"offset":"1","remove":"0","text":"\"cards\":1"}]}}]})";
+      R"({"changes":[{"value_type":"PatchSource","value":{"path":"externals/child/layout.bin","base_hash":"hash","patches":[{"offset":"1","remove":"0","text":"\"cards\":1"}]}}]})";
   EXPECT_THROW(PrepareLayoutSave(invalid, read), LayoutFailure);
   const auto source =
-      R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/src/layout.json","bytes":"not JSON"}}]})";
+      R"({"changes":[{"value_type":"PutSource","value":{"path":"definitions/a/src/layout.bin","bytes":"not JSON"}}]})";
   EXPECT_NO_THROW(PrepareLayoutSave(source, read));
   EXPECT_TRUE(
-      IsExternalDocument("externals/a/externals/b/layout.json", "layout.json"));
-  EXPECT_FALSE(IsExternalDocument("externals/a/definitions/b/src/layout.json",
-                                  "layout.json"));
-  EXPECT_FALSE(IsExternalDocument("layout.json", "layout.json"));
+      IsExternalDocument("externals/a/externals/b/layout.bin", "layout.bin"));
+  EXPECT_FALSE(IsExternalDocument("externals/a/definitions/b/src/layout.bin",
+                                  "layout.bin"));
+  EXPECT_FALSE(IsExternalDocument("layout.bin", "layout.bin"));
 }
 }  // namespace
 }  // namespace tsugumi::host
@@ -415,7 +419,7 @@ TEST(HostCardPlacement, APersonsDropIsSavedWithoutAddingDerivedPositions) {
                {"value_type", json::Quote("PutSource")},
                {"value",
                 json::Encode(json::Members{
-                    {"path", json::Quote("externals/inner/layout.json")},
+                    {"path", json::Quote("externals/inner/layout.bin")},
                     {"bytes",
                      json::Quote(
                          R"({"cards":{"dropped":{"x":17,"y":29}}})")}})}})})}});
@@ -427,9 +431,11 @@ TEST(HostCardPlacement, APersonsDropIsSavedWithoutAddingDerivedPositions) {
   ASSERT_EQ(changes.size(), 2u);
   const auto value = json::Object(json::Get(json::Object(changes[1]), "value"));
   const auto positions =
-      json::Object(json::Object(json::Text(value, "bytes")).at("cards"));
-  EXPECT_EQ(json::Object(positions.at("dropped")).at("x"), "17");
-  EXPECT_EQ(json::Object(positions.at("dropped")).at("y"), "29");
+      json::Object(json::Object(LayoutView(DecodeSourceBytes(value.at("bytes"))))
+                       .at("cards"));
+  const auto dropped = json::Object(positions.at("dropped"));
+  EXPECT_DOUBLE_EQ(std::stod(dropped.at("x")), 17);
+  EXPECT_DOUBLE_EQ(std::stod(dropped.at("y")), 29);
   EXPECT_FALSE(positions.contains("new"));
 }
 }  // namespace
@@ -509,12 +515,12 @@ namespace {
 TEST(HostLayoutSaving, RemovingAnExternalDoesNotRecreateItsLayout) {
   namespace json = ::tsugumi::json;
   const auto args =
-      R"({"changes":[{"value_type":"RemoveSource","value":{"path":"externals/child/tsugumi.json","base_hash":"project"}},{"value_type":"RemoveSource","value":{"path":"externals/child/layout.json","base_hash":"layout"}}]})";
+      R"({"changes":[{"value_type":"RemoveSource","value":{"path":"externals/child/tsugumi.json","base_hash":"project"}},{"value_type":"RemoveSource","value":{"path":"externals/child/layout.bin","base_hash":"layout"}}]})";
   const auto prepared = json::Object(PrepareLayoutSave(
       args, [](const std::string& path) -> std::optional<LayoutFile> {
         if (path == "externals/child/tsugumi.json")
           return LayoutFile{R"({"canvas":{"cards":[{"id":"a"}]}})", "project"};
-        if (path == "externals/child/layout.json")
+        if (path == "externals/child/layout.bin")
           return LayoutFile{R"({"cards":{"a":{"x":1,"y":2}}})", "layout"};
         return std::nullopt;
       }));

@@ -7,6 +7,8 @@
 #include "agent/tools.hh"
 #include "host/access.hh"
 #include "host/failure.hh"
+#include "tsugumi/document/document.hh"
+#include "tsugumi/document/text.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/text.hh"
@@ -16,8 +18,8 @@ namespace {
 using host::Failure;
 namespace H = Tsugumi::Host;
 const std::set<std::string> kProtected{
-    "tsugumi.json", "layout.json",  "_card.json", "_meta.json",
-    "_inputs.fbs",  "_outputs.fbs", "_params.fbs"};
+    "tsugumi.json", "layout.bin",   "_card.json",  "README.md",
+    "_comments.json", "_inputs.fbs", "_outputs.fbs", "_params.fbs"};
 auto CardRoot(const std::string& path) -> std::string {
   if (!fs::valid_relative_path(path)) return {};
   auto rest = path;
@@ -39,7 +41,8 @@ auto SourcePath(const std::string& path, bool shell = false) -> bool {
   for (const auto& part : std::filesystem::path(path))
     if (part == ".tsugumi" || part == ".git") return false;
   const auto file = path.substr(root.size() + 1);
-  if (file.empty() || file == "_card.json" || file == "_meta.json")
+  if (file.empty() || file == "_card.json" || file == "README.md" ||
+      file == "_comments.json")
     return false;
   return !shell || !kProtected.contains(file);
 }
@@ -207,7 +210,6 @@ auto Tools::FileOperation(const std::string& conversation,
         item->demo = json::Text(args, "demo");
       item->from = json::Text(args, "card");
       item->id = json::Text(args, "id");
-      item->name = json::Text(args, "name");
       item->x = std::stod(json::Get(args, "x", "0"));
       item->y = std::stod(json::Get(args, "y", "0"));
       if (attached_card ? item->folder.empty() : item->demo.empty())
@@ -273,7 +275,9 @@ auto Tools::FileOperation(const std::string& conversation,
     const auto definition = json::Object(raw);
     const auto dir = "definitions/" + json::Text(definition, "id") + '/';
     for (const auto& [field, file] :
-         {std::pair{"card_json", "_card.json"}, {"meta_json", "_meta.json"}}) {
+         {std::pair{"card_json", "_card.json"},
+          {"readme", "README.md"},
+          {"comments_json", "_comments.json"}}) {
       const auto bytes = json::Text(definition, field);
       if (!bytes.empty()) hashes[dir + file] = crypto::sha256_hex(bytes);
     }
@@ -378,8 +382,6 @@ auto Tools::FileOperation(const std::string& conversation,
     if (!boundary || !boundary->scoped()) {
       fs::write_atomic(work / "tsugumi.json",
                        json::Text(snapshot, "project_json"));
-      fs::write_atomic(work / "layout.json",
-                       json::Text(snapshot, "layout_json", "{}"));
     }
     std::set<std::string> writable, protected_paths;
     std::map<std::string, std::string> initial;
@@ -405,10 +407,28 @@ auto Tools::FileOperation(const std::string& conversation,
         check_cancelled();
         digest.update(chunk);
       });
-      if (digest.finish_hex() != hash)
+      const auto disk_hash = digest.finish_hex();
+      bool matches = disk_hash == hash;
+      if (!matches && Document::is_document_file(path) &&
+          (path.ends_with("/_card.json") || path.ends_with("/_comments.json")) &&
+          std::filesystem::file_size(work / path) <= kMaxDocumentJsonBytes) {
+        // A confirmed document is canonical JSON; its formatting on disk may
+        // still reflect a human edit already accepted by the core.
+        using namespace document_text;
+        const auto kind =
+            path.ends_with("/_card.json") ? Schema::Card : Schema::Comments;
+        try {
+          const auto data = fs::read_file_or_throw(work / path);
+          matches = crypto::sha256_hex(print(kind, parse(kind, path, data))) ==
+                    hash;
+        } catch (const DocumentError&) {
+          // An invalid file is an unconfirmed edit.
+        }
+      }
+      if (!matches)
         throw Failure("external_change",
                       "Reload external edits before running shell: " + path);
-      initial[path] = hash;
+      initial[path] = disk_hash;
       bool may_write = SourcePath(path, true);
       if (may_write) try {
           check(path, true);

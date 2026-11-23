@@ -1,53 +1,69 @@
 {
   "type": "code",
+  "params": [
+    {
+      "name": "red_min_ev",
+      "type": "double",
+      "data": {
+        "double": 600.0
+      }
+    },
+    {
+      "name": "green_min_ev",
+      "type": "double",
+      "data": {
+        "double": 1650.0
+      }
+    },
+    {
+      "name": "blue_min_ev",
+      "type": "double",
+      "data": {
+        "double": 2250.0
+      }
+    },
+    {
+      "name": "max_ev",
+      "type": "double",
+      "data": {
+        "double": 7500.0
+      }
+    },
+    {
+      "name": "ra",
+      "type": "double",
+      "data": {
+        "double": 350.8584
+      }
+    },
+    {
+      "name": "dec",
+      "type": "double",
+      "data": {
+        "double": 58.8113
+      }
+    },
+    {
+      "name": "bin_size",
+      "type": "double",
+      "data": {
+        "double": 2.0
+      }
+    },
+    {
+      "name": "pixels",
+      "type": "uint64",
+      "data": {
+        "uint64": 360
+      }
+    }
+  ],
   "inputs": [
     {
       "name": "input"
     },
     {
       "name": "ciao"
-    }
-  ],
-  "params": [
-    {
-      "name": "red_min_ev",
-      "type": "double",
-      "data": 600
-    },
-    {
-      "name": "green_min_ev",
-      "type": "double",
-      "data": 1650
-    },
-    {
-      "name": "blue_min_ev",
-      "type": "double",
-      "data": 2250
-    },
-    {
-      "name": "max_ev",
-      "type": "double",
-      "data": 7500
-    },
-    {
-      "name": "ra",
-      "type": "double",
-      "data": 350.8584
-    },
-    {
-      "name": "dec",
-      "type": "double",
-      "data": 58.8113
-    },
-    {
-      "name": "bin_size",
-      "type": "double",
-      "data": 2
-    },
-    {
-      "name": "pixels",
-      "type": "uint64",
-      "data": 360
     }
   ]
 }

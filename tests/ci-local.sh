@@ -45,7 +45,7 @@ linux_job() {
   bash tests/ci/run-suite.sh host "$system"
   step "Python tests"
   bash tests/ci/run-suite.sh kit "$system"
-  # TODO(ABI 9): the demo runs skip until the demos are ported (docs/Demos.md).
+  # TODO(Card ABI): the demo runs skip until the demos are ported (docs/Demos.md).
   demo_python=$(nix --extra-experimental-features 'nix-command flakes' build --cores 4 --max-jobs 1 .#ci-python --no-link --print-out-paths)
   bash tests/ci/run-suite.sh demos "$system" "$demo_python/bin/python3"
   bash tests/ci/run-suite.sh adapters "$system"

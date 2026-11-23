@@ -83,15 +83,15 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
             files[changed_file] = "second"
             first, second = second, first
     elif changed_input == "nix-param":
-        settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": "first"}]
+        settings["params"] = [{"name": "message", "type": "string", "nix": True, "data": {"string": "first"}}]
         files = {"default.nix": expression("params.message")}
         changed_file = "_card.json"
-        replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data="second")]})
+        replacement = json.dumps({**settings, "params": [dict(settings["params"][0], data={"string": "second"})]})
     elif changed_input == "port-schema":
         # A builder generates the Card's API from these exact schemas. Observe
         # them in the body as well so a stale directory cannot pass unnoticed.
         files = {"default.nix": expression(schema_says("_params.fbs", "second", "second", "first"))}
-        settings["params"] = [{"name": "first", "type": "string", "data": "value"}]
+        settings["params"] = [{"name": "first", "type": "string", "data": {"string": "value"}}]
         changed_file = "_card.json"
         replacement = json.dumps({**settings, "params": [dict(settings["params"][0], name="second")]})
     elif changed_input == "output-schema":
@@ -196,7 +196,7 @@ def test_connected_input_change_replaces_downstream_definition(core_factory, pro
 def test_run_and_explicit_views_are_in_the_plan_closure(core_factory, project, list_run):
     """Keep declaration order and build references, including a standalone HTML file."""
     client = core_factory().connect()
-    library = synthetic_run('"abi9"')
+    library = synthetic_run('"views"')
     # A passthru entry would fail if the evaluator tried to read or merge it.
     library = "(" + library + ').overrideAttrs (_: { passthru.views = throw "implicit views"; })'
     body = '[ { label = "first"; run = library; } library ]' if list_run else 'library'

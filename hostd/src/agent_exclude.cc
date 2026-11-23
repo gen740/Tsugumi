@@ -5,7 +5,10 @@
 #include "host/comments.hh"
 #include "host/document_edits.hh"
 #include "host/failure.hh"
+#include "host/layout_file.hh"
 #include "host/layout_saving.hh"
+#include "host/save.hh"
+#include "tsugumi/document/document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/text.hh"
@@ -139,12 +142,22 @@ auto AgentExclude::FileText(const std::string& path,
                             const std::string& raw) const -> std::string {
   if (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json"))
     return ProjectText(raw, path.substr(0, path.size() - 12));
-  if (path == "layout.json" || IsExternalDocument(path, "layout.json"))
-    return j::Text(
-        j::Object(Filter(j::Encode(j::Members{{"layout_json", j::Quote(raw)}}),
-                         path.substr(0, path.size() - 11))),
-        "layout_json");
+  if (path == "layout.bin" || IsExternalDocument(path, "layout.bin"))
+    return LayoutText(raw, path.substr(0, path.size() - 10));
   return raw;
+}
+
+auto AgentExclude::LayoutText(const std::string& view,
+                              const std::string& prefix) const -> std::string {
+  auto layout = j::Object(view);
+  for (const auto* field : {"cards", "boundaries"})
+    if (layout.contains(field)) {
+      auto entries = j::Object(layout.at(field));
+      std::erase_if(entries,
+                    [&](const auto& entry) { return !Card(entry.first, prefix); });
+      layout[field] = j::Encode(entries);
+    }
+  return j::Encode(layout);
 }
 
 auto AgentExclude::Filter(const std::string& raw, const std::string& prefix,
@@ -173,28 +186,38 @@ auto AgentExclude::Filter(const std::string& raw, const std::string& prefix,
   }
   if (!raw.starts_with('{')) return raw;
   auto object = j::Object(raw);
-  object.erase("document_json");
+  // A snapshot's or delta's layout is shown as its JSON view, with the text
+  // of the notes it carries.
+  if (object.contains("layout") && (object.contains("sources") ||
+                                    object.contains("sources_upsert"))) {
+    std::map<std::string, std::string> notes;
+    for (const auto* list : {"sources", "sources_upsert"})
+      for (const auto& entry : j::Array(j::Get(object, list, "[]"))) {
+        const auto source = j::Object(entry);
+        const auto path = j::Text(source, "path");
+        if (const auto id = NoteId("", path);
+            id && source.contains("document") && !Contains(path))
+          notes[*id] = DecodeSourceBytes(source.at("document"));
+      }
+    try {
+      object["layout"] = j::Quote(LayoutText(
+          LayoutView(DecodeSourceBytes(object.at("layout")), notes), prefix));
+    } catch (const std::exception&) {
+      object["layout"] = j::Quote("{}");
+    }
+  }
+  object.erase("document");
   if (object.contains("id") && object.contains("card_json")) {
     const auto dir = prefix + "definitions/" + j::Text(object, "id") + '/';
-    if (Contains(dir + "_meta.json")) object.erase("meta_json");
+    if (Contains(dir + "README.md")) object.erase("readme");
+    if (Contains(dir + "_comments.json")) object.erase("comments_json");
   }
   for (auto& [key, value] : object) {
     if (key == "project_json")
       value = j::Quote(ProjectText(j::String(value), prefix));
-    else if (key == "layout_json") {
-      auto layout = j::Object(j::String(value));
-      for (const auto* field : {"cards", "boundaries"})
-        if (layout.contains(field)) {
-          auto entries = j::Object(layout.at(field));
-          std::erase_if(entries, [&](const auto& entry) {
-            return !Card(entry.first, prefix);
-          });
-          layout[field] = j::Encode(entries);
-        }
-      value = j::Quote(j::Encode(layout));
-    } else if (key != "bytes" && key != "text" && key != "record_json" &&
-               key != "card_json" && key != "meta_json" &&
-               key != "stdout_bytes" && key != "stderr_bytes")
+    else if (key != "bytes" && key != "text" && key != "record_json" &&
+             key != "card_json" && key != "readme" && key != "comments_json" &&
+             key != "layout" && key != "stdout_bytes" && key != "stderr_bytes")
       value = Filter(value, prefix, recorded);
   }
   return j::Encode(object);
@@ -232,7 +255,8 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
   };
   const auto card_document = [](const std::string& path) {
     return path.ends_with("/_card.json") &&
-           comments::is_meta(path.substr(0, path.size() - 10) + "_meta.json");
+           comments::is_comments(path.substr(0, path.size() - 10) +
+                                 "_comments.json");
   };
   auto document = [&](const std::string& path, const std::string& bytes) {
     Check(path);
@@ -248,10 +272,10 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
     const bool project_document =
         path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json");
     const bool layout_document =
-        path == "layout.json" || IsExternalDocument(path, "layout.json");
+        path == "layout.bin" || IsExternalDocument(path, "layout.bin");
     if (!project_document && !layout_document) return;
     const auto prefix =
-        path.substr(0, path.size() - (project_document ? 12 : 11));
+        path.substr(0, path.size() - (project_document ? 12 : 10));
     const auto old = j::Object(before), after = j::Object(bytes);
     if (path == "tsugumi.json" &&
         !DocumentsEqual(j::Get(old, "agentExclude", "null"),
@@ -310,13 +334,15 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
     if (type == "SetProject")
       document("tsugumi.json", j::Text(value, "json"));
     else if (type == "SetLayout")
-      document("layout.json", j::Text(value, "json"));
+      document("layout.bin",
+               LayoutView(DecodeSourceBytes(j::Get(value, "layout", "\"\"")),
+                          {}));
     else if (type == "PutDefinition" || type == "RemoveDefinition") {
       const auto dir = "definitions/" + j::Text(value, "id");
       Check(dir);
       if (type == "RemoveDefinition" && hidden_definition(dir))
         throw Failure("not_found", "Card not found");
-      for (const auto* file : {"_card.json", "_meta.json"})
+      for (const auto* file : {"_card.json", "README.md", "_comments.json"})
         Check(dir + '/' + file);
       if (type == "PutDefinition")
         document(dir + "/_card.json", j::Text(value, "card_json", "{}"));
@@ -324,15 +350,16 @@ auto AgentExclude::CheckSave(const j::Members& plan, const SaveBase& base,
       const auto path = j::Text(value, "path");
       check_source(path);
       if (type == "RemoveSource" && card_document(path)) document(path, "{}");
+      if (type == "PutSource" && IsExternalDocument(path, "layout.bin"))
+        document(path,
+                 LayoutView(DecodeSourceBytes(j::Get(value, "bytes")), {}));
       if (type == "PutSource" &&
-          (path == "tsugumi.json" || path == "layout.json" ||
-           IsExternalDocument(path, "tsugumi.json") ||
-           IsExternalDocument(path, "layout.json") || card_document(path)))
+          (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json") ||
+           card_document(path)))
         document(path, DecodeSourceBytes(j::Get(value, "bytes")));
       if (type == "PatchSource" &&
-          (path == "tsugumi.json" || path == "layout.json" ||
-           IsExternalDocument(path, "tsugumi.json") ||
-           IsExternalDocument(path, "layout.json") || card_document(path))) {
+          (path == "tsugumi.json" || IsExternalDocument(path, "tsugumi.json") ||
+           card_document(path))) {
         if (!base.files.contains(path))
           throw Failure("not_found", "Path not found");
         try {

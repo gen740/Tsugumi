@@ -1,0 +1,2 @@
+Plan of the analysis / Cas A (Chandra)
+Make a three-colour image from public event data. The observation is pinned with Nix; changing the ObsID switches between a short calibration observation (25628) and deep observations (114 from 2000, 19606 from 2019)

@@ -1,5 +1,7 @@
 #include "host/layout_saving.hh"
 
+#include "host/layout_file.hh"
+
 #include <algorithm>
 #include <cmath>
 #include <map>
@@ -224,11 +226,11 @@ static auto TransformLayout(
         json::Object(json::Get(json::Object(project), "boundary", "{}"));
     const auto places = json::Object(json::Get(doc, "boundary", "{}"));
     auto bar = [&](const std::string& side, auto& destination) {
-      for (const auto& [name, raw] :
-           json::Object(json::Get(boundary, side, "{}"))) {
+      for (const auto& raw : json::Array(json::Get(boundary, side, "[]"))) {
         const auto end = json::Object(raw);
-        destination.ends.push_back(
-            {name, json::Text(end, "card"), json::Text(end, "port")});
+        destination.ends.push_back({json::Text(end, "name"),
+                                    json::Text(end, "card"),
+                                    json::Text(end, "port")});
       }
       if (places.contains(side)) {
         const auto at = json::Object(places.at(side));
@@ -335,47 +337,78 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
                        const SourcePatches& patches) -> std::string {
   auto args = json::Object(arguments);
   auto changes = json::Array(json::Get(args, "changes", "[]"));
+  // A layout in a change: layout.bin bytes, or its JSON view (a model writes
+  // the view; it is saved as layout.bin and the notes' Markdown files).
   struct Edit {
+    size_t index;
+    std::string view;
+    bool source;
+    bool written = false;  // given as a JSON view, with the notes' text
+    bool validated = false;
+  };
+  struct Project {
     size_t index;
     std::string text;
     bool source;
-    bool validated = false;
   };
-  std::map<std::string, Edit> projects, layouts;
+  std::map<std::string, Project> projects;
+  std::map<std::string, Edit> layouts;
   std::set<std::string> deleted_projects;
+  const auto current_view = [&](const std::string& prefix) {
+    const auto file = read(prefix + "layout.bin");
+    return file ? file->text : std::string("{}");
+  };
+  const auto view_of = [&](const std::string& prefix, const std::string& bytes,
+                           bool& written) {
+    written = bytes.starts_with('{');
+    if (written) return bytes;
+    return LayoutView(bytes, SplitLayoutView(current_view(prefix)).notes);
+  };
   for (size_t i = 0; i < changes.size(); ++i) {
     const auto change = json::Object(changes[i]);
     const auto type = json::Text(change, "value_type");
     const auto value = json::Object(json::Get(change, "value", "{}"));
     if (type == "SetProject")
       projects[""] = {i, json::Text(value, "json"), false};
-    if (type == "SetLayout")
-      layouts[""] = {i, json::Text(value, "json"), false};
+    if (type == "SetLayout") {
+      bool written = false;
+      auto view = view_of(
+          "", DecodeSourceBytes(json::Get(value, "layout", "\"\"")), written);
+      layouts[""] = {i, std::move(view), false, written};
+    }
     const auto path = json::Text(value, "path");
-    const bool layout = IsExternalDocument(path, "layout.json");
+    const bool layout = IsExternalDocument(path, "layout.bin");
     const bool project = IsExternalDocument(path, "tsugumi.json");
     if (!layout && !project) continue;
-    const auto prefix = path.substr(0, path.size() - (layout ? 11 : 12));
+    const auto prefix = path.substr(0, path.size() - (layout ? 10 : 12));
     if (type == "RemoveSource") {
       if (project) deleted_projects.insert(prefix);
       if (layout) layouts[prefix] = {i, "{}", true};
       continue;
     }
+    if (type == "PatchSource" && layout)
+      throw LayoutFailure("layout.bin is binary; save its JSON view instead");
     if (type != "PutSource" && type != "PatchSource") continue;
     std::string text;
     if (type == "PutSource")
       text = Bytes(json::Get(value, "bytes"));
     else {
       const auto file = read(path);
-      if (!file) throw LayoutFailure("missing layout source for patch");
+      if (!file) throw LayoutFailure("missing project source for patch");
       text = Patched(*file, value, patches);
     }
-    (layout ? layouts : projects)[prefix] = {i, std::move(text), true};
+    if (layout) {
+      bool written = false;
+      auto view = view_of(prefix, text, written);
+      layouts[prefix] = {i, std::move(view), true, written};
+    } else {
+      projects[prefix] = {i, std::move(text), true};
+    }
   }
   for (const auto& prefix : deleted_projects) layouts.erase(prefix);
   for (const auto& [prefix, project] : projects) {
     if (deleted_projects.contains(prefix)) continue;
-    const auto layout_path = prefix + "layout.json";
+    const auto layout_path = prefix + "layout.bin";
     const auto previous = read(prefix + "tsugumi.json");
     const auto before = previous
                             ? CardIds(previous->text, prefix + "tsugumi.json")
@@ -386,44 +419,71 @@ auto PrepareLayoutSave(const std::string& arguments, const LayoutRead& read,
       if (!after.contains(id)) removed.insert(id);
     if (removed.empty()) continue;
     const auto file = read(layout_path);
-    const auto old = layouts.contains(prefix) ? layouts.at(prefix).text
+    const auto old = layouts.contains(prefix) ? layouts.at(prefix).view
                      : file                   ? file->text
                                               : "{}";
     const auto cleaned = ValidateLayout(old, removed);
     if (layouts.contains(prefix)) {
-      layouts.at(prefix).text = cleaned;
+      layouts.at(prefix).view = cleaned;
       layouts.at(prefix).validated = true;
     } else if (cleaned != old) {
       const auto i = changes.size();
       const auto value =
           project.source
-              ? json::Members{{"path", json::Quote(prefix + "layout.json")},
-                              {"bytes", json::Quote(cleaned)},
+              ? json::Members{{"path", json::Quote(layout_path)},
                               {"base_hash", file && file->hash
                                                 ? json::Quote(*file->hash)
                                                 : "null"}}
-              : json::Members{{"json", json::Quote(cleaned)}};
+              : json::Members{};
       changes.push_back(json::Encode(json::Members{
           {"value_type",
            json::Quote(project.source ? "PutSource" : "SetLayout")},
           {"value", json::Encode(value)}}));
-      layouts[prefix] = {i, cleaned, project.source, true};
+      layouts[prefix] = {i, cleaned, project.source, false, true};
     }
   }
   for (const auto& [prefix, layout] : layouts) {
     auto change = json::Object(changes.at(layout.index));
     auto value = json::Object(json::Get(change, "value"));
     if (json::Text(change, "value_type") == "RemoveSource" &&
-        layout.text == "{}")
+        layout.view == "{}")
       continue;
-    value[layout.source ? "bytes" : "json"] = json::Quote(
-        layout.validated ? layout.text : ValidateLayout(layout.text));
+    const auto view =
+        layout.validated ? layout.view : ValidateLayout(layout.view);
+    const auto split = SplitLayoutView(view);
+    const auto bytes = json::Encode(json::Members{
+        {"base64", json::Quote(crypto::base64(split.layout))}});
     if (layout.source) {
+      value["bytes"] = bytes;
       change["value_type"] = json::Quote("PutSource");
       value.erase("patches");
+    } else {
+      value["layout"] = bytes;
     }
     change["value"] = json::Encode(value);
     changes[layout.index] = json::Encode(change);
+    if (!layout.written) continue;
+    // A written view also says what its notes read.
+    const auto before = SplitLayoutView(current_view(prefix)).notes;
+    for (const auto& [id, text] : split.notes) {
+      const auto was = before.find(id);
+      if (was != before.end() && was->second == text) continue;
+      json::Members put{{"path", json::Quote(NotePath(prefix, id))},
+                        {"bytes", json::Quote(text)}};
+      if (was != before.end())
+        put["base_hash"] = json::Quote(crypto::sha256_hex(was->second));
+      changes.push_back(json::Encode(json::Members{
+          {"value_type", json::Quote("PutSource")},
+          {"value", json::Encode(put)}}));
+    }
+    for (const auto& [id, text] : before)
+      if (!split.notes.contains(id))
+        changes.push_back(json::Encode(json::Members{
+            {"value_type", json::Quote("RemoveSource")},
+            {"value", json::Encode(json::Members{
+                          {"path", json::Quote(NotePath(prefix, id))},
+                          {"base_hash",
+                           json::Quote(crypto::sha256_hex(text))}})}}));
   }
   args["changes"] = json::Encode(changes);
   return json::Encode(args);

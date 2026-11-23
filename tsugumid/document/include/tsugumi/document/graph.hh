@@ -53,16 +53,23 @@ std::optional<ParamType> parse_param_type(const std::string& s);
 const char* param_type_name(ParamType t);
 std::string param_fbs_type(ParamType t);
 
+using ParamValue = Tsugumi::Document::ParamValueT;
+
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
-  std::optional<hosq::json::GenericDom<>>
-      data;  // effective value (validated against type)
+  std::optional<ParamValue> data;  // effective value (checked against type)
   // An Input Card's value sweep (exclusive with data): one execution batch
   // member per value, in order, and the Cartesian product across swept params.
-  std::optional<std::vector<hosq::json::GenericDom<>>> sweep;
+  std::optional<std::vector<ParamValue>> sweep;
   bool nix = false;
 };
+
+// A param value as JSON text (for the params handed to default.nix and the
+// Card's Params buffer).
+auto param_value_json(ParamType t, const ParamValue& v) -> std::string;
+// A value as a label: a string as it is, other values as their JSON text.
+auto param_value_label(ParamType t, const ParamValue& v) -> std::string;
 
 struct HostFolder {
   std::string path;  // on the Mac
@@ -85,9 +92,9 @@ struct Settings {
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
   bool record_logs = true;
-  uint64_t log_limit_bytes = schema::kDefaultLogLimitBytes;
-  uint64_t output_limit_bytes = schema::kDefaultOutputLimitBytes;
-  uint64_t output_limit_entries = schema::kDefaultOutputLimitEntries;
+  uint64_t log_limit_bytes = kDefaultLogLimitBytes;
+  uint64_t output_limit_bytes = kDefaultOutputLimitBytes;
+  uint64_t output_limit_entries = kDefaultOutputLimitEntries;
   bool record_io = false;
   bool retain_artifact = false;
   std::optional<std::string> artifact_output;
@@ -142,7 +149,7 @@ struct Node {
   std::vector<CardNixReference> nix_references;
   std::map<std::string, size_t>
       nix_inputs;  // destination port -> guaranteed Code producer
-  std::optional<schema::Boundary>
+  std::optional<Tsugumi::Document::BoundaryT>
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)
   Settings settings;
@@ -196,10 +203,10 @@ using SourceReader =
 std::shared_ptr<const Resolution> resolve(const Document& doc,
                                           const SourceReader& read);
 
-// Checks that a captured JSON value has the param type (no implicit
-// conversion, integers in range); returns error text.
-std::optional<std::string> check_param_value(ParamType t,
-                                             const hosq::json::GenericDom<>& v);
+// Checks that a value sets exactly the field of the param type (and that a
+// double is finite); returns error text.
+std::optional<std::string> check_param_value(
+    ParamType t, const Tsugumi::Document::ParamValue& v);
 // Decodes an array-of-strings param.
 
 }  // namespace tsugumi

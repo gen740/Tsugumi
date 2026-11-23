@@ -139,7 +139,7 @@ class Service : public RequestSink {
       -> std::optional<Diag>;
   // A run finished: its record goes to the project's copy soon.
   // A run ended: its result goes to the note of the version it started from.
-  void note_run_end(const RunStatusData& s, const std::string& record_json);
+  void note_run_end(const RunStatusData& s, const std::string& facts);
   // The views a Card declares (name -> blob), set with the full list each
   // time CardViewsUpdated is sent; an empty list clears them. CardViewRead
   // serves only these files.

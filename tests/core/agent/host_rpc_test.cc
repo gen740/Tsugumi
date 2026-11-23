@@ -2,7 +2,7 @@
 // lifetimes.
 #include <unistd.h>
 
-#include "fixture.hh"
+#include "project_fixture.hh"
 #include "tsugumi/util/json_object.hh"
 
 namespace tsugumi::test {
@@ -108,7 +108,7 @@ TEST_F(HostProjectsFixture, CreatesPinnedDocumentsInNewAndExactlyEmptyFolders) {
             H::ProjectTrustDecision::Trusted);
   EXPECT_EQ(JsonString(Read(folder / "tsugumi.json"), "/pkgsPath"),
             JsonString(defaults.View(), "/nixpkgsPin"));
-  EXPECT_EQ(JsonString(Read(folder / "layout.json"), "/flow"), "leftToRight");
+  EXPECT_EQ(JsonString(FixtureLayoutText(Read(folder / "layout.bin")), "/flow"), "leftToRight");
   std::filesystem::create_directory(directory.path / "empty");
   EXPECT_TRUE(Create("empty").Code().empty());
   EXPECT_EQ(Create("new").Code(), "folder_not_empty");

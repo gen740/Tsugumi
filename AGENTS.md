@@ -13,7 +13,7 @@ The full text is in [docs/Philosophy.md](docs/Philosophy.md). In short:
 
 | Where | What |
 | --- | --- |
-| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums. The Card ABI is core-owned here: [`card.fbs`](protocol/card.fbs) and [`card_abi.h`](protocol/include/tsugumi/card_abi.h) ([Card ABI 9](docs/CardABI.md)) |
+| [protocol/](protocol/) | FlatBuffers contracts: project (`tsugumi.fbs`), Agent (`agent.fbs`), host operations (`host.fbs`, shared types in `service_common.fbs`), private VM helper (`vm_host.fbs`), workers (`worker.fbs`, `remote_worker.fbs`), data and enums. The Card ABI is core-owned here: [`card.fbs`](protocol/card.fbs) and [`card_abi.h`](protocol/include/tsugumi/card_abi.h) ([Card ABI](docs/CardABI.md)) |
 | [util/](util/), [rpc/](rpc/) | Generic filesystem/process/JSON mechanisms and protocol-free transport/TLS |
 | [tsugumid/](tsugumid/) | Project document contracts, runtime, scheduling, history and versions; narrow shared runtime accounting |
 | [hostd/](hostd/) | Human/Agent policy, settings, credentials, document operations and environment adapters |
@@ -64,6 +64,6 @@ Use `--no-nix` for only the static tests (seconds). See [tests/README.md](tests/
 
 ### Compatibility
 
-- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.json` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
+- **Do not worry about compatibility until v1.0.0.** Project documents (`tsugumi.json`, `layout.bin` and so on), settings, the RPC protocol, storage formats and the contents of the VM and support folders may change without migration code or compatibility layers.
 - Do not add code that reads old formats, migrations or deprecated aliases. When something changes, delete the old one.
 - The version number is in `VERSION`. This policy holds for the versions before v1.0.0 (0.x).

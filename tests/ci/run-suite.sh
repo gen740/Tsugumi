@@ -113,7 +113,7 @@ case "$suite" in
     run nix build --no-link ".#checks.$system.pinned-kit"
     ;;
   demos)
-    # TODO(ABI 9): every demo module skips until the demos are ported
+    # TODO(Card ABI): every demo module skips until the demos are ported
     # (docs/Demos.md), and pytest reports that as 5 (no tests ran).
     status=0
     run "${3:?supply the demo Python executable from .#ci-python}" -m pytest -q -m 'not static' -n "${TSUGUMI_PYTEST_WORKERS:-2}" --dist loadfile \

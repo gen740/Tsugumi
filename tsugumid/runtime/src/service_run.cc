@@ -637,13 +637,10 @@ auto Service::run_environment_uses(RequestIn& req) -> void {
       throw Failed(FailureKind::not_found, "unknown run environment");
     auto q = db.prepare(
         "SELECT card, invocation FROM ("
-        "SELECT card, invocation, detail FROM invocations WHERE run_id=?1 "
-        "UNION ALL SELECT card, invocation, detail FROM statuses AS s WHERE "
-        "run_id=?1 "
-        "AND NOT EXISTS (SELECT 1 FROM invocations AS i WHERE "
-        "i.run_id=s.run_id "
-        "AND i.card=s.card AND i.invocation=s.invocation)) "
-        "WHERE json_extract(detail, '$.environment_id')=?2 ORDER BY card, "
+        "SELECT card, invocation FROM invocations WHERE run_id=?1 "
+        "AND environment_id=?2 UNION ALL SELECT card, invocation "
+        "FROM active_environments WHERE run_id=?1 AND environment_id=?2) "
+        "ORDER BY card, "
         "invocation LIMIT ?3 OFFSET ?4");
     q.bind(1, run)
         .bind(2, id)
@@ -853,16 +850,21 @@ void Service::run_record(RequestIn& req) {
             b, b.CreateString(s.port), wire::path(b, s.card), s.invocation));
     auto srcv = b.CreateVector(srcs);
     auto sum = wire::invocation(b, summary);
-    auto params = summary.params_json.empty()
-                      ? flatbuffers::Offset<flatbuffers::String>()
-                      : b.CreateString(summary.params_json);
+    flatbuffers::Offset<D::InvocationParams> params;
+    if (summary.params) {
+      std::vector<flatbuffers::Offset<D::InvocationParam>> entries;
+      for (const auto& [name, value] : *summary.params)
+        entries.push_back(D::CreateInvocationParam(b, b.CreateString(name),
+                                                   b.CreateString(value)));
+      params = D::CreateInvocationParams(b, b.CreateVector(entries));
+    }
     R::InvocationRecordBuilder rb(b);
     rb.add_summary(sum);
     rb.add_inputs(ins);
     rb.add_outputs(outs);
     rb.add_input_sources(srcv);
     rb.add_record_io(o.record ? o.record->record_io : false);
-    if (!params.IsNull()) rb.add_params_json(params);
+    if (!params.IsNull()) rb.add_params(params);
     rec = rb.Finish();
   }
   auto run = wire::run_summary(b, o.run);

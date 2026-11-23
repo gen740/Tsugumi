@@ -67,49 +67,32 @@ auto staged_input_path(size_t index, const stdfs::path& name) -> stdfs::path {
 
 auto import_logs(const stdfs::path& path, const RemoteLogPrefix& recorded,
                  const WorkerProc::LogSink& sink, RemoteInvocationResult& result) -> void {
-  std::ifstream stream(path, std::ios::binary);
+  const auto bytes = fs::read_file(path).value_or("");
   // The complete result is authoritative: the entries recorded while the job
   // ran must be exactly its prefix, so none is recorded twice or lost.
-  crypto::Sha256 prefix;
-  std::string buffer(64 << 10, '\0');
-  for (uint64_t left = recorded.bytes; left > 0;) {
-    const auto size =
-        static_cast<std::streamsize>(std::min<uint64_t>(left, buffer.size()));
-    stream.read(buffer.data(), size);
-    if (stream.gcount() != size)
-      throw std::runtime_error("remote log is shorter than its recorded part");
-    prefix.update(buffer.data(), static_cast<size_t>(size));
-    left -= static_cast<uint64_t>(size);
-  }
-  if (recorded.bytes && prefix.finish_hex() != recorded.sha256)
+  if (bytes.size() < recorded.bytes)
+    throw std::runtime_error("remote log is shorter than its recorded part");
+  if (recorded.bytes &&
+      crypto::sha256_hex(std::string_view(bytes).substr(0, recorded.bytes)) !=
+          recorded.sha256)
     throw std::runtime_error("remote log differs from its recorded part");
   workerd::InvocationLog auxiliary_budget(kInvocationLogLimitBytes);
-  std::string line;
-  while (std::getline(stream, line)) {
-    auto [kind, text] = decode_remote_log_entry(line);
-    if (kind == LogStream::standard_output || kind == LogStream::standard_error) {
-      if (sink) sink(kind, text);
-    } else if (auxiliary_budget.append(kind, text)) {
-      result.auxiliary_logs.emplace_back(kind, std::move(text));
-    }
-  }
+  const auto rest = std::string_view(bytes).substr(recorded.bytes);
+  const auto used = remote::decode_log_entries(
+      rest, [&](LogStream kind, std::string text, std::string_view) {
+        if (kind == LogStream::standard_output ||
+            kind == LogStream::standard_error) {
+          if (sink) sink(kind, text);
+        } else if (auxiliary_budget.append(kind, text)) {
+          result.auxiliary_logs.emplace_back(kind, std::move(text));
+        }
+      });
+  if (used != rest.size())
+    throw std::runtime_error("remote log ends inside an entry");
   result.auxiliary_logs_truncated = auxiliary_budget.truncated();
 }
 
 }  // namespace
-
-auto decode_remote_log_entry(std::string_view line)
-    -> std::pair<LogStream, std::string> {
-  remote::LogJson entry;
-  // Decode the complete entry directly. A JSON DOM would own another copy
-  // of the line and validate it before decoding the same bytes again.
-  if (hosq::decode_document_into<hosq::json::FastReader<>>(
-          entry, line, {.error_path = false}) ||
-      *entry.stream <= static_cast<uint64_t>(LogStream::unspecified) ||
-      *entry.stream > static_cast<uint64_t>(LogStream::MAX))
-    throw std::runtime_error("invalid remote log entry");
-  return {static_cast<LogStream>(*entry.stream), std::move(*entry.text)};
-}
 
 auto stage_remote_archive(const RemoteJobClient& client,
                           const std::string& service,
@@ -140,10 +123,10 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                              const std::vector<stdfs::path>& file_roots,
                              const std::string& archive_digest,
                              const ExecutionRequest& request) -> std::string {
-  remote::InvocationJson invocation;
-  *invocation.implementation_index = request.build.implementation_index;
-  auto& files = *invocation.files;
-  auto& dirs = *invocation.directories;
+  remote::RW::InvocationT invocation;
+  invocation.implementation_index = request.build.implementation_index;
+  auto& files = invocation.files;
+  auto& dirs = invocation.directories;
   std::set<std::string> blobs;
   uint64_t total = 0;
   auto stage_file = [&](const stdfs::path& root, const stdfs::path& source,
@@ -185,10 +168,10 @@ auto stage_remote_invocation(const RemoteJobClient& client,
                                            done, bytes);
                       });
     }
-    remote::FileJson file;
-    *file.path = path.generic_string();
-    *file.sha256 = digest;
-    *file.size = size;
+    auto file = std::make_unique<remote::RW::InvocationFileT>();
+    file->path = path.generic_string();
+    file->sha256 = digest;
+    file->size = size;
     files.push_back(std::move(file));
   };
   std::vector<Value> inputs = request.inputs;
@@ -226,14 +209,14 @@ auto stage_remote_invocation(const RemoteJobClient& client,
           ? std::optional<uint64_t>(*request.node.settings.timeout_seconds *
                                     1000)
           : std::nullopt);
-  *invocation.call_sha256 =
+  invocation.call_sha256 =
       upload(client, service, instance, job_id, call, request.stop);
-  blobs.insert(*invocation.call_sha256);
-  *invocation.archive_sha256 = archive_digest;
+  blobs.insert(invocation.call_sha256);
+  invocation.archive_sha256 = archive_digest;
   blobs.insert(archive_digest);
-  const auto invocation_digest =
-      upload(client, service, instance, job_id, schema::encode(invocation),
-             request.stop);
+  const auto invocation_digest = upload(
+      client, service, instance, job_id,
+      remote::encode<remote::RW::Invocation>(invocation), request.stop);
   blobs.insert(invocation_digest);
   R::JobSpecT job;
   job.input_blobs.assign(blobs.begin(), blobs.end());
@@ -328,7 +311,7 @@ auto import_remote_result(
     const auto size = file->size();
     const auto rel = remote::relative_path(name);
     const bool output_file = name.starts_with("files/out/");
-    if (!output_file && name != "environment.json" && name != "logs.jsonl")
+    if (!output_file && name != "environment" && name != "logs")
       throw std::runtime_error("unexpected remote result member");
     if (output_file) {
       count_entry();
@@ -340,7 +323,7 @@ auto import_remote_result(
     if (!crypto::is_sha256_hex(digest) || !written.insert(rel).second)
       throw std::runtime_error("invalid remote result member");
     const auto max_size = output_file            ? kMaxBlobBytes
-                          : name == "logs.jsonl" ? kRemoteLogTransportBytes
+                          : name == "logs" ? kRemoteLogTransportBytes
                                                  : kMaxWorkerBytes;
     if (size > max_size)
       throw std::runtime_error("remote result member exceeds its size limit");
@@ -355,12 +338,12 @@ auto import_remote_result(
     destination.close();
     if (!destination) throw std::runtime_error("cannot close remote result");
   }
-  remote::EnvironmentJson environment;
-  const auto info = fs::read_file(temp / "environment.json");
-  if (!info || schema::decode(*info, environment))
-    throw std::runtime_error("invalid remote build environment");
-  result.built = *environment.built;
-  result.environment.paths = *environment.paths;
+  const auto info = fs::read_file(temp / "environment");
+  const auto environment =
+      info ? remote::decode<remote::RW::ResultEnvironment>(*info) : std::nullopt;
+  if (!environment) throw std::runtime_error("invalid remote build environment");
+  result.built = environment->built;
+  result.environment.paths = environment->paths;
   if (const auto* failure = message->value_as_WorkerFailure()) {
     result.failure = wire::failure(failure->failure());
   } else if (const auto* worker = message->value_as_WorkerResult()) {
@@ -415,7 +398,7 @@ auto import_remote_result(
       value.path = (directory / rel).string();
     }
     std::set<stdfs::path> directories;
-    for (const auto& dir : *environment.directories) {
+    for (const auto& dir : environment->directories) {
       const auto rel = remote::relative_path(dir);
       if (*rel.begin() != "out" || !directories.insert(rel).second)
         throw std::runtime_error("invalid remote result directory");
@@ -443,7 +426,7 @@ auto import_remote_result(
   } else {
     throw std::runtime_error("remote worker did not send a result or failure");
   }
-  import_logs(temp / "logs.jsonl", recorded, log, result);
+  import_logs(temp / "logs", recorded, log, result);
   return result;
 }
 
