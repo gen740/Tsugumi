@@ -156,7 +156,7 @@ struct Export {
   }
 
   /// What the launcher shows and accepts: the trigger, and each Card's
-  /// parameters (those that change the build are fixed at export).
+  /// parameters. Prepared Code Cards retain the values used for their build.
   private func writeManifest(to url: URL, name: String, export: [String: Any]) throws {
     let document = try JSONSerialization.jsonObject(with: Data(contentsOf: project.appendingPathComponent("tsugumi.json"))) as? [String: Any] ?? [:]
     let canvas = (document["canvas"] as? [String: Any])?["cards"] as? [[String: Any]] ?? []
@@ -174,7 +174,7 @@ struct Export {
         if let raw = p["effective_json"] as? String {
           entry["default"] = try? JSONSerialization.jsonObject(with: Data(raw.utf8), options: .fragmentsAllowed)
         }
-        if p["build"] as? Bool == true || !["code", "input"].contains(type) { entry["fixed"] = true }
+        if type != "input" { entry["fixed"] = true }
         return entry
       }
       var entry: [String: Any] = ["id": id, "type": type, "params": params]

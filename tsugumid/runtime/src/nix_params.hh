@@ -12,4 +12,7 @@ auto read_params_nix(nix::EvalState& state, std::string_view text,
                      const std::string& origin) -> std::string;
 auto evaluate_literal_params(const std::string& def_dir, std::string_view text)
     -> std::string;
+auto rewrite_param_literal(const std::string& path, std::string_view text,
+                           std::string_view name, std::string_view literal)
+    -> std::string;
 }  // namespace tsugumi

@@ -407,7 +407,7 @@ auto supported_source_type(std::string_view type) -> bool {
 struct SourceFetcher {
   nix::fetchers::Settings settings;
   nix::ref<nix::Store> store = nix::openStore();
-  std::map<LockedSource, nix::StorePath> fetched;
+  std::map<nix::Hash, nix::StorePath> fetched;
 
   SourceFetcher() {
     nix::experimentalFeatureSettings.set("extra-experimental-features",
@@ -415,7 +415,7 @@ struct SourceFetcher {
     nix::loadConfFile(settings);
   }
 
-  auto lock(const std::string& url) -> LockedSource {
+  auto parse(const std::string& url) -> nix::fetchers::Input {
     const auto scheme = url.substr(0, url.find(':'));
     if (!supported_source_type(scheme) || !url.starts_with(scheme + ":"))
       throw std::runtime_error(
@@ -427,39 +427,54 @@ struct SourceFetcher {
         throw std::runtime_error("nixPath URL has an unsupported attribute: " +
                                  key);
     }
-    const auto [path, locked] = input.fetchToStore(settings, *store);
-    const auto attrs = locked.toAttrs();
-    const auto rev = locked.getRev();
+    return input;
+  }
+
+  auto lock(const std::string& url) -> std::string {
+    const auto [_, locked] = parse(url).fetchToStore(settings, *store);
     const auto hash = locked.getNarHash();
-    const auto modified = locked.getLastModified();
-    if (!rev || !hash || !modified)
-      throw std::runtime_error(
-          "nixPath fetch did not return rev, narHash and lastModified");
-    return {locked.getType(),
-            nix::fetchers::getStrAttr(attrs, "owner"),
-            nix::fetchers::getStrAttr(attrs, "repo"),
-            rev->to_string(nix::HashFormat::Base16, false),
-            hash->to_string(nix::HashFormat::SRI, true),
-            *modified};
+    if (!locked.getRev() || !hash)
+      throw std::runtime_error("nixPath fetch did not return rev and narHash");
+    nix::StringMap query{
+        {"narHash", hash->to_string(nix::HashFormat::SRI, true)}};
+    if (const auto modified = locked.getLastModified())
+      query.emplace("lastModified", std::to_string(*modified));
+    return locked.toURLString(query);
+  }
+
+  auto materialize(const std::string& name, const NixPathPin& pin)
+      -> std::string {
+    const auto input = parse(pin.url);
+    const auto intent = parse(pin.intent);
+    const auto attrs = input.toAttrs();
+    const auto desired = intent.toAttrs();
+    if (input.getType() != intent.getType() ||
+        nix::fetchers::getStrAttr(attrs, "owner") !=
+            nix::fetchers::getStrAttr(desired, "owner") ||
+        nix::fetchers::getStrAttr(attrs, "repo") !=
+            nix::fetchers::getStrAttr(desired, "repo"))
+      throw std::runtime_error("nixPath \"" + name +
+                               "\" changed source (lock has " + pin.url +
+                               "); update the lock");
+    return materialize(input);
   }
 
   auto materialize(const LockedSource& source) -> std::string {
-    if (!supported_source_type(source.type) || source.owner.empty() ||
-        source.repo.empty() || source.rev.empty() || source.nar_hash.empty())
-      throw std::runtime_error("invalid locked nixPath source");
-    if (auto found = fetched.find(source); found != fetched.end())
-      return store->printStorePath(found->second);
     nix::fetchers::Attrs attrs{{"type", source.type},
                                {"owner", source.owner},
                                {"repo", source.repo},
                                {"rev", source.rev},
                                {"narHash", source.nar_hash}};
-    if (source.last_modified > 0)
-      attrs.emplace("lastModified",
-                    static_cast<uint64_t>(source.last_modified));
-    const auto input =
-        nix::fetchers::Input::fromAttrs(settings, std::move(attrs));
+    return materialize(
+        nix::fetchers::Input::fromAttrs(settings, std::move(attrs)));
+  }
+
+  auto materialize(const nix::fetchers::Input& input) -> std::string {
     const auto expected = input.getNarHash();
+    if (!input.getRev() || !expected)
+      throw std::runtime_error("nixPath source requires rev and narHash");
+    if (auto found = fetched.find(*expected); found != fetched.end())
+      return store->printStorePath(found->second);
     // A locked fetchTree source is a fixed-output NAR named "source".
     // Reuse a valid object already in the store, including a flake input
     // fetched by the test harness, without a network round trip.
@@ -471,7 +486,7 @@ struct SourceFetcher {
     store->addTempRoot(path);
     if (store->queryPathInfo(path)->narHash != *expected)
       throw std::runtime_error("nixPath source narHash mismatch");
-    fetched.emplace(source, path);
+    fetched.emplace(*expected, path);
     return store->printStorePath(path);
   }
 };
@@ -597,7 +612,6 @@ struct EvaluationState {
   std::shared_ptr<EvaluationReads> reads;
   std::string expression_text;
   const NixDefinitionScope* expression_scope = nullptr;
-  std::map<std::string, std::set<std::string>> observed_names;
   bool capture_derivations = false;
   std::set<std::string> instantiated_derivations;
 
@@ -607,14 +621,6 @@ struct EvaluationState {
         store(std::move(store)),
         next_epoch(epoch),
         evaluation_times(times) {}
-
-  auto names() const -> ResolvedNames {
-    ResolvedNames result;
-    for (const auto& [card, names] : observed_names)
-      result.emplace(card,
-                     std::vector<std::string>(names.begin(), names.end()));
-    return result;
-  }
 
   auto origin(nix::EvalState& st, nix::PosIdx pos) const
       -> const NixDefinitionScope* {
@@ -677,7 +683,6 @@ struct EvaluationState {
                                  lookup)
           .atPos(pos)
           .debugThrow();
-    observed_names[owner->card].insert(name);
     out.mkPath(path, st.mem);
   }
 
@@ -823,41 +828,17 @@ struct EvaluationState {
   }
 
   auto begin() -> void {
-    // A forced import can hide the lookups we need to attribute to this
-    // particular evaluation. Start a new state for a full request, including
-    // a fresh position table for all builtin and imported expressions.
     reset();
     open();
-    observed_names.clear();
   }
 
   auto arguments(const NixCall& call, nix::Value& out) -> void {
-    nix::Value entry, partial;
+    nix::Value entry;
     auto& args = *state->allocValue();
-    auto& note = *state->allocValue();
     const auto root = state->rootPath(nix::CanonPath("/"));
     state->eval(state->parseExprFromString(entry_text, root), entry);
     state->eval(state->parseExprFromString(call.args, root), args);
-    // noteCard is visible only to the trusted entry expression.
-    nix::PrimOp observe{
-        .name = "noteCard",
-        .args = {"card"},
-        .arity = 1,
-        .doc = std::nullopt,
-        .addTrace = false,
-        .impl =
-            [this](nix::EvalState& st, nix::PosIdx pos, nix::Value** args,
-                   nix::Value& value) {
-              observed_names.try_emplace(std::string(st.forceStringNoCtx(
-                  *args[0], pos, "while recording an evaluated Card")));
-              value.mkNull();
-            },
-        .experimentalFeature = std::nullopt,
-        .internal = true};
-    // The partial application can survive this stack frame in lazy values.
-    install(note, std::move(observe));
-    state->callFunction(entry, note, partial, nix::noPos);
-    state->callFunction(partial, args, out, nix::noPos);
+    state->callFunction(entry, args, out, nix::noPos);
   }
 
   auto derivation(nix::EvalState& st, nix::Value& value,
@@ -956,7 +937,6 @@ struct EvaluationState {
             .platform != c.system)
       throw std::runtime_error("Card derivation does not target system " +
                                c.system);
-    r.resolved_names = names();
     if (reads->reusable) {
       for (const auto& path : reads->store_roots) {
         const auto source = store->parseStorePath(path);
@@ -976,10 +956,7 @@ struct EvaluationState {
     if (def == definitions.end())
       throw std::runtime_error("missing Card scope");
     expression_scope = &*def;
-    expression_text =
-        "args: let inherit (args) params inputs; card = import ./. "
-        "{ inherit params inputs; }; in (\n" +
-        text + "\n)";
+    expression_text = "{ params, inputs }: (\n" + text + "\n)";
     capture_derivations = build;
     Finally clear_expression([&] {
       expression_scope = nullptr;
@@ -987,7 +964,6 @@ struct EvaluationState {
       capture_derivations = false;
       instantiated_derivations.clear();
     });
-    observed_names.try_emplace(call.card);
     nix::Value function, args, value;
     const auto dir =
         state->rootPath(nix::CanonPath(call.definition_dir.string()));
@@ -1170,13 +1146,11 @@ auto pack_source(const LockedSource& source) -> E::LockedSourceT {
   result.repo = source.repo;
   result.rev = source.rev;
   result.nar_hash = source.nar_hash;
-  result.last_modified = source.last_modified;
   return result;
 }
 
 auto unpack_source(const E::LockedSourceT& source) -> LockedSource {
-  return {source.type, source.owner,    source.repo,
-          source.rev,  source.nar_hash, source.last_modified};
+  return {source.type, source.owner, source.repo, source.rev, source.nar_hash};
 }
 
 auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
@@ -1195,7 +1169,8 @@ auto pack_scope(const NixCall& call) -> std::unique_ptr<E::ScopeT> {
     for (const auto& [name, locked] : entries) {
       auto pin = std::make_unique<E::PinT>();
       pin->name = name;
-      pin->source = std::make_unique<E::LockedSourceT>(pack_source(locked));
+      pin->intent = locked.intent;
+      pin->url = locked.url;
       scope->pins.push_back(std::move(pin));
     }
     result->projects.push_back(std::move(scope));
@@ -1210,27 +1185,8 @@ auto unpack_scope(const E::ScopeT& data, NixCall& call) -> void {
   for (const auto& project : data.projects) {
     auto& entries = call.projects[project->project];
     for (const auto& pin : project->pins)
-      entries.emplace(pin->name, unpack_source(*pin->source));
+      entries.emplace(pin->name, NixPathPin{pin->intent, pin->url});
   }
-}
-
-auto pack_names(const ResolvedNames& names)
-    -> std::vector<std::unique_ptr<E::CardNamesT>> {
-  std::vector<std::unique_ptr<E::CardNamesT>> result;
-  for (const auto& [card, entries] : names) {
-    auto item = std::make_unique<E::CardNamesT>();
-    item->card = card;
-    item->names = entries;
-    result.push_back(std::move(item));
-  }
-  return result;
-}
-
-auto unpack_names(const std::vector<std::unique_ptr<E::CardNamesT>>& names)
-    -> ResolvedNames {
-  ResolvedNames result;
-  for (const auto& item : names) result.emplace(item->card, item->names);
-  return result;
 }
 
 constexpr int kEvaluatorSocket = 3;
@@ -1280,7 +1236,7 @@ auto evaluator_main() -> void {
     for (const auto& [project, entries] : call.projects) {
       auto& paths = eval->projects[project];
       for (const auto& [name, source] : entries)
-        paths.emplace(name, fetch.materialize(source));
+        paths.emplace(name, fetch.materialize(name, source));
     }
     if (warm.size() >= 4) warm.pop_back();
     warm.emplace_front(std::move(key), std::move(eval));
@@ -1315,7 +1271,6 @@ auto evaluator_main() -> void {
       call.nix_dir = op->nix_dir;
       call.needs_worker = op->needs_worker;
       call.args = op->args;
-      call.card = op->card;
       call.max_implementations = op->max_implementations;
       const auto result = evaluator(call).evaluate(call, fetch);
       E::EvaluationT reply;
@@ -1325,10 +1280,11 @@ auto evaluator_main() -> void {
       reply.implementation_count = result.implementation_count;
       reply.implementation_labels = result.implementation_labels;
       reply.epoch = result.evaluation_epoch;
-      reply.resolved = pack_names(result.resolved_names);
       send<E::Reply>(sink, std::move(reply));
     } else if (const auto* op = request.body.AsLockSource()) {
-      send<E::Reply>(sink, pack_source(fetch.lock(op->url)));
+      E::LockedUrlT locked;
+      locked.url = fetch.lock(op->url);
+      send<E::Reply>(sink, std::move(locked));
     } else if (const auto* op = request.body.AsExpression()) {
       unpack_scope(*op->scope, call);
       call.args = op->args;
@@ -1336,7 +1292,6 @@ auto evaluator_main() -> void {
       call.definition_dir = op->definition_dir;
       auto& eval = evaluator(call);
       auto result = eval.expression(call, op->text, op->build);
-      result.resolved = pack_names(eval.names());
       send<E::Reply>(sink, std::move(result));
     } else if (const auto* op = request.body.AsParamsDeclaration()) {
       const auto hash = nix::hashString(nix::HashAlgorithm::SHA256, op->text);
@@ -1413,7 +1368,6 @@ struct NixEvaluator::Impl {
   nix::AutoCloseFD socket, lifetime;
   pid_t pid = -1;
   uint64_t last_epoch = 0;
-  uint64_t observation_order = 0;
   // Evaluated derivations can still be in use when a later evaluation is
   // stopped. The core holds their roots across evaluator process lifetimes.
   std::shared_ptr<nix::Store> roots;
@@ -1575,7 +1529,6 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
       std::make_unique<E::LockedSourceT>(pack_source(call.core_nixpkgs));
   request.nix_dir = call.nix_dir.string();
   request.needs_worker = call.needs_worker;
-  request.card = call.card;
   request.args = call.args;
   request.max_implementations = call.max_implementations;
   return impl_->exchange(call, std::move(request), [&](auto& reply) {
@@ -1587,8 +1540,6 @@ auto NixEvaluator::evaluate(const NixCall& call) -> NixResult {
     result.implementation_count = data->implementation_count;
     result.implementation_labels = data->implementation_labels;
     result.evaluation_epoch = data->epoch;
-    result.observation_order = ++impl_->observation_order;
-    result.resolved_names = unpack_names(data->resolved);
     impl_->last_epoch = std::max(impl_->last_epoch, result.evaluation_epoch);
     impl_->hold(result.derivation.path);
     return result;
@@ -1612,13 +1563,13 @@ auto NixEvaluator::reuse(const NixCall& call, const NixResult& result) -> bool {
   });
 }
 
-auto NixEvaluator::lock_source(const std::string& url) -> LockedSource {
+auto NixEvaluator::lock_source(const std::string& url) -> std::string {
   E::LockSourceT request;
   request.url = url;
   return impl_->exchange(NixCall{}, std::move(request), [](auto& reply) {
-    const auto* source = reply.AsLockedSource();
+    const auto* source = reply.AsLockedUrl();
     if (!source) throw std::runtime_error("missing nixPath lock reply");
-    return unpack_source(*source);
+    return source->url;
   });
 }
 
@@ -1646,16 +1597,14 @@ auto NixEvaluator::expression(const NixCall& call,
   request.definition_dir = call.definition_dir.string();
   request.text = expression;
   request.build = build;
-  auto [value, order] =
+  const auto value =
       impl_->exchange(call, std::move(request), [&](auto& reply) {
         auto* data = reply.AsExpressionValue();
         if (!data) throw std::runtime_error("missing Nix expression reply");
         if (build) impl_->hold(data->drv);
-        return std::pair{std::move(*data), ++impl_->observation_order};
+        return std::move(*data);
       });
   ExpressionResult result;
-  result.resolved_names = unpack_names(value.resolved);
-  result.observation_order = order;
   if (!build) {
     result.json = value.json;
     return result;

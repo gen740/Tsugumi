@@ -19,6 +19,7 @@ let
         {
           inherit name locked;
           url = "${original.type}:${original.owner}/${original.repo}/${original.ref}";
+          locked_url = "${locked.type}:${locked.owner}/${locked.repo}/${locked.rev}?narHash=${locked.narHash}";
         }
       )
       [

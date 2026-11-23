@@ -250,7 +250,7 @@ auto NixEvaluator::realise_native(const NixCall& call, NixResult result)
   return result;
 }
 
-auto NixEvaluator::lock_source(const std::string&) -> LockedSource {
+auto NixEvaluator::lock_source(const std::string&) -> std::string {
   throw std::runtime_error("the mock evaluator cannot fetch sources");
 }
 

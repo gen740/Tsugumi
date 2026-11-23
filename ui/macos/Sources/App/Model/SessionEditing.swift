@@ -403,13 +403,14 @@ extension ProjectSession {
   }
 
   @discardableResult
-  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue?, expectedRev: UInt64) async throws -> UInt64 {
-    let edit = Tsugumi_Host_ProjectSetParamT()
+  func setParam(_ k: CardKey, _ name: String, _ value: JSONValue, expectedRev: UInt64) async throws -> UInt64 {
+    let edit = Tsugumi_Host_ProjectRewriteParamLiteralT()
     edit.card = cardPath(path(k))
     edit.name = name
-    edit.valueJson = value?.serialized(pretty: false)
+    let type = resolution[k]?.parameters.first { $0.name == name }?.type ?? ""
+    edit.literal = parameterLiteral(value, type)
     edit.expectedRev = expectedRev
-    return try await operate(.projectsetparam, body: edit).rev ?? rev
+    return try await operate(.projectrewriteparamliteral, body: edit).rev ?? rev
   }
 
   /// Moves the selected Cards into a new Card in Card: a new external project

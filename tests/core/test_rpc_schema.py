@@ -13,7 +13,8 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     before = client.call("ProjectInspectRequest")
     invalid_documents = (
         '{"type":"code","sandbox":true,"sandbox":false}',
-        '{"type":"code","params":{"k":1,"k":2}}',
+        '{"type":"code","params":{"k":1}}',
+        '{"type":"input","sweeps":{"k":[1],"k":[2]}}',
         b'{"type":"code","symbol":"\xff"}',
         b'{"type":"code","symbol":"\xc3"}',
         '{"type":"code","timeoutSeconds":NaN}',
@@ -42,14 +43,14 @@ def test_invalid_card_documents_are_rejected_without_a_save(client):
     # A valid document keeps exact integer values and writes canonical text.
     raw = ('{"type":"draft","symbol":"é","timeoutSeconds":null,'
            '"maxRuns":18446744073709551615,'
-           '"params":{"decimal":1.50e+2,"minimum":-9223372036854775808}}')
+           '"sweeps":{"decimal":[1.50e+2],"minimum":[-9223372036854775808]}}')
     client.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test",
                 changes=[change("PutDefinition", id="work", cardJson=raw)])
     after = client.call("ProjectInspectRequest")
     saved = next(definition for definition in after.definitions if text(definition.id) == "work")
     parsed = json.loads(text(saved.cardJson))
     assert parsed["maxRuns"] == (1 << 64) - 1
-    assert parsed["params"]["minimum"] == -(1 << 63)
+    assert parsed["sweeps"]["minimum"] == [-(1 << 63)]
     assert text(saved.cardJson).endswith("\n")
 
 
@@ -71,7 +72,6 @@ def test_card_settings_round_trip(client):
     """Execution settings survive a save and inspect without a filesystem switch."""
     settings = {
         "type": "code", "inputs": [{"name": "data"}],
-        "params": {"limit": 2.5},
         "maxRuns": 3,
         "timeoutSeconds": 120, "buildTimeoutSeconds": 240,
         "recordIO": True, "retainArtifact": True, "artifactOutput": "report",

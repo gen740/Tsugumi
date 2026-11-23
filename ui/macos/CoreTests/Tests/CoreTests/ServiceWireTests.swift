@@ -8,9 +8,8 @@ final class ServiceWireTests: XCTestCase {
   func testNixEvaluationRequestPreservesCardScopeAndOptionalSystem() throws {
     let evaluation = Tsugumi_RPC_EvaluateNixRequestT()
     evaluation.card = cardPath(["analysis", "plot"])
-    evaluation.expression = "card.api"
+    evaluation.expression = "(import ./. { inherit params inputs; }).api"
     evaluation.build = true
-    evaluation.system = "aarch64-darwin"
     evaluation.atRev = 42
 
     let request = Tsugumi_RPC_RequestT()
@@ -26,9 +25,8 @@ final class ServiceWireTests: XCTestCase {
     let decoded = try XCTUnwrap(wire.unpack().payload?.value as? Tsugumi_RPC_RequestT)
     let value = try XCTUnwrap(decoded.value?.value as? Tsugumi_RPC_EvaluateNixRequestT)
     XCTAssertEqual(value.card.segments, ["analysis", "plot"])
-    XCTAssertEqual(value.expression, "card.api")
+    XCTAssertEqual(value.expression, "(import ./. { inherit params inputs; }).api")
     XCTAssertEqual(value.atRev, 42)
-    XCTAssertEqual(value.system, "aarch64-darwin")
     XCTAssertTrue(value.build)
   }
 

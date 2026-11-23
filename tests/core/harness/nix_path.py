@@ -16,7 +16,8 @@ def test_lock_entries():
         node = nodes[root[name]]
         original = node["original"]
         url = "{type}:{owner}/{repo}/{ref}".format(**original)
-        entries.append({"name": name, "url": url, "locked": node["locked"]})
+        locked_url = "{type}:{owner}/{repo}/{rev}?narHash={narHash}".format(**node["locked"])
+        entries.append({"name": name, "url": url, "locked_url": locked_url})
     return entries
 
 
@@ -25,4 +26,5 @@ def declarations(entries):
 
 
 def write_lock(root, entries):
-    (root / "tsugumi.lock").write_text(json.dumps({"nixPath": sorted(entries, key=lambda entry: entry["name"])}))
+    pins = {entry["name"]: entry["locked_url"] for entry in entries}
+    (root / "tsugumi.lock").write_text(json.dumps({"nixPath": pins}, sort_keys=True))

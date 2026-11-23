@@ -77,7 +77,6 @@ struct ExpressionRequest {
   CardPath card;
   std::string expression;
   bool build = false;
-  std::string system;
   std::stop_token cancel;
   std::optional<std::chrono::steady_clock::time_point> deadline;
   NixOutput log;
@@ -99,12 +98,9 @@ class NixRunner {
   auto declared_views(const BuildRequest& req) -> std::vector<schema::CardView>;
   static auto execution_systems() -> std::vector<std::string>;
   auto evaluate_expression(const ExpressionRequest& req) -> ExpressionResult;
-  auto lock_source(const std::string& url) -> LockedSource;
-  auto params_declaration(const std::filesystem::path& def_dir) -> std::string;
+  auto lock_source(const std::string& url) -> std::string;
   auto params_declaration(const std::filesystem::path& def_dir,
                           std::string_view text) -> std::string;
-  auto resolved_names(const CardPath& card) const
-      -> std::optional<std::vector<std::string>>;
 
   CacheClearOutcome clear_cache();
 
@@ -112,7 +108,6 @@ class NixRunner {
   auto build_plan(const BuildRequest& req, bool views_only) -> CardBuildPlan;
   auto configure_call(NixCall& call, const Document& doc, const Node& node,
                       bool expression_only = false) -> void;
-  auto remember_names(const ResolvedNames& names, uint64_t order) -> void;
   std::filesystem::path cache_dir() const;
   std::filesystem::path gcroots_dir() const;
   NixEvaluator& evaluator();
@@ -135,9 +130,6 @@ class NixRunner {
   std::map<std::pair<std::string, std::string>,
            std::pair<EvaluationKey, NixResult>>
       evaluations_;
-  mutable std::mutex names_mu_;
-  std::map<std::string, std::pair<uint64_t, std::vector<std::string>>>
-      resolved_names_;
   std::optional<std::map<std::string, Tsugumi::State::PreparedCardT>> prepared_;
   uint64_t full_evaluations_ = 0;
   std::mutex dirs_mu_;

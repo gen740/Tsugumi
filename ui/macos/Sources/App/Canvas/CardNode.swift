@@ -64,7 +64,7 @@ extension ProjectSession {
     guard kind(k).editsValueOnCanvas else { return [] }
     let sweeps = cardDefinition(k)?["sweeps"]
     return (resolution[k]?.parameters ?? []).compactMap { parameter in
-      guard parameter.section == .run, !parameter.type.hasPrefix("["), sweeps?[parameter.name] == nil else { return nil }
+      guard !parameter.type.hasPrefix("["), sweeps?[parameter.name] == nil else { return nil }
       return ParamData(name: parameter.name, type: parameter.type, value: parameterText(parameter.effectiveValue))
     }
   }

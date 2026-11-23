@@ -16,24 +16,17 @@ session.project = parse('{"name":"input-test","canvas":{"cards":[],"connections"
 session.layout = parse('{}')
 let operations = 0
 const operate = session.operateProject
-const parameter = (override: string | null = null) => new R.CardParameterT('value', R.ParamSection.run, 'bool', 'false', override)
-const resolved = (card: string, override: string | null = null) =>
-  Object.assign(new R.ResolvedCardT(), { card: cardPath([card]), parameters: [parameter(override)] })
-const publish = (card: string, override?: string) => {
-  session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', section: R.ParamSection.run,
-    defaultValue: false, override: override === undefined ? undefined : parse(override) }]
-}
+const resolved = (card: string, value: string) =>
+  Object.assign(new R.ResolvedCardT(), { card: cardPath([card]), parameters: [new R.CardParameterT('value', 'bool', value)] })
 session.operateProject = async request => {
   operations++
-  if (request.bodyType !== H.ProjectOperationBody.ProjectSetParam) return operate(request)
-  const param = request.body as H.ProjectSetParamT
+  if (request.bodyType !== H.ProjectOperationBody.ProjectRewriteParamLiteral) return operate(request)
+  const param = request.body as H.ProjectRewriteParamLiteralT
   assert.equal(param.expectedRev, session.rev)
   assert.equal(param.name, 'value')
   assert.deepEqual(param.card?.segments, ['calibrate'])
-  const definition = new R.DefinitionT('calibrate',
-    param.valueJson === null ? '{"type":"input"}' : '{"type":"input","params":{"value":' + param.valueJson + '}}')
   const delta = Object.assign(new R.DocumentDeltaT(), { baseRev: session.rev, rev: session.rev + 1n,
-    definitionsUpsert: [definition], resolution: [resolved('calibrate', param.valueJson as string | null)] })
+    resolution: [resolved('calibrate', String(param.literal))] })
   const builder = new Builder()
   builder.finish(new H.ProjectEditsT().pack(builder))
   return Object.assign(new R.SaveResultT(), { rev: delta.rev, delta, operationData: [...builder.asUint8Array()] })
@@ -48,7 +41,7 @@ assert.ok(session.connections([]).some(wire =>
   get(wire, 'from', 'card') === card && get(wire, 'from', 'port') === 'value' &&
   get(wire, 'to', 'card') === branch && get(wire, 'to', 'port') === 'condition'))
 
-publish(card)
+session.resolution.get(card)!.parameters = [{ name: 'value', type: 'bool', value: false }]
 assert.deepEqual(session.inlineParams(card), [{ name: 'value', type: 'bool', value: 'false' }])
 const before = operations
 let pending: Promise<void> | undefined
@@ -71,10 +64,8 @@ view.update(render(false))
 assert.equal(checkbox().props.disabled, true)
 view.unmount()
 assert.equal(operations, before + 1, 'Toggling submits one operation')
-assert.equal(get(session.cardDefinition(card), 'params', 'value'), true, 'The saved override is a boolean')
-await session.setParam(card, 'value', undefined, session.rev)
 assert.equal(get(session.cardDefinition(card), 'params'), undefined)
-assert.equal(session.inlineParams(card)[0].value, 'false')
+assert.equal(session.inlineParams(card)[0].value, 'true')
 
 const draft = await session.addCard('draft', [], { x: 100, y: 0 })
 const draftEditor = new CardEditorModel(session, draft)
@@ -82,7 +73,7 @@ draftEditor.implementAs('input')
 draftEditor.implementAs(preset.id)
 assert.equal(draftEditor.implementation, preset.id)
 assert.equal(await draftEditor.apply(), true)
-assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ run = { value = false; }; }\n')
+assert.equal(await session.sourceText(`definitions/${draft}/params.nix`), '{ value = false; }\n')
 assert.equal(get(session.cardDefinition(draft), 'params'), undefined)
 const outputSchema = (async (id: string) => (await session.sourceText(`definitions/${id}/_outputs.fbs`))
   .replace(/^namespace .*;\n/, ''))

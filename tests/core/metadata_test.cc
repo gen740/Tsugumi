@@ -72,63 +72,58 @@ TEST_F(DocumentStorage, ResolvedNixPathUsesTheCardsProject) {
 TEST(NixParams, AcceptsTypedLiteralsAndSortsByName) {
   const auto actual = evaluate_literal_params("definitions/a/", R"nix(
     {
-      run = {
-        z = -3;
-        zero = 0.0;
-        int = 10;
-        float = 10.0;
-        exp = 1e3;
-        negative = -0.5;
-        flag = true;
-        text = "quoted\ntext";
-        indented = ''indented'';
-        ints = [ 1 (-2) ];
-        floats = [ 1.0 (-2.0) ];
-        bools = [ false true ];
-        strings = [ "" "x" ];
-      };
-      build = { flag2 = false; };
+      z = -3;
+      zero = 0.0;
+      int = 10;
+      float = 10.0;
+      exp = 1e3;
+      negative = -0.5;
+      flag = true;
+      text = "quoted\ntext";
+      indented = ''indented'';
+      ints = [ 1 (-2) ];
+      floats = [ 1.0 (-2.0) ];
+      bools = [ false true ];
+      strings = [ "" "x" ];
+      flag2 = false;
     }
   )nix");
   EXPECT_EQ(
       actual,
-      R"({"run":[{"name":"bools","type":"[bool]","default":[false,true]},{"name":"exp","type":"float","default":1000.0},{"name":"flag","type":"bool","default":true},{"name":"float","type":"float","default":10.0},{"name":"floats","type":"[float]","default":[1.0,-2.0]},{"name":"indented","type":"string","default":"indented"},{"name":"int","type":"int","default":10},{"name":"ints","type":"[int]","default":[1,-2]},{"name":"negative","type":"float","default":-0.5},{"name":"strings","type":"[string]","default":["","x"]},{"name":"text","type":"string","default":"quoted\ntext"},{"name":"z","type":"int","default":-3},{"name":"zero","type":"float","default":0.0}],"build":[{"name":"flag2","type":"bool","default":false}]})");
-  EXPECT_EQ(
-      evaluate_literal_params("definitions/a/",
-                              "{ run = { min = -9223372036854775808; }; }"),
-      R"({"run":[{"name":"min","type":"int","default":-9223372036854775808}],"build":[]})");
-  EXPECT_EQ(evaluate_literal_params("definitions/a/", "{ }"),
-            R"({"run":[],"build":[]})");
+      R"([{"name":"bools","type":"[bool]","value":[false,true]},{"name":"exp","type":"float","value":1000.0},{"name":"flag","type":"bool","value":true},{"name":"flag2","type":"bool","value":false},{"name":"float","type":"float","value":10.0},{"name":"floats","type":"[float]","value":[1.0,-2.0]},{"name":"indented","type":"string","value":"indented"},{"name":"int","type":"int","value":10},{"name":"ints","type":"[int]","value":[1,-2]},{"name":"negative","type":"float","value":-0.5},{"name":"strings","type":"[string]","value":["","x"]},{"name":"text","type":"string","value":"quoted\ntext"},{"name":"z","type":"int","value":-3},{"name":"zero","type":"float","value":0.0}])");
+  EXPECT_EQ(evaluate_literal_params("definitions/a/",
+                                    "{ min = -9223372036854775808; }"),
+            R"([{"name":"min","type":"int","value":-9223372036854775808}])");
+  EXPECT_EQ(evaluate_literal_params("definitions/a/", "{ }"), R"([])");
 }
 
 TEST(NixParams, RejectsExpressionsAndInvalidDeclarations) {
   for (const auto* source : {
-           "{ run = { a = []; }; }",
-           "{ run = { a = [ 1 2.0 ]; }; }",
-           "{ run = { a = [[1]]; }; }",
-           "{ run = { a = { x = 1; }; }; }",
-           "{ run = { a = null; }; }",
-           "{ run = { a = ./data; }; }",
-           "{ run = { a = import ./data; }; }",
-           "{ run = { a = __sub 0 1; }; }",
-           "{ run = { a = 0 - 1; }; }",
-           "{ run = { a = 1 + 2; }; }",
-           "{ run = { a = \"$"
-           "{true}\"; }; }",
-           "{ run = { a = ''$"
-           "{\"x\"}''; }; }",
-           "{ run = { $"
-           "{\"a\"} = 0; }; }",
+           "{ a = []; }",
+           "{ a = [ 1 2.0 ]; }",
+           "{ a = [[1]]; }",
+           "{ a = { x = 1; }; }",
+           "{ a = null; }",
+           "{ a = ./data; }",
+           "{ a = import ./data; }",
+           "{ a = __sub 0 1; }",
+           "{ a = 0 - 1; }",
+           "{ a = 1 + 2; }",
+           "{ a = \"$"
+           "{true}\"; }",
+           "{ a = ''$"
+           "{\"x\"}''; }",
+           "{ $"
+           "{\"a\"} = 0; }",
            "{ run = let x = 1; in { a = x; }; }",
            "{ run = with builtins; { a = 0; }; }",
            "{ run = rec { a = 0; }; }",
-           "{ run = { inherit (builtins) true; }; }",
-           "{ run = { inherit; }; }",
-           "{ run = { a = 0; a = 1; }; }",
-           "{ run = { a = 0; }; build = { a = 1; }; }",
+           "{ inherit (builtins) true; }",
+           "{ inherit; }",
+           "{ a = 0; a = 1; }",
+           "{ a = 0; }; build = { a = 1; }",
            "{ runtime = {}; }",
-           "{ run = true; }",
-           "{ run = { \"a/b\" = 1; }; }",
+           "{ \"a/b\" = 1; }",
        }) {
     SCOPED_TRACE(source);
     try {
@@ -141,49 +136,45 @@ TEST(NixParams, RejectsExpressionsAndInvalidDeclarations) {
   }
 }
 
-TEST_F(DocumentStorage,
-       ParamsAreValidatedAndEncodedIndependentlyOfBuildValues) {
+TEST(NixParams, RewriteKeepsCommentsInsideAList) {
+  const std::string source = "{ items = [ 1 /* keep */ 2 # line\n 3 ]; }";
+  const auto edited =
+      rewrite_param_literal("params.nix", source, "items", "[ 7 ]");
+  EXPECT_EQ(edited, "{ items = [ 7 ]  /* keep */  # line\n  ; }");
+  EXPECT_EQ(evaluate_literal_params("", edited),
+            R"([{"name":"items","type":"[int]","value":[7]}])");
+}
+
+TEST_F(DocumentStorage, AllParamsAreEncodedForNixAndTheCard) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"canvas":{"cards":[{"id":"start"},{"id":"a"}],"connections":[]}})");
-  fs::write_atomic(
-      root / "definitions/a/_card.json",
-      R"({"type":"code","params":{"z":0.0,"a":false,"preset":5}})");
+  fs::write_atomic(root / "definitions/a/_card.json", R"({"type":"code"})");
   fs::write_atomic(root / "definitions/a/params.nix",
-                   "{ run = { z = 1.5; a = true; count = -5; }; build = { "
-                   "preset = 1.0; }; }");
+                   "{ z = 0.0; a = false; count = -5; preset = 5.0; }");
   Store store({root, ""});
   store.open();
   const auto* node = store.current()->resolution->find({"a"});
   ASSERT_NE(node, nullptr);
   EXPECT_TRUE(node->diags.empty());
-  EXPECT_EQ(node->build_params_json, R"({"preset":5.0})");
+  EXPECT_EQ(node->params_nix_json,
+            R"({"a":false,"count":-5,"preset":5.0,"z":0.0})");
   const auto buffer = params_buffer(node->settings.params);
   const auto* table = flatbuffers::GetRoot<flatbuffers::Table>(buffer.data());
   const auto field = [](int id) { return flatbuffers::FieldIndexToOffset(id); };
   EXPECT_TRUE(table->CheckField(field(0)));
   EXPECT_FALSE(table->GetField<uint8_t>(field(0), 1));
   EXPECT_EQ(table->GetField<int64_t>(field(1), 0), -5);
-  EXPECT_TRUE(table->CheckField(field(2)));
-  EXPECT_DOUBLE_EQ(table->GetField<double>(field(2), 1.0), 0.0);
-  ChangeIn edit{};
-  edit.kind = ChangeIn::Kind::PutDefinition;
-  edit.id = "a";
-  edit.json =
-      R"({"type":"code","params":{"count":2.01,"preset":"bad","unknown":true}})";
-  const auto preview = store.preview({edit});
-  const auto& diags = preview->resolution->find({"a"})->diags;
-  EXPECT_EQ(
-      std::ranges::count(diags, std::string("invalid_param"), &Diag::code), 3);
+  EXPECT_DOUBLE_EQ(table->GetField<double>(field(2), 1.0), 5.0);
+  EXPECT_TRUE(table->CheckField(field(3)));
+  EXPECT_DOUBLE_EQ(table->GetField<double>(field(3), 1.0), 0.0);
   EXPECT_EQ(normalize_param_value(ParamType::Int64, "9.223372036854775807e18"),
             "9223372036854775807");
 }
 
 TEST_F(DocumentStorage, LockIsCarriedAndConflictsWithDiskEdits) {
-  const std::string lock = R"({"nixPath":[
-    {"name":"source","url":"github:org/repo","locked":{"type":"github",
-     "owner":"org","repo":"repo","rev":"rev","narHash":"sha256-123","lastModified":42}}
-  ]})";
+  const std::string lock =
+      R"({"nixPath":{"source":"github:org/repo/0123456789012345678901234567890123456789?narHash=sha256-123&lastModified=42"}})";
   Store store({root, ""});
   store.open();
   EXPECT_FALSE(store.current()->sources.contains("tsugumi.lock"));
@@ -206,8 +197,8 @@ TEST_F(DocumentStorage, PortAndParamDiagnosticsNameWhatFixesThem) {
   fs::write_atomic(
       root / "tsugumi.json",
       R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":"config"}}]}})");
-  fs::write_atomic(root / "definitions/b/_card.json",
-                   R"({"type":"code","params":{"x":1}})");
+  fs::write_atomic(root / "definitions/b/_card.json", R"({"type":"code"})");
+  fs::write_atomic(root / "definitions/b/params.nix", "{ x = null; }");
   Store store({root, ""});
   store.open();
   const auto doc = store.current();

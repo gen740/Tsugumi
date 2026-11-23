@@ -12,11 +12,11 @@ table LockedSource {
   repo:string (required);
   rev:string (required);
   nar_hash:string (required);
-  last_modified:long;
 }
 table Pin {
   name:string (required);
-  source:LockedSource (required);
+  intent:string (required);
+  url:string (required);
 }
 table ProjectScope {
   project:string;
@@ -38,7 +38,6 @@ table Evaluate {
   nix_dir:string;
   needs_worker:bool;
   args:string (required);
-  card:string;
   max_implementations:uint;
 }
 
@@ -68,11 +67,6 @@ table Request {
   body:RequestBody (required);
 }
 
-table CardNames {
-  card:string (required);
-  names:[string];
-}
-
 table Evaluation {
   drv:string (required);
   out:string (required);
@@ -80,21 +74,20 @@ table Evaluation {
   implementation_count:uint;
   implementation_labels:[string];
   epoch:ulong;
-  resolved:[CardNames];
 }
 table Reusable { value:bool; }
 table ExpressionValue {
   json:string;
   drv:string;
   output_name:string;
-  resolved:[CardNames];
 }
 table ParamsValue { json:string (required); }
+table LockedUrl { url:string (required); }
 table Log { line:string; }
 // Size-prefixed stdout frames from the build client.
 table BuildLog { line:string; truncated:bool; }
 table Build { drv:string (required); active:bool; }
 table Error { message:string; limit:bool; }
 
-union ReplyBody { Evaluation, Reusable, ExpressionValue, LockedSource, ParamsValue, Log, Build, Error }
+union ReplyBody { Evaluation, Reusable, ExpressionValue, LockedUrl, ParamsValue, Log, Build, Error }
 table Reply { body:ReplyBody (required); }

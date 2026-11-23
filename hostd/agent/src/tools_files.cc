@@ -210,11 +210,6 @@ auto Tools::FileOperation(const std::string& conversation,
         item->demo = json::Text(args, "demo");
       item->from = json::Text(args, "card");
       item->id = json::Text(args, "id");
-      if (args.contains("nix_path_names")) {
-        item->choose_nix_path_names = true;
-        for (const auto& raw : json::Array(args.at("nix_path_names")))
-          item->nix_path_names.push_back(json::String(raw));
-      }
       item->x = std::stod(json::Get(args, "x", "0"));
       item->y = std::stod(json::Get(args, "y", "0"));
       if (attached_card ? item->folder.empty() : item->demo.empty())

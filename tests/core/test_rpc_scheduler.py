@@ -13,7 +13,7 @@ import pytest
 from harness.daemon import Daemon
 from harness.values import recorded_input_json
 from projects import SINK, card, card_in_card, conn, run_and_wait, wait_run, wait_run_notification, write
-from harness.document import set_param as set_typed_param
+from harness.document import set_param
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.FailureKind import FailureKind
@@ -37,8 +37,8 @@ root_type Outputs;
 
 BASE_DEFS = {
     "trigger": {"type": "trigger"},
-    "msg": {"type": "input", "params": {"text": "hello"}, "_params": '{ run = { text = ""; }; }', "_outputs": MSG_FBS},
-    "flag": {"type": "input", "params": {"value": True}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG_FBS},
+    "msg": {"type": "input", "params": {"text": "hello"}, "_params": '{ text = ""; }', "_outputs": MSG_FBS},
+    "flag": {"type": "input", "params": {"value": True}, "_params": '{ value = false; }', "_outputs": FLAG_FBS},
     "branch": {"type": "branch"},
     "fork": {"type": "fork", "outputs": [{"name": "a"}, {"name": "b"}, {"name": "c"}]},
     "merge": {"type": "merge", "inputs": [{"name": "a"}, {"name": "b"}], "maxRuns": 4},
@@ -147,7 +147,7 @@ def test_fork_sends_the_value_on_every_output(env, tmp_path):
 
 def test_boolean_input_drives_a_branch_and_persists_after_reopen(project, core_factory):
     """A saved Boolean Input selects the same branch after reopening the project."""
-    write(project, dict(BASE_DEFS, condition={"type": "input", "params": {"value": False}, "_params": '{ run = { value = false; }; }', "_outputs": FLAG_FBS}),
+    write(project, dict(BASE_DEFS, condition={"type": "input", "params": {"value": False}, "_params": '{ value = false; }', "_outputs": FLAG_FBS}),
           [card("start", "trigger"), card("src", "msg"), card("toggle", "condition"),
            card("gate", "branch"), card("yes", "sink"), card("no", "sink")],
           [conn("src", "msg", "gate", "value"), conn("toggle", "flag", "gate", "condition"),
@@ -207,14 +207,6 @@ def test_subgraph_runs_as_one_card_and_keeps_paths_apart(env):
     assert st3.state == RunState.succeeded
     assert states(c, run3, "o1") == [CardState.succeeded]
     assert states(c, run3, "o2") == []
-
-
-def set_param(c, card_id, name, value):
-    snap = c.call("ProjectInspectRequest")
-    body = next(json.loads(text(d.cardJson)) for d in snap.definitions if text(d.id) == card_id)
-    set_typed_param(body, name, value)
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutDefinition", id=card_id, cardJson=json.dumps(body), keepReadme=True, keepComments=True)])
 
 
 FAN_DEFS = {**BASE_DEFS, "words": dict(BASE_DEFS["msg"]), "cond": dict(BASE_DEFS["flag"]),

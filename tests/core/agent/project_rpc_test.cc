@@ -27,9 +27,8 @@ class CancelledCopy : public AgentProjectFixture,
 TEST_F(AgentProjectFixture, TemplateStoresCopyWholeGraphsWithFreshIds) {
   StartProject();
   const auto folder = directory.path / "sample-template";
-  Write(folder / "start/_card.json",
-        R"({"type":"input","params":{"value":1.0}})");
-  Write(folder / "start/params.nix", "{ run = { value = 1.0; }; }");
+  Write(folder / "start/_card.json", R"({"type":"input"})");
+  Write(folder / "start/params.nix", "{ value = 1.0; }");
   Write(folder / "start/_outputs.fbs",
         "namespace sample; table Value { value:double; } "
         "table Outputs { value:Value (required); } root_type Outputs;");

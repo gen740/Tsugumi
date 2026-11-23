@@ -164,7 +164,7 @@ import TsugumiTestSupport
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectEditsT)
       let puts = body.edits.compactMap { $0?.value?.value as? Tsugumi_Host_ProjectFilePutT }
       #expect(puts.map(\.filePath) == ["definitions/a/params.nix"])
-      #expect(puts.first.map { String(decoding: $0.bytes, as: UTF8.self) } == "{ run = { value = false; }; }\n")
+      #expect(puts.first.map { String(decoding: $0.bytes, as: UTF8.self) } == "{ value = false; }\n")
       #expect(!body.edits.contains { $0?.value?.type == .projectfileremove })
       let saved = self.delta(0, request.opId, "saved")
       saved.projectJson = snapshot.projectJson
@@ -184,7 +184,8 @@ import TsugumiTestSupport
     let snapshot = Tsugumi_RPC_ProjectSnapshotT()
     snapshot.rev = 0; snapshot.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#; snapshot.layout = []
     let definition = Tsugumi_RPC_DefinitionT(); definition.id = "a"
-    definition.cardJson = #"{"type":"input","params":{"value":1}}"#
+    definition.cardJson = #"{"type":"input"}"#
+    snapshot.resolution = [resolvedParameter(["a"], 1)]
     definition.readme = "before"
     snapshot.definitions = [definition]
     session.receiveProjectSnapshot(snapshot, projectId: "p")
@@ -194,7 +195,8 @@ import TsugumiTestSupport
     session.inlineDraft?.content = "mine"
     let other = delta(0, "agent", "old"); other.projectJson = nil; other.origin = "agent"
     let changed = Tsugumi_RPC_DefinitionT(); changed.id = "a"
-    changed.cardJson = #"{"type":"input","params":{"value":2}}"#
+    changed.cardJson = #"{"type":"input"}"#
+    other.resolution = [resolvedParameter(["a"], 2)]
     changed.readme = "---\ndescription: unrelated\n---\n\nagent"
     other.definitionsUpsert = [changed]; session.applyDelta(other)
     // The replies keep the documents: the Card under edit stays on the canvas.
@@ -204,10 +206,10 @@ import TsugumiTestSupport
     }
     var guards: [UInt64?] = []
     session.operateProject = { request in
-      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectSetParamT)
+      let body = try #require(request.body?.value as? Tsugumi_Host_ProjectRewriteParamLiteralT)
       guards.append(body.expectedRev)
       #expect(body.card.segments == ["a"])
-      #expect(body.name == "value" && body.valueJson == "3")
+      #expect(body.name == "value" && body.literal == "3")
       if body.expectedRev != session.rev { throw RPCFailure(kind: .revisionConflict, diagnostic: "") }
       return self.result(unchanged(request.opId))
     }
@@ -288,7 +290,7 @@ import TsugumiTestSupport
   @Test func lockUpdatesUseTheSelectedScopeWithoutAnUndoReceipt() async throws {
     let (session, dir) = try session()
     defer { try? FileManager.default.removeItem(at: dir) }
-    let bytes = #"{"nixPath":[{"name":"science","url":"github:owner/repo","locked":{"type":"github","rev":"abcdef1234","narHash":"sha256-example","lastModified":1700000000}}]}"#
+    let bytes = #"{"nixPath":{"science":"github:owner/repo/abcdef1234567890abcdef1234567890abcdef12?narHash=sha256-example&lastModified=1700000000"}}"#
     var calls = 0
     session.operateProject = { request in
       let body = try #require(request.body?.value as? Tsugumi_Host_ProjectUpdateNixPathLockT)
@@ -313,13 +315,21 @@ import TsugumiTestSupport
     #expect(session.undoStack.isEmpty)
   }
 
+  private func resolvedParameter(_ path: [String], _ value: Int) -> Tsugumi_RPC_ResolvedCardT {
+    let resolution = Tsugumi_RPC_ResolvedCardT()
+    resolution.card = cardPath(path)
+    let param = Tsugumi_RPC_CardParameterT()
+    param.name = "value"; param.type = "int"; param.valueJson = String(value)
+    resolution.parameters = [param]
+    return resolution
+  }
+
   @Test func internalDocumentsApplyInRevisionOrder() async throws {
     for echoFirst in [false, true] {
       let (session, dir) = try session()
       defer { try? FileManager.default.removeItem(at: dir) }
       let prefix = "externals/sub/"
       let project = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
-      func card(_ value: UInt64) -> String { #"{"type":"input","params":{"value":\#(value)}}"# }
       let snapshot = Tsugumi_RPC_ProjectSnapshotT(); snapshot.rev = 0
       snapshot.projectJson = #"{"canvas":{"cards":[{"id":"sub"}],"connections":[]}}"#; snapshot.layout = []
       let link = Tsugumi_RPC_DefinitionT(); link.id = "sub"; link.cardJson = #"{"type":"subgraph","external":"sub"}"#
@@ -328,25 +338,25 @@ import TsugumiTestSupport
         let value = Tsugumi_RPC_SourceInfoT(); value.path = prefix + file; value.document = Array(text.utf8)
         return value
       }
-      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", card(1))]
+      snapshot.sources = [source("tsugumi.json", project), source("definitions/a/_card.json", #"{"type":"input"}"#)]
       session.receiveProjectSnapshot(snapshot, projectId: "p")
       var calls = 0
       session.operateProject = { request in
         calls += 1
-        let body = try #require(request.body?.value as? Tsugumi_Host_ProjectSetParamT)
+        let body = try #require(request.body?.value as? Tsugumi_Host_ProjectRewriteParamLiteralT)
         #expect(body.card.segments == ["sub", "a"])
         #expect(body.expectedRev == session.rev)
-        #expect(body.valueJson == (calls == 1 ? "2" : nil))
-        let saved = calls == 1 ? card(2) : #"{"type":"input"}"#
-        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil; d.sourcesUpsert = [source("definitions/a/_card.json", saved)]
+        #expect(body.literal == (calls == 1 ? "2" : "3"))
+        let d = self.delta(session.rev, request.opId, "old"); d.projectJson = nil
+        d.resolution = [self.resolvedParameter(["sub", "a"], calls == 1 ? 2 : 3)]
         if echoFirst { session.applyDelta(d) }
         return self.result(d)
       }
       try await session.setParam("sub/a", "value", .number("2"), expectedRev: session.rev)
-      #expect(session.cardDefinition("sub/a")?["params"]?["value"] == .number("2"))
-      try await session.setParam("sub/a", "value", nil, expectedRev: session.rev)
+      #expect(session.resolution["sub/a"]?.parameters.first?.effectiveValue == .number("2"))
+      try await session.setParam("sub/a", "value", .number("3"), expectedRev: session.rev)
       #expect(calls == 2 && session.saveError == nil)
-      #expect(session.cardDefinition("sub/a")?["params"]?["value"] == nil)
+      #expect(session.resolution["sub/a"]?.parameters.first?.effectiveValue == .number("3"))
     }
   }
 
@@ -522,7 +532,8 @@ extension ProjectOperationTests {
         let d = delta(s.rev, id, "old")
         d.projectJson = #"{"canvas":{"cards":[{"id":"a"}],"connections":[]}}"#
         let def = Tsugumi_RPC_DefinitionT(); def.id = "a"
-        def.cardJson = #"{"type":"input","params":{"value":\#(n)}}"#
+        def.cardJson = #"{"type":"input"}"#
+        d.resolution = [resolvedParameter(["a"], n)]
         def.readme = "---\ndescription: unrelated\n---\n\n\(n)"
         d.definitionsUpsert = [def]
         return d
@@ -543,7 +554,7 @@ extension ProjectOperationTests {
           let written = try JSONValue.parse(try #require(json.newValue.json))
           #expect(Documents.parseReadme(try #require(written.string)).description == "unrelated")
         } else {
-          let body = try #require(request.body?.value as? Tsugumi_Host_ProjectSetParamT)
+          let body = try #require(request.body?.value as? Tsugumi_Host_ProjectRewriteParamLiteralT)
           guardValue = String(try #require(body.expectedRev))
         }
         guards.append(guardValue)
@@ -562,7 +573,7 @@ extension ProjectOperationTests {
       #expect(guards.last == "2")
       #expect(await save(true))
       #expect(guards.last == (draft ? "4" : "3"))
-      #expect(draft ? s.cardMeta("a")?["content"]?.string == "mine" : s.cardDefinition("a")?["params"]?["value"] == .number("3"))
+      #expect(draft ? s.cardMeta("a")?["content"]?.string == "mine" : s.resolution["a"]?.parameters.first?.effectiveValue == .number("3"))
     }
   }
 }

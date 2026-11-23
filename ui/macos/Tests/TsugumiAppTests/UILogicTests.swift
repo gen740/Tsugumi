@@ -70,10 +70,12 @@ import TsugumiTestSupport
 
 @Test func nixPathShowsTheLockForTheDeclaredURL() throws {
   let url = "github:owner/repo"
-  let lock = try JSONValue.parse(#"{"nixPath":[{"name":"science","url":"github:owner/repo","locked":{"type":"github","rev":"abcdef1234","narHash":"sha256-example","lastModified":1700000000}}]}"#)
+  let lock = try JSONValue.parse(#"{"nixPath":{"science":"github:owner/repo/abcdef1234567890abcdef1234567890abcdef12?narHash=sha256-example&lastModified=1700000000"}}"#)
   #expect(NixPathLockStatus.read(nil, name: "science", url: url) == .unlocked)
   #expect(NixPathLockStatus.read(lock, name: "other", url: url) == .unlocked)
-  #expect(NixPathLockStatus.read(lock, name: "science", url: url + "/other") == .urlChanged)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: "github:owner/other") == .urlChanged)
+  #expect(NixPathLockStatus.read(lock, name: "science", url: url + "/other") ==
+          .locked(revision: "abcdef1", modified: Date(timeIntervalSince1970: 1_700_000_000)))
   #expect(NixPathLockStatus.read(lock, name: "science", url: url) ==
           .locked(revision: "abcdef1", modified: Date(timeIntervalSince1970: 1_700_000_000)))
 }

@@ -12,7 +12,7 @@ from harness.values import recorded_input_json
 from projects import MSG_FBS, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
-from harness.document import layout_bytes, write_layout
+from harness.document import layout_bytes, params_nix, write_layout
 
 
 def project_json(c) -> tuple[int, dict]:
@@ -35,9 +35,8 @@ def external(root: Path, name: str, text_value: str) -> None:
         "name": name, "nixPath": [],
         "canvas": {"cards": [{"id": "say"}], "connections": []},
         "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
-    put(ext / "definitions" / "say" / "_card.json", json.dumps(
-        {"type": "input", "params": {"text": text_value, "value": True}}))
-    put(ext / "definitions" / "say" / "params.nix", '{ run = { text = ""; value = true; }; }')
+    put(ext / "definitions" / "say" / "_card.json", json.dumps({"type": "input"}))
+    put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
 
 
@@ -315,10 +314,9 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     assert {"greet", "greet/say"} <= cards
     assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
-    source = "externals/greeting/definitions/say/_card.json"
-    body = json.loads((root / source).read_text())
-    body["params"]["text"] = "changed on disk"
-    put(root / source, json.dumps(body))
+    source = "externals/greeting/definitions/say/params.nix"
+    edited = params_nix({"text": "changed on disk", "value": True})
+    put(root / source, edited)
     with pytest.raises(RpcFailure) as error:
         c.call("RunRequest", baseRev=snap.rev, opId=new_id(), origin="test", card=path("greet"))
     assert error.value.kind == "external_change"
@@ -331,7 +329,8 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     committed = subprocess.check_output(
         ["git", "-C", root, "show", f"{text(st.commit)}:{source}"], text=True)
     result = recorded_input_json(c, tmp_path / "decode", run_id, "show")
-    assert result["text"] == json.loads(committed)["params"]["text"] == "changed on disk"
+    assert committed == edited
+    assert result["text"] == "changed on disk"
     # The external is this project's copy: its files change here like any other.
     rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",

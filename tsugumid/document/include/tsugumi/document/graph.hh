@@ -54,16 +54,8 @@ std::string param_fbs_type(ParamType t);
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
-  std::optional<std::string> data;  // effective value as canonical JSON
+  std::optional<std::string> data;  // value as canonical JSON
   std::optional<std::vector<std::string>> sweep;
-};
-
-struct ParamSetting {
-  std::string name;
-  bool build = false;
-  ParamType type = ParamType::String;
-  std::string default_json;
-  std::optional<std::string> value_json;
 };
 
 auto normalize_param_value(ParamType type, std::string_view json)
@@ -151,9 +143,8 @@ struct Node {
   std::vector<NixPathEntry> nix_path;  // declarations in project_dir
   std::vector<CardNixReference> nix_references;
   std::map<std::string, NixInput> nix_ports;
-  std::string build_params_json = "{}";
+  std::string params_nix_json = "{}";
   std::string run_params_buffer;
-  std::vector<ParamSetting> param_settings;
   std::optional<Tsugumi::Document::BoundaryT>
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)

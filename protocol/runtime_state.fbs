@@ -58,7 +58,6 @@ table PreparedCard {
 table PreparedParameter {
   name:string (required);
   type:string (required);
-  build:bool;
   effective_json:string (required);
 }
 

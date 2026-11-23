@@ -6,6 +6,7 @@ require a particular number of evaluations or builds, including on reversion.
 
 import json
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
 
 import pytest
 
@@ -18,7 +19,7 @@ from harness.nix_path import test_lock_entries as fixture_locks, write_lock
 from harness.real_cards import nix_string
 from harness.scenario import Project, run, wait_run
 from projects import card, card_in_card, conn, write_nix_project as write
-from tsugumi_client import path, text
+from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.FailureKind import FailureKind
 from Tsugumi.Data.PortKind import PortKind
 from Tsugumi.Data.RunState import RunState
@@ -84,13 +85,13 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
             first, second = second, first
     elif changed_input == "nix-param":
         files = {"default.nix": expression("params.message"),
-                 "params.nix": '{ build = { message = "first"; }; }'}
-        changed_file = "_card.json"
-        replacement = json.dumps({**settings, "params": {"message": "second"}})
+                 "params.nix": '{ message = "first"; }'}
+        changed_file = "params.nix"
+        replacement = '{ message = "second"; }'
     elif changed_input == "params-declaration":
         files = {"default.nix": expression(schema_says("./params.nix", "second", "second", "first")),
-                 "params.nix": '{ run = { first = "value"; }; }'}
-        changed_file, replacement = "params.nix", '{ run = { second = "value"; }; }'
+                 "params.nix": '{ first = "value"; }'}
+        changed_file, replacement = "params.nix", '{ second = "value"; }'
     elif changed_input == "output-schema":
         files = {"default.nix": expression(
             schema_says("./_outputs.fbs", "Second", "outputs.out.Second", "outputs.out.First"))}
@@ -121,14 +122,14 @@ def test_changed_input_replaces_the_recorded_definition(core_factory, project, c
 
 @pytest.mark.parametrize("case, diagnostic", [
     ("missing", 'nixPath "nixpkgs" is not locked; update the lock'),
-    ("changed", 'nixPath "nixpkgs" changed (lock has github:NixOS/nixpkgs/nixos-unstable); update the lock'),
+    ("changed", 'nixPath "nixpkgs" changed source (lock has github:NixOS/nixpkgs/'),
 ])
 def test_project_requires_a_lock_for_each_declared_name(core_factory, project, case, diagnostic):
     entries = fixture_locks()
     if case == "missing":
         write_lock(project, [entry for entry in entries if entry["name"] != "nixpkgs"])
     else:
-        edit_json(project / "tsugumi.json", lambda doc: doc["nixPath"][0].update(url="github:NixOS/nixpkgs"))
+        edit_json(project / "tsugumi.json", lambda doc: doc["nixPath"][0].update(url="github:other/nixpkgs"))
     client = core_factory().connect()
     Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
         expression('"unused"'))).save(client)
@@ -136,6 +137,68 @@ def test_project_requires_a_lock_for_each_declared_name(core_factory, project, c
     assert status.state == RunState.failed
     assert status.failure.kind == FailureKind.nix_failed
     assert diagnostic in text(status.failure.diagnostic)
+    assert "update the lock" in text(status.failure.diagnostic)
+
+
+def test_explicit_lock_returns_a_pinned_url_and_it_resolves_same_source_refs(core_factory, project):
+    target = project / "tsugumi.lock"
+    pin = next(entry for entry in fixture_locks() if entry["name"] == "nixpkgs")
+    expected = urlsplit(pin["locked_url"])
+    target.write_text('{"nixPath":{}}')
+    edit_json(project / "tsugumi.json", lambda doc: doc.update(nixPath=[
+        {"name": "nixpkgs", "url": "github:NixOS/nixpkgs/some-other-ref"},
+    ]))
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources=sources(
+        expression('"from locked source"'))).save(client)
+    snapshot = client.call("ProjectInspectRequest")
+    result = client.call("NixPathLockSourceRequest", url=f"{expected.scheme}:{expected.path}")
+    locked_url = text(result.url)
+    actual = urlsplit(locked_url)
+    assert (actual.scheme, actual.path) == (expected.scheme, expected.path)
+    query = {k: unquote(v) for k, v in (part.split("=", 1) for part in actual.query.split("&"))}
+    assert query["narHash"] == expected.query.removeprefix("narHash=")
+    assert query.keys() <= {"narHash", "lastModified"}
+    assert json.loads(target.read_text()) == {"nixPath": {}}
+
+    locked = json.dumps({"nixPath": {"nixpkgs": locked_url}})
+    old = next(info for info in snapshot.sources if info.path == b"tsugumi.lock")
+    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
+                changes=[change("SetProjectLock", path="tsugumi.lock", json=locked, baseHash=text(old.hash))])
+    assert json.loads(target.read_text()) == json.loads(locked)
+    evaluated = client.call("EvaluateNixRequest", card=path("work"),
+                            expression="builtins.baseNameOf <nixpkgs/flake.nix>")
+    assert evaluated.failure is None, evaluated.failure and text(evaluated.failure.diagnostic)
+    assert json.loads(text(evaluated.json)) == "flake.nix"
+
+
+def test_kit_derivation_is_independent_of_unused_parameter_values(core_factory, project):
+    client = core_factory().connect()
+    Project(project).card("work", definition(), outputs=EMPTY_OUTPUTS, sources={
+        "params.nix": "{ unused = 7; }",
+        "default.nix": ARGUMENTS + """
+          let sdk = import <tsugumi-kit/sdk/python> { inherit pkgs; };
+          in {
+            run = sdk.pythonCard {
+              inherit params inputs;
+              outputs = ./_outputs.fbs;
+              src = ./src;
+            };
+          }
+        """,
+        "src/main.py": "",
+    }).save(client)
+
+    def drv():
+        result = client.call("EvaluateNixRequest", card=path("work"),
+                             expression="(import ./. { inherit params inputs; }).run.drvPath")
+        assert result.failure is None, result.failure and text(result.failure.diagnostic)
+        return json.loads(text(result.json))
+
+    before = drv()
+    (project / "definitions/work/params.nix").write_text("{ unused = 42; }")
+    reload_project(client)
+    assert drv() == before
 
 
 def test_undeclared_search_path_reports_the_project_names(core_factory, project, monkeypatch):
@@ -317,19 +380,7 @@ def test_root_and_external_cards_resolve_their_own_projects(core_factory, projec
     edit_json(external / "tsugumi.json", lambda doc: doc.update(nixPath=declarations(external_lock)))
     write_lock(external, external_lock)
     client = core_factory().connect()
-    rev = client.call("ProjectInspectRequest").rev
-
-    def names(directory):
-        return client.call("CardNixPathNamesRequest", definitionDir=directory, atRev=rev)
-
-    work_dir = "externals/outer/definitions/work/"
-    assert not names(work_dir).recorded
     assert completed_definition(client, card="outer/work", start="producer")[0] == "independent\n"
-    work = names(work_dir)
-    producer = names("definitions/producer/")
-    assert work.recorded and sorted(map(text, work.names)) == ["external-only", "nixpkgs", "shared"]
-    # The latest producer observation only forced its exports.
-    assert producer.recorded and list(map(text, producer.names)) == ["shared"]
 
 
 def test_target_system_change_selects_new_packages_and_definition(core_factory, project):

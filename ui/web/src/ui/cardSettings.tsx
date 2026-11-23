@@ -37,7 +37,7 @@ export type SourceLoad = { state: 'loading' } | { state: 'loaded' } | { state: '
  *  is open (the Agent, the canvas): settings and files not touched here take
  *  the new content; changes on both sides require an explicit overwrite or
  *  reload choice. */
-const inputParameters = (boolean: boolean) => `{ run = { value = ${boolean ? 'false' : '0.0'}; }; }\n`
+const inputParameters = (boolean: boolean) => `{ value = ${boolean ? 'false' : '0.0'}; }\n`
 
 export class CardEditorModel extends Observable {
   definition?: J
@@ -730,12 +730,9 @@ function GeneralCategory({ model }: { model: CardEditorModel }) {
             .map(value => ({ value, label: value === 'input_bool' ? L('真偽値の入力') : value === 'code' ? L('コード') : value }))
         } /></Row>
       </Section>}
-      {[R.ParamSection.run, R.ParamSection.build].map(section => {
-        const group = params.filter(p => p.section === section)
-        return group.length ? <Section key={section} title={section === R.ParamSection.run ? L('実行時パラメータ') : L('ビルド時パラメータ')}>
-          {group.map(parameter => <ParamRow key={parameter.name} model={model} parameter={parameter} />)}
-        </Section> : null
-      })}
+      {params.length > 0 && <Section title={L('パラメータ')}>
+        {params.map(parameter => <ParamRow key={parameter.name} model={model} parameter={parameter} />)}
+      </Section>}
       {kind !== 'subgraph' && kind !== 'draft' && kind !== 'invalid' && (
         <Section title={L('実行')}>
           {numberField('maxRuns', L('最大発火回数'), '1', L('実行リスト内の呼び出しはまとめて 1 回の発火として数えます。'))}
@@ -921,11 +918,10 @@ function HostFoldersEditor({ model, remote }: { model: CardEditorModel; remote: 
 function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: CardParameter }) {
   const session = model.session
   const { name, type } = parameter
-  const value = parameter.override ?? parameter.defaultValue
+  const value = parameter.value
   const sweep = arr(get(model.definition, 'sweeps', name))
   const [draft, setDraft] = useState<string>()
   const [sweepDraft, setSweepDraft] = useState<string>()
-  const [reset, setReset] = useState(false)
   const [edit] = useState(() => new InlineParamEdit())
   useObserve(edit)
 
@@ -939,34 +935,25 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
     : folder + entered
   const choices = pathInput && !sweep ? pathChoices(session.sourcePaths, folder) : []
   const begin = () => {
-    if (draft === undefined && !reset) edit.begin(paramText(value), session.rev)
-    setReset(false)
+    if (draft === undefined) edit.begin(paramText(value), session.rev)
   }
   const clear = () => {
     setDraft(undefined)
-    setReset(false)
     edit.begin(paramText(value), session.rev)
   }
   const save = async (text: string | undefined, overwrite = false) => {
-    if (await edit.commitParam(session, model.cardKey, name, text === undefined ? undefined : parseParam(text, type), overwrite)) clear()
+    if (text !== undefined && await edit.commitParam(session, model.cardKey, name, parseParam(text, type), overwrite)) clear()
   }
   const set = (text: string) => {
     begin()
     setDraft(text)
     void save(text)
   }
-  // A sweep and a scalar override for the same parameter are mutually exclusive.
-  const setSweep = (values: J[] | undefined, updateOverride = false) => {
+  const setSweep = (values: J[] | undefined) => {
     const sweeps = clone(get(model.definition, 'sweeps'))
     const next = isObj(sweeps) ? sweeps : obj()
     next.set(name, values)
     model.setSetting('sweeps', next.size ? next : undefined)
-    if (updateOverride) {
-      const current = clone(get(model.definition, 'params'))
-      const overrides = isObj(current) ? current : obj()
-      overrides.set(name, values === undefined ? sweep?.[0] : undefined)
-      model.setSetting('params', overrides.size ? overrides : undefined)
-    }
   }
   const pendingSweepRemoval = !sweep && get(session.cardDefinition(model.cardKey), 'sweeps', name) !== undefined
   const valueDisabled = disabled || pendingSweepRemoval
@@ -996,17 +983,11 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
             options={[{ value: '', label: L('ファイルかフォルダを選択…'), disabled: true },
               ...choices.map(p => ({ value: p, label: p }))]} />}
           <span className="caption2 secondary nowrap">{type}</span>
-          {parameter.override !== undefined && !sweep && <Button disabled={valueDisabled} onClick={() => {
-            begin()
-            setReset(true)
-            void save(undefined)
-          }}>{L('既定値に戻す')}</Button>}
         </div>
-        <div className="caption secondary">{L('既定値: {0}', serialize(parameter.defaultValue, false))}</div>
-        {model.kind === 'input' && parameter.section === R.ParamSection.run && <div className="row gap6 center">
+        {model.kind === 'input' && <div className="row gap6 center">
           <Toggle kind="checkbox" small checked={!!sweep} disabled={disabled || draft !== undefined} onChange={enabled => {
             setSweepDraft(undefined)
-            setSweep(enabled ? [value] : undefined, true)
+            setSweep(enabled ? [value] : undefined)
           }} label={L('値ごとに呼び出す')} help={L('並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。')} />
         </div>}
         {sweep && <div className="caption secondary">
@@ -1017,8 +998,8 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
           <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
           <div>{L('参照先: {0}', target)}</div>
         </div>}
-        <RevisionEditNotice edit={edit} text={() => reset ? L('既定値に戻す') : draft ?? ''}
-          overwrite={() => void save(reset ? undefined : draft, true)} reload={clear} />
+        <RevisionEditNotice edit={edit} text={() => draft ?? ''}
+          overwrite={() => void save(draft, true)} reload={clear} />
       </div>
     </Row>
   )
@@ -1519,7 +1500,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
     if (!rpc || sdk.building) return
     setSdk({ building: true })
     try {
-      const result = await rpc.evaluateNix(path(model.cardKey), 'card.api', { build: true, atRev: session.rev })
+      const result = await rpc.evaluateNix(path(model.cardKey), '(import ./. { inherit params inputs; }).api', { build: true, atRev: session.rev })
       setSdk(sdkBuild(result))
     } catch (e) {
       setSdk({ building: false, failure: errorText(e) })
@@ -1686,7 +1667,7 @@ function SourceCategory({ model }: { model: CardEditorModel }) {
                     <div className="src-section caption row center gap4">
                       <span className="spacer">{L('SDK')}</span>
                       <Button small disabled={sdk.building || !session.rpc} onClick={() => void buildSdk()}
-                        help={L('保存済みの定義と現在の接続で card.api をビルドし、share/tsugumi/api/ のファイルを表示します')}>
+                        help={L('保存済みの定義と現在の接続で SDK をビルドし、share/tsugumi/api/ のファイルを表示します')}>
                         {sdk.building ? L('ビルドしています…') : L('SDK をビルド')}
                       </Button>
                     </div>

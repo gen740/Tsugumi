@@ -393,8 +393,7 @@ auto project_document(const std::optional<std::string>& text,
   return out;
 }
 
-// The canonical text of a version's _card.json, split into its params and
-// the rest; both empty when there is none.
+// Classify sweep edits separately from the rest of a Card's settings.
 auto card_document(const std::optional<std::string>& text,
                    const std::string& path)
     -> std::pair<std::string, std::string> {
@@ -408,9 +407,7 @@ auto card_document(const std::optional<std::string>& text,
     throw Failed(FailureKind::invalid_document, error.what());
   }
   D::CardT params;
-  params.params = std::move(card.params);
   params.sweeps = std::move(card.sweeps);
-  card.params.clear();
   card.sweeps.clear();
   const auto print = [](const D::CardT& c) {
     return document_text::print(document_text::Schema::Card,
@@ -1174,6 +1171,8 @@ auto Versions::note(const std::string& commit) -> VersionNoteData {
       if (before.first != after.first) changed[*card].insert("parameters");
       if (before.second != after.second || !old_text || !new_text)
         changed[*card].insert("definition");
+    } else if (!source && filename == "params.nix") {
+      changed[*card].insert("parameters");
     } else {
       changed[*card].insert(source ? "source" : "definition");
     }

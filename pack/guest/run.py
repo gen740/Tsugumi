@@ -1,8 +1,8 @@
 """Run an exported Project once, inside the pack guest, and write its results.
 
 Called by the guest's /init in run mode. The Project is a copy of what the
-author exported; the recipient's request (parameter values) is applied to that
-copy before tsugumid opens it, so the run is an ordinary run of the Workflow
+author exported; the recipient's input values are saved to that copy before
+the Workflow runs. The run is an ordinary run of the Workflow
 from its trigger. Nothing here schedules Cards: tsugumid does, through the
 same RPC the apps use (tsugumi-rpc, one JSON request per line).
 
@@ -18,6 +18,7 @@ author chose: the recipient gets the values back. recordIO is
 a setting, so this changes no build.
 """
 
+import base64
 import json
 import os
 import shutil
@@ -29,7 +30,7 @@ from pathlib import Path
 
 ENDED = {"succeeded", "failed", "cancelled"}
 # Card kinds that expose editable values in the exported app.
-SETTABLE = {"code", "input"}
+SETTABLE = {"input"}
 
 
 def stage(text):
@@ -84,31 +85,61 @@ def definition_of(project, card):
 
 
 def apply_request(project, request, inputs, parameters):
-    """Write recipient-selected run overrides into the copied definitions."""
+    """Copy recipient files before opening the project and collect edits."""
+    edits = {}
     for card, name in request.get("files", {}).items():
-        path, definition = definition_of(project, card)
+        _, definition = definition_of(project, card)
         spec = next((p for p in parameters.get(card, []) if p["name"] == "value"), None)
         if (definition.get("type") != "input" or not spec
-                or spec.get("build", False) or spec["type"] != "string"):
+                or spec["type"] != "string"):
             raise SystemExit(f"{card} is not an input Card with a file")
         source = inputs / card / name
         target = project / "definitions" / card / "recipient" / name
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
-        definition.setdefault("params", {})["value"] = f"recipient/{name}"
-        path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
+        edits[card, "value"] = f"recipient/{name}"
     for card, values in request.get("params", {}).items():
-        path, definition = definition_of(project, card)
+        _, definition = definition_of(project, card)
         if definition.get("type") not in SETTABLE:
             raise SystemExit(f"{card} is a {definition.get('type')} Card: its parameters shape the Workflow")
         declarations = {p["name"]: p for p in parameters.get(card, [])}
         for name, value in values.items():
             if name not in declarations:
                 raise SystemExit(f"Card {card} has no parameter {name}")
-            if declarations[name].get("build", False):
-                raise SystemExit(f"{card}.{name} is fixed at export: it changes the Card's build")
-            definition.setdefault("params", {})[name] = value
-        path.write_text(json.dumps(definition, indent=2, ensure_ascii=False) + "\n")
+            edits[card, name] = value
+    return edits
+
+
+def nix_literal(value, type_name):
+    if isinstance(value, list) and type_name.startswith("["):
+        items = [nix_literal(v, type_name[1:-1]) for v in value]
+        return "[ " + " ".join(f"({v})" if v.startswith("-") else v for v in items) + " ]"
+    if isinstance(value, str):
+        escaped = value.replace("\\", "\\\\").replace('"', '\\"').replace("$" + "{", "\\$" + "{")
+        return '"' + escaped + '"'
+    text = json.dumps(value, allow_nan=False)
+    mantissa, exponent, power = text.partition("e")
+    if type_name == "float" and type(value) in (float, int) and "." not in mantissa:
+        return mantissa + ".0" + exponent + power
+    return text
+
+
+def save_params(rpc, revision, edits, parameters):
+    for (card, name), value in edits.items():
+        type_name = next(p["type"] for p in parameters[card] if p["name"] == name)
+        rewritten = rpc.call("RewriteParamLiteralRequest", {
+            "card": {"segments": [card]}, "name": name, "at_rev": revision,
+            "literal": nix_literal(value, type_name),
+        })
+        result = rpc.call("ProjectSaveRequest", {
+            "base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
+            "changes": [{"value_type": "PutSource", "value": {
+                "path": rewritten["path"], "base_hash": rewritten["base_hash"],
+                "bytes": {"base64": base64.b64encode(rewritten["text"].encode()).decode()},
+            }}],
+        })
+        revision = result["rev"]
+    return revision
 
 def record_all(project):
     """recordIO on for every Code Card of the copy."""
@@ -261,7 +292,7 @@ def main():
     work = Path(os.environ.get("PACK_WORK", "/work"))
     request = json.loads(request_path.read_text()) if request_path.is_file() else {}
     parameters = json.loads(Path(os.environ["PACK_PARAMETERS"]).read_text())
-    apply_request(project, request, request_path.parent / "inputs", parameters)
+    edits = apply_request(project, request, request_path.parent / "inputs", parameters)
     record_all(project)
     found = triggers(project)
     start = request.get("start") or (found[0] if found else None)
@@ -275,8 +306,9 @@ def main():
     try:
         rpc.call("SessionHelloRequest", {})
         snapshot = rpc.call("ProjectInspectRequest", {})
+        revision = save_params(rpc, snapshot["rev"], edits, parameters)
         stage("run")
-        accepted = rpc.call("RunRequest", {"base_rev": snapshot["rev"], "op_id": str(uuid.uuid4()), "origin": "pack",
+        accepted = rpc.call("RunRequest", {"base_rev": revision, "op_id": str(uuid.uuid4()), "origin": "pack",
                                           "card": {"segments": [start]},
                                           "max_concurrency": min(64, max(1, os.cpu_count() or 1))})
         run_id = accepted["run"]["run_id"]

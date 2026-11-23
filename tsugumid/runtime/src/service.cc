@@ -755,7 +755,7 @@ std::vector<std::string> Service::capabilities() {
                                    "ViewSave",
                                    "CardViewRead",
                                    "NixPathLockSource",
-                                   "CardNixPathNames",
+                                   "RewriteParamLiteral",
                                    "VersionInit",
                                    "VersionMark",
                                    "VersionCheckout",
@@ -987,8 +987,9 @@ void Service::dispatch(RequestIn req) {
       return on_lane(r, std::move(req), &Service::output_types);
     case P::NixPathLockSourceRequest:
       return on_lane(r, std::move(req), &Service::nix_path_lock_source);
-    case P::CardNixPathNamesRequest:
-      return on_lane(r, std::move(req), &Service::card_nix_path_names);
+    case P::RewriteParamLiteralRequest:
+      return on_lane(r, std::move(req),
+                     &Service::rewrite_param_literal_request);
     case P::EvaluateNixRequest:
       return on_lane(r, std::move(req), &Service::evaluate_nix);
     case P::RunPlanRequest:
@@ -2634,36 +2635,48 @@ void Service::nix_path_lock_source(RequestIn& req) {
     throw Failed(FailureKind::invalid_request,
                  "Unsupported nixPath URL " + url +
                      "; expected github:, gitlab: or sourcehut:");
-  const auto info = nix_->lock_source(url);
+  const auto locked = nix_->lock_source(url);
   FBB b;
-  const auto source = R::CreateNixPathLockedSourceDirect(
-      b, info.type.c_str(), info.owner.empty() ? nullptr : info.owner.c_str(),
-      info.repo.empty() ? nullptr : info.repo.c_str(), info.rev.c_str(),
-      info.nar_hash.c_str(), info.last_modified);
+  const auto source = R::CreateNixPathLockedSource(b, b.CreateString(locked));
   reply(req, wire::reply(b, req.request_id,
                          R::ReplyPayload::NixPathLockedSource, source.Union()));
 }
 
-void Service::card_nix_path_names(RequestIn& req) {
-  const auto* query = project_request(req)->value_as_CardNixPathNamesRequest();
+void Service::rewrite_param_literal_request(RequestIn& req) {
+  const auto* request =
+      project_request(req)->value_as_RewriteParamLiteralRequest();
   const auto doc = store_->current();
-  if (query->at_rev() && *query->at_rev() != doc->rev)
-    throw Failed(FailureKind::revision_conflict, "project revision changed");
-  const auto dir = query->definition_dir()->string_view();
-  const auto& nodes = doc->resolution->nodes;
-  const auto node = std::ranges::find(nodes, dir, &Node::def_dir);
-  std::optional<std::vector<std::string>> names;
-  // An external project can be mounted by multiple Cards. Without a unique
-  // logical path, leave the source choice to the caller.
-  if (node != nodes.end() &&
-      std::ranges::find(std::next(node), nodes.end(), dir, &Node::def_dir) ==
-          nodes.end())
-    names = nix_->resolved_names(node->path);
+  check_at_rev(request->at_rev(), *doc);
+  const auto card = wire::card_arg(request->card());
+  const auto* node = doc->resolution->find(card);
+  if (!node || node->is_virtual)
+    throw Failed(FailureKind::not_found, "unknown Card " + path_key(card));
+  const auto path = node->def_dir + "params.nix";
+  const auto source = doc->sources.find(path);
+  if (source == doc->sources.end())
+    throw Failed(FailureKind::not_found, path + " does not exist");
+  if (source->second.size > kMaxDocumentJsonBytes ||
+      request->literal()->size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " exceeds 8 MiB");
+  const auto bytes = store_->read_source(*doc, path);
+  std::string rewritten;
+  try {
+    rewritten =
+        rewrite_param_literal(path, bytes, request->name()->string_view(),
+                              request->literal()->string_view());
+  } catch (const std::exception& error) {
+    throw Failed(FailureKind::validation_failed, error.what(),
+                 {{"path", path}});
+  }
+  if (rewritten.size() > kMaxDocumentJsonBytes)
+    throw Failed(FailureKind::invalid_request, path + " would exceed 8 MiB");
   FBB b;
-  const auto result = R::CreateCardNixPathNames(
-      b, names.has_value(), names ? b.CreateVectorOfStrings(*names) : 0);
-  reply(req, wire::reply(b, req.request_id, R::ReplyPayload::CardNixPathNames,
-                         result.Union()));
+  const auto result = R::CreateRewrittenParamLiteral(
+      b, b.CreateString(path), b.CreateString(source->second.hash),
+      b.CreateString(rewritten));
+  reply(req,
+        wire::reply(b, req.request_id, R::ReplyPayload::RewrittenParamLiteral,
+                    result.Union()));
 }
 
 void Service::input_types(RequestIn& req) {

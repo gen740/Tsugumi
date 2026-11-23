@@ -1,17 +1,15 @@
 # Evaluated with restricted filesystem access and without IFD.
-noteCard:
 {
   gen,
   upstream,
   card,
-  cardKey,
   viewsOnly ? false,
   expressionOnly ? false,
 }:
 let
   up = builtins.fromJSON (builtins.readFile upstream);
   argumentsFor = g: deps: {
-    params = builtins.fromJSON (builtins.readFile (g + "/build-params.json"));
+    params = builtins.fromJSON (builtins.readFile (g + "/params.json"));
     inputs = builtins.listToAttrs (
       map (d: {
         name = d.name;
@@ -25,17 +23,14 @@ let
       }) deps
     );
   };
-  importCard =
-    key: def: args:
-    builtins.seq (noteCard key) (import def args);
   cards = builtins.listToAttrs (
     map (u: {
       name = u.key;
-      value = importCard u.key (/. + u.def) (argumentsFor (/. + u.gen) u.deps);
+      value = import (/. + u.def) (argumentsFor (/. + u.gen) u.deps);
     }) up.cards
   );
   arguments = argumentsFor gen up.deps;
-  self = importCard cardKey card arguments;
+  self = import card arguments;
   unknown = builtins.filter (
     key:
     !(builtins.elem key [

@@ -46,15 +46,16 @@ class DefinitionEvaluation : public ::testing::Test {
     ASSERT_NE(lock, nullptr) << "run using nix develop or tsugumi-test-env";
     for (const auto& value : json::Array(json::Object(lock).at("nixPath"))) {
       const auto row = json::Object(value);
-      const auto attrs = json::Object(row.at("locked"));
       pins.emplace(
           json::Text(row, "name"),
-          LockedSource{json::Text(attrs, "type"), json::Text(attrs, "owner"),
-                       json::Text(attrs, "repo"), json::Text(attrs, "rev"),
-                       json::Text(attrs, "narHash"),
-                       std::stoll(attrs.at("lastModified"))});
+          NixPathPin{json::Text(row, "url"), json::Text(row, "locked_url")});
+      if (json::Text(row, "name") != "nixpkgs") continue;
+      const auto attrs = json::Object(row.at("locked"));
+      call.core_nixpkgs = {json::Text(attrs, "type"),
+                           json::Text(attrs, "owner"),
+                           json::Text(attrs, "repo"), json::Text(attrs, "rev"),
+                           json::Text(attrs, "narHash")};
     }
-    call.core_nixpkgs = pins.at("nixpkgs");
     call.system = native_system();
     call.card = "work";
     call.definition_dir = root / "source";
@@ -69,10 +70,10 @@ class DefinitionEvaluation : public ::testing::Test {
   auto TearDown() -> void override { std::filesystem::remove_all(root); }
   auto evaluator(const std::string& body) -> std::unique_ptr<NixEvaluator> {
     return std::make_unique<NixEvaluator>(
-        "note: args: { executionList = false; implementationCount "
+        "args: { executionList = false; implementationCount "
         "= 1; "
         "implementationLabels = builtins.toJSON [ \"\" ]; "
-        "plan = builtins.seq (note \"work\") (" +
+        "plan = (" +
         body + "); }");
   }
   std::filesystem::path root;
@@ -224,9 +225,6 @@ TEST_F(DefinitionEvaluation, SearchPathIsCatchableAndHostPathIsEmpty) {
   auto eval = evaluator("import (args.root + \"/default.nix\")");
   auto result = eval->realise_native(call, eval->evaluate(call));
   EXPECT_EQ(fs::read_file(result.derivation.output), "flake.nix");
-  ASSERT_EQ(result.resolved_names.size(), 1u);
-  EXPECT_EQ(result.resolved_names.at("work"),
-            (std::vector<std::string>{"local"}));
   fs::write_atomic(root / "source" / "default.nix", "toString <misspelled>");
   try {
     eval->evaluate(call);
@@ -258,11 +256,7 @@ TEST_F(DefinitionEvaluation, NameResolutionFollowsImportedDefinitionOrigin) {
     in if a != b then "different projects" else throw "shared search path"
   )");
   auto first = eval->realise_native(call, eval->evaluate(call));
-  ASSERT_EQ(first.resolved_names.size(), 2u);
-  EXPECT_EQ(first.resolved_names.at("work"), (std::vector<std::string>{"dep"}));
-  EXPECT_EQ(first.resolved_names.at("outer/work"),
-            (std::vector<std::string>{"dep"}));
-  EXPECT_EQ(eval->evaluate(call).resolved_names, first.resolved_names);
+  EXPECT_EQ(fs::read_file(first.derivation.output), "different projects");
 
   call.projects["externals/outer/"]["dep"] = pins.at("nixpkgs");
   EXPECT_THROW(eval->evaluate(call), std::runtime_error);
@@ -304,18 +298,18 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
                    "{ params, inputs }: { api = params.value; }");
   fs::write_atomic(dir / "relative", "from the Card");
   call.projects.at("").emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("note: args: { params.value = 42; inputs = {}; }");
-  const auto result = eval.expression(call, R"({ inherit inputs; x = card.api;
+  NixEvaluator eval("args: { params.value = 42; inputs = {}; }");
+  const auto result = eval.expression(
+      call,
+      R"({ inherit inputs; x = (import ./. { inherit params inputs; }).api;
                  local = builtins.readFile ./relative;
                  lock = builtins.baseNameOf <dep/flake.nix>;
                  store = import (builtins.toFile "scope-test.nix"
                    "(builtins.tryEval <dep>).success"); })",
-                                      false);
+      false);
   EXPECT_EQ(
       result.json,
       R"({"inputs":{},"local":"from the Card","lock":"flake.nix","store":false,"x":42})");
-  EXPECT_EQ(result.resolved_names.at("work"),
-            (std::vector<std::string>{"dep"}));
   EXPECT_THROW(eval.expression(call,
                                "builtins.concatStringsSep \"\" "
                                "(builtins.genList (_: \"abcdefgh\") 1100000)",
@@ -325,7 +319,7 @@ TEST_F(DefinitionEvaluation, ExpressionUsesTheCardDirectoryAndProject) {
 
 TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
   call.projects.at("").emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("note: args: { params = {}; inputs = {}; }");
+  NixEvaluator eval("args: { params = {}; inputs = {}; }");
   fs::write_atomic(call.definition_dir / "default.nix", R"(
     { params, inputs }:
     let pkgs = import <dep> {};
@@ -338,7 +332,8 @@ TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
       '';
     }
   )");
-  const auto result = eval.expression(call, "card.api", true);
+  const auto result = eval.expression(
+      call, "(import ./. { inherit params inputs; }).api", true);
   ASSERT_FALSE(result.build_error) << result.log_tail;
   ASSERT_EQ(result.files.size(), 1u);
   EXPECT_EQ(result.files[0].path, "share/tsugumi/api/result");
@@ -363,7 +358,7 @@ TEST_F(DefinitionEvaluation, ExpressionBuildReturnsFilesAndFailureLog) {
 
 TEST_F(DefinitionEvaluation, ExpressionBuildBoundsDirectoryEntriesAndBytes) {
   call.projects.at("").emplace("dep", pins.at("nixpkgs"));
-  NixEvaluator eval("note: args: { params = {}; inputs = {}; }");
+  NixEvaluator eval("args: { params = {}; inputs = {}; }");
   const auto entries = eval.expression(call, R"(
     let pkgs = import <dep> {};
     in pkgs.runCommand "expression-many-files" {} ''

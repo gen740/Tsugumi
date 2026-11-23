@@ -595,8 +595,8 @@ auto ReverseProjectChanges(const json::Members& plan, const SaveBase& base,
         if (path.starts_with(dir)) after[path] = std::nullopt;
       }
     } else if (type == "SetProjectLock") {
-      // Existing pins carried by a copy stay available after undo. Pins in a
-      // newly installed external are removed with the rest of its tree.
+      // Explicit lock updates have no undo. Pins installed with a new
+      // external leave with the rest of that external's tree.
       const auto path = json::Text(value, "path");
       if (path.starts_with("externals/") && value.contains("json") &&
           !original(path))

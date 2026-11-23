@@ -11,7 +11,7 @@ from tsugumi_client import RpcFailure, new_id, path, text
 from Tsugumi.Data.RunState import RunState
 from Tsugumi.RPC.NotificationPayload import NotificationPayload
 from Tsugumi.RPC.RunEventValue import RunEventValue
-from harness.document import set_param
+from harness.document import params_nix
 from harness.nix_path import declarations, test_lock_entries, write_lock
 
 MSG_FBS = """
@@ -86,8 +86,9 @@ def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None =
         for k, v in c.items():
             if k not in ("id", "definition", "params"):
                 body[k] = v
-        for pname, value in (c.get("params") or {}).items():
-            set_param(body, pname, value)
+        values = {**body.pop("params", {}), **c.get("params", {})}
+        if values:
+            params = params_nix(values)
         # Card-local file parameters need no rewriting when a definition is reused.
         mine, theirs = f"definitions/{cid}/", f"definitions/{d}/"
         put(folder / "_card.json", json.dumps(body))
@@ -120,7 +121,7 @@ def builtin_project(root: Path, text: str = "hello", extra_cards=(), extra_conns
     """An input Card wired to a sink, with a trigger for whole-workflow runs."""
     defs = {
         "trigger": {"type": "trigger"},
-        "source": {"type": "input", "_params": '{ run = { text = "x"; value = true; }; }',
+        "source": {"type": "input", "params": {"text": "x", "value": True},
                    "_outputs": MSG_FBS},
         "sink": SINK,
         "branch": {"type": "branch"},

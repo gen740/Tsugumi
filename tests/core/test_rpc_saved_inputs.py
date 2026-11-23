@@ -20,12 +20,12 @@ def saved_file_subgraph(project, core_factory):
             "start": {"type": "trigger"},
             "source": {
                 "type": "input",
-                "params": {"value": "report.txt"}, "_params": '{ run = { value = ""; }; }',
+                "params": {"value": "report.txt"}, "_params": '{ value = ""; }',
                 "_outputs": FILE_FBS,
             },
             "flag": {
                 "type": "input",
-                "params": {"value": True}, "_params": '{ run = { value = false; }; }',
+                "params": {"value": True}, "_params": '{ value = false; }',
                 "_outputs": FLAG_FBS,
             },
             "forward": {

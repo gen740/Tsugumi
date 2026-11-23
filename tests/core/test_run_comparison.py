@@ -7,7 +7,7 @@ import shutil
 
 from harness.fixtures import add_worker
 from harness.scenario import Gate, Project, run, wait_run
-from harness.document import set_param as set_typed_param
+from harness.document import set_param
 from tsugumi_client import change, new_id, path, text
 from Tsugumi.Data.CardState import CardState
 from Tsugumi.Data.RunState import RunState
@@ -18,15 +18,6 @@ from Tsugumi.Data.RunState import RunState
 def recorded_params(client, run_id, card):
     result = client.call("RunRecordRequest", runId=run_id, card=path(card))
     return result, {text(p.name): json.loads(text(p.value)) for p in result.record.params.entries}
-
-
-def set_param(client, card, name, value):
-    snapshot = client.call("ProjectInspectRequest")
-    definition = next(d for d in snapshot.definitions if text(d.id) == card)
-    body = json.loads(text(definition.cardJson))
-    set_typed_param(body, name, value)
-    client.call("ProjectSaveRequest", baseRev=snapshot.rev, opId=new_id(), origin="ui:test",
-                changes=[change("PutDefinition", id=card, cardJson=json.dumps(body))])
 
 
 def test_parameters_are_recorded_for_failed_cancelled_and_never_started_cards(core_factory, project, tmp_path):
@@ -42,12 +33,12 @@ def test_parameters_are_recorded_for_failed_cancelled_and_never_started_cards(co
     gate = Gate(tmp_path, "stopped")
     graph = Project(project)
     add_worker(graph, "fails", tmp_path / "fails", [{"op": "failure", "message": "the band is empty"}],
-               params={"boundary": 1650}, _params="{ run = { boundary = 0; }; }")
+               params={"boundary": 1650}, _params="{ boundary = 0; }")
     add_worker(graph, "after", tmp_path / "after", [{"op": "echo", "input": "in", "port": "out"}],
-               inputs=[{"name": "in"}], params={"bins": 64}, _params="{ run = { bins = 0; }; }")
+               inputs=[{"name": "in"}], params={"bins": 64}, _params="{ bins = 0; }")
     add_worker(graph, "stopped", tmp_path / "stopped", [
         gate.action(), {"op": "output", "port": "out", "type": "string", "value": "too late"},
-    ], params={"low": 600}, _params="{ run = { low = 0; }; }")
+    ], params={"low": 600}, _params="{ low = 0; }")
     graph.connect("fails", "out", "after", "in").save(client)
 
     failed_run = run(client, "fails")
@@ -137,7 +128,7 @@ def test_a_project_copy_keeps_recorded_invocation_details(core_factory, project,
     graph = Project(project)
     add_worker(graph, "work", tmp_path / "package", [
         {"op": "output", "port": "out", "type": "string", "value": "counts"},
-    ], params={"boundary": 1650}, _params="{ run = { boundary = 0; }; }")
+    ], params={"boundary": 1650}, _params="{ boundary = 0; }")
     graph.save(client)
     run_id = run(client)
     assert wait_run(client, run_id).state == RunState.succeeded

@@ -66,7 +66,7 @@ def python_run(main: str, *, values: dict | None = None, tools: str = "") -> str
     parts = [f'"{name} = " (builtins.toJSON ({expr})) "\\n"' for name, expr in (values or {}).items()]
     source = "(builtins.concatStringsSep \"\" [ " + " ".join(parts + [nix_string(main)]) + " ])"
     options = f" tools = {tools};" if tools else ""
-    return ("(sdk.pythonCard { inherit inputs; outputs = ./_outputs.fbs; params = ./params.nix;"
+    return ("(sdk.pythonCard { inherit inputs params; outputs = ./_outputs.fbs;"
             " src = pkgs.writeTextDir \"main.py\" " + source + ";" + options + " })")
 
 

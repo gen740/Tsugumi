@@ -190,11 +190,11 @@ export class RPCClient {
   save(baseRev: bigint, opId: string, origin: string, changes: R.DocumentChangeT[], checkPermissions = false, approvedPermissions: string[] = []) {
     return this.call<R.SaveResultT>(RequestPayload.ProjectSaveRequest, Object.assign(new R.ProjectSaveRequestT(), { baseRev, opId, origin, changes, checkPermissions, approvedPermissions }))
   }
-  evaluateNix(card: string[], expression: string, { build = false, system = null, atRev = null }: {
-    build?: boolean; system?: string | null; atRev?: bigint | null
+  evaluateNix(card: string[], expression: string, { build = false, atRev = null }: {
+    build?: boolean; atRev?: bigint | null
   } = {}) {
     return this.call<R.EvaluateNixResultT>(RequestPayload.EvaluateNixRequest,
-      Object.assign(new R.EvaluateNixRequestT(), { card: cardPath(card), expression, build, system, atRev }))
+      Object.assign(new R.EvaluateNixRequestT(), { card: cardPath(card), expression, build, atRev }))
   }
   /** Deletes finished runs (all, or those that ended before the date) with their files. */
   deleteHistory(opId: string, endedBefore: number | null) {

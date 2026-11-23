@@ -392,17 +392,19 @@ def test_int64_values_preserve_precision_and_report_overflow(builtin_client):
     snap = c.open().snapshot
     doc = project_json(snap)
     doc["canvas"]["cards"].append({"id": "b"})
-    raw = '{"type": "input", "params": {"n": 9223372036854775807}}'
+    raw = b"{ n = 9223372036854775807; }"
+    source = "definitions/b/params.nix"
     res = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-                 changes=[change("SetProject", json=json.dumps(doc)), change("PutDefinition", id="b", cardJson=raw),
-                          change("PutSource", path="definitions/b/params.nix", bytes=b"{ run = { n = 0; }; }")])
-    saved = next(x for x in res.delta.definitionsUpsert if text(x.id) == "b")
-    assert json.loads(text(saved.cardJson))["params"]["n"] == 9223372036854775807
+                 changes=[change("SetProject", json=json.dumps(doc)),
+                          change("PutDefinition", id="b", cardJson='{"type":"input"}'),
+                          change("PutSource", path=source, bytes=raw)])
     node = next(r for r in res.delta.resolution if text(r.card.segments[0]) == "b")
     assert "invalid_param" not in [text(x.code) for x in node.diagnostics]
-    raw = raw.replace("9223372036854775807", "9223372036854775808")
+    assert json.loads(text(node.parameters[0].valueJson)) == 9223372036854775807
+    base = c.call("ProjectFileStatRequest", path=source)
+    raw = raw.replace(b"9223372036854775807", b"9223372036854775808")
     bad = c.call("ProjectSaveRequest", baseRev=res.rev, opId=new_id(), origin="t",
-                 changes=[change("PutDefinition", id="b", cardJson=raw)])
+                 changes=[change("PutSource", path=source, baseHash=text(base.hash), bytes=raw)])
     node = next(r for r in bad.delta.resolution if text(r.card.segments[0]) == "b")
     assert "invalid_param" in [text(x.code) for x in node.diagnostics]
 

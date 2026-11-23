@@ -3,7 +3,6 @@
 #include <sys/stat.h>
 #include <unistd.h>
 
-#include <charconv>
 #include <fstream>
 #include <sstream>
 
@@ -91,16 +90,10 @@ std::string root_prefix(const CardPath& card) {
 auto project_pins(const Document& doc, const Store& store, const Node& node)
     -> std::pair<LockedNixPath, std::string> {
   const auto path = node.project_dir + "tsugumi.lock";
-  std::map<std::string, json::Members> lines;
+  json::Members lines;
   if (doc.sources.contains(path)) {
     const auto lock = json::Object(store.read_source(doc, path), path);
-    for (const auto& row : json::Array(json::Get(lock, "nixPath", "[]"))) {
-      auto entry = json::Object(row, path);
-      const auto name = json::Text(entry, "name");
-      if (!lines.emplace(name, std::move(entry)).second)
-        throw std::runtime_error(path + ": duplicate nixPath name " +
-                                 json::Quote(name));
-    }
+    lines = json::Object(json::Get(lock, "nixPath", "{}"), path);
   }
 
   LockedNixPath result;
@@ -108,27 +101,13 @@ auto project_pins(const Document& doc, const Store& store, const Node& node)
   for (const auto& declaration : node.nix_path) {
     const auto& name = declaration.name;
     const auto line = lines.find(name);
-    const auto prefix = "nixPath " + json::Quote(name);
     if (line == lines.end())
-      throw std::runtime_error(prefix + " is not locked; update the lock");
-    const auto url = json::Text(line->second, "url");
-    if (declaration.url != url)
-      throw std::runtime_error(prefix + " changed (lock has " + url +
-                               "); update the lock");
-    const auto source = json::Object(json::Get(line->second, "locked"), path);
-    const auto timestamp = json::Get(source, "lastModified", "0");
-    int64_t last_modified = 0;
-    const auto [end, err] = std::from_chars(
-        timestamp.data(), timestamp.data() + timestamp.size(), last_modified);
-    if (err != std::errc{} || end != timestamp.data() + timestamp.size() ||
-        last_modified < 0)
-      throw std::runtime_error(path + ": invalid lastModified for " + prefix);
-    result.emplace(
-        name,
-        LockedSource{json::Text(source, "type"), json::Text(source, "owner"),
-                     json::Text(source, "repo"), json::Text(source, "rev"),
-                     json::Text(source, "narHash"), last_modified});
-    identity.emplace(name, json::Encode(line->second));
+      throw std::runtime_error("nixPath " + json::Quote(name) +
+                               " is not locked; update the lock");
+    result.emplace(name,
+                   NixPathPin{declaration.url, json::String(line->second)});
+    identity.emplace(name, json::Encode(std::vector<std::string>{
+                               json::Quote(declaration.url), line->second}));
   }
   return {std::move(result), json::Encode(identity)};
 }
@@ -209,22 +188,8 @@ auto NixRunner::prepared(const std::string& card, const std::string& key,
 
 NixRunner::~NixRunner() { evaluator_.reset(); }
 
-auto NixRunner::lock_source(const std::string& url) -> LockedSource {
+auto NixRunner::lock_source(const std::string& url) -> std::string {
   return evaluator().lock_source(url);
-}
-
-auto NixRunner::params_declaration(const stdfs::path& def_dir) -> std::string {
-  auto& store = svc_.store();
-  auto path = def_dir.is_absolute() ? def_dir.lexically_relative(store.root())
-                                    : def_dir;
-  path /= "params.nix";
-  if (!fs::valid_relative_path(path.generic_string()))
-    throw std::runtime_error("invalid params.nix path");
-  const auto doc = store.current();
-  if (!doc->sources.contains(path.generic_string()))
-    return R"({"run":[],"build":[]})";
-  return params_declaration(def_dir,
-                            store.read_source(*doc, path.generic_string()));
 }
 
 auto NixRunner::params_declaration(const stdfs::path& def_dir,
@@ -233,23 +198,6 @@ auto NixRunner::params_declaration(const stdfs::path& def_dir,
   call.system = native_system();
   return evaluator().params_declaration(
       call, text, (def_dir / "params.nix").generic_string());
-}
-
-auto NixRunner::resolved_names(const CardPath& card) const
-    -> std::optional<std::vector<std::string>> {
-  std::lock_guard lock(names_mu_);
-  const auto found = resolved_names_.find(path_key(card));
-  if (found == resolved_names_.end()) return std::nullopt;
-  return found->second.second;
-}
-
-auto NixRunner::remember_names(const ResolvedNames& names, uint64_t order)
-    -> void {
-  std::lock_guard lock(names_mu_);
-  for (const auto& [card, observed] : names) {
-    auto& record = resolved_names_[card];
-    if (order > record.first) record = {order, observed};
-  }
 }
 
 NixEvaluator& NixRunner::evaluator() {
@@ -388,7 +336,7 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
 
     std::vector<std::string> deps;
     std::map<std::string, std::string> files{
-        {"build-params.json", owner.build_params_json}};
+        {"params.json", owner.params_nix_json}};
     for (const auto& [name, port] : owner.nix_ports) {
       if (!fs::valid_relative_path(name) || stdfs::path(name).has_parent_path())
         throw std::runtime_error("invalid input port name " +
@@ -437,16 +385,11 @@ auto NixRunner::configure_call(NixCall& call, const Document& doc,
               "; upstream = /. + " +
               nix_quote((manifest_dir / "upstream.json").string()) +
               "; card = /. + " + nix_quote(call.definition_dir.string()) +
-              "; cardKey = " + nix_quote(call.card) +
               (call.views_only ? "; viewsOnly = true" : "") +
               (expression_only ? "; expressionOnly = true" : "") + "; }";
   call.nix_dir = nix_dir_;
-  call.core_nixpkgs = {"github",
-                       "NixOS",
-                       "nixpkgs",
-                       TSUGUMI_CARD_NIXPKGS_REV,
-                       TSUGUMI_CARD_NIXPKGS_NARHASH,
-                       0};
+  call.core_nixpkgs = {"github", "NixOS", "nixpkgs", TSUGUMI_CARD_NIXPKGS_REV,
+                       TSUGUMI_CARD_NIXPKGS_NARHASH};
   key.update(json::Quote(call.core_nixpkgs.rev));
   key.update(json::Quote(call.core_nixpkgs.nar_hash));
   key.update(call.needs_worker ? "worker" : "no-worker");
@@ -465,14 +408,12 @@ auto NixRunner::evaluate_expression(const ExpressionRequest& req)
   if (req.expression.size() > kMaxDocumentJsonBytes)
     throw std::runtime_error("Nix expression exceeds 8 MiB");
   NixCall call;
-  call.system = req.system.empty() ? native_system() : req.system;
+  call.system = native_system();
   call.cancel = req.cancel;
   call.deadline = req.deadline;
   call.log = req.log;
   configure_call(call, *req.doc, *node, true);
-  auto result = evaluator().expression(call, req.expression, req.build);
-  remember_names(result.resolved_names, result.observation_order);
-  return result;
+  return evaluator().expression(call, req.expression, req.build);
 }
 
 auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
@@ -569,7 +510,6 @@ auto NixRunner::build_plan(const BuildRequest& req, bool views_only)
         log::info("Card full evaluation " + std::to_string(count));
         res = evaluator().evaluate(call);
       }
-      remember_names(res.resolved_names, res.observation_order);
       if (req.on_plan) req.on_plan(res.implementation_count);
       if (!req.transport)
         throw std::runtime_error(

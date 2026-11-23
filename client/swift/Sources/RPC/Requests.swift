@@ -195,12 +195,11 @@ public extension RPCClient {
     return try await call(.viewsaverequest, r)
   }
 
-  func evaluateNix(card: [String], expression: String, build: Bool = false, system: String? = nil, atRev: UInt64? = nil) async throws -> Tsugumi_RPC_EvaluateNixResultT {
+  func evaluateNix(card: [String], expression: String, build: Bool = false, atRev: UInt64? = nil) async throws -> Tsugumi_RPC_EvaluateNixResultT {
     let r = Tsugumi_RPC_EvaluateNixRequestT()
     r.card = cardPath(card)
     r.expression = expression
     r.build = build
-    r.system = system
     r.atRev = atRev
     return try await call(.evaluatenixrequest, r)
   }

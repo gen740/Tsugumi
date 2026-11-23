@@ -175,7 +175,7 @@ auto BuiltinCard(H::BuiltinCard kind, const std::string& id) -> TemplateFiles {
       std::ranges::replace(ns, '-', '_');
       std::ranges::replace(ns, '.', '_');
       return {{"_card.json", R"({"type":"input"})"},
-              {"params.nix", "{ run = { value = " + value + "; }; }\n"},
+              {"params.nix", "{ value = " + value + "; }\n"},
               {"_outputs.fbs", "namespace " + ns +
                                    ";\ntable Value { value:" + type +
                                    "; }\ntable Outputs { value:Value "

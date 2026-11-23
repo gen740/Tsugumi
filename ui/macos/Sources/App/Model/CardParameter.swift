@@ -4,20 +4,14 @@ import TsugumiRPC
 struct CardParameter: Identifiable, Equatable {
   var id: String { name }
   let name: String
-  let section: Tsugumi_RPC_ParamSection
   let type: String
-  let defaultValue: JSONValue
-  let override: JSONValue?
-
-  var effectiveValue: JSONValue { override ?? defaultValue }
+  let effectiveValue: JSONValue
 
   init?(_ parameter: Tsugumi_RPC_CardParameterT) {
-    guard let value = try? JSONValue.parse(parameter.defaultJson) else { return nil }
+    guard let value = try? JSONValue.parse(parameter.valueJson) else { return nil }
     name = parameter.name
-    section = parameter.section
     type = parameter.type
-    defaultValue = value
-    override = parameter.valueJson.flatMap { try? JSONValue.parse($0) }
+    effectiveValue = value
   }
 }
 
@@ -29,4 +23,25 @@ func parseParam(_ text: String, _ type: String) -> JSONValue {
 
 func parameterText(_ value: JSONValue) -> String {
   value.string ?? value.serialized(pretty: false)
+}
+
+func parameterLiteral(_ value: JSONValue, _ type: String) -> String {
+  if let values = value.array, type.hasPrefix("[") {
+    let itemType = String(type.dropFirst().dropLast())
+    return "[ " + values.map {
+      let item = parameterLiteral($0, itemType)
+      return item.hasPrefix("-") ? "(" + item + ")" : item
+    }.joined(separator: " ") + " ]"
+  }
+  if let string = value.string {
+    return "\"" + string.replacingOccurrences(of: "\\", with: "\\\\")
+      .replacingOccurrences(of: "\"", with: "\\\"")
+      .replacingOccurrences(of: "$" + "{", with: "\\$" + "{") + "\""
+  }
+  if let number = value.numberText, type == "float" {
+    let exponent = number.firstIndex { $0 == "e" || $0 == "E" } ?? number.endIndex
+    let mantissa = number[..<exponent]
+    if !mantissa.contains(".") { return mantissa + ".0" + number[exponent...] }
+  }
+  return value.serialized(pretty: false)
 }

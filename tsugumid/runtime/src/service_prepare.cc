@@ -23,16 +23,14 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
   Tsugumi::State::PreparedCardsT manifest;
   for (const auto& node : graph.nodes) {
     const auto card = path_key(node.path);
-    if (!node.param_settings.empty()) {
+    if (!node.settings.params.empty()) {
       auto settings = std::make_unique<Tsugumi::State::PreparedCardSettingsT>();
       settings->card = card;
-      for (const auto& parameter : node.param_settings) {
+      for (const auto& parameter : node.settings.params) {
         auto entry = std::make_unique<Tsugumi::State::PreparedParameterT>();
         entry->name = parameter.name;
         entry->type = param_type_name(parameter.type);
-        entry->build = parameter.build;
-        entry->effective_json =
-            parameter.value_json.value_or(parameter.default_json);
+        entry->effective_json = *parameter.data;
         settings->parameters.push_back(std::move(entry));
       }
       manifest.settings.push_back(std::move(settings));

@@ -46,13 +46,10 @@ table CardNixReference {
   name:string (id: 1, required);
 }
 
-enum ParamSection:ubyte { run, build }
 table CardParameter {
   name:string (id: 0, required);
-  section:ParamSection (id: 1);
-  type:string (id: 2, required);
-  default_json:string (id: 3, required);
-  value_json:string (id: 4);
+  type:string (id: 1, required);
+  value_json:string (id: 2, required);
 }
 
 table ResolvedCard {
@@ -450,12 +447,14 @@ table ProjectCacheUsageResult {
 
 /// -> NixPathLockedSource. Fetch a source for an explicit Host lock update.
 table NixPathLockSourceRequest { url:string (id: 0, required); }
-/// -> CardNixPathNames. Read the latest evaluator record for this Card.
-table CardNixPathNamesRequest {
-  definition_dir:string (id: 0, required);
-  at_rev:uint64 = null (id: 1);
-}
 
+/// -> RewrittenParamLiteral. Prepare a guarded params.nix edit for the Host.
+table RewriteParamLiteralRequest {
+  card:Tsugumi.Data.CardPath (id: 0, required);
+  name:string (id: 1, required);
+  literal:string (id: 2, required);
+  at_rev:uint64 = null (id: 3);
+}
 enum RunRecordCategory:ubyte { Unspecified, Logs, Values, Files }
 
 /// -> RunCategoryDeleteResult. Delete one category from a finished run.
@@ -587,7 +586,7 @@ table OutputTypesRequest {
   kind:Tsugumi.Data.PortKind (id: 3);
 }
 
-/// -> EvaluateNixResult. Evaluate a Nix expression in the saved Card's directory with its project's nixPath names and the real build's params and inputs. The lazy card binding is import ./. { inherit params inputs; }. Evaluation returns up to 8 MiB of JSON. Set build to realize a derivation in the Nix sandbox and return up to 2,000 regular output entries and 8 MiB including paths, with a log tail on failure.
+/// -> EvaluateNixResult. Evaluate a Nix expression on the local system in the saved Card's directory with its nixPath, params and inputs. Returns JSON. For Build SDK, evaluate (import ./. { inherit params inputs; }).api with build enabled to return the derivation's output files.
 table EvaluateNixRequest {
   /// Card path segments from the root project.
   card:Tsugumi.Data.CardPath (id: 0, required);
@@ -596,8 +595,6 @@ table EvaluateNixRequest {
   expression:string (id: 2, required);
   /// Realize the derivation returned by the expression. Defaults to false.
   build:bool = false (id: 3);
-  /// Evaluation system. Defaults to the local native system.
-  system:string (id: 4);
 }
 
 /// -> RunPlanResult. Preview the Cards a run reaches; propagate defaults to true.
@@ -898,6 +895,7 @@ union RequestPayload {
   VersionGraphRequest = 36,
   VersionCanvasRequest = 37,
   NixPathLockSourceRequest = 40,
+  RewriteParamLiteralRequest = 66,
   RunLatestInvocationsRequest = 41,
   RunEnvironmentsRequest = 42,
   RunEnvironmentPathsRequest = 43,
@@ -917,7 +915,6 @@ union RequestPayload {
   RunCategoryDeleteRequest = 60,
   RunFileReferencesRequest = 61,
   CardViewReadRequest = 62,
-  CardNixPathNamesRequest = 66,
 }
 
 // ---- Replies -----------------------------------------------------------------
@@ -1067,24 +1064,13 @@ table FileContent {
 }
 
 table NixPathLockedSource {
-  type:string (id: 0, required);
-  owner:string (id: 1);
-  repo:string (id: 2);
-  rev:string (id: 3, required);
-  nar_hash:string (id: 4, required);
-  last_modified:int64 (id: 5);
+  url:string (id: 0, required);
 }
 
-table CardNixPathNames {
-  recorded:bool (id: 0);
-  names:[string] (id: 1);
-}
-
-/// A Card copy needs an explicit choice. No changes were saved.
-table NixPathCopyChoices {
-  from:string (id: 0, required);
-  id:string (id: 1, required);
-  names:[string] (id: 2, required);
+table RewrittenParamLiteral {
+  path:string (id: 0, required);
+  base_hash:string (id: 1, required);
+  text:string (id: 2, required);
 }
 
 table OutputTypesResult {
@@ -1328,6 +1314,7 @@ union ReplyPayload {
   VersionGraph = 28,
   VersionCanvas = 29,
   NixPathLockedSource = 31,
+  RewrittenParamLiteral = 53,
   BuildEnvironmentPage = 32,
   EnvironmentPathPage = 33,
   ProjectShellResult = 34,
@@ -1345,8 +1332,6 @@ union ReplyPayload {
   VersionComments = 47,
   RunCategoryDeleteResult = 48,
   RunFileReferences = 49,
-  CardNixPathNames = 53,
-  NixPathCopyChoices = 54,
 }
 
 // ---- Notifications -----------------------------------------------------------

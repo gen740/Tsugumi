@@ -79,7 +79,7 @@ auto Help(const ToolInfo& tool) -> void {
   if (tool.name == "evaluate_nix")
     std::cout << R"(
 Example:
-  tsugumi evaluate nix --card '{"segments":["plot"]}' --expression card.api --build
+  tsugumi evaluate nix --card '{"segments":["plot"]}' --expression '(import ./. { inherit params inputs; }).api' --build
 )";
 }
 

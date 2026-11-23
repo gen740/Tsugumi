@@ -110,7 +110,7 @@ final class CardEditorModel {
   }
 
   private static func inputParameters(boolean: Bool) -> String {
-    "{ run = { value = \(boolean ? "false" : "0.0"); }; }\n"
+    "{ value = \(boolean ? "false" : "0.0"); }\n"
   }
 
   private func preset(_ relative: String, _ text: String) {
@@ -650,12 +650,9 @@ private struct GeneralCategory: View {
       }
       if definitionKind(model.definition) == model.session.kind(model.cardKey) {
         let parameters = model.session.resolution[model.cardKey]?.parameters ?? []
-        ForEach([Tsugumi_RPC_ParamSection.run, .build], id: \.self) { section in
-          let group = parameters.filter { $0.section == section }
-          if !group.isEmpty {
-            Section(section == .run ? String(localized: "実行時パラメータ") : String(localized: "ビルド時パラメータ")) {
-              ForEach(group) { parameter in ParamRow(model: model, parameter: parameter) }
-            }
+        if !parameters.isEmpty {
+          Section("パラメータ") {
+            ForEach(parameters) { parameter in ParamRow(model: model, parameter: parameter) }
           }
         }
       }
@@ -928,7 +925,6 @@ private struct ParamRow: View {
   let parameter: CardParameter
   @State private var draft: String?
   @State private var sweepDraft: String?
-  @State private var reset = false
   @State private var edit = InlineParamEdit()
 
   private var session: ProjectSession { model.session }
@@ -974,18 +970,13 @@ private struct ParamRow: View {
           if draft != nil { Button("保存") { save() } }
         }
         Text(verbatim: parameter.type).font(.caption2).foregroundStyle(.secondary)
-        if parameter.override != nil && sweep == nil {
-          Button("既定値に戻す") { begin(); reset = true; save() }
-        }
       }
       .guideTarget("param:\(name)")
       .disabled(disabled)
-      Text("既定値: \(parameter.defaultValue.serialized(pretty: false))")
-        .font(.caption).foregroundStyle(.secondary)
-      if model.kind == .input && parameter.section == .run {
+      if model.kind == .input {
         Toggle("値ごとに呼び出す", isOn: Binding(get: { sweep != nil }, set: { enabled in
           sweepDraft = nil
-          setSweep(enabled ? [value] : nil, updateOverride: true)
+          setSweep(enabled ? [value] : nil)
         }))
         .toggleStyle(.checkbox).controlSize(.small)
         .help("並べた値を 1 つずつ別の呼び出しとして渡します（実行リスト）。")
@@ -1006,38 +997,30 @@ private struct ParamRow: View {
           .font(.caption).foregroundStyle(.secondary)
         Text("参照先: \(target)").font(.caption).foregroundStyle(.secondary).textSelection(.enabled)
       }
-      RevisionEditNotice(edit: edit.revision, text: { reset ? String(localized: "既定値に戻す") : (draft ?? "") },
+      RevisionEditNotice(edit: edit.revision, text: { draft ?? "" },
                          overwrite: { save(overwrite: true) }, reload: clear)
     }
   }
 
   private func begin() {
-    if draft == nil && !reset { edit.begin(parameterText(parameter.effectiveValue), rev: session.rev) }
-    reset = false
+    if draft == nil { edit.begin(parameterText(parameter.effectiveValue), rev: session.rev) }
   }
 
   private func clear() {
     draft = nil
-    reset = false
     edit.begin(parameterText(parameter.effectiveValue), rev: session.rev)
   }
 
   private func save(overwrite: Bool = false) {
-    let value = reset ? nil : draft.map { parseParam($0, parameter.type) }
+    guard let draft else { return }
+    let value = parseParam(draft, parameter.type)
     Task { if await edit.commitParam(session, card: model.cardKey, name: name, value: value, overwrite: overwrite) { clear() } }
   }
 
-  /// A sweep and a scalar override for the same parameter are mutually exclusive.
-  private func setSweep(_ values: [JSONValue]?, updateOverride: Bool = false) {
-    let first = sweep?.first
+  private func setSweep(_ values: [JSONValue]?) {
     var sweeps = model.definition?["sweeps"] ?? .object([])
     sweeps[name] = values.map(JSONValue.array)
     model.definition?["sweeps"] = sweeps.object?.isEmpty == true ? nil : sweeps
-    if updateOverride {
-      var overrides = model.definition?["params"] ?? .object([])
-      overrides[name] = values == nil ? first : nil
-      model.definition?["params"] = overrides.object?.isEmpty == true ? nil : overrides
-    }
   }
 }
 
@@ -1588,14 +1571,14 @@ private struct SourceCategory: View {
   private func open(_ path: String) { model.openFile(path) }
 
   /// The "SDK" section: builds the saved definition with the current wiring
-  /// by evaluating and building card.api, then lists share/tsugumi/api/.
+  /// by evaluating and building (import ./. { inherit params inputs; }).api, then lists share/tsugumi/api/.
   @ViewBuilder private var sdkSection: some View {
     HStack {
       Text("SDK").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
       Spacer()
       Button(sdk.building ? String(localized: "ビルドしています…") : String(localized: "SDK をビルド")) { Task { await buildSdk() } }
         .controlSize(.small).disabled(sdk.building || model.session.rpc == nil)
-        .help("保存済みの定義と現在の接続で card.api をビルドし、share/tsugumi/api/ のファイルを表示します")
+        .help("保存済みの定義と現在の接続で SDK をビルドし、share/tsugumi/api/ のファイルを表示します")
     }
     .padding(.leading, 10).padding(.trailing, 6).padding(.top, 12).padding(.bottom, 2)
     if let failure = sdk.failure {
@@ -1627,7 +1610,7 @@ private struct SourceCategory: View {
     guard let rpc = model.session.rpc, !sdk.building else { return }
     sdk = SdkBuild(building: true)
     do {
-      let result = try await rpc.evaluateNix(card: path(model.cardKey), expression: "card.api", build: true, atRev: model.session.rev)
+      let result = try await rpc.evaluateNix(card: path(model.cardKey), expression: "(import ./. { inherit params inputs; }).api", build: true, atRev: model.session.rev)
       sdk = SdkBuild(result, prefix: Self.sdkPrefix)
     } catch {
       sdk = SdkBuild(failure: "\(error)")

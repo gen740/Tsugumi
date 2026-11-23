@@ -83,7 +83,7 @@ def test_input_value_sweep_runs_the_cartesian_product_of_its_values(core_factory
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [7, 8]))
-    graph.card("values", {"type": "input", "recordIO": True, "_params": "{ run = { left = 0; right = 0; }; }", "sweeps": {"left": [1, 2], "right": [10, 20, 30]}}, outputs=PAIR)
+    graph.card("values", {"type": "input", "recordIO": True, "_params": "{ left = 0; right = 0; }", "sweeps": {"left": [1, 2], "right": [10, 20, 30]}}, outputs=PAIR)
     graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("starts", "out", "values", "start").connect("values", "out", "collect", "in")
     graph.save(client)
@@ -109,11 +109,11 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
     graph.card("one", {"type": "input", "recordIO": True,
-                       "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [5]}}, outputs=NUMBER)
+                       "_params": "{ value = 0; }", "sweeps": {"value": [5]}}, outputs=NUMBER)
     graph.card("vector", {"type": "input", "recordIO": True,
-                          "_params": "{ run = { items = [ 0 ]; }; }", "params": {"items": [1, 2, 3]}}, outputs=VECTOR)
+                          "_params": "{ items = [ 0 ]; }", "params": {"items": [1, 2, 3]}}, outputs=VECTOR)
     graph.card("lists", {"type": "input", "recordIO": True,
-                         "_params": "{ run = { items = [ 0 ]; }; }", "sweeps": {"items": [[1, 2], [], [3]]}},
+                         "_params": "{ items = [ 0 ]; }", "sweeps": {"items": [[1, 2], [], [3]]}},
                outputs=VECTOR)
     for name in ("one", "vector", "lists"):
         graph.card(f"collect-{name}", {"type": "collect", "recordIO": True})
@@ -141,7 +141,7 @@ def test_singleton_sweep_is_a_batch_and_a_list_param_is_one_vector(core_factory,
 def test_empty_sweep_sends_an_empty_batch(core_factory, project, tmp_path):
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     graph = Project(project)
-    graph.card("values", {"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": []}},
+    graph.card("values", {"type": "input", "_params": "{ value = 0; }", "sweeps": {"value": []}},
                outputs=NUMBER)
     graph.card("collect", {"type": "collect", "recordIO": True})
     graph.connect("values", "out", "collect", "in").save(client)
@@ -159,7 +159,7 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
     graph = Project(project)
     graph.card("starts", {"type": "code", "sandbox": {"filesystem": False}}, outputs=NUMBER,
                plan=numeric_plan(tmp_path, [0, 1]))
-    graph.card("values", {"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": list(range(200))}}, outputs=NUMBER)
+    graph.card("values", {"type": "input", "_params": "{ value = 0; }", "sweeps": {"value": list(range(200))}}, outputs=NUMBER)
     graph.connect("starts", "out", "values", "start").save(client)
 
     run_id = run(client, "starts", propagate=True)
@@ -171,13 +171,13 @@ def test_sweep_and_arriving_batch_share_the_combination_limit(core_factory, proj
 
 
 @pytest.mark.parametrize("definition,message", [
-    ({"type": "input", "_params": "{ run = { value = 0; }; }", "params": {"value": 1}, "sweeps": {"value": [1]}},
-     "without an override"),
-    ({"type": "input", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [1, "wrong"]}},
+    ({"type": "input", "_params": "{ value = 0; }", "sweeps": {"other": [1]}},
+     "undeclared sweep param other"),
+    ({"type": "input", "_params": "{ value = 0; }", "sweeps": {"value": [1, "wrong"]}},
      "expected int"),
-    ({"type": "input", "_params": "{ run = { left = 0; right = 0; }; }", "sweeps": {"left": list(range(17)), "right": list(range(16))}},
+    ({"type": "input", "_params": "{ left = 0; right = 0; }", "sweeps": {"left": list(range(17)), "right": list(range(16))}},
      "exceeds 256"),
-    ({"type": "code", "_params": "{ run = { value = 0; }; }", "sweeps": {"value": [1, 2]},
+    ({"type": "code", "_params": "{ value = 0; }", "sweeps": {"value": [1, 2]},
       "_nix": "{ pkgs, inputs, params, ... }: { run = pkgs.emptyDirectory; }"},
      "a sweep needs an Input Card"),
 ])

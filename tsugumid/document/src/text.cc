@@ -56,7 +56,6 @@ auto parser(Schema schema) -> flatbuffers::Parser& {
     o.natural_utf8 = true;
     o.indent_step = 2;
     o.no_warnings = true;
-    o.output_default_scalars_in_json = schema == Schema::Lock;
     p = std::make_unique<flatbuffers::Parser>(o);
     if (!p->Parse(std::string(source(schema)).c_str()))
       throw std::logic_error("document schema: " + p->error_);
@@ -151,15 +150,13 @@ auto parse(Schema schema, std::string_view path, std::string_view text)
     -> std::string {
   auto& p = parser(schema);
   std::string owned(text);
-  if (schema == Schema::Card) {
+  if (schema == Schema::Card || schema == Schema::Lock) {
     try {
-      auto card = strict_object(text, std::string(path));
-      for (const auto* key : {"params", "sweeps"}) {
-        if (auto it = card.find(key); it != card.end())
-          it->second =
-              json::Quote(json::Encode(strict_object(it->second, key)));
-      }
-      owned = json::Encode(card);
+      auto document = strict_object(text, std::string(path));
+      const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
+      if (auto it = document.find(key); it != document.end())
+        it->second = json::Quote(json::Encode(strict_object(it->second, key)));
+      owned = json::Encode(document);
     } catch (const std::exception& e) {
       throw DocumentError("invalid_document",
                           std::string(path) + ": " + e.what(),
@@ -183,11 +180,12 @@ auto print(Schema schema, std::string_view buffer) -> std::string {
     throw DocumentError("invalid_document",
                         std::string("cannot print document: ") + error);
   text = collapse_empty(text);
-  if (schema == Schema::Card) {
-    const auto& card = root<D::Card>(buffer);
-    for (const auto& [key, value] : {std::pair{"params", card.params()},
-                                     std::pair{"sweeps", card.sweeps()}}) {
-      if (!value) continue;
+  if (schema == Schema::Card || schema == Schema::Lock) {
+    const char* key = schema == Schema::Card ? "sweeps" : "nixPath";
+    const auto* value = schema == Schema::Card
+                            ? root<D::Card>(buffer).sweeps()
+                            : root<D::ProjectLock>(buffer).nixPath();
+    if (value) {
       const auto prefix = std::string("\n  \"") + key + "\": ";
       const auto start = text.find(prefix) + prefix.size();
       const auto end = text.find('\n', start);

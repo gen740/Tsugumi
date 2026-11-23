@@ -64,10 +64,21 @@ export function portTypeName(port?: PortInfo): string | undefined {
 
 export interface CardParameter {
   name: string
-  section: R.ParamSection
   type: string
-  defaultValue: J
-  override?: J
+  value: J
+}
+
+function parameterLiteral(value: J, type: string): string {
+  if (Array.isArray(value) && type.startsWith('[')) {
+    const items = value.map(item => parameterLiteral(item, type.slice(1, -1)))
+    return '[ ' + items.map(item => item.startsWith('-') ? '(' + item + ')' : item).join(' ') + ' ]'
+  }
+  if (typeof value === 'string') {
+    return '"' + value.replace(/\\/g, '\\\\').replace(/"/g, '\\"').replace(/\$\{/g, '\\$' + '{') + '"'
+  }
+  const literal = serialize(value, false)
+  if (type === 'float') return literal.replace(/^(-?\d+)(?=[eE]|$)/, '$1.0')
+  return literal
 }
 
 export interface ResolvedCard {
@@ -831,10 +842,9 @@ export class ProjectSession extends Observable {
       r.set(key(p), { path: p, inputs: rc.inputs.map(port), outputs: rc.outputs.map(port), diagnostics: d,
         nixReferences: rc.nixReferences.map(r => ({ target: segs(r.target), name: s(r.name) })),
         parameters: (rc.parameters ?? []).flatMap(p => {
-          const defaultValue = tryParse(s(p.defaultJson))
-          if (defaultValue === undefined) return []
-          return [{ name: s(p.name), section: p.section, type: s(p.type), defaultValue,
-            override: p.valueJson === null ? undefined : tryParse(s(p.valueJson)) }]
+          const value = tryParse(s(p.valueJson))
+          if (value === undefined) return []
+          return [{ name: s(p.name), type: s(p.type), value }]
         }) })
       all.push(...d)
     }
@@ -1866,10 +1876,10 @@ export class ProjectSession extends Observable {
   }
 
   /** Mutates the value inside the caller's transaction, without an autosave. */
-  async setParam(k: CardKey, name: string, value: J | undefined, expectedRev: bigint) {
-    const edit = new H.ProjectSetParamT(cardPath(path(k)), name,
-      value === undefined ? null : serialize(value, false), expectedRev)
-    return (await this.operate(H.ProjectOperationBody.ProjectSetParam, edit)).rev ?? this.rev
+  async setParam(k: CardKey, name: string, value: J, expectedRev: bigint) {
+    const type = this.resolution.get(k)?.parameters?.find(p => p.name === name)?.type ?? ''
+    const edit = new H.ProjectRewriteParamLiteralT(cardPath(path(k)), name, parameterLiteral(value, type), expectedRev)
+    return (await this.operate(H.ProjectOperationBody.ProjectRewriteParamLiteral, edit)).rev ?? this.rev
   }
 
   /** The host moves the complete selected definition/external closure. */
@@ -2261,8 +2271,8 @@ export class ProjectSession extends Observable {
     if (this.kind(k) !== 'input') return []
     const sweeps = get(this.cardDefinition(k), 'sweeps')
     return (this.resolution.get(k)?.parameters ?? []).filter(p =>
-      p.section === R.ParamSection.run && !p.type.startsWith('[') && get(sweeps, p.name) === undefined)
-      .map(p => ({ name: p.name, type: p.type, value: paramText(p.override ?? p.defaultValue) }))
+      !p.type.startsWith('[') && get(sweeps, p.name) === undefined)
+      .map(p => ({ name: p.name, type: p.type, value: paramText(p.value) }))
   }
 
   cardDescription(k: CardKey): string | undefined {

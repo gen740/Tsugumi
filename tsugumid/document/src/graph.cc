@@ -514,8 +514,6 @@ class Builder {
 
   void read_params(Node& n, const DefinitionDoc* def) {
     const auto rel = n.def_dir + "params.nix";
-    auto values = json::Object(
-        def->card().params() ? def->card().params()->string_view() : "{}");
     auto sweeps = json::Object(
         def->card().sweeps() ? def->card().sweeps()->string_view() : "{}");
     const auto invalid = [&](const std::string& message) {
@@ -523,7 +521,6 @@ class Builder {
     };
     if (doc_.sources.contains(rel) && !read_params_) return;
     try {
-      json::Members declarations;
       if (doc_.sources.contains(rel)) {
         if (doc_.sources.at(rel).size > kMaxDocumentJsonBytes)
           throw std::runtime_error(rel + ": exceeds the 8 MiB document limit");
@@ -531,12 +528,7 @@ class Builder {
         if (!bytes)
           throw std::runtime_error(rel +
                                    " differs from the confirmed document");
-        declarations = json::Object(read_params_(n.def_dir, *bytes));
-      }
-      json::Members build;
-      for (const std::string key : {"run", "build"}) {
-        for (const auto& raw :
-             json::Array(json::Get(declarations, key, "[]"))) {
+        for (const auto& raw : json::Array(read_params_(n.def_dir, *bytes))) {
           const auto entry = json::Object(raw);
           const auto name = json::Text(entry, "name");
           const auto type = parse_param_type(json::Text(entry, "type"));
@@ -544,24 +536,11 @@ class Builder {
             invalid("invalid declaration for param " + name);
             continue;
           }
-          ParamSetting setting{name, key == "build", *type, entry.at("default"),
-                               std::nullopt};
-          ParamDef param{name, *type, setting.default_json, std::nullopt};
-          if (const auto value = values.extract(name); !value.empty()) {
-            setting.value_json = value.mapped();
-            try {
-              param.data = normalize_param_value(*type, value.mapped());
-            } catch (const std::exception& error) {
-              invalid("param " + name + ": " + error.what());
-            }
-          }
+          ParamDef param{name, *type, entry.at("value"), std::nullopt};
           if (const auto sweep = sweeps.extract(name); !sweep.empty()) {
             try {
-              if (n.kind != CardType::Input || setting.build ||
-                  setting.value_json)
-                throw std::runtime_error(
-                    "a sweep needs an Input Card run param without an "
-                    "override");
+              if (n.kind != CardType::Input)
+                throw std::runtime_error("a sweep needs an Input Card param");
               std::vector<std::string> members;
               for (const auto& member : json::Array(sweep.mapped()))
                 members.push_back(normalize_param_value(*type, member));
@@ -570,17 +549,12 @@ class Builder {
               invalid("param " + name + ": " + error.what());
             }
           }
-          if (setting.build)
-            build.emplace(name, *param.data);
-          else
-            n.settings.params.push_back(std::move(param));
-          n.param_settings.push_back(std::move(setting));
+          n.settings.params.push_back(std::move(param));
         }
       }
-      for (const auto& [name, _] : values) invalid("undeclared param " + name);
       for (const auto& [name, _] : sweeps)
         invalid("undeclared sweep param " + name);
-      n.build_params_json = json::Encode(build);
+      n.params_nix_json = params_json(n.settings.params);
       if (value_sweep_size(n.settings) > kMaxValueSweepSize)
         invalid("the value sweep exceeds 256 combinations per trigger");
       if (n.kind == CardType::Code)

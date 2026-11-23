@@ -93,14 +93,11 @@ static auto TransformLayout(
       missing.push_back(id);
     // A host reservation is independent of a window's zoom and grid. Leave
     // room for the normal expanded Card; Arrange uses measured UI geometry.
-    size_t params = 0, ports = 0;
+    size_t ports = 0;
     if (read)
       if (const auto file = read("definitions/" + id + "/_card.json")) {
         const auto definition =
             json::Object(file->text, "definitions/" + id + "/_card.json");
-        params = json::Object(json::Get(definition, "params", "{}"),
-                              "definitions/" + id + "/_card.json.params")
-                     .size();
         ports = json::Array(json::Get(definition, "inputs", "[]"),
                             "definitions/" + id + "/_card.json.inputs")
                     .size();
@@ -119,8 +116,7 @@ static auto TransformLayout(
     ports = std::max({ports, incoming.size(), outgoing.size()});
     const double width =
         std::max(320.0, 64.0 * static_cast<double>(ports) + 24);
-    const double height = 240 + 26.0 * static_cast<double>(params) +
-                          30.0 * static_cast<double>(ports);
+    const double height = 240 + 30.0 * static_cast<double>(ports);
     scene.cards.push_back({id,
                            number(position, "x", 0),
                            number(position, "y", 0),

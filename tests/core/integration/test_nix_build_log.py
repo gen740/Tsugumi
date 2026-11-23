@@ -250,8 +250,8 @@ def test_stop_ends_locked_source_materialization(core_factory, monkeypatch, tmp_
         # The pinned NAR is absent, so materializing the lock uses this proxy.
         pin = next(entry for entry in fixture_locks() if entry["name"] == "nixpkgs")
         revision = uuid4().hex + "cafef00d"
-        pin["locked"] = dict(pin["locked"], rev=revision,
-                             narHash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
+        pin["locked_url"] = (f"github:NixOS/nixpkgs/{revision}"
+                             "?narHash=sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=")
         write(root, {"fetch": {
             "type": "code",
             "_outputs": "table Outputs {} root_type Outputs;",

@@ -50,8 +50,8 @@ class VersionFiles : public ::testing::Test {
 TEST_F(VersionFiles, LockDocumentsAreTrackedWithTheirProjects) {
   Put("tsugumi.json", initial_project_json("root"));
   Put("externals/sub/tsugumi.json", initial_project_json("sub"));
-  Put("tsugumi.lock", R"({"nixPath":[]})");
-  Put("externals/sub/tsugumi.lock", R"({"nixPath":[]})");
+  Put("tsugumi.lock", R"({"nixPath":{}})");
+  Put("externals/sub/tsugumi.lock", R"({"nixPath":{}})");
   const auto loaded = load_from_disk(root);
   Versions versions(root);
   const auto commit = versions.init();
@@ -60,7 +60,7 @@ TEST_F(VersionFiles, LockDocumentsAreTrackedWithTheirProjects) {
   EXPECT_TRUE(paths.contains("externals/sub/tsugumi.lock"));
   EXPECT_EQ(Versions::card_of("tsugumi.lock"), "");
   EXPECT_EQ(Versions::card_of("externals/sub/tsugumi.lock"), "sub");
-  EXPECT_EQ(*loaded->sources.at("tsugumi.lock").document, R"({"nixPath":[]})");
+  EXPECT_EQ(*loaded->sources.at("tsugumi.lock").document, R"({"nixPath":{}})");
 }
 
 TEST_F(VersionFiles, DefinitionsTemplatesAndLiteralOptInsShareOneSelection) {

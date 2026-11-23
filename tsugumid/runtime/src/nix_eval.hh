@@ -27,12 +27,14 @@ inline constexpr uint32_t kMaxExecutionBatchSize = 256;
 
 struct LockedSource {
   std::string type, owner, repo, rev, nar_hash;
-  int64_t last_modified = 0;
-  auto operator<=>(const LockedSource&) const = default;
 };
 
-using LockedNixPath = std::map<std::string, LockedSource>;
-using ResolvedNames = std::map<std::string, std::vector<std::string>>;
+struct NixPathPin {
+  std::string intent, url;
+  auto operator<=>(const NixPathPin&) const = default;
+};
+
+using LockedNixPath = std::map<std::string, NixPathPin>;
 
 struct NixDefinitionScope {
   std::string directory;
@@ -89,8 +91,6 @@ struct NixResult {
   // One per implementation, in run list order; "" for an unlabeled one.
   std::vector<std::string> implementation_labels;
   uint64_t evaluation_epoch = 0;
-  uint64_t observation_order = 0;
-  ResolvedNames resolved_names;
 };
 
 struct ExpressionFile {
@@ -103,8 +103,6 @@ struct ExpressionResult {
   bool truncated = false;
   std::string log_tail;
   std::optional<std::string> build_error;
-  ResolvedNames resolved_names;
-  uint64_t observation_order = 0;
 };
 
 class NixEvaluator {
@@ -133,7 +131,7 @@ class NixEvaluator {
 
   auto expression(const NixCall& call, const std::string& expression,
                   bool build) -> ExpressionResult;
-  auto lock_source(const std::string& url) -> LockedSource;
+  auto lock_source(const std::string& url) -> std::string;
   auto params_declaration(const NixCall& call, std::string_view text,
                           const std::string& origin) -> std::string;
 

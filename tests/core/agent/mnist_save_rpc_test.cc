@@ -79,10 +79,7 @@ TEST_F(AgentProjectFixture,
     for (const auto& name : inputs)
       input_defs.push_back(json::Encode(json::Members{{"name", Quote(name)}}));
     const auto definition = json::Encode(json::Members{
-        {"type", Quote("code")},
-        {"inputs", json::Encode(input_defs)},
-        {"params",
-         R"([{"name":"rate","type":"double","data":{"double":0.001}},{"name":"regularization","type":"double","data":{"double":1.0}}])"}});
+        {"type", Quote("code")}, {"inputs", json::Encode(input_defs)}});
     change("PutDefinition", {{"id", Quote(id)},
                              {"readme", Quote(readme)},
                              {"card_json", Quote(definition)}});
@@ -95,6 +92,9 @@ TEST_F(AgentProjectFixture,
             {"bytes", Quote("def main(inputs, report):\n    return {}\n")}});
     change("PutSource", {{"path", Quote("definitions/" + id + "/_outputs.fbs")},
                          {"bytes", Quote(output_schema)}});
+    change("PutSource",
+           {{"path", Quote("definitions/" + id + "/params.nix")},
+            {"bytes", Quote("{ rate = 0.001; regularization = 1.0; }")}});
   }
   // The bundled Japanese text exercises multibyte clipping in tool events.
   const auto read_arguments = R"({"path":"definitions/boosting/README.md"})";
@@ -130,9 +130,8 @@ TEST_F(AgentProjectFixture,
     SCOPED_TRACE(id);
     const auto definition = Read(root / "definitions" / id / "_card.json");
     EXPECT_EQ(JsonString(definition, "/type"), "code");
-    const auto params = json::Array(json::Object(definition).at("params"));
-    const auto rate = json::Object(params.front());
-    EXPECT_DOUBLE_EQ(std::stod(json::Object(rate.at("data")).at("double")), 0.001);
+    EXPECT_EQ(Read(root / "definitions" / id / "params.nix"),
+              "{ rate = 0.001; regularization = 1.0; }");
   }
 }
 }  // namespace

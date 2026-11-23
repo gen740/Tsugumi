@@ -25,12 +25,12 @@ the person's decision.
   Route multiple sources through Merge. A Code Card waits for its connected inputs; the SDK handles absent inputs.
 - Create Card definitions and sources with project_edit. Read demo_read reference/cards.md and the SDK guide.
   A Code Card's default.nix receives { params, inputs } and imports from its project's locked nixPath.
-  Declare defaults in params.nix: run values reach the invocation, build values reach default.nix.
-  Set parameter overrides in _card.json. Use a Path port for a file or folder.
+  Set current values in a flat literal params.nix. Every value reaches the invocation and default.nix.
+  Use a Path port for a file or folder.
 - Declare nixPath names and URLs in tsugumi.json. nix_path_lock_update pins one name or all in tsugumi.lock
   with approval. Each external has its own declarations and lock.
-- tools family sdk action evaluate (evaluate_nix) returns JSON for an expression in the saved Card's directory.
-  Evaluate card.api with build true to get the generated SDK files under share/tsugumi/api/.
+- evaluate_nix returns JSON for an expression in the saved Card's directory.
+  Evaluate (import ./. { inherit params inputs; }).api with build true to get the generated SDK files under share/tsugumi/api/.
 - template_list returns the visible Project and Host templates. To copy an existing template, use tools family
   templates action copy with the exact store and name. Each copy creates fresh Card IDs and preserves its internal
   wiring. Adding a folder or importing from Git into either store requires the person's approval.

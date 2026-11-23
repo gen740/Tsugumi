@@ -260,8 +260,6 @@ table ProjectCopyItem {
   demo:string;
   folder:string;
   /// Explicit choice when the source Card has no evaluation record.
-  choose_nix_path_names:bool;
-  nix_path_names:[string];
 }
 table ProjectCopy { project_path:string; items:[ProjectCopyItem]; copy_connections:bool; }
 table ProjectImport { project_path:string; path:string (required); id:string (required); x:double; y:double; }
@@ -303,14 +301,14 @@ table ProjectUpdateNixPathLock {
   /// Omitted locks every declared name and removes obsolete lines.
   name:string;
 }
-table ProjectSetParam {
+table ProjectRewriteParamLiteral {
   card:Tsugumi.Data.CardPath (required);
   name:string (required);
-  /// Omitted clears the override.
-  value_json:string;
+  /// One Nix value of the same type as the current literal.
+  literal:string (required);
   expected_rev:uint64 = null;
 }
-union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectSetParam }
+union ProjectOperationBody { ProjectEdits, ProjectConnect, ProjectMakeSubgraph, ProjectLayout, ProjectCopy, ProjectImport, ProjectCreateCard, ProjectMove, ProjectReplaceDocuments, ProjectSelection, ProjectReload, ProjectTemplateCopy, TemplateAdd, ProjectUpdateNixPathLock, ProjectRewriteParamLiteral }
 table ProjectOperateRequest {
   project_id:string (required);
   op_id:string (required);

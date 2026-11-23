@@ -1,6 +1,7 @@
 #include "tsugumi/document/document.hh"
 
 #include <algorithm>
+#include <cctype>
 #include <set>
 
 #include "tsugumi/document/graph.hh"
@@ -300,30 +301,46 @@ auto parse_project_lock(const std::string& path, const std::string& text)
     -> ParsedDocument {
   auto buffer = document_text::parse(Schema::Lock, path, text);
   const auto& lock = document_text::root<D::ProjectLock>(buffer);
-  check_nix_path(lock.nixPath(), path);
-  std::vector<const D::LockEntry*> sorted;
-  if (const auto* entries = lock.nixPath()) {
-    for (const auto* entry : *entries) {
-      const auto* pin = entry->locked();
-      const auto url = entry->url()->string_view();
-      if (!supported_nix_path_url(url) ||
-          url.substr(0, url.find(':')) != pin->type()->string_view() ||
-          pin->rev()->size() == 0 || pin->narHash()->size() == 0)
-        invalid(path + ": invalid locked source for " + entry->name()->str());
-      sorted.push_back(entry);
+  for (const auto& [name, value] :
+       json::Object(lock.nixPath()->string_view())) {
+    if (!valid_nix_path_name(name))
+      invalid(path + ": invalid nixPath name " + json::Quote(name));
+    const auto url = json::String(value);
+    const auto query = url.find('?');
+    const auto source = std::string_view(url).substr(0, query);
+    const auto rev = source.substr(source.rfind('/') + 1);
+    if (!supported_nix_path_url(url) || std::ranges::count(source, '/') != 2 ||
+        rev.size() != 40 ||
+        !std::ranges::all_of(
+            rev, [](unsigned char c) { return std::isxdigit(c); }) ||
+        query == url.npos)
+      invalid(path + ": invalid locked URL for " + json::Quote(name));
+    bool hash = false;
+    bool modified = false;
+    auto options = std::string_view(url).substr(query + 1);
+    while (!options.empty()) {
+      const auto separator = options.find('&');
+      const auto option = options.substr(0, separator);
+      if (!hash && option.starts_with("narHash=sha256-") &&
+          option.size() > std::string_view("narHash=sha256-").size()) {
+        hash = true;
+      } else if (!modified && option.starts_with("lastModified=")) {
+        const auto timestamp =
+            option.substr(std::string_view("lastModified=").size());
+        if (timestamp.empty() || !std::ranges::all_of(timestamp, [](char c) {
+              return c >= '0' && c <= '9';
+            }))
+          invalid(path + ": invalid lastModified for " + json::Quote(name));
+        modified = true;
+      } else {
+        invalid(path + ": unexpected locked URL query for " +
+                json::Quote(name));
+      }
+      if (separator == options.npos) break;
+      options.remove_prefix(separator + 1);
     }
+    if (!hash) invalid(path + ": missing narHash for " + json::Quote(name));
   }
-  std::ranges::sort(sorted, {}, [](const auto* entry) {
-    return entry->name()->string_view();
-  });
-  flatbuffers::FlatBufferBuilder builder;
-  std::vector<flatbuffers::Offset<D::LockEntry>> entries;
-  for (const auto* entry : sorted)
-    entries.push_back(D::LockEntry::Pack(
-        builder, std::unique_ptr<D::LockEntryT>(entry->UnPack()).get()));
-  builder.Finish(D::CreateProjectLock(builder, builder.CreateVector(entries)));
-  buffer.assign(reinterpret_cast<const char*>(builder.GetBufferPointer()),
-                builder.GetSize());
   return {buffer, document_text::print(Schema::Lock, buffer)};
 }
 

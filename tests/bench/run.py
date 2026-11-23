@@ -24,7 +24,7 @@ from projects import SINK, card, conn, write_nix_project as write
 SCENARIOS = ("value-fresh", "value-resident-50", "file-1gib", "file-sparse-1gib",
              "directory-10000", "file-input-1gib", "run-list-100")
 # Requires the redesigned kit pin with sdk/python/default.nix.
-PYTHON_RUN = 'sdk.pythonCard { src = ./src; outputs = ./_outputs.fbs; params = ./params.nix; inherit inputs; }'
+PYTHON_RUN = 'sdk.pythonCard { src = ./src; outputs = ./_outputs.fbs; inherit inputs params; }'
 # Every benchmark Card returns its own metrics as the declared `metrics` output.
 METRICS = 'namespace bench; table Metrics { value:string; } '
 VALUE = METRICS + 'table Number { value:ulong; } table Outputs { out:Number (required); metrics:Metrics (required); } root_type Outputs;'
@@ -263,7 +263,7 @@ def stage_project(root, scenario):
         return root
     if scenario == "builtin-chain":
         definitions = {"trigger": {"type": "trigger"}, "sink": SINK,
-                       "input": {"type": "input", "_params": "{ run = { value = 1; }; }",
+                       "input": {"type": "input", "_params": "{ value = 1; }",
                                  "_outputs": "table Value { value:ulong; } "
                                              "table Outputs { value:Value; } root_type Outputs;"}}
         cards = [card("start", "trigger"), card("src", "input")]

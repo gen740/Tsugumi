@@ -150,7 +150,6 @@ void Service::evaluate_nix(RequestIn& req) {
       .card = std::move(card),
       .expression = r->expression()->str(),
       .build = r->build(),
-      .system = r->system() ? r->system()->str() : native_system(),
       .cancel = stop.get_token(),
       .deadline = std::nullopt,
       .log =

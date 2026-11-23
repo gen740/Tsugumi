@@ -166,7 +166,7 @@ final class InlineParamEdit {
     return ok
   }
 
-  func commitParam(_ session: ProjectSession, card: CardKey, name: String, value: JSONValue?, overwrite: Bool) async -> Bool {
+  func commitParam(_ session: ProjectSession, card: CardKey, name: String, value: JSONValue, overwrite: Bool) async -> Bool {
     let expectedRev = overwrite ? (revision.conflictRev ?? revision.baseRev) : revision.baseRev
     return await revision.applyOperation(session) { try await session.setParam(card, name, value, expectedRev: expectedRev) }
   }

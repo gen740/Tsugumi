@@ -156,35 +156,6 @@ auto Tools::OperateProject(const H::ProjectOperateRequestT& operation,
     if (context.origin == "agent") Exclusions(project, stop).Check(folder);
     return folder;
   };
-  resolved_context.copy_resolution_names =
-      [&](const auto& folder,
-          const auto& dir) -> std::optional<std::vector<std::string>> {
-    std::string source;
-    {
-      std::lock_guard lock(mutex);
-      auto query = db.prepare("SELECT id FROM project_paths WHERE path=?");
-      query.bind(1, std::filesystem::weakly_canonical(folder).string());
-      if (query.step()) source = query.text(0);
-    }
-    if (source.empty()) return std::nullopt;
-    // The copy has already authorized the source folder. An unregistered
-    // or stopped source has no available evaluator record.
-    try {
-      const auto response = json::Object(RawProjectCall(
-          source, "card_nix_path_names",
-          json::Encode(json::Members{{"definition_dir", json::Quote(dir)}}),
-          stop));
-      const auto value = json::Object(json::Get(response, "value", "{}"));
-      if (!json::Bool(json::Get(value, "recorded"))) return std::nullopt;
-      std::vector<std::string> names;
-      for (const auto& raw : json::Array(json::Get(value, "names", "[]")))
-        names.push_back(json::String(raw));
-      return names;
-    } catch (const Failure& error) {
-      if (error.code != "not_found" && error.code != "unavailable") throw;
-      return std::nullopt;
-    }
-  };
   return operations.Execute(operation, resolved_context,
                             [&](const auto& method, const auto& arguments) {
                               host::OperationReply reply;

@@ -1851,12 +1851,8 @@
   "未ロック": "Not locked",
   "URL が変更されました": "URL changed",
   "すべて更新": "Update all",
-  "実行時パラメータ": "Run parameters",
-  "ビルド時パラメータ": "Build parameters",
-  "既定値に戻す": "Reset to default",
-  "既定値: {0}": {"text":"Default: {0}","mac":["@"]},
   "Nix 式を評価しています": "Evaluating a Nix expression",
   "Nix 式を評価": "Evaluate Nix expression",
-  "保存済みの定義と現在の接続で card.api をビルドし、share/tsugumi/api/ のファイルを表示します": "Build card.api from the saved definition and current wiring and show the files in share/tsugumi/api/",
+  "保存済みの定義と現在の接続で SDK をビルドし、share/tsugumi/api/ のファイルを表示します": "Build the SDK from the saved definition and current wiring and show the files in share/tsugumi/api/",
   "出力の上限に達したため、一部のファイルのみ表示しています": "Showing partial results because the output limit was reached"
 }

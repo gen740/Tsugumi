@@ -60,37 +60,6 @@ auto Intent(const H::ProjectOperateRequestT& operation,
   hash.update(builder.GetBufferPointer(), builder.GetSize());
   return hash.finish_hex();
 }
-namespace R = Tsugumi::RPC;
-
-struct NixPathChoice {
-  std::string from;
-  std::string id;
-  std::vector<std::string> names;
-};
-
-auto ChoiceReply(const NixPathChoice& choice) -> OperationReply {
-  flatbuffers::FlatBufferBuilder builder;
-  const auto result =
-      R::CreateNixPathCopyChoices(builder, builder.CreateString(choice.from),
-                                  builder.CreateString(choice.id),
-                                  builder.CreateVectorOfStrings(choice.names));
-  const auto reply = R::CreateReply(
-      builder, R::ReplyPayload::NixPathCopyChoices, result.Union());
-  R::FinishMessageBuffer(builder,
-                         R::CreateMessage(builder, flatbuffers::nullopt,
-                                          R::Payload::Reply, reply.Union()));
-  std::vector<std::string> names;
-  for (const auto& name : choice.names) names.push_back(json::Quote(name));
-  return {json::Encode(json::Members{
-              {"reply", json::Quote("NixPathCopyChoices")},
-              {"value",
-               json::Encode(json::Members{{"from", json::Quote(choice.from)},
-                                          {"id", json::Quote(choice.id)},
-                                          {"names", json::Encode(names)}})}}),
-          {reinterpret_cast<const char*>(builder.GetBufferPointer()),
-           builder.GetSize()}};
-}
-
 auto NixPath(std::string_view document) -> json::Members {
   json::Members entries;
   for (const auto& raw :
@@ -99,24 +68,14 @@ auto NixPath(std::string_view document) -> json::Members {
   return entries;
 }
 
-auto OrderedEntries(const json::Members& entries) -> std::string {
-  std::vector<std::string> ordered;
-  for (const auto& [_, value] : entries) ordered.push_back(value);
-  return json::Encode(ordered);
-}
-
-auto LockText(const std::string& path, const json::Members& entries)
-    -> std::string {
-  return parse_project_lock(path,
-                            "{\"nixPath\":" + OrderedEntries(entries) + "}")
-      .text;
-}
-
 auto UpdatedLock(const std::string& path, const std::string& project,
                  const std::optional<std::string>& old, const std::string& name,
                  const OperationCall& call) -> std::string {
   auto declarations = NixPath(project);
-  auto locked = name.empty() || !old ? json::Members{} : NixPath(*old);
+  auto locked =
+      name.empty() || !old
+          ? json::Members{}
+          : json::Object(json::Get(json::Object(*old), "nixPath", "{}"));
   if (!name.empty()) {
     if (!declarations.contains(name))
       throw Failure("not_found", "Undeclared nixPath name " + name);
@@ -129,63 +88,12 @@ auto UpdatedLock(const std::string& path, const std::string& project,
                     "Unsupported fetchTree URL for nixPath " + key +
                         "; expected github:, gitlab: or sourcehut:");
   for (const auto& [key, entry] : declarations) {
-    auto value = json::Object(entry);
-    const auto pin =
-        Value(call("nix_path_lock_source", {{"url", value.at("url")}}));
-    json::Members attrs;
-    for (const auto* field : {"type", "owner", "repo", "rev"})
-      if (pin.contains(field)) attrs[field] = pin.at(field);
-    attrs["narHash"] = pin.at("nar_hash");
-    attrs["lastModified"] = json::Get(pin, "last_modified", "0");
-    // Reflection uses decimal strings for 64-bit values.
-    attrs["lastModified"] =
-        json::String(attrs["lastModified"], attrs["lastModified"]);
-    value["locked"] = json::Encode(attrs);
-    locked[key] = json::Encode(value);
+    const auto url = json::Object(entry).at("url");
+    const auto pin = Value(call("nix_path_lock_source", {{"url", url}}));
+    locked[key] = pin.at("url");
   }
-  return LockText(path, locked);
-}
-
-auto SameJson(std::string_view left, std::string_view right) -> bool {
-  return schema::canonical_text(schema::capture(left)) ==
-         schema::canonical_text(schema::capture(right));
-}
-
-auto CarryNixPath(const std::string& source_project,
-                  const std::string& source_lock,
-                  const std::string& destination_project,
-                  const std::string& destination_lock,
-                  const std::vector<std::string>& names)
-    -> std::pair<json::Members, json::Members> {
-  const auto source_entries = NixPath(source_project);
-  const auto source_pins = NixPath(source_lock);
-  auto entries = NixPath(destination_project);
-  auto pins = NixPath(destination_lock);
-  for (const auto& name : names) {
-    if (!source_entries.contains(name))
-      throw Failure("not_found", "Source project has no nixPath name " + name);
-    const auto& incoming = source_entries.at(name);
-    const auto existing = json::Get(entries, name);
-    const auto incoming_pin = json::Get(source_pins, name);
-    const auto existing_pin = json::Get(pins, name);
-    const bool urls_differ =
-        existing != "null" && !SameJson(existing, incoming);
-    const bool pins_differ = incoming_pin != "null" && existing_pin != "null" &&
-                             !SameJson(incoming_pin, existing_pin);
-    const bool stale_target_pin =
-        existing_pin != "null" &&
-        json::Text(json::Object(existing_pin), "url") !=
-            json::Text(json::Object(incoming), "url");
-    if (urls_differ || pins_differ || stale_target_pin)
-      throw Failure("value_conflict", "nixPath collision for " + name +
-                                          ": source declaration " + incoming +
-                                          ", pin " + incoming_pin +
-                                          "; target declaration " + existing +
-                                          ", pin " + existing_pin);
-    entries[name] = incoming;
-    if (incoming_pin != "null") pins[name] = incoming_pin;
-  }
-  return {std::move(entries), std::move(pins)};
+  return parse_project_lock(path, "{\"nixPath\":" + json::Encode(locked) + "}")
+      .text;
 }
 
 // Expand transformations into guarded file edits against this inspection only.
@@ -288,57 +196,28 @@ auto Prepare(
     prefix = Prefix(copy->project_path);
   else if (const auto* update = body.AsProjectUpdateNixPathLock())
     prefix = Prefix(update->project_path);
-  else if (const auto* parameter = body.AsProjectSetParam()) {
-    const auto rev = json::UInt(json::String(json::Get(base.snapshot, "rev"),
-                                             json::Get(base.snapshot, "rev")));
+  else if (const auto* parameter = body.AsProjectRewriteParamLiteral()) {
+    const auto at_rev = json::Get(base.snapshot, "rev");
+    const auto rev = json::UInt(json::String(at_rev, at_rev));
     if (!parameter->expected_rev || *parameter->expected_rev != rev)
       throw Failure("revision_conflict", "Card settings revision changed");
     if (!parameter->card || parameter->card->segments.empty())
       throw Failure("invalid_request", "Choose a Card");
-    const auto& segments = parameter->card->segments;
-    std::vector<std::string> encoded;
-    for (size_t i = 0; i < segments.size(); ++i) {
-      if (!valid_id(segments[i])) throw Failure("invalid_path", "Invalid Card");
-      encoded.push_back(json::Quote(segments[i]));
-      const auto file = prefix + "definitions/" + segments[i] + "/_card.json";
-      if (i + 1 < segments.size()) {
-        const auto external =
-            json::Text(json::Object(required(file)), "external");
-        if (!valid_id(external)) throw Failure("not_found", "Card not found");
-        prefix += "externals/" + external + '/';
-      }
-    }
-    const auto file = prefix + "definitions/" + segments.back() + "/_card.json";
-    auto definition = json::Object(required(file));
-    auto values = json::Object(json::Get(definition, "params", "{}"));
-    if (parameter->value_json.empty()) {
-      values.erase(parameter->name);
-    } else {
-      std::optional<ParamType> type;
-      for (const auto& raw :
-           json::Array(json::Get(base.snapshot, "resolution", "[]"))) {
-        const auto card = json::Object(raw);
-        const auto path = json::Object(json::Get(card, "card", "{}"));
-        if (!SameJson(json::Get(path, "segments", "[]"), json::Encode(encoded)))
-          continue;
-        for (const auto& param :
-             json::Array(json::Get(card, "parameters", "[]"))) {
-          const auto entry = json::Object(param);
-          if (json::Text(entry, "name") == parameter->name)
-            type = parse_param_type(json::Text(entry, "type"));
-        }
-      }
-      if (!type)
-        throw Failure("validation_failed",
-                      "Undeclared param " + parameter->name);
-      values[parameter->name] =
-          normalize_param_value(*type, parameter->value_json);
-    }
-    if (values.empty())
-      definition.erase("params");
-    else
-      definition["params"] = json::Encode(values);
-    put(file, json::Encode(definition));
+    std::vector<std::string> segments;
+    for (const auto& segment : parameter->card->segments)
+      segments.push_back(json::Quote(segment));
+    const auto card =
+        json::Encode(json::Members{{"segments", json::Encode(segments)}});
+    const auto rewritten = Value(call(
+        "rewrite_param_literal", {{"card", card},
+                                  {"name", json::Quote(parameter->name)},
+                                  {"literal", json::Quote(parameter->literal)},
+                                  {"at_rev", at_rev}}));
+    const auto file = json::Text(rewritten, "path");
+    if (crypto::sha256_hex(required(file)) !=
+        json::Text(rewritten, "base_hash"))
+      throw Failure("source_changed", file + " changed during the edit");
+    put(file, json::Text(rewritten, "text"));
     return ProjectSaveChanges(base, originals, staged, {});
   } else if (const auto* add = body.AsTemplateAdd()) {
     if (!TemplateName(add->name) || !context.read_template_source)
@@ -878,66 +757,6 @@ auto Prepare(
         for (const auto& dir : closure)
           if (path.starts_with(dir) && authorize)
             authorize(imported ? (source_root / path).string() : path);
-      const auto source_prefix = from.substr(0, from.rfind("definitions/"));
-      if (!is_external && (imported || source_prefix != prefix) &&
-          json::Text(json::Object(source_files.at(from + "_card.json")),
-                     "type") != "subgraph") {
-        const auto source_project_path = source_prefix + "tsugumi.json";
-        const auto source_lock_path = source_prefix + "tsugumi.lock";
-        if (authorize) {
-          authorize(imported ? (source_root / source_project_path).string()
-                             : source_project_path);
-          authorize(imported ? (source_root / source_lock_path).string()
-                             : source_lock_path);
-        }
-        const auto& project_source = source_files.at(source_project_path);
-        const auto& lock_source = source_files.contains(source_lock_path)
-                                      ? source_files.at(source_lock_path)
-                                      : "{}";
-        const auto declarations = NixPath(project_source);
-        std::optional<std::vector<std::string>> names;
-        if (!imported) {
-          const auto record =
-              Value(call("card_nix_path_names",
-                         {{"definition_dir", json::Quote(from)},
-                          {"at_rev", json::Get(base.snapshot, "rev")}}));
-          if (json::Bool(json::Get(record, "recorded"))) {
-            names.emplace();
-            for (const auto& raw :
-                 json::Array(json::Get(record, "names", "[]")))
-              names->push_back(json::String(raw));
-          }
-        } else if (context.copy_resolution_names) {
-          names = context.copy_resolution_names(source_root, from);
-        }
-        if (!names) {
-          if (item->choose_nix_path_names || !item->nix_path_names.empty()) {
-            names = item->nix_path_names;
-          } else if (!declarations.empty()) {
-            NixPathChoice choice{item->from, item->id, {}};
-            for (const auto& [key, _] : declarations)
-              choice.names.push_back(key);
-            throw choice;
-          } else {
-            names.emplace();
-          }
-        }
-        if (!names->empty()) {
-          auto target = json::Object(required(prefix + "tsugumi.json"));
-          const auto lock_path = prefix + "tsugumi.lock";
-          const auto prior = get(lock_path);
-          const auto [entries, pins] =
-              CarryNixPath(project_source, lock_source, json::Encode(target),
-                           prior.value_or("{}"), *names);
-          const auto ordered = OrderedEntries(entries);
-          if (NixPath(json::Encode(target)) != entries) {
-            target["nixPath"] = ordered;
-            put(prefix + "tsugumi.json", json::Encode(target));
-          }
-          if (!pins.empty() && (!prior || NixPath(*prior) != pins))
-            put(lock_path, LockText(lock_path, pins));
-        }
-      }
       const auto patch = CopyDocuments(source_state, source_paths, from,
                                        destination);
       const auto values = json::Object(patch.edits_json);
@@ -1299,8 +1118,6 @@ auto ProjectOperations::Execute(const H::ProjectOperateRequestT& operation,
         }};
     return SubmitProjectSave(std::move(plan), base, patches, call, preparation)
         .reply;
-  } catch (const NixPathChoice& choice) {
-    return ChoiceReply(choice);
   } catch (const Failure& failure) {
     if (context.origin == "ui" && (failure.code == "value_conflict" ||
                                    failure.code == "source_changed")) {
