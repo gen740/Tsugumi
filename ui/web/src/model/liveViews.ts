@@ -6,26 +6,28 @@ export interface ViewDeclaration {
   blob: string
 }
 
-export type ViewRunState = 'started' | 'ended'
-export type ViewMessage = { type: 'data'; bytes: Uint8Array<ArrayBuffer> } | { type: 'run'; state: ViewRunState }
+export type ViewMessage = { type: 'data'; bytes: Uint8Array<ArrayBuffer>; complete?: () => void }
 
 /** One entry of a Card's views list. Its index is how the core serves its file. */
 export class LiveView {
-  latest?: Uint8Array<ArrayBuffer>
   private readonly listeners = new Set<(message: ViewMessage) => void>()
 
   constructor(readonly declaration: ViewDeclaration, readonly index: number) {}
 
-  listen(activeRun: string | undefined, receive: (message: ViewMessage) => void): () => void {
+  listen(receive: (message: ViewMessage) => void): () => void {
     this.listeners.add(receive)
-    if (activeRun !== undefined) receive({ type: 'run', state: 'started' })
-    if (this.latest) receive({ type: 'data', bytes: this.latest })
     return () => { this.listeners.delete(receive) }
   }
 
   deliver(message: ViewMessage) {
-    if (message.type === 'data') this.latest = message.bytes
-    for (const receive of this.listeners) receive(message)
+    const listeners = [...this.listeners]
+    let remaining = listeners.length
+    if (!remaining) message.complete?.()
+    for (const receive of listeners)
+      receive(message.complete ? {
+        ...message,
+        complete: () => { if (--remaining === 0) message.complete?.() },
+      } : message)
   }
 }
 
@@ -38,7 +40,6 @@ export class CardLiveViews {
   ambiguous = new Set<string>()
   /** Why evaluating the declarations failed; unset when they were evaluated, even to an empty list. */
   failure?: string
-  activeRun?: string
   viewers = 0
 
   declare(declarations: ViewDeclaration[], failure?: string) {
@@ -58,16 +59,13 @@ export class CardLiveViews {
     }
   }
 
-  data(name: string, bytes: Uint8Array<ArrayBuffer>) {
+  data(name: string, bytes: Uint8Array<ArrayBuffer>, complete?: () => void) {
     const matching = this.views.filter(view => view.declaration.name === name)
-    if (matching.length === 1) matching[0].deliver({ type: 'data', bytes })
-    else if (!matching.length) this.unknown.add(name)
-  }
-
-  run(id: string, state: ViewRunState) {
-    if (state === 'started') this.activeRun = id
-    else if (this.activeRun === id) this.activeRun = undefined
-    for (const view of this.views) view.deliver({ type: 'run', state })
+    if (matching.length === 1) matching[0].deliver({ type: 'data', bytes, ...(complete ? { complete } : {}) })
+    else {
+      if (!matching.length) this.unknown.add(name)
+      complete?.()
+    }
   }
 
   clear() {
@@ -75,7 +73,6 @@ export class CardLiveViews {
     this.unknown.clear()
     this.ambiguous = new Set()
     this.failure = undefined
-    this.activeRun = undefined
   }
 }
 

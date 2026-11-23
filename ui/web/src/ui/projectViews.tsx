@@ -302,7 +302,6 @@ function NixPathRows({ session, prefix }: { session: ProjectSession; prefix: str
 const recordingDefaults = {
   recordLogs: true,
   recordIO: false,
-  retainArtifact: false,
 }
 type RecordingKey = keyof typeof recordingDefaults
 const recordingKeys = Object.keys(recordingDefaults) as RecordingKey[]
@@ -383,7 +382,6 @@ function GeneralProjectSettings({ session }: { session: ProjectSession }) {
           <Section title={L('記録の既定値')}>
             <Row label={L('標準出力と標準エラーを記録')}><Toggle checked={recording.recordLogs} onChange={recordLogs => setRecording({ ...recording, recordLogs })} /></Row>
             <Row label={L('入出力の値を記録')}><Toggle checked={recording.recordIO} onChange={recordIO => setRecording({ ...recording, recordIO })} /></Row>
-            <Row label={L('出力ファイルと成果物を保持')}><Toggle checked={recording.retainArtifact} onChange={retainArtifact => setRecording({ ...recording, retainArtifact })} /></Row>
             <Row label={L('呼び出しごとのログ上限（バイト）')}>
               <TextField value={logLimit} onChange={setLogLimit} mono />
             </Row>

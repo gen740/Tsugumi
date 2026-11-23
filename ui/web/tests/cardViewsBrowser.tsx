@@ -81,7 +81,7 @@ function viewHtml(name: string) {
 }
 
 const have = (kind: string, view?: string) => reports.some(r => r.kind === kind && (!view || r.name === view))
-const traffic = (name: string) => reports.filter(r => r.name === name && ['data', 'run'].includes(r.kind)).map(r => [r.kind, r.value])
+const traffic = (name: string) => reports.filter(r => r.name === name && r.kind === 'data').map(r => [r.kind, r.value])
 const equal = (actual: unknown, expected: unknown, message: string) => assert(JSON.stringify(actual) === JSON.stringify(expected), message)
 const render = () => flushSync(() => root.render(<CardViewsPanel card={card} read={read} />))
 
@@ -99,19 +99,17 @@ async function test() {
   await until(() => ['connect-src', 'img-src', 'frame-src'].every(d => reports.some(r => r.kind === 'blocked' && r.value === d)))
   assert(!have('network-open'), 'The view could not make a network request')
 
-  card.run('r', 'started')
   card.data('first', Uint8Array.of(99))
   card.data('first', Uint8Array.of(0, 255, 0, 128))
   card.data('second', Uint8Array.of(8, 0, 9))
-  card.run('r', 'ended')
   resolveSecond(viewHtml('second'))
-  await until(() => traffic('first').length === 3 && traffic('second').length === 3)
-  equal(traffic('first'), [['run', 'started'], ['data', [0, 255, 0, 128]], ['run', 'ended']], 'First view routes its latest bytes between controls')
-  equal(traffic('second'), [['run', 'started'], ['data', [8, 0, 9]], ['run', 'ended']], 'Control order survives a slow view load')
+  await until(() => traffic('first').length === 2 && traffic('second').length === 1)
+  equal(traffic('first'), [['data', [99]], ['data', [0, 255, 0, 128]]], 'First view receives both messages in order')
+  equal(traffic('second'), [['data', [8, 0, 9]]], 'A slow view receives queued data')
   card.data('second', new Uint8Array())
-  await until(() => traffic('second').length === 4)
+  await until(() => traffic('second').length === 2)
   equal(traffic('second').at(-1), ['data', []], 'A post-run empty message still arrives')
-  equal(traffic('first').length, 3, 'Post-run data stays with its addressed view')
+  equal(traffic('first').length, 2, 'Post-run data stays with its addressed view')
 
   const first = document.querySelector<HTMLIFrameElement>('iframe[title=first]')!
   card.declare([{ name: 'waiting', type: 'html', blob: '/nix/store/waiting' }])

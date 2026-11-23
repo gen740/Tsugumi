@@ -10,7 +10,6 @@ import { hostCall } from '../wire/host'
 import { app } from '../model/app'
 import { Observable, useObserve } from '../model/observable'
 import { OutputCatalogResult, parseOutputCatalog } from '../model/outputCatalog'
-import { pathChoices } from '../model/pathChoices'
 import { prefs } from '../model/prefs'
 import { portTypeName, CardComment, CardKey, CardParameter, commentDone, definitionKind, errorText, key, KIND_ICON, KIND_LABEL, paramText, parseParam, path, PortInfo, ProjectSession } from '../model/session'
 import { CardEditorCategory, CATEGORY } from '../model/workspace'
@@ -926,14 +925,6 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
   useObserve(edit)
 
   const disabled = !session.isEditable || edit.applying || model.applying
-  const pathInput = model.kind === 'input' && name === 'value' && type === 'string' &&
-    session.resolution.get(model.cardKey)?.outputs.some((p) => p.kind === D.PortKind.Path)
-  const folder = session.definitionDir(model.cardKey) ?? ''
-  const entered = draft ?? str(value) ?? ''
-  const target = entered.startsWith('project:')
-    ? folder.split('/').slice(0, -3).map((part) => part + '/').join('') + entered.slice(8)
-    : folder + entered
-  const choices = pathInput && !sweep ? pathChoices(session.sourcePaths, folder) : []
   const begin = () => {
     if (draft === undefined) edit.begin(paramText(value), session.rev)
   }
@@ -978,10 +969,6 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
                 }} style={{ width: 220 }} />
               {draft !== undefined && <Button disabled={valueDisabled} onClick={() => void save(draft)}>{L('保存')}</Button>}
             </>}
-          {pathInput && !sweep && <Select value={choices.includes(entered) ? entered : ''} onChange={v => v && set(v)} disabled={valueDisabled} style={{ maxWidth: 220 }}
-            help={L('プロジェクトのファイルかフォルダを選びます。')}
-            options={[{ value: '', label: L('ファイルかフォルダを選択…'), disabled: true },
-              ...choices.map(p => ({ value: p, label: p }))]} />}
           <span className="caption2 secondary nowrap">{type}</span>
         </div>
         {model.kind === 'input' && <div className="row gap6 center">
@@ -994,10 +981,7 @@ function ParamRow({ model, parameter }: { model: CardEditorModel; parameter: Car
           {arr(tryParse(sweepText)) ? L('{0} 個の値を 1 つずつ別の呼び出しとして渡します（実行リスト）。', sweep.length)
             : L('値を JSON の配列で書いてください。例: [8, 12, 16]')}
         </div>}
-        {pathInput && !sweep && <div className="caption secondary" style={{ overflowWrap: 'anywhere' }}>
-          <div>{L('Card の定義フォルダからの相対パス。project: を付けると所属プロジェクトからの相対パスになります。')}</div>
-          <div>{L('参照先: {0}', target)}</div>
-        </div>}
+
         <RevisionEditNotice edit={edit} text={() => draft ?? ''}
           overwrite={() => void save(draft, true)} reload={clear} />
       </div>
@@ -1021,7 +1005,7 @@ function portNote(model: CardEditorModel, list: string, name: string): { value: 
   }
 }
 
-/** Ports, their purposes, recording and artifact retention. */
+/** Ports, their purposes, recording. */
 function PortsCategory({ model }: { model: CardEditorModel }) {
   const r = model.session.resolution.get(model.cardKey)
   const def = model.definition
@@ -1032,7 +1016,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
     fn(a)
     model.setSetting('inputs', a.length ? a : undefined)
   }
-  const keepable = (r?.outputs ?? []).filter((p) => p.kind === D.PortKind.Path)
   return (
     <Form>
       {model.draftEnds.length > 0 && <Section title={L('wire の再接続')} footer={L('入力 wire には実入力ポート、出力 wire には実出力ポートを指定します。候補が一つでも指定が必要です。')}>
@@ -1073,7 +1056,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
           {([
             ['recordLogs', L('標準出力と標準エラーを記録')],
             ['recordIO', L('入出力の値を記録')],
-            ['retainArtifact', L('出力ファイルと成果物を保持')],
           ] as const).map(([key, label]) => {
             const value = bool(get(def, key))
             return <Row key={key} label={label}>
@@ -1083,14 +1065,6 @@ function PortsCategory({ model }: { model: CardEditorModel }) {
                   { value: 'on', label: L('オン') }, { value: 'off', label: L('オフ') }]} />
             </Row>
           })}
-          {/* Only Path outputs can be kept as artifacts. */}
-          <Row label={L('成果物にする出力')}>
-            {keepable.length === 0
-              ? <span className="callout secondary">{r === undefined ? L('出力の型がまだ解決されていません') : L('Path の出力がないため、保持できる出力はありません')}</span>
-              : <Select value={str(get(def, 'artifactOutput')) ?? ''} onChange={(v) => model.setSetting('artifactOutput', v || undefined)}
-                  options={[{ value: '', label: L('なし') },
-                    ...keepable.map((p) => ({ value: p.name, label: p.name }))]} />}
-          </Row>
         </Section>
       )}
     </Form>
@@ -1167,12 +1141,12 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
   }, [p, model.generation, loaded, session.rpc])
 
   /** Rewrites the port in the working copy of _outputs.fbs (applied with the rest). */
-  const set = async (port: string, type: string, kind: D.PortKind) => {
+  const set = async (port: string, type: string) => {
     const rpc = session.rpc
     if (!type || !p || !rpc) return
     try {
       const text = await model.text(p)
-      const res = await rpc.outputTypes(text, port, type, kind)
+      const res = await rpc.outputTypes(text, port, type)
       const changed = sOpt(res.text)
       if (changed !== undefined) {
         model.setText(p, changed)
@@ -1195,12 +1169,11 @@ function OutputPortsSection({ model }: { model: CardEditorModel }) {
             {!p ? (
               <span className="caption secondary nowrap">{portTypeName(port) ?? L('未解決')}</span>
             ) : (
-              <Select value={port.kind === D.PortKind.Path ? 'string' : port.rootType ?? ''} style={{ maxWidth: 150 }}
+              <Select value={port.rootType ?? ''} style={{ maxWidth: 150 }}
                 help={L('_outputs.fbs で定義した型から選びます（_outputs.fbs に書き戻します）')}
-                onChange={(type) => void set(port.name, type, type === 'string' ? D.PortKind.Path : D.PortKind.FlatBuffer)}
-                options={[...(port.kind !== D.PortKind.Path && port.rootType === undefined ? [{ value: '', label: L('未解決'), disabled: true }] : []),
-                  { value: 'string', label: 'Path' },
-                  ...(port.kind !== D.PortKind.Path && port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
+                onChange={(type) => void set(port.name, type)}
+                options={[...(port.rootType === undefined ? [{ value: '', label: L('未解決'), disabled: true }] : []),
+                  ...(port.rootType !== undefined && !types.includes(port.rootType) ? [{ value: port.rootType, label: shortType(port.rootType) }] : []),
                   ...types.map((type) => ({ value: type, label: shortType(type) }))]} />
             )}
           </div>

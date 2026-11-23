@@ -96,22 +96,22 @@ import Testing
 
 }
 
-@MainActor @Test func filesCompareRecordedContentAndOneSidedValuesAreNotComparable() {
-  func file(_ path: String, _ digest: String?) -> Tsugumi_Data_NamedValueT {
+@MainActor @Test func artifactIdsParticipateInValueComparison() {
+  func value(_ id: String) -> Tsugumi_Data_NamedValueT {
     let v = Tsugumi_Data_NamedValueT()
-    v.name = "file"; v.kind = .path
-    v.inlineBytes = Array(path.utf8); v.contentHash = path; v.fileContentHash = digest
+    v.name = "value"
+    v.contentHash = "bytes"
+    let artifact = Tsugumi_Data_ValueArtifactT()
+    artifact.id = id
+    artifact.sizeBytes = 1
+    v.artifacts = [artifact]
     return v
   }
-  let a = file("/runs/left/value", "bytes"), b = file("/runs/right/value", "bytes")
+  let a = value("id"), b = value("id")
   #expect(RunComparison.valueDifference(a, b) == .same)
-  b.fileContentHash = "other"
+  b.artifacts = value("other").artifacts
   #expect(RunComparison.valueDifference(a, b) == .changed)
-  b.fileContentHash = nil
-  #expect(RunComparison.valueDifference(a, b) == .unknown)
-  #expect(RunComparison.valueDifference(file("/same/path", nil), file("/same/path", nil)) == .unknown)
-  b.fileContentHash = "bytes"; b.fileMissing = true
-  #expect(RunComparison.valueDifference(a, b) == .same)
+  b.artifacts = a.artifacts
   b.rootType = "Other"
   #expect(RunComparison.valueDifference(a, b) == .changed)
   #expect(RunComparison.valueDifference(a, nil) == .unknown)

@@ -51,7 +51,6 @@ const diag = (d: D.DiagnosticT): Diagnostic => ({
 
 export interface PortInfo {
   name: string
-  kind: D.PortKind
   rootType?: string
   mergeMemberTypes?: string[]
   executionShape?: D.ExecutionShape
@@ -59,7 +58,7 @@ export interface PortInfo {
 
 export function portTypeName(port?: PortInfo): string | undefined {
   if (port?.mergeMemberTypes?.length) return port.mergeMemberTypes.join(' | ')
-  return port?.kind === D.PortKind.Path ? 'Path' : port?.rootType
+  return port?.rootType
 }
 
 export interface CardParameter {
@@ -759,15 +758,14 @@ export class ProjectSession extends Observable {
         break
       }
       case R.NotificationPayload.DisplayUpdated: {
-        const { card, view, bytes } = e.value as LiveDisplayUpdate
-        this.liveViews.get(key(card))?.data(view, bytes)
-        break
-      }
-      case R.NotificationPayload.DisplayRunStateChanged: {
-        const { card, runId, state } = e.value as R.DisplayRunStateChangedT
-        const view = this.liveViews.get(key(segs(card)))
-        if (state === D.DisplayRunState.started) view?.run(s(runId), 'started')
-        if (state === D.DisplayRunState.ended) view?.run(s(runId), 'ended')
+        const { card, view, bytes, creditId } = e.value as LiveDisplayUpdate
+        const client = this.client
+        const complete = creditId === undefined ? undefined : () => {
+          void client?.viewCredit(e.subscriptionId, card, view, bytes.length, creditId).catch(() => {})
+        }
+        const views = this.liveViews.get(key(card))
+        if (views) views.data(view, bytes, complete)
+        else complete?.()
         break
       }
       case R.NotificationPayload.RunEvent:
@@ -833,7 +831,7 @@ export class ProjectSession extends Observable {
     const r = new Map<CardKey, ResolvedCard>()
     const all = diags.map(diag)
     const port = (x: D.PortT): PortInfo => ({
-      name: s(x.name), kind: x.kind, rootType: sOpt(x.rootType), executionShape: x.executionShape,
+      name: s(x.name), rootType: sOpt(x.rootType), executionShape: x.executionShape,
       mergeMemberTypes: x.mergeMemberTypes.map(s),
     })
     for (const rc of res) {
@@ -2210,13 +2208,6 @@ export class ProjectSession extends Observable {
     const result = await this.client.deleteRunScratch(uuid(), paths)
     await this.refreshCacheUsage()
     return result
-  }
-
-  async runFileReferences(runId: string): Promise<string[]> {
-    if (!this.projectId || !this.connected) throw new RPCError('disconnected', L('接続していません'))
-    const reply = await hostCall<R.RunFileReferencesT>(H.RequestPayload.RunFileReferencesRequest,
-      new H.RunFileReferencesRequestT(this.projectId, runId), H.ReplyPayload.RunFileReferences)
-    return reply.runIds.map(s)
   }
 
   async deleteRunCategory(runId: string, category: R.RunRecordCategory) {

@@ -42,31 +42,21 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   return payload(u, .cardviewsupdated)
 }
 
-@MainActor private func sent(_ card: CardKey, _ view: String, _ bytes: [UInt8], run: String? = nil) -> Tsugumi_RPC_NotificationPayloadUnion {
+@MainActor private func sent(_ card: CardKey, _ view: String, _ bytes: [UInt8]) -> Tsugumi_RPC_NotificationPayloadUnion {
   let d = Tsugumi_Data_DisplayT()
-  d.card = cardPath(card); d.view = view; d.bytes = bytes; d.runId = run
+  d.card = cardPath(card); d.view = view; d.bytes = bytes
   let u = Tsugumi_RPC_DisplayUpdatedT()
   u.display = d
   return payload(u, .displayupdated)
 }
 
-@MainActor private func runState(_ card: CardKey, _ run: String, _ state: Tsugumi_Data_DisplayRunState) -> Tsugumi_RPC_NotificationPayloadUnion {
-  let r = Tsugumi_RPC_DisplayRunStateChangedT()
-  r.card = cardPath(card); r.runId = run; r.state = state
-  return payload(r, .displayrunstatechanged)
-}
-
-@Test func pendingDataIsReplacedButRunStateKeepsItsOrder() {
+@Test func pendingDataKeepsItsOrder() {
   var box = CardViewOutbox()
-  box.put(.run(started: true))
   box.put(.data(Data([1])))
   box.put(.data(Data([2])))
-  box.put(.run(started: false))
   box.put(.data(Data([3])))
-  #expect(box.pending == [.run(started: true), .data(Data([2])), .run(started: false), .data(Data([3]))])
-  #expect(box.take() == .run(started: true))
-  box.put(.data(Data([4])))
-  #expect(box.pending == [.data(Data([2])), .run(started: false), .data(Data([4]))])
+  #expect(box.take()?.0 == .data(Data([1])))
+  #expect(box.pending == [.data(Data([2])), .data(Data([3]))])
 }
 
 @MainActor @Test func theSessionRoutesViewTrafficByNameForOpenWindowsOnly() throws {
@@ -85,26 +75,23 @@ private func cardPath(_ key: CardKey) -> Tsugumi_Data_CardPathT {
   // Declarations arrive before any run; there is no data yet.
   s.applyViewNotification(declared("plot", [html("chart"), html("notes"), CardViewDeclaration(name: "gpu", type: "dawn", blob: "/nix/store/x-gpu.wasm")]))
   #expect(s.cardViews.declarations["plot"]?.map(\.name) == ["chart", "notes", "gpu"])
-  #expect(s.cardViews.runs["plot"] == nil)
 
   var chart: [CardViewMessage] = [], notes: [CardViewMessage] = []
-  let a = s.cardViews.attach("plot", view: "chart") { chart.append($0) }
-  let b = s.cardViews.attach("plot", view: "notes") { notes.append($0) }
-  s.applyViewNotification(runState("plot", "7", .started))
+  let a = s.cardViews.attach("plot", view: "chart") { message, done in chart.append(message); done() }
+  let b = s.cardViews.attach("plot", view: "notes") { message, done in notes.append(message); done() }
   // Arbitrary bytes, NUL and non-UTF-8 included, reach only the named view.
-  s.applyViewNotification(sent("plot", "chart", [0, 0xff, 0xfe, 0], run: "7"))
-  s.applyViewNotification(sent("plot", "missing", [5], run: "7"))
-  s.applyViewNotification(runState("plot", "7", .ended))
+  s.applyViewNotification(sent("plot", "chart", [0, 0xff, 0xfe, 0]))
+  s.applyViewNotification(sent("plot", "missing", [5]))
   // A Card thread may still send after its call returned, with no active run.
   s.applyViewNotification(sent("plot", "chart", [9]))
-  #expect(chart == [.run(started: true), .data(Data([0, 0xff, 0xfe, 0])), .run(started: false), .data(Data([9]))])
-  #expect(notes == [.run(started: true), .run(started: false)])
+  #expect(chart == [.data(Data([0, 0xff, 0xfe, 0])), .data(Data([9]))])
+  #expect(notes.isEmpty)
   #expect(s.cardViews.undeclared("plot") == ["missing"])
 
-  // A window opened later starts from the state so far.
+  // A window opened later receives only new messages.
   var late: [CardViewMessage] = []
-  let c = s.cardViews.attach("plot", view: "chart") { late.append($0) }
-  #expect(late == [.run(started: true), .data(Data([9])), .run(started: false)])
+  let c = s.cardViews.attach("plot", view: "chart") { message, done in late.append(message); done() }
+  #expect(late.isEmpty)
 
   // Declaring the name later clears the error; an empty list clears the declarations.
   s.applyViewNotification(declared("plot", [html("chart"), html("missing")]))
@@ -212,15 +199,16 @@ private func viewDocument(_ out: Outside) -> String {
   try await host.mount(viewDocument(out))
   try await waitForModel("the view took its port") { probe.log == ["port"] }
 
-  let id = relay.attach("plot", view: "chart") { [weak host] in host?.send($0) }
-  relay.runState("plot", runId: "1", started: true)
+  let id = relay.attach("plot", view: "chart") { [weak host] message, done in
+    if let host { host.send(message, complete: done) }
+    else { done() }
+  }
   relay.receive("plot", view: "other", bytes: Data([7]))
   relay.receive("plot", view: "chart", bytes: Data([0, 255, 0, 10]))
-  relay.runState("plot", runId: "1", started: false)
   // After the Card's call returned.
   relay.receive("plot", view: "chart", bytes: Data([9]))
   try await waitForModel("the view received the run") { probe.log.last == "data:9" }
-  #expect(probe.log == ["port", "run:started", "data:0,255,0,10", "run:ended", "data:9"])
+  #expect(probe.log == ["port", "data:0,255,0,10", "data:9"])
 
   // Teardown: nothing more reaches the view.
   relay.detach(id)

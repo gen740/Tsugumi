@@ -87,18 +87,16 @@ assert.equal(valueDifference(v, undefined), 'unknown')
   } finally { view.unmount() }
 }
 
-// Files compare their recorded content, never the serialized storage path.
+// Opaque values also compare the artifact capabilities they carry.
 {
-  const file = (path: string, digest: string | null) => Object.assign(new D.NamedValueT(), {
-    name: 'file', kind: D.PortKind.Path,
-    inlineBytes: [...new TextEncoder().encode(path)], contentHash: path, fileContentHash: digest,
+  const value = (id: string) => Object.assign(new D.NamedValueT(), {
+    name: 'value', contentHash: 'bytes', artifacts: [new D.ValueArtifactT(id, 1n)],
   })
-  const x = file('/runs/left/value', 'bytes'), y = file('/runs/right/value', 'bytes')
+  const x = value('id'), y = value('id')
   assert.equal(valueDifference(x, y), 'same')
-  y.fileContentHash = 'other'; assert.equal(valueDifference(x, y), 'changed')
-  y.fileContentHash = null; assert.equal(valueDifference(x, y), 'unknown')
-  assert.equal(valueDifference(file('/same/path', null), file('/same/path', null)), 'unknown')
-  y.fileContentHash = 'bytes'; y.fileMissing = true; assert.equal(valueDifference(x, y), 'same')
+  y.artifacts = [new D.ValueArtifactT('other', 1n)]
+  assert.equal(valueDifference(x, y), 'changed')
+  y.artifacts = x.artifacts
   y.rootType = 'Other'; assert.equal(valueDifference(x, y), 'changed')
   assert.equal(valueDifference(x, undefined), 'unknown')
   assert.equal(valueDifference(undefined, x), 'unknown')

@@ -62,8 +62,8 @@ export interface Transport {
 }
 
 export interface LiveDisplayUpdate {
+  creditId?: bigint
   card: string[]
-  runId?: string
   view: string
   bytes: Uint8Array<ArrayBuffer>
 }
@@ -129,8 +129,8 @@ export class RPCClient {
         const card = display.card()!
         const value: LiveDisplayUpdate = {
           card: Array.from({ length: card.segmentsLength() }, (_, i) => s(card.segments(i))),
-          runId: display.runId() ?? undefined,
           view: s(display.view()),
+          creditId: display.creditId() ?? undefined,
           bytes: display.bytesArray()?.slice() ?? new Uint8Array(),
         }
         this.onNotification?.({ subscriptionId: s(raw.subscriptionId()), seq: raw.seq() ?? 0n, type: raw.valueType(), value })
@@ -203,9 +203,9 @@ export class RPCClient {
   }
   /** The types of an _outputs.fbs text as the core compiles them (bfbs); with
    *  a port and a type, also the text with that port changed. Saves nothing. */
-  outputTypes(text: string, port: string | null = null, typeName: string | null = null, kind: D.PortKind = D.PortKind.FlatBuffer) {
+  outputTypes(text: string, port: string | null = null, typeName: string | null = null) {
     return this.call<R.OutputTypesResultT>(RequestPayload.OutputTypesRequest,
-      Object.assign(new R.OutputTypesRequestT(), { text, port, typeName, kind: port !== null ? kind : D.PortKind.unspecified }))
+      Object.assign(new R.OutputTypesRequestT(), { text, port, typeName }))
   }
   /** Checks the document as it would be after `changes` (nothing is saved). */
   validate(changes: R.DocumentChangeT[] | null = null) {
@@ -308,6 +308,19 @@ export class RPCClient {
       offset = next
     }
   }
+  sendView(card: string[], view: string, bytes: Uint8Array) {
+    const value = new R.ViewSendRequestT(cardPath(card), view)
+    value.pack = builder => R.ViewSendRequest.createViewSendRequest(
+      builder, value.card!.pack(builder), builder.createString(view),
+      R.ViewSendRequest.createBytesVector(builder, bytes),
+    )
+    return this.call<R.AckT>(RequestPayload.ViewSendRequest, value)
+  }
+
+  viewCredit(subscriptionId: string, card: string[], view: string, bytes: number, creditId: bigint) {
+    return this.call<R.AckT>(RequestPayload.ViewCreditRequest, new R.ViewCreditRequestT(subscriptionId, cardPath(card), view, bytes, creditId))
+  }
+
   setVisible(subscriptionId: string, cards: string[][], enabled = true) {
     return this.call<R.AckT>(
       RequestPayload.ViewSetVisibleRequest,

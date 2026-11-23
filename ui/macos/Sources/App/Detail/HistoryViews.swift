@@ -478,7 +478,6 @@ private struct DeleteRunCategory: View {
     let runId: String
     let category: Tsugumi_RPC_RunRecordCategory
     let label: String
-    let references: [String]
   }
   @State private var selection: Selection?
   @State private var confirming = false
@@ -489,7 +488,6 @@ private struct DeleteRunCategory: View {
     Menu("記録を削除…") {
       Button("標準出力と標準エラー") { prepare(.logs, String(localized: "標準出力と標準エラー")) }
       Button("値") { prepare(.values, String(localized: "値")) }
-      Button("ファイルと成果物") { prepare(.files, String(localized: "ファイルと成果物")) }
     }
     .disabled(busy || session.runActive || !session.connected)
     .confirmationDialog(
@@ -505,10 +503,6 @@ private struct DeleteRunCategory: View {
         }
       }
       Button("キャンセル", role: .cancel) {}
-    } message: { selection in
-      if !selection.references.isEmpty {
-        Text("参照している実行: \(selection.references.joined(separator: ", "))。削除後、それらの参照は削除済みと表示されます。")
-      }
     }
     if let error {
       Text("削除できませんでした: \(error)").font(.caption).foregroundStyle(.red).textSelection(.enabled)
@@ -516,16 +510,9 @@ private struct DeleteRunCategory: View {
   }
 
   private func prepare(_ category: Tsugumi_RPC_RunRecordCategory, _ label: String) {
-    busy = true
     error = nil
-    Task {
-      defer { busy = false }
-      do {
-        let refs = category == .files ? try await session.runFileReferences(runId) : []
-        selection = Selection(runId: runId, category: category, label: label, references: refs)
-        confirming = true
-      } catch let failure { error = String(describing: failure) }
-    }
+    selection = Selection(runId: runId, category: category, label: label)
+    confirming = true
   }
 }
 
@@ -588,8 +575,8 @@ struct CardArtifactsView: View {
       HSplitView {
         List(artifacts, id: \.artifactId, selection: $artifactId) { a in
           VStack(alignment: .leading) {
-            Text(a.output).font(.callout.bold())
-            Text("#\(a.invocation ?? 0) · \(a.directory ? "directory" : "file") · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
+            Text(a.artifactId).font(.callout.bold())
+            Text("#\(a.invocation ?? 0) · \(a.sizeBytes ?? 0) bytes · \(a.members.count) 件").font(.caption).foregroundStyle(.secondary)
           }
           .tag(Optional(a.artifactId))
         }
@@ -662,7 +649,7 @@ struct CardArtifactsView: View {
     preview = nil
     guard let rpc = session.rpc, let a = selectedArtifact, let member else { return }
     do {
-      let data = try await rpc.readArtifact(id: a.artifactId, member: a.directory ? member : nil)
+      let data = try await rpc.readArtifact(id: a.artifactId, member: member)
       guard !Task.isCancelled else { return }
       if let html = ArtifactHTMLPreview.text(member: member, data: data) {
         preview = .html(html)
@@ -684,7 +671,7 @@ struct CardArtifactsView: View {
     p.nameFieldStringValue = (m as NSString).lastPathComponent
     guard p.runModal() == .OK, let url = p.url else { return }
     do {
-      try await rpc.readArtifact(id: a.artifactId, member: a.directory ? m : nil).write(to: url)
+      try await rpc.readArtifact(id: a.artifactId, member: m).write(to: url)
     } catch { self.error = "\(error)" }
   }
 }

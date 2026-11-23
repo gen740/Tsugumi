@@ -697,15 +697,6 @@ extension ProjectSession {
     return result
   }
 
-  func runFileReferences(_ runId: String) async throws -> [String] {
-    guard connected, let projectId else { throw RPCError.disconnected }
-    let request = Tsugumi_Host_RunFileReferencesRequestT()
-    request.projectId = projectId
-    request.runId = runId
-    let reply: Tsugumi_RPC_RunFileReferencesT = try await CoreHostClient.shared.hostCall(.runfilereferencesrequest, request)
-    return reply.runIds.compactMap { $0 }
-  }
-
   func deleteRunCategory(_ runId: String, _ category: Tsugumi_RPC_RunRecordCategory) async throws {
     guard connected, let projectId else { throw RPCError.disconnected }
     let request = Tsugumi_Host_RunCategoryDeleteRequestT()

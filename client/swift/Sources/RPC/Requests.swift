@@ -179,6 +179,25 @@ public extension RPCClient {
     return try await call(.cardviewreadrequest, r)
   }
 
+  func sendView(card: [String], view: String, bytes: Data) async throws {
+    let r = Tsugumi_RPC_ViewSendRequestT()
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = Array(bytes)
+    let _: Tsugumi_RPC_AckT = try await call(.viewsendrequest, r)
+  }
+
+  func returnViewCredit(subscription: String, card: [String], view: String,
+                        bytes: UInt32, creditId: UInt64) async throws {
+    let r = Tsugumi_RPC_ViewCreditRequestT()
+    r.subscriptionId = subscription
+    r.card = cardPath(card)
+    r.view = view
+    r.bytes = bytes
+    r.creditId = creditId
+    let _: Tsugumi_RPC_AckT = try await call(.viewcreditrequest, r)
+  }
+
   func setVisible(subscription: String, cards: [[String]], enabled: Bool = true) async throws {
     let r = Tsugumi_RPC_ViewSetVisibleRequestT()
     r.subscriptionId = subscription
@@ -280,13 +299,11 @@ public extension RPCClient {
 
   /// The types of an _outputs.fbs text as the core compiles them (bfbs); with
   /// a port and a type, also the text with that port changed. Saves nothing.
-  func outputTypes(text: String, port: String? = nil, typeName: String? = nil,
-                   kind: Tsugumi_Data_PortKind = .flatbuffer) async throws -> Tsugumi_RPC_OutputTypesResultT {
+  func outputTypes(text: String, port: String? = nil, typeName: String? = nil) async throws -> Tsugumi_RPC_OutputTypesResultT {
     let r = Tsugumi_RPC_OutputTypesRequestT()
     r.text = text
     r.port = port
     r.typeName = typeName
-    if port != nil { r.kind = kind }
     return try await call(.outputtypesrequest, r)
   }
 }
