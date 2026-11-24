@@ -18,7 +18,6 @@ struct Object;
 
 namespace tsugumi::types {
 
-using ExecutionShape = Tsugumi::Data::ExecutionShape;
 
 struct Type {
   std::string bfbs;       // reflection schema, root_table = root message
@@ -34,7 +33,6 @@ struct PortType {
   std::string name;
   bool required = false;  // output catalog attribute only
   TypeRef type;           // null when unresolved
-  ExecutionShape execution_shape = ExecutionShape::unspecified;
   std::vector<std::string> merge_member_types{};  // presentation only
 
   auto resolved() const -> bool { return type != nullptr; }
@@ -75,10 +73,4 @@ std::string render_closure(const Type& t, const std::string& prefix,
 // Builtin message types.
 TypeRef empty_type();
 
-// Builds a FlatBuffer of `t` from JSON text. Returns false with error text.
-bool json_to_flatbuffer(const Type& t, const std::string& json,
-                        std::string* out, std::string* error,
-                        bool force_defaults = false);
-// Generates a Params schema text (`table Params {...}`) for the given
-// name -> fbs type list.
 }  // namespace tsugumi::types

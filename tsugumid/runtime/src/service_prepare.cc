@@ -30,7 +30,7 @@ auto Service::prepare_cards(std::ostream& out) -> bool {
         auto entry = std::make_unique<Tsugumi::State::PreparedParameterT>();
         entry->name = parameter.name;
         entry->type = param_type_name(parameter.type);
-        entry->effective_json = *parameter.data;
+        entry->effective_json = parameter.data;
         settings->parameters.push_back(std::move(entry));
       }
       manifest.settings.push_back(std::move(settings));

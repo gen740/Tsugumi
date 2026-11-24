@@ -16,7 +16,7 @@ session.confirmedLayout = parse('{}')
 session.confirmedDefinitions.set('source', parse('{"type":"code"}'))
 session.confirmedDefinitions.set('collect', parse('{"type":"collect"}'))
 session.confirmedDefinitions.set('sink', parse('{"type":"code"}'))
-const ordinaryList = { name: 'out', rootType: 'Example.List', executionShape: D.ExecutionShape.single }
+const ordinaryList = { name: 'out', rootType: 'Example.List' }
 session.resolution.set('source', { path: ['source'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
 session.resolution.set('collect', { path: ['collect'], inputs: [], outputs: [ordinaryList], diagnostics: [], nixReferences: [] })
 

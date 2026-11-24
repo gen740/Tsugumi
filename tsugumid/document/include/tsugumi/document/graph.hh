@@ -29,7 +29,6 @@ enum class CardType {
 };
 // The _card.json "type" value of each kind.
 const char* card_type_name(CardType t);
-std::optional<CardType> parse_card_type(std::string_view name);
 // The type a parsed definition states (parse_card_json has checked it).
 CardType card_type_of(const DefinitionDoc& def);
 enum class ParamType {
@@ -48,7 +47,7 @@ const char* param_type_name(ParamType t);
 struct ParamDef {
   std::string name;
   ParamType type = ParamType::String;
-  std::optional<std::string> data;  // value as canonical JSON
+  std::string data;  // value as canonical JSON
 };
 
 struct HostFolder {
@@ -67,7 +66,6 @@ inline constexpr char kLocalExecutionService[] = "local";
 
 struct Settings {
   std::string name;  // the Card id
-  std::string symbol;
   uint64_t max_runs = 1;
   std::optional<uint64_t> timeout_seconds;        // nullopt = no deadline
   std::optional<uint64_t> build_timeout_seconds;  // nullopt = no deadline
@@ -86,10 +84,6 @@ struct Settings {
   // name of the environment variable that carries its value.
   std::vector<std::string> secrets;
   std::vector<ParamDef> params;  // with their values in data
-};
-
-struct InputDef {
-  std::string name;
 };
 
 struct NixPathEntry {
@@ -117,7 +111,6 @@ struct Node {
       boundary;          // Card in Card: its external's ports
   std::string external;  // Card in Card: "externals/<p>/" (project relative)
   Settings settings;
-  std::vector<InputDef> input_defs;
   std::vector<types::PortType> inputs;
   std::vector<types::PortType> outputs;
   std::vector<Diag> diags;       // structure diagnostics
@@ -140,7 +133,6 @@ struct Resolution {
   std::map<std::string, size_t> index;  // path_key -> node
   std::vector<Edge> edges;              // between executable nodes only
   std::vector<std::map<std::string, size_t>> incoming;
-  std::vector<std::vector<size_t>> outgoing;
   std::vector<Diag> diags;
   // Boundary aliases produced by the same leaf resolution as executable wires.
   std::map<std::tuple<std::string, std::string, bool>,
@@ -151,7 +143,7 @@ struct Resolution {
       -> std::optional<std::pair<size_t, std::string>>;
   // Concrete producer types reachable through a Merge output, by schema ID.
   auto merge_candidates(size_t node, const std::string& port) const
-      -> std::vector<types::TypeRef>;
+      -> std::map<std::string, types::TypeRef>;
 
   const Node* find(const CardPath& p) const;
   std::vector<Diag> all_diagnostics(bool executable) const;

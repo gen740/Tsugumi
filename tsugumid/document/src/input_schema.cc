@@ -19,23 +19,12 @@ auto add_candidates(const Resolution& graph, size_t source,
                     std::map<std::string, types::TypeRef>& result) -> void {
   const auto& producer = graph.nodes[source];
   if (producer.kind == CardType::Merge) {
-    for (auto type : graph.merge_candidates(source, port))
-      result.try_emplace(schema_id(*type), std::move(type));
+    auto candidates = graph.merge_candidates(source, port);
+    result.merge(candidates);
     return;
   }
   if (const auto* output = producer.output(port); output && output->type)
     result.try_emplace(schema_id(*output->type), output->type);
-}
-
-auto stamp_declaration(std::string text, const std::string& id) -> std::string {
-  if (id.empty()) return text;
-  const auto body = text.find(" {\n");
-  const auto attribute = "tsugumi_schema: \"" + id + "\"";
-  if (text[body - 1] == ')')
-    text.insert(body - 1, ", " + attribute);
-  else
-    text.insert(body, " (" + attribute + ")");
-  return text;
 }
 
 }  // namespace
@@ -48,7 +37,7 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
   std::string fields;
   bool uses_collected = false;
   int field_id = 0;
-  for (const auto& port : node.input_defs) {
+  for (const auto& port : node.inputs) {
     const auto wire = std::ranges::find_if(graph.edges, [&](const Edge& edge) {
       return edge.to == dest && edge.to_port == port.name;
     });
@@ -87,7 +76,7 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
         auto prefix = "inputs." + port.name;
         if (multiple_merge_candidates) prefix += ".s" + id.substr(0, 12);
         names.push_back(
-            types::render_input_candidate(*type, prefix, declarations));
+            types::render_input_candidate(*type, prefix, id, declarations));
       }
     }
     std::string field_type;
@@ -127,10 +116,8 @@ auto generated_input_schema(const Resolution& graph, const Node& node)
   for (const auto& attr : declarations.attributes)
     text += "attribute \"" + attr + "\";\n";
   if (uses_collected) text += collect_schema_declarations();
-  for (const auto& name : declarations.order) {
-    const auto& decl = declarations.types.at(name);
-    text += stamp_declaration(decl.text, decl.schema);
-  }
+  for (const auto& name : declarations.order)
+    text += declarations.types.at(name);
   text += "namespace inputs;\n" + unions + "table Inputs {\n" + fields +
           "}\nroot_type Inputs;\n";
   return text;

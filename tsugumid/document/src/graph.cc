@@ -46,13 +46,13 @@ const char* card_type_name(CardType t) {
   return "";
 }
 
-std::optional<CardType> parse_card_type(std::string_view name) {
+namespace {
+auto parse_card_type(std::string_view name) -> std::optional<CardType> {
   for (const auto& [type, text] : kCardTypes)
     if (name == text) return type;
   return std::nullopt;
 }
 
-namespace {
 struct ParamTypeInfo {
   ParamType type;
   const char* name;
@@ -102,7 +102,7 @@ const PortType* Node::output(const std::string& n) const {
 }
 
 auto Resolution::merge_candidates(size_t node, const std::string& port) const
-    -> std::vector<types::TypeRef> {
+    -> std::map<std::string, types::TypeRef> {
   if (nodes.at(node).kind != CardType::Merge || !nodes[node].output(port))
     return {};
   std::vector<size_t> pending{node};
@@ -124,9 +124,7 @@ auto Resolution::merge_candidates(size_t node, const std::string& port) const
         candidates.try_emplace(schema_id(*output->type), output->type);
     }
   }
-  std::vector<types::TypeRef> result;
-  for (const auto& [_, candidate] : candidates) result.push_back(candidate);
-  return result;
+  return candidates;
 }
 
 const Node* Resolution::find(const CardPath& p) const {
@@ -168,13 +166,9 @@ class Builder {
     scope(doc_.project(), "", {}, 0);
     connect_all();
     res_->incoming.resize(res_->nodes.size());
-    res_->outgoing.resize(res_->nodes.size());
-    for (const auto& edge : res_->edges) {
+    for (const auto& edge : res_->edges)
       res_->incoming[edge.to].emplace(edge.to_port, edge.from);
-      res_->outgoing[edge.from].push_back(edge.to);
-    }
     resolve_types();
-    resolve_execution_shapes();
     resolve_boundary_types();
     resolve_nix_exports();
     for (auto& node : res_->nodes) {
@@ -216,7 +210,6 @@ class Builder {
     auto boolean = [&](std::optional<bool> v, bool& out) {
       if (v) out = *v;
     };
-    if (d.symbol()) s.symbol = d.symbol()->str();
     if (const auto* ins = d.inputs(); ins && n.kind != CardType::Draft) {
       std::set<std::string> seen;
       for (const auto* in : *ins) {
@@ -229,7 +222,7 @@ class Builder {
         if (!seen.insert(name).second)
           n.diags.push_back(
               diag(n.path, "invalid_setting", "duplicate input " + name));
-        n.input_defs.push_back({name});
+        n.inputs.push_back({name, false, nullptr});
       }
     }
     if (const auto v = d.maxRuns()) {
@@ -278,16 +271,15 @@ class Builder {
     }
     if (const auto* service = d.executionService()) {
       const auto value = service->str();
-      const auto* v = &value;
       if (n.kind != CardType::Code)
         n.diags.push_back(
             diag(n.path, "invalid_setting",
                  "executionService is only available on Code Cards"));
-      else if (!valid_id(*v))
+      else if (!valid_id(value))
         n.diags.push_back(diag(n.path, "invalid_setting",
                                "executionService must be a valid service ID"));
       else
-        s.execution_service = *v;
+        s.execution_service = value;
     }
     if (const auto* condition = d.workerCondition()) {
       auto compiled = worker_condition::compile(
@@ -326,11 +318,10 @@ class Builder {
     }
     if (const auto* system = d.system()) {
       const auto value = system->str();
-      const auto* v = &value;
-      if (!remote && *v == native_system())
+      if (!remote && value == native_system())
         s.system.clear();
-      else if (*v == "x86_64-linux" || *v == "aarch64-linux")
-        s.system = *v;
+      else if (value == "x86_64-linux" || value == "aarch64-linux")
+        s.system = value;
       else
         n.diags.push_back(diag(
             n.path, "invalid_setting",
@@ -340,23 +331,21 @@ class Builder {
     if (folders) {
       std::set<std::string> names;
       for (const auto* f : *folders) {
-        const auto path_value = f->path()->str();
-        const auto name_value = f->name()->str();
-        const auto* path = &path_value;
-        const auto* name = &name_value;
-        if (path->empty() || path->front() != '/' || !valid_id(*name)) {
+        const auto path = f->path()->str();
+        const auto name = f->name()->str();
+        if (path.empty() || path.front() != '/' || !valid_id(name)) {
           n.diags.push_back(diag(
               n.path, "invalid_setting",
               "grants.hostPaths entries need an absolute path and a name"));
           continue;
         }
-        if (!names.insert(grant_environment(*name)).second) {
+        if (!names.insert(grant_environment(name)).second) {
           n.diags.push_back(
               diag(n.path, "invalid_setting",
-                   "duplicate host path grant variable for " + *name));
+                   "duplicate host path grant variable for " + name));
           continue;
         }
-        s.grants.host_paths.push_back({*path, *name, f->write().value_or(false)});
+        s.grants.host_paths.push_back({path, name, f->write().value_or(false)});
       }
     }
     if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
@@ -373,25 +362,24 @@ class Builder {
     const auto invalid = [&](const std::string& message) {
       n.diags.push_back(diag(n.path, "invalid_param", message, true, rel));
     };
-    if (doc_.sources.contains(rel) && !read_params_) return;
+    const auto source = doc_.sources.find(rel);
+    if (source == doc_.sources.end() || !read_params_) return;
     try {
-      if (doc_.sources.contains(rel)) {
-        if (doc_.sources.at(rel).size > kMaxDocumentJsonBytes)
-          throw std::runtime_error(rel + ": exceeds the 8 MiB document limit");
-        auto bytes = read_(rel);
-        if (!bytes)
-          throw std::runtime_error(rel +
-                                   " differs from the confirmed document");
-        for (const auto& raw : json::Array(read_params_(n.def_dir, *bytes))) {
-          const auto entry = json::Object(raw);
-          const auto name = json::Text(entry, "name");
-          const auto type = parse_param_type(json::Text(entry, "type"));
-          if (!type || !valid_id(name)) {
-            invalid("invalid value for param " + name);
-            continue;
-          }
-          n.settings.params.push_back({name, *type, entry.at("value")});
+      if (source->second.size > kMaxDocumentJsonBytes)
+        throw std::runtime_error(rel + ": exceeds the 8 MiB document limit");
+      auto bytes = read_(rel);
+      if (!bytes)
+        throw std::runtime_error(rel +
+                                 " differs from the confirmed document");
+      for (const auto& raw : json::Array(read_params_(n.def_dir, *bytes))) {
+        const auto entry = json::Object(raw);
+        const auto name = json::Text(entry, "name");
+        const auto type = parse_param_type(json::Text(entry, "type"));
+        if (!type || !valid_id(name)) {
+          invalid("invalid value for param " + name);
+          continue;
         }
+        n.settings.params.push_back({name, *type, entry.at("value")});
       }
     } catch (const std::exception& error) {
       invalid(error.what());
@@ -515,7 +503,7 @@ class Builder {
                                         n.def_dir + "default.nix"));
           // A connected start input triggers the Card on arrival.
           // An unconnected Input Card is a source that fires once per run.
-          n.input_defs = {{"start"}};
+          n.inputs = {{"start", false, nullptr}};
           load_catalog(n);
           break;
         case CardType::Trigger:
@@ -524,18 +512,18 @@ class Builder {
           break;
         case CardType::Merge:
           n.outputs = {{"out", false, nullptr}};
-          if (n.input_defs.empty())
+          if (n.inputs.empty())
             n.diags.push_back(
                 diag(n.path, "invalid_setting", "merge needs declared inputs"));
           break;
         case CardType::Collect:
-          n.input_defs = {{"in"}};
+          n.inputs = {{"in", false, nullptr}};
           n.outputs = {{"out", false, nullptr}};
           break;
         case CardType::Draft:
           // Draft wires end on the Card itself. Neither metadata nor a schema
           // declares ports until the Card is implemented.
-          n.input_defs.clear();
+          n.inputs.clear();
           n.exec_diags.push_back(
               diag(n.path, "draft",
                    "draft cards are not implemented and cannot run"));
@@ -544,8 +532,6 @@ class Builder {
           n.is_virtual = true;
           break;
       }
-      for (const auto& in : n.input_defs)
-        n.inputs.push_back({in.name, false, nullptr});
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
@@ -745,14 +731,14 @@ class Builder {
       if (node.kind != CardType::Merge) continue;
       auto& output = node.outputs.front();
       const auto candidates = res_->merge_candidates(i, output.name);
-      if (candidates.size() == 1) output.type = candidates.front();
+      if (candidates.size() == 1) output.type = candidates.begin()->second;
       const auto short_name = [](const std::string& full) {
         return full.substr(full.find_last_of('.') + 1);
       };
       std::map<std::string, size_t> name_counts;
-      for (const auto& type : candidates)
+      for (const auto& [_, type] : candidates)
         ++name_counts[short_name(type->root_type)];
-      for (const auto& type : candidates) {
+      for (const auto& [_, type] : candidates) {
         auto name = short_name(type->root_type);
         output.merge_member_types.push_back(
             name_counts.at(name) == 1 ? std::move(name) : type->root_type);
@@ -772,50 +758,6 @@ class Builder {
     }
   }
 
-  auto resolve_execution_shapes() -> void {
-    using Shape = types::ExecutionShape;
-    for (size_t pass = 0; pass <= res_->nodes.size(); ++pass) {
-      bool changed = false;
-      for (size_t i = 0; i < res_->nodes.size(); ++i) {
-        auto& node = res_->nodes[i];
-        size_t connected = 0, lists = 0, singles = 0;
-        for (auto& port : node.inputs) {
-          std::optional<Shape> shape;
-          for (const auto& edge : res_->edges) {
-            if (edge.to != i || edge.to_port != port.name) continue;
-            const auto* output = res_->nodes[edge.from].output(edge.from_port);
-            const auto from =
-                output ? output->execution_shape : Shape::unspecified;
-            shape = !shape || *shape == from ? from : Shape::unspecified;
-          }
-          if (!shape) continue;
-          ++connected;
-          if (*shape == Shape::list) ++lists;
-          if (*shape == Shape::single) ++singles;
-          if (port.execution_shape != *shape) {
-            port.execution_shape = *shape;
-            changed = true;
-          }
-        }
-        Shape shape = Shape::unspecified;
-        if (node.kind == CardType::Collect)
-          shape = Shape::single;
-        else if (lists > 0 &&
-                 (node.kind != CardType::Merge || lists == connected))
-          shape = Shape::list;
-        else if (node.kind != CardType::Code && node.kind != CardType::Input &&
-                 node.kind != CardType::Subgraph && singles == connected)
-          shape = Shape::single;
-        for (auto& port : node.outputs) {
-          if (port.execution_shape == shape) continue;
-          port.execution_shape = shape;
-          changed = true;
-        }
-      }
-      if (!changed) break;
-    }
-  }
-
   auto resolve_boundary_types() -> void {
     for (auto& node : res_->nodes) {
       if (!node.is_virtual) continue;
@@ -828,7 +770,6 @@ class Builder {
               output ? leaf.output(end->second) : leaf.input(end->second);
           if (!resolved) continue;
           port.type = resolved->type;
-          port.execution_shape = resolved->execution_shape;
           port.merge_member_types = resolved->merge_member_types;
         }
       };
@@ -839,12 +780,15 @@ class Builder {
 
   auto resolve_nix_exports() -> void {
     const size_t count = res_->nodes.size();
+    std::vector<std::vector<size_t>> outgoing(count);
+    for (const auto& edge : res_->edges)
+      outgoing[edge.from].push_back(edge.to);
     std::vector<bool> visited(count);
     std::vector<size_t> order;
     const auto finish = [&](auto&& self, size_t node) -> void {
       if (visited[node]) return;
       visited[node] = true;
-      for (auto next : res_->outgoing[node]) self(self, next);
+      for (auto next : outgoing[node]) self(self, next);
       order.push_back(node);
     };
     for (size_t node = 0; node < count; ++node) finish(finish, node);
