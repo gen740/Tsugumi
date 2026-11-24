@@ -12,8 +12,8 @@ A Tsugumi project is code to run and the definition of the environment it runs i
 Inside it, Tsugumi takes on the following:
 
 - **AI does not widen permissions without the user's approval.** A save in which the Agent gives a Card the network, running without isolation, a Mac folder or an external Nix source does not go through until the user approves (§7). For a tool you hand work to AI with, this is the boundary that matters most.
-- **Closed by default.** By default a Card cannot reach the network, and cannot see the project's definitions, the authentication token or other Cards' work areas. It widens only when the project says so (§4).
-- **The permissions written are visible.** Widened permissions are in readable files, `_card.json` and `tsugumi.json`, and appear on the Card's icons on the Canvas and among the Experimental items of the Card's settings. The `.tsugumi/` of a project from someone else is inspected before use.
+- **Card isolation.** With network grants off and filesystem isolation on, a Card cannot reach the network and cannot see the project's definitions, the authentication token or other Cards' work areas. The project records any wider access (§4).
+- **The permissions written are visible.** Widened permissions are in readable files, `_card.json` and `tsugumi.json`, and appear on the Card's icons on the Canvas and in the Card's settings. The `.tsugumi/` of a project from someone else is inspected before use.
 - **The Mac and other projects are protected.** In the app (the shared VM), even if a project could not be trusted, its files and processes reach only that project and the folders explicitly shared with it (§2, §3).
 
 The table below lists the limits of these guarantees. Details are in each section.
@@ -32,7 +32,7 @@ There are four boundaries, from the innermost outwards.
 
 | Boundary | Protects | Mechanism |
 | --- | --- | --- |
-| Card (worker) ⇄ tsugumid | The whole project, the authentication token, other Cards' work areas, the outside network (by default) | bubblewrap separating all namespaces, and dropping capabilities |
+| Card (worker) ⇄ tsugumid | The whole project, the authentication token, other Cards' work areas and the outside network when isolated | bubblewrap separating namespaces and dropping capabilities |
 | project ⇄ project | Other projects' files, processes, run histories and build roots | Own uid, namespaces and cgroup (managed by `tsugumi-vmd`) |
 | VM ⇄ macOS | All of the Mac's files and the home folder | `Virtualization.framework`. Only the open projects' folders and folders specified in Card definitions or the chat (§2) are shared |
 | The RPC on macOS ⇄ other processes and the network | The authority to operate the core | Listening only on `127.0.0.1`, token authentication, checking the WebSocket's `Origin` |
@@ -62,7 +62,7 @@ There are four boundaries, from the innermost outwards.
 ### The VM's network
 
 The VM's NAT exists **so that `nix-daemon` can fetch the binary cache from `cache.nixos.org` and download the project sources pinned in `tsugumi.lock`**.
-Cards themselves are cut off from the network namespace by default and cannot communicate outside. Only a Card with "Allow network access" turned on in its settings (`network: true` in `_card.json`, Experimental) can communicate outside through this NAT (§4).
+A Card with `grants.network: false` is cut off from the network namespace and cannot communicate outside. Only a Card with "Allow network access" turned on in its settings (`grants.network: true` in `_card.json`) can communicate outside through this NAT (§4).
 
 ## 3. project ⇄ project (inside the VM)
 
@@ -102,7 +102,7 @@ Only hostd talks to the signed Mac helper, over the owner-only Unix socket using
 
 The contract this section implements is [The sandbox contract](SandboxContract.md).
 
-Linux workers use bubblewrap to apply the Card's requested isolation. File visibility is limited to the realized Nix closure, worker files, the active inputs and enabled grants. Separate PID and IPC namespaces and a mapped uid of 65534 with capabilities dropped are enabled by default. Linux's network grant controls sharing the network namespace. With filesystem isolation disabled, files and pathname-based Unix sockets may also be reachable. A Linux host without bubblewrap runs a Card only when it selects none of the isolation bubblewrap provides (filesystem, PID, IPC, identity) and is granted the network; otherwise the Card fails with a message that names the setting, instead of running without it.
+Linux workers use bubblewrap to apply the Card's requested isolation. With filesystem isolation, file visibility is limited to the realized Nix closure, worker files, the active inputs and enabled grants. The `sandbox.pid` and `sandbox.ipc` flags request separate namespaces. The `sandbox.identity` flag requests a mapped uid of 65534 with capabilities dropped. Linux's network grant controls sharing the network namespace. With filesystem isolation disabled, files and pathname-based Unix sockets may also be reachable. A Linux host without bubblewrap runs a Card only when it selects none of the isolation bubblewrap provides (filesystem, PID, IPC, identity) and is granted the network. Otherwise the Card fails with a message that names the setting.
 
 The shared VM hides the project's control folder and state behind mounts even when filesystem isolation is disabled. Worker teardown always ends the worker's process group. The worker reports settings it can provide. Remote workers require filesystem and PID isolation.
 
@@ -227,7 +227,6 @@ A setting that lets the Agent search the web at its own discretion ("Web search"
   - relaxing isolation or resource limits (`sandbox`)
   - GUI or host paths (`grants.gui` and `grants.hostPaths`)
   - explicit Nix lock updates requested by the Agent (`nix_path_lock_update`)
-  - switching to a registered remote execution service (`executionService`)
 
   The approval works like this:
   - The Agent service requests per-call `CardPermissions` approval, resolved by the user through Agent RPC. Approval binds the conversation, project, call ID, argument digest and exact permission set, and is consumed once. A different save or a general grant cannot use it; the UI presents the request rather than deciding the permission rule.

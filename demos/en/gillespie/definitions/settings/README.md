@@ -1,4 +1,5 @@
 ---
+title: settings
 description: Reaction rates and volume
 ---
 

@@ -16,10 +16,10 @@
     "cards": {
       "start": "The run begins at the start Card.",
       "initial": "Sends the starting value 27.",
-      "collatz-cpp": "The Workflow inside runs the iteration on its wires, halving even numbers and tripling odd ones plus 1, until it reaches 1.",
-      "collatz-py": "On the Python side, a Workflow of the same shape runs the same iteration.",
-      "collatz-jl": "The Julia side has the same shape. It runs in a separate process per invocation, so it carries the sequence so far in the message.",
-      "collatz-r": "The R side has the same shape. R handles integers exactly only below 2 to the 53rd, so beyond that it fails rather than round silently.",
+      "collatz_cpp": "The Workflow inside runs the iteration on its wires, halving even numbers and tripling odd ones plus 1, until it reaches 1.",
+      "collatz_py": "On the Python side, a Workflow of the same shape runs the same iteration.",
+      "collatz_jl": "The Julia side has the same shape. It runs in a separate process per invocation, so it carries the sequence so far in the message.",
+      "collatz_r": "The R side has the same shape. R handles integers exactly only below 2 to the 53rd, so beyond that it fails rather than round silently.",
       "compare": "Checks that the four sequences agree exactly.",
       "record": "Writes the sequence to collatz.csv and keeps it as an artifact."
     },

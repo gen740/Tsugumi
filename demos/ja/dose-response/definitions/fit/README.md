@@ -1,4 +1,5 @@
 ---
+title: fit
 description: 4PL 曲線の当てはめ
 ---
 

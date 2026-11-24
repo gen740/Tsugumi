@@ -1,3 +1,4 @@
 ---
+title: source
 description: 測定値をノートブックへ渡します。倍率はノートブック Card の factor パラメーターで指定します。
 ---

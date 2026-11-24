@@ -1,4 +1,5 @@
 ---
+title: settings
 description: 反応の速さと体積
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: scores
 description: Lay out the scores
 ---
 

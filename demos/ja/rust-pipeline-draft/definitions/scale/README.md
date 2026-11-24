@@ -1,4 +1,5 @@
 ---
+title: scale
 description: Rust で受け取った値を掛ける
 ---
 

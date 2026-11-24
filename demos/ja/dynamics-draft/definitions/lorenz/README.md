@@ -1,4 +1,5 @@
 ---
+title: lorenz
 description: ローレンツ・アトラクタを描く
 ---
 

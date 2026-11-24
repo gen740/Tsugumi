@@ -1,4 +1,5 @@
 ---
+title: cnn
 description: Tell the digits apart with a convolutional neural network
 ---
 

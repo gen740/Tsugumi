@@ -1,0 +1,4 @@
+---
+title: loop
+description: 初期値と halve・triple の結果を 1 本にまとめる
+---

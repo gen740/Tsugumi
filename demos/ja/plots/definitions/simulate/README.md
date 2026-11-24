@@ -1,3 +1,4 @@
 ---
+title: simulate
 description: seed から ±1 ずつ進むランダムウォークを作る
 ---

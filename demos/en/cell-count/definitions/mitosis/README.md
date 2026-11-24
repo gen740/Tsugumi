@@ -1,4 +1,5 @@
 ---
+title: mitosis
 description: A real image of nuclei
 ---
 

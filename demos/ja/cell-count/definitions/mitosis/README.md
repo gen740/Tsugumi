@@ -1,4 +1,5 @@
 ---
+title: mitosis
 description: 実際の核の画像
 ---
 

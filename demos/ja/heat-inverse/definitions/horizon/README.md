@@ -1,4 +1,5 @@
 ---
+title: horizon
 description: 遅い測定は細部を失う
 ---
 

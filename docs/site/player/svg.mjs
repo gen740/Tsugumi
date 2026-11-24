@@ -904,14 +904,13 @@ ${lines.slice(first, last).map((l, j) => `<div class="s-line"><span class="s-no"
   })
 }
 
-// ---- Card in Card: inside collatz-cpp ----------------------------------------------------------
+// ---- Card in Card: inside collatz_cpp ----------------------------------------------------------
 
 /** A Card in Card's inner Workflow as player data: its Cards, wires and layout (read as build.mjs reads a demo), and its
  *  part of the demo's recorded run (the timeline's `<card>/<inner>` entries). */
 function innerDemo(demo, card) {
   const root = path.join(ROOT, 'demos', 'en', demo)
-  const ext = readJson(path.join(root, 'definitions', card, '_card.json')).external
-  const inner = path.join(root, 'externals', ext)
+  const inner = path.join(root, 'externals', card)
   const portsOf = readJson(path.join(DATA, 'assets', 'ports.json'), {})
   const { doc, wires, cards } = readProject(inner, portsOf[demo], `${card}/`)
   const layout = readLayout(inner)
@@ -933,7 +932,7 @@ function innerDemo(demo, card) {
 const SIDEBAR = 250
 
 function subworkflowSvg() {
-  const data = innerDemo('collatz', 'collatz-cpp')
+  const data = innerDemo('collatz', 'collatz_cpp')
   const subgraphs = data.outer.cards.filter((c) => c.kind === 'subgraph').map((c) => c.id)
   // The inner loop ran 112 times in 2.3 s: replayed at about half the player's pace, so the counts can be read.
   const frames = [{ ...player.IDLE, ms: 1800 }, ...player.framesOf(data, 2.4), { ...player.DONE, ms: 5600 }]

@@ -1,0 +1,4 @@
+---
+title: triple
+description: Turns an odd number into 3n+1 and sends it back to loop (fails beyond uint64)
+---

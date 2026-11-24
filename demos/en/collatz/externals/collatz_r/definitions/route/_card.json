@@ -1,0 +1,31 @@
+{
+  "type": "code",
+  "symbol": "chevron.left.forwardslash.chevron.right",
+  "inputs": [
+    {
+      "name": "value"
+    }
+  ],
+  "maxRuns": 100000,
+  "reuseWorker": false,
+  "timeoutSeconds": 0,
+  "buildTimeoutSeconds": 0,
+  "recordLogs": "project",
+  "recordIO": "project",
+  "sandbox": {
+    "filesystem": true,
+    "pid": true,
+    "ipc": true,
+    "identity": true,
+    "limits": {
+      "cpu": 0,
+      "memoryMiB": 0
+    }
+  },
+  "grants": {
+    "network": false,
+    "gui": false
+  },
+  "system": "aarch64-linux",
+  "workerCapabilities": []
+}

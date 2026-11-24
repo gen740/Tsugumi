@@ -1,4 +1,5 @@
 ---
+title: grayscott
 description: 反応拡散（Gray–Scott）の模様を育てる
 ---
 

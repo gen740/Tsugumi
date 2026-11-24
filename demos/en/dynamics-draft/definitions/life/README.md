@@ -1,4 +1,5 @@
 ---
+title: life
 description: Advance the Game of Life
 ---
 

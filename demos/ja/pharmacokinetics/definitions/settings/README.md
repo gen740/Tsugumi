@@ -1,4 +1,5 @@
 ---
+title: settings
 description: 投与計画と架空の薬物の値
 ---
 

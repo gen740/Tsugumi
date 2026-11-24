@@ -1,0 +1,4 @@
+---
+title: loop
+description: Merges the starting value and the results of halve and triple into one
+---

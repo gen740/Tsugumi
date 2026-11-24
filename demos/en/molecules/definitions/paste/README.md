@@ -1,4 +1,5 @@
 ---
+title: paste
 description: Paste a SMILES
 ---
 

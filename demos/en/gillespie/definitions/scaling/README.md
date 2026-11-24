@@ -1,4 +1,5 @@
 ---
+title: scaling
 description: Volume and the size of fluctuations
 ---
 

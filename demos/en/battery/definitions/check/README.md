@@ -1,4 +1,5 @@
 ---
+title: check
 description: Check by exhaustive search, a bound and the step
 ---
 

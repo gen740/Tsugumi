@@ -1,3 +1,4 @@
 ---
+title: render
 description: Writes the aggregate as report.md and summary.json and keeps them as artifacts
 ---

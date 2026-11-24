@@ -1,3 +1,4 @@
 ---
+title: start
 description: Starts the computation from how to make the network (settings)
 ---

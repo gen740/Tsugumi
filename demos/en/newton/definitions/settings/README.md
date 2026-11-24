@@ -1,4 +1,5 @@
 ---
+title: settings
 description: Polynomial and iteration settings
 ---
 

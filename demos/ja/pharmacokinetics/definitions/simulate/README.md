@@ -1,4 +1,5 @@
 ---
+title: simulate
 description: 微分方程式を数値で解く
 ---
 

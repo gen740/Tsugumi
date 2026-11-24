@@ -1,4 +1,5 @@
 ---
+title: grayscott
 description: Grow reaction–diffusion (Gray–Scott) patterns
 ---
 

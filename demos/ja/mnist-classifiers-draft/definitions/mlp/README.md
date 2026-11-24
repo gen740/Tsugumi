@@ -1,4 +1,5 @@
 ---
+title: mlp
 description: 多層パーセプトロンで数字を当てる
 ---
 

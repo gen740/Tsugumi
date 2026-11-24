@@ -1,3 +1,4 @@
 ---
+title: readings
 description: Three C++ readings: 1.25, 2.5 and 3.75
 ---

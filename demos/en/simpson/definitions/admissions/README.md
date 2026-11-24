@@ -1,4 +1,5 @@
 ---
+title: admissions
 description: Aggregate the Berkeley applications by department
 ---
 

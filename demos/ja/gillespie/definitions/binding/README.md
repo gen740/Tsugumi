@@ -1,4 +1,5 @@
 ---
+title: binding
 description: 非線形な反応と率方程式
 ---
 

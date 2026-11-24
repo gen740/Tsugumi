@@ -1,4 +1,5 @@
 ---
+title: applications
 description: 応募先の偏りを図にする
 ---
 

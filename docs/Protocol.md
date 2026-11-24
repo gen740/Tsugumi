@@ -644,7 +644,7 @@ Separate listener: `TSH1`, WebSocket subprotocol `tsugumi.host.v1`; authenticate
 | `SignInActionRequest` | `profile: string` (required), `attempt_id: string`, `action: string` (required), `client_id: string` |
 | `SignInStatusRequest` | `profile: string` (required), `attempt_id: string` |
 | `ExecutionServicesRequest` | None |
-| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `grade: ulong` |
+| `ExecutionServicePutRequest` | `id: string` (required), `name: string` (required), `endpoint: string` (required), `worker_public_key: string` (required), `verify: bool`, `worker_capabilities: [ubyte]` (required) |
 | `ExecutionServiceRemoveRequest` | `id: string` (required) |
 | `ExecutionProjectAuthorizeRequest` | `project_id: string` (required), `path: string` (required), `control_dir: string` (required), `guest: bool` |
 | `ExecutionProjectRevokeRequest` | `project_id: string` (required) |

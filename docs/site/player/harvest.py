@@ -56,7 +56,11 @@ def guide_files() -> dict[str, str]:
     files: dict[str, dict[str, str]] = {}
     for m in re.finditer(r"^`([^`\n]+)`(?:（([^）\n]+)）)?\n\n```\w*\n(.*?)^```", page, flags=re.M | re.S):
         files.setdefault(m.group(2) or "", {})[m.group(1)] = m.group(3)
-    return files[""]
+    project = files[""]
+    manifest = json.loads(project["tsugumi.json"])
+    manifest["tsugumiVersion"] = (ROOT / "VERSION").read_text().strip()
+    project["tsugumi.json"] = json.dumps(manifest, indent=2) + "\n"
+    return project
 
 
 def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
@@ -72,7 +76,7 @@ def project_copy(demo: str, tmp: Path, sandbox: bool) -> Path:
         for f in dst.rglob("definitions/*/_card.json"):
             card = json.loads(f.read_text())
             if card.get("type") == "code":
-                card["sandbox"] = {"filesystem": False, "pid": False, "ipc": False, "identity": False}
+                card["sandbox"].update(filesystem=False, pid=False, ipc=False, identity=False)
                 f.write_text(json.dumps(card))
     return dst
 
@@ -86,9 +90,8 @@ def card_paths(root: Path, prefix: list[str] | None = None) -> list[list[str]]:
         cid = c["id"]
         out.append([*prefix, cid])
         definition = root / "definitions" / cid / "_card.json"
-        ext = json.loads(definition.read_text()).get("external") if definition.exists() else None
-        if ext:
-            out += card_paths(root / "externals" / ext, [*prefix, cid])
+        if json.loads(definition.read_text())["type"] == "subgraph":
+            out += card_paths(root / "externals" / cid, [*prefix, cid])
     return out
 
 

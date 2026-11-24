@@ -1,4 +1,5 @@
 ---
+title: survey
 description: Compare the three stratifications side by side
 ---
 

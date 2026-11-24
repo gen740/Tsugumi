@@ -4,10 +4,10 @@ A project's folder is a git repository. Projects made in the app, and copies of 
 
 Versions contain the project's definitions: `tsugumi.json`, `tsugumi.lock`, `layout.bin`, canvas notes in `notes/<id>.md`, each Card's documents (`_card.json`, `README.md`, `_comments.json`) and source files, including `default.nix`, `params.nix` and generated `_inputs.fbs`, Skills (`skills/`), and embedded projects (`externals/`). The document model's source areas cover all files under each Card's `definitions/<id>/` folder, `skills/` and `externals/`, as in the project file APIs and saves.
 
-Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `versionPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
+These settings control Tsugumi's own project versions. They do not change Git tracking in your repository. Other files, including results and downloads outside those areas, enter a version only when explicitly listed in `trackedPaths` in `tsugumi.json`. Edit **Additional paths to version** in the project's General settings in either the Mac app or Web UI: one project-relative file or folder per line. Folder entries include their descendants. Paths are literal, without wildcard expansion; missing paths add nothing. For example:
 
 ```json
-"versionPaths": ["inputs/reference.csv", "calibration"]
+"trackedPaths": ["inputs/reference.csv", "calibration"]
 ```
 
 Choosing data here fixes it as part of the computation's definition. Removing a path stops versioning it unless it is also in a definition's source area. Files outside this selection remain untracked and untouched, including files previously staged or tracked that the next version leaves out; their contents stay on disk. `.tsugumi/` and `.git/` at any depth are always excluded, regardless of `.gitignore` or the selection. Symbolic links are not followed or versioned. Definitions and explicit selections are included even if `.gitignore` ignores them.

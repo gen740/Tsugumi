@@ -33,7 +33,7 @@ Tsugumi connects small, typed steps called Cards into a Workflow. Run the whole 
 - **Keep a monitoring worker resident.** Workers retained with `reuseWorker` have no count, idle-time or memory eviction limit. They stay until the environment stops or the Card's definition or execution conditions change; a failed, cancelled or timed-out call discards its worker, and a dead worker is replaced. Each invocation records reuse, and its log identifies replacement of resident state. Fresh workers prepared for speed keep their separate limits. [Worker state](CardGuide.md#worker-state)
 - **Use a shell or a signed build cache.** Open the project Terminal to run a tool such as `nix --version`. On Mac, configure a shared signed cache in **Settings → Binary Caches** and apply it on the next VM start. [Project terminal](Usage.md#project-terminal) · [Binary caches](BinaryCaches.md) · [Browser and CLI platforms](WebUI.md#the-tsugumi-command)
 - **Run a Card on another Linux machine.** Start `tsugumi-workerd` there, register it in **Settings → Execution service**, and choose it under **Execution service** in the Card's settings. [Run a Card on a remote worker](RemoteExecution.md) · [Execution service](#execution-service)
-- **Control a Card's access.** Use **Card settings → General** to review **Restrict file access**, and the network and host folder permissions under **Experimental**, before running code from another project. [Security and isolation](security.md#summary)
+- **Control a Card's access.** Use **Card settings → General** to review **Restrict file access**, and the network and host folder permissions in the same tab, before running code from another project. [Security and isolation](security.md#summary)
 
 ### Work with the Agent and explore examples
 
@@ -64,7 +64,7 @@ The Mac app, the Web UI and the `tsugumi` command use the same Host environment 
 
 ## 2. Cards and Workflows
 
-Every Card has a permanent id that also serves as its name. The core reserves new ids from a lowercase slug and adds a numeric suffix when needed. Connections and run records refer to these ids.
+Every Card has an id for its definition directory, connections and run records. Host allocates a lowercase id and adds suffixes such as `_2` when needed. The `title` in its README is the display name. See [Card ids and port names](Reference.md#card-ids-and-port-names).
 
 ### Kinds of Card
 
@@ -78,7 +78,7 @@ Every Card states its kind in `_card.json` as `"type"`: `code`, `draft`, `trigge
 | Merge | Forwards every arriving envelope to `out` |
 | Collect | Aggregates a batch into a `Collected` list of envelopes |
 | subgraph (Card in Card) | Handles a child Workflow as one Card. `boundary` maps the outer ports to Cards inside |
-| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty port name. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
+| Draft (`draft`) | An "unimplemented Card": write its name and content directly on the card, and connect it just by dropping a wire on it (it has no ports; the other end names the real port). Draft wire ends use an empty `port` string. Implementing one requires explicitly rebinding its wires to real ports in the same save. The Agent can later generate its implementation |
 
 A Card in Card uses full Card paths to distinguish state and history; visual groups in `layout.bin` do not affect execution.
 
@@ -92,7 +92,7 @@ A Card in Card uses full Card paths to distinguish state and history; visual gro
 ### Execution semantics (scheduler)
 
 - A Card runs when every connected input has arrived. An unconnected input is absent from the call. An arrival is a single value or a batch of values. A Merge consumes one arrival at a time.
-- Bounded queues with backpressure, cancellation and an optional per-invocation deadline (`timeoutSeconds`; none by default for local runs). Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
+- Bounded queues with backpressure, cancellation and a per-invocation deadline when `timeoutSeconds` is greater than zero. Each input port holds up to 16 unconsumed groups, and a run that can no longer progress fails with `execution_limit`. A Run can request concurrency from 1 to 64, with up to eight Code workers active at once. The iteration limit (`maxRuns`) counts how often the Card receives a set of inputs that triggers it.
 - When a connected input cannot arrive because its producer omitted the output or skipped, the downstream Card is recorded as `skipped`. Merge skips once all of its inputs are exhausted without any arrival. A Card downstream of a failed, blocked or cancelled Card is `blocked`, with a reason. A Draft, and the Cards that need only its outputs, do not run and get no state; the canvas marks them as not run because of a Draft. Independent paths keep running.
 - A run lives only while the `tsugumid` process that started it lives. Local and remote invocations left unfinished end as `failed` with failure kind `interrupted`; startup never imports old remote results or reruns Cards. Within one core life, remote reconnection resumes the same job. Regular status and log exchanges detect disconnection; there is no heartbeat or silence expiry ([Remote execution](RemoteExecution.md#host-authorization-and-following-a-run)).
 - Partial runs exist only for debugging: AI-written code rarely works on its first attempt. Running one Card or from a Card downstream with saved inputs is not a result of the Workflow. Such a run is marked **Partial run** (Japanese: **部分実行**). Values computed from it carry their provenance downstream, including into later runs that consume them as saved inputs; those runs also show **Uses a partial run's result** (**部分実行の結果を使用**). Running the whole Workflow replaces these values and clears the marks. Explicit **Record I/O** settings still apply, and kept results carry the run's marks. There is no selection of an earlier run as the input source.
@@ -136,7 +136,7 @@ tsugumi lock update nixpkgs --project /path/to/project
 tsugumi lock update --project /path/to/project
 ```
 
-Use `--project-path externals/id` to select an external. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](CardGuide.md#the-files)
+Use `--project-path externals/id` to select a child project. The Agent uses `nix_path_lock_update` with approval. The `tsugumi.lock` root contains an `entries` list. Each entry stores `name`, the declared `url`, the resolved `rev` when supplied, and the verifying `narHash`. Updating adds missing entries, removes undeclared ones and resolves changed URLs. It keeps an existing pin for an unchanged declaration. Evaluation requires each declared name's locked URL to match its declaration. [Example lock file](CardGuide.md#the-files)
 
 Imports such as `<nixpkgs>` and `<tsugumi-kit/sdk/cpp>` resolve from Card definition files against their own project's names. An undeclared name raises a catchable evaluation error and lists the declared names. Host `NIX_PATH` is ignored. A project under `externals/<id>/` carries its own `tsugumi.json` and `tsugumi.lock` and resolves names independently of its parent.
 
@@ -155,7 +155,7 @@ tsugumi evaluate nix --project /path/to/project --card '{"segments":["convert"]}
 
 ### Sharing Nix exports through connections
 
-Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback, Draft and nested or external boundaries.
+Publish values through `exports` in an upstream Card's `default.nix`. Refer to them as `inputs.<card_id>.<attr>` in a downstream definition. In `A → B → C`, C sees exports from A and B. TODO(open): Exports at Merge, Collect, feedback and Draft boundaries. A subgraph upstream contributes no Nix input key. See [Nix inputs across child project boundaries](Reference.md#nix-inputs-across-child-project-boundaries).
 
 ### Keeping build results
 
@@ -182,15 +182,15 @@ Start with [Your first Card](CardGuide.md), then use the [worker state rules](Ca
 
 A Card declares the names of the credentials it needs (`"secrets": ["database_password"]` in `_card.json`); people set the values for each project in its **Settings > Card secrets** (Mac app and Web UI), kept by hostd beside the API keys, bound to that project and never shown again. Each invocation's process receives them as environment variables of the same names; the run history records only which names were provided. See [Card secrets](security.md#card-secrets) and the [Card guide](CardGuide.md#card-secrets).
 
-### Outside access (Experimental)
+### Outside access
 
-- By default a Card has no network and cannot see the Mac's file system ([security.md](security.md)).
-- In **Card settings → General**, the Card can grant access to the network, a supported GUI, or named host paths. Host path grants are read-only by default and appear in the Card environment as `TSUGUMI_GRANT_<NAME>`.
-- The sandbox options (`sandbox.filesystem`, `sandbox.pid`, `sandbox.ipc` and `sandbox.identity`, each on by default) are in the same tab. An Agent's save that turns it off, allows the network, adds a host folder or changes the execution service waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
+- Card creation writes `grants.network: false` and enables filesystem isolation. See [Security and isolation](security.md).
+- In **Card settings → General**, the Card can grant access to the network, a supported GUI, or named host paths. Host path grants with `write: false` are read-only and appear in the Card environment as `TSUGUMI_GRANT_<NAME>`.
+- The sandbox options (`sandbox.filesystem`, `sandbox.pid`, `sandbox.ipc` and `sandbox.identity`, written explicitly) are in the same tab. An Agent's save that disables isolation, allows the network or adds a host folder waits for a person's approval ([The Agent's permission boundary](security.md#the-agents-permission-boundary)).
 
 ## 5. Documents and saving
 
-[The Card guide](CardGuide.md#the-files) describes project files. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
+[Project files](Reference.md) defines the file formats. [ProjectSave](Protocol.md#projectsave) defines save transactions and conflicts; [Versions](Versions.md) explains returning to saved code and settings.
 
 ## 6. Run history and artifacts
 

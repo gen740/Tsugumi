@@ -1,4 +1,5 @@
 ---
+title: knn
 description: Tell the digits apart with k-nearest neighbours
 ---
 

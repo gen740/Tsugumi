@@ -1,4 +1,5 @@
 ---
+title: load
 description: 震源カタログを取る
 ---
 

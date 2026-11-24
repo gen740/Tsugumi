@@ -1,3 +1,4 @@
 ---
+title: start
 description: Sends settings' state to start the stream
 ---

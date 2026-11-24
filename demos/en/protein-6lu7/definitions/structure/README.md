@@ -1,4 +1,5 @@
 ---
+title: structure
 description: Take out the Cα atoms and the inhibitor
 ---
 

@@ -1,4 +1,5 @@
 ---
+title: properties
 description: Compute the molecules' properties
 ---
 

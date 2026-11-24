@@ -1,0 +1,4 @@
+---
+title: halve
+description: 偶数を半分にして、ここまでの数列に足して loop に戻す
+---

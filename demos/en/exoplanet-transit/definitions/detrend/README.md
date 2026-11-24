@@ -1,4 +1,5 @@
 ---
+title: detrend
 description: Detrend and search for the period
 ---
 

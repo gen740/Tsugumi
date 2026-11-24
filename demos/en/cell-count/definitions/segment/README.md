@@ -1,4 +1,5 @@
 ---
+title: segment
 description: Separate with a threshold and watershed
 ---
 

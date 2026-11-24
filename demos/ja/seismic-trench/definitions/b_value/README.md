@@ -1,4 +1,5 @@
 ---
+title: b_value
 description: b 値を求める
 ---
 

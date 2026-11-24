@@ -1,9 +1,0 @@
-{
-  "type": "code",
-  "maxRuns": 100000,
-  "inputs": [
-    {
-      "name": "value"
-    }
-  ]
-}
