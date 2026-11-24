@@ -379,9 +379,11 @@ auto run_worker(const W::WorkerCall& call, const workerd::R::JobSpecT& job,
       grants.push_back({std::move(id), target.string()});
     }
   }
+  auto worker = std::make_unique<WorkerProc>(spawn);
+  InvocationDisplay display(worker->view_receiver());
+  // Retire the worker and its pending display callbacks before the relay.
   WorkerPool::Lease lease;
-  lease.worker = std::make_unique<WorkerProc>(spawn);
-  InvocationDisplay display(lease.worker->view_receiver());
+  lease.worker = std::move(worker);
   spawn.secrets.reset();
   workerd::Invocation request;
   request.inputs = values;
