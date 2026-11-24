@@ -147,8 +147,7 @@ int tsugumi_main(const tsugumi_call *call, tsugumi_bytes *result) {
     if (effects->recv(host, &event, 50) != 1 ||
         effects->route_unregister(host, &second))
         return 3;
-    *result = (tsugumi_bytes){result_bytes, sizeof(result_bytes)};
-    return 0;
+    return write_result(result, result_bytes, sizeof(result_bytes));
 }
 """)
     daemon = core_factory(mocked_builds=True, env={"TSUGUMI_MOCK_STORE": str(store)})
