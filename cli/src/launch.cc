@@ -64,9 +64,16 @@ auto LaunchFromEnvironment(const f::path& executable) -> Launch {
                                                       : launch.root / "ui" / "web" / "dist" / "public";
   if (!Env("TSUGUMI_WEB_PORT").empty()) launch.web_port = std::stoi(Env("TSUGUMI_WEB_PORT"));
 #ifdef __APPLE__
+  // The support folder of the Mac app of the same channel (AppChannel.swift):
+  // a release shares the release app's, a build from source the dev app's.
+#ifdef TSUGUMI_RELEASE
+  constexpr auto kSupportFolder = "Tsugumi";
+#else
+  constexpr auto kSupportFolder = "Tsugumi-dev";
+#endif
   const auto support = !Env("TSUGUMI_SUPPORT_DIR").empty()
                            ? f::path(Env("TSUGUMI_SUPPORT_DIR"))
-                           : Home() / "Library" / "Application Support" / "Tsugumi";
+                           : Home() / "Library" / "Application Support" / kSupportFolder;
   const auto data = !Env("TSUGUMI_WEB_DATA").empty() ? f::path(Env("TSUGUMI_WEB_DATA")) : support / "web";
   // The desktop app's host: the same VM, store, settings and recent projects.
   launch.state = support / "host-core";

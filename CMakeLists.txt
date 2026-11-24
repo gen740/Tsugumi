@@ -14,6 +14,9 @@ set(CMAKE_POSITION_INDEPENDENT_CODE ON)
 
 option(TSUGUMI_BUILD_CORE "Build tsugumid and the Card worker" ON)
 option(TSUGUMI_BUILD_TESTS "Build core RPC tests" ON)
+# The release channel (cli/package-macos.sh --release); a build from source is
+# dev, as for the Mac app (ui/macos/Sources/Launcher/AppChannel.swift).
+option(TSUGUMI_RELEASE "Build the release channel" OFF)
 
 if(CMAKE_CXX_COMPILER_ID MATCHES "Clang|GNU")
   add_compile_options(-Wall -Wextra -Werror -Wformat=2 -Wimplicit-fallthrough)
