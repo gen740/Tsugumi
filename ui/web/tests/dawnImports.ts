@@ -193,6 +193,33 @@ assert.equal(textureFormatValue.get('bgra8unorm'), 0x1b)
     /wgpuDeviceCreateShaderModule: WGPUShaderSourceWGSL.code: unterminated string/)
   trap(() => imports.wgpuDeviceCreateCommandEncoder(deviceId, descriptor),
     /wgpuDeviceCreateCommandEncoder: .*nextInChain: unexpected chained extension/)
+  // The view ABI requires WGSL source for every shader module.
+  u32(descriptor, 0)
+  trap(() => imports.wgpuDeviceCreateShaderModule(deviceId, descriptor),
+    /wgpuDeviceCreateShaderModule: .*nextInChain: missing WGPUShaderSourceWGSL/)
+}
+
+{
+  const { handles, imports, u32, u64 } = fixture()
+  let created = 0
+  const deviceId = handles.add('Device', {
+    createBindGroupLayout(descriptor: { entries: { binding: number }[] }) {
+      assert.equal(descriptor.entries[0].binding, 3)
+      created++
+      return {}
+    },
+  })
+  const descriptor = 8
+  const entry = 64
+  u32(descriptor + 12, 1)
+  u32(descriptor + 16, entry)
+  u32(entry + 4, 3)
+  u64(entry + 8, 2n)
+  imports.wgpuDeviceCreateBindGroupLayout(deviceId, descriptor)
+  assert.equal(created, 1)
+  u32(entry + 16, 4) // bindingArraySize
+  trap(() => imports.wgpuDeviceCreateBindGroupLayout(deviceId, descriptor),
+    /WGPUBindGroupLayoutEntry.bindingArraySize: binding arrays are not in the view ABI/)
 }
 
 {

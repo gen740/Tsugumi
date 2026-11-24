@@ -255,6 +255,35 @@ TEST_F(DecodeTest, ShaderModuleAndForeignChains) {
       };
   expectTrap("wgpuDeviceCreateCommandEncoder", {word(device), word(descriptor)},
              "nextInChain", "unexpected chained extension");
+
+  // The view ABI requires WGSL source for every shader module.
+  put(descriptor, 0);
+  expectTrap("wgpuDeviceCreateShaderModule", {word(device), word(descriptor)},
+             "nextInChain", "missing WGPUShaderSourceWGSL");
+}
+
+TEST_F(DecodeTest, BindGroupLayoutRejectsBindingArrays) {
+  const auto device = handles_.add(Kind::Device, native<WGPUDevice>());
+  constexpr uint32_t descriptor = 8;
+  constexpr uint32_t entry = 64;
+  put(descriptor + 12, 1);  // entryCount
+  put(descriptor + 16, entry);
+  put(entry + 4, 3);  // binding
+  put<uint64_t>(entry + 8, 2);  // visibility: fragment
+  procs_.wgpuDeviceCreateBindGroupLayout =
+      [](WGPUDevice, const WGPUBindGroupLayoutDescriptor* descriptor) {
+        EXPECT_EQ(descriptor->entryCount, 1u);
+        EXPECT_EQ(descriptor->entries[0].binding, 3u);
+        EXPECT_EQ(descriptor->entries[0].bindingArraySize, 0u);
+        return native<WGPUBindGroupLayout>();
+      };
+  const auto layout = invoke("wgpuDeviceCreateBindGroupLayout",
+                             {word(device), word(descriptor)});
+  EXPECT_EQ(handles_.get(Kind::BindGroupLayout, layout),
+            native<WGPUBindGroupLayout>());
+  put(entry + 16, 4);  // bindingArraySize
+  expectTrap("wgpuDeviceCreateBindGroupLayout", {word(device), word(descriptor)},
+             "WGPUBindGroupLayoutEntry.bindingArraySize", "binding arrays");
 }
 
 struct WriteRecord {

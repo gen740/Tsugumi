@@ -27,8 +27,10 @@
  * WGPU* handles are opaque i32 ids owned by the host (0 is null); a view
  * receives the device and the queue in tsugumi_view_start and never
  * releases them. No function writes into the module's memory, and none takes
- * a callback. A chained struct may only be WGPUShaderSourceWGSL on a
- * WGPUShaderModuleDescriptor; every other nextInChain must be NULL.
+ * a callback. A WGPUShaderModuleDescriptor must chain exactly one
+ * WGPUShaderSourceWGSL; every other nextInChain must be NULL. A
+ * WGPUBindGroupLayoutEntry's bindingArraySize must be 0 (binding arrays are
+ * not in this ABI). Breaking these rules is an error, as a trap is.
  * X(return type, name, (parameters)) */
 #define TSUGUMI_VIEW_WEBGPU_IMPORTS(X) \
   X(WGPUBindGroup, wgpuDeviceCreateBindGroup, (WGPUDevice device, WGPUBindGroupDescriptor const * descriptor)) \
@@ -110,6 +112,8 @@ int32_t tsugumi_view_read(uint8_t* dst, uint32_t size);
  * Exports: callbacks the host calls, found by name at load.
  * Return 0 on success; a negative value or a trap makes the host drop
  * this instance and show the error. One instance per view.
+ * A WebGPU validation error or device loss does not drop the instance:
+ * the host shows the first one under the view and keeps calling it.
  * ==================================================================== */
 
 /* --- required ---------------------------------------------------- */

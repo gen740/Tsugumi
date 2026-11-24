@@ -489,12 +489,12 @@ def cpp_decode(model, struct):
             field = f'"{c_name}.nextInChain"'
             lines.append(f"  const auto chain = {read_u32('next_in_chain', field)};")
             if struct.name == SHADER:
+                # The view ABI requires WGSL source on both hosts.
                 lines += [
-                    "  if (chain != 0) {",
-                    "    auto* source = arena.allocate<WGPUShaderSourceWGSL>();",
-                    f"    *source = read_ShaderSourceWGSL(reader, arena, chain, {field});",
-                    "    result.nextInChain = &source->chain;",
-                    "  }",
+                    f'  if (chain == 0) reader.fail({field}, "missing WGPUShaderSourceWGSL");',
+                    "  auto* source = arena.allocate<WGPUShaderSourceWGSL>();",
+                    f"  *source = read_ShaderSourceWGSL(reader, arena, chain, {field});",
+                    "  result.nextInChain = &source->chain;",
                 ]
             else:
                 lines.append(f'  if (chain != 0) reader.fail({field}, "unexpected chained extension");')
@@ -515,6 +515,9 @@ def cpp_decode(model, struct):
             else:
                 expr = cpp_read(member.type, address(member.name), field, member.optional)
             lines.append(f"  result.{key} = {expr};")
+            if struct.name == "bind_group_layout_entry" and key == "bindingArraySize":
+                # Outside the view ABI's portable subset on both hosts.
+                lines.append(f'  if (result.{key} != 0) reader.fail({field}, "binding arrays are not in the view ABI");')
         lines.append("  return result;")
     return lines + ["}"]
 
@@ -763,7 +766,7 @@ def js_decode(model, struct):
         if struct.name == "bind_group_entry" and key != "binding":
             continue
         if struct.name == "bind_group_layout_entry" and key == "bindingArraySize":
-            lines.append(f"  if ({local} !== 0) reader.fail({field}, 'binding arrays are unavailable in WebGPU IDL')")
+            lines.append(f"  if ({local} !== 0) reader.fail({field}, 'binding arrays are not in the view ABI')")
             continue
         if key == "constants" and member.element == "struct.constant_entry":
             output.append(f"constants: Object.fromEntries({local}.map(({{ key, value }}) => [key, value]))")
