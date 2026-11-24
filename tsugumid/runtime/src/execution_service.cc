@@ -212,9 +212,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
     sp.binds.push_back({source, "/host/" + f.name, f.write, f.name});
   }
 
-  sp.artifact_inputs = std::ranges::any_of(artifacts, [](const auto& artifact) {
-    return artifact.store_path.empty();
-  });
   const auto destination = service_.artifact_destination(s);
   sp.artifact_store = (state_dir / "artifacts").string();
   sp.artifact_staging = state_dir / "artifact-invocations";
@@ -241,8 +238,7 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
       "|" + std::to_string(build.implementation_index) + "|" + secret_version;
   for (const auto& b : sp.binds)
     key += "|" + b.source + ">" + b.target + (b.write ? "w" : "r");
-  // The sandbox must not preserve a past invocation's input descriptors.
-  const bool reuse = node.settings.reuse_worker && !sp.artifact_inputs;
+  const bool reuse = node.settings.reuse_worker;
   const auto worker_card =
       card_key + "|" + std::to_string(build.implementation_index);
   auto lease = workers_.acquire(worker_card, key, sp, reuse);
@@ -259,12 +255,6 @@ auto LocalExecutionService::run(const ExecutionRequest& request)
   invocation.outputs = node.outputs;
   invocation.artifact_directory = destination;
   invocation.artifact_sequence = s.artifact_sequence;
-  invocation.artifact_inputs = sp.artifact_inputs;
-#ifdef __APPLE__
-  invocation.artifact_snapshot_root = sp.artifact_staging;
-#else
-  if (!sp.sandbox.pid) invocation.artifact_snapshot_root = sp.artifact_staging;
-#endif
   invocation.grants = std::move(artifacts);
   invocation.output_budget = {node.settings.output_limit_bytes,
                               node.settings.output_limit_entries};

@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import ctypes
 import json
+import os
+import time
 import socket
 import subprocess
 import sys
@@ -23,6 +25,8 @@ from projects import card, conn, run_and_wait, write_nix_project as write
 from harness.observations import decode_scalar, read_output
 from harness.real_cards import (ENVIRONMENT_MAIN, TXT, accept_in_background, check_process_environment,
                                 python_card, txt_main)
+from test_resident_workers import check_resident_artifacts
+from test_worker_loading import DIRECTORY, native_card
 from tsugumi_client import path, text
 from Tsugumi.Data.RunState import RunState
 
@@ -233,3 +237,67 @@ def test_a_reused_worker_keeps_its_process_environment(core_factory, tmp_path):
     reused, = c.call("RunInvocationsRequest", runId=run_id, card=path("show")).records
     assert reused.workerReused
     check_process_environment(*seen)
+
+
+def test_a_detached_writer_cannot_change_a_sealed_artifact(core_factory, tmp_path):
+    """Without a PID namespace a detached child can outlive the call with a
+    descriptor and a shared mapping on an output. The run seals a clone, so
+    once the staged original is gone the child's writes reach nothing sealed."""
+    source = native_card(r"""
+        tsugumi_artifact_id id;
+        const auto directory = fs::path(create_artifact(call, id));
+        const auto member = directory / "report.txt";
+        std::ofstream(member) << "sealed";
+        const int fd = open(member.c_str(), O_RDWR);
+        if (fd < 0) return 1;
+        void* mapped = mmap(nullptr, 6, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        if (mapped == MAP_FAILED) return 2;
+        int ready[2];
+        if (pipe(ready) != 0) return 3;
+        const pid_t child = fork();
+        if (child < 0) return 4;
+        if (child == 0) {
+          setsid();
+          if (fork() != 0) _exit(0);
+          // Hold nothing of the worker's but the output and the pipe.
+          for (int other = 0; other < 1024; ++other)
+            if (other != fd && other != ready[1]) close(other);
+          const pid_t self = getpid();
+          write(ready[1], &self, sizeof self);
+          // Write once the staged original is removed, i.e. after sealing.
+          for (int i = 0; i < 3000 && access(member.c_str(), F_OK) == 0; ++i)
+            usleep(10000);
+          pwrite(fd, "change", 6, 0);
+          std::memcpy(mapped, "mapped", 6);
+          msync(mapped, 6, MS_SYNC);
+          _exit(0);
+        }
+        waitpid(child, nullptr, 0);
+        pid_t writer = 0;
+        if (read(ready[0], &writer, sizeof writer) != sizeof writer) return 5;
+        std::ofstream(directory / "writer") << writer;
+        out.artifact(id);
+    """, declarations="#include <sys/mman.h>\n#include <sys/wait.h>\n", outputs=DIRECTORY)
+    root = tmp_path / "p"
+    write(root, {"source": source}, [card("source", "source")], [])
+    c = core_factory(project_root=root).connect()
+    run_id, st = run_and_wait(c, "source")
+    assert st.state == RunState.succeeded, log_of(c, run_id, "source")
+    sealed = root / ".tsugumi/artifacts" / run_id / "source/@1/0"
+    writer = int((sealed / "writer").read_text())
+    # The writer outlived the call; it leaves once it has written, or after
+    # 30 seconds if its staged output was never removed.
+    deadline = time.monotonic() + 20
+    while time.monotonic() < deadline:
+        try:
+            os.kill(writer, 0)
+        except ProcessLookupError:
+            break
+        time.sleep(0.05)
+    else:
+        pytest.fail("the detached writer never saw its staged output removed")
+    assert (sealed / "report.txt").read_text() == "sealed"
+
+
+def test_a_resident_card_uses_artifacts(core_factory, tmp_path):
+    check_resident_artifacts(core_factory, tmp_path / "p")

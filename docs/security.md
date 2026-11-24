@@ -112,7 +112,7 @@ Native macOS reports partial filesystem and network guarantees through Seatbelt.
 
 The workspace and `HOME` are private to the process and survive calls of a resident worker. The worker clears temporary files between calls. Where remapping is available, `/tmp` is backed by the worker's disk scratch. With filesystem isolation enabled, the project artifact root is exposed read-only at sandbox startup. Its holding directories allow exact-name traversal and deny listing. The core checks invocation grants for `artifact_open`, and a Card that already knows an exact path can read that artifact directly. [Artifact access](SandboxContract.md#artifact-access)
 
-The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are snapshotted and sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
+The worker builds the process environment at launch and fixes it for the life of the process. The Card gets no implicit shell or `PATH`; the tools a Card declares to its SDK's builder are its `PATH`, and Nix `cacert` is used for certificate verification. The worker loads the Card's `lib/main.so` and calls it through [Card ABI](CardABI.md). Created artifact directories are sealed read-only before passing outputs downstream. [Card ABI](CardABI.md#artifacts) A failed call keeps its failure record and discards its outputs.
 
 ### Showing Card views
 

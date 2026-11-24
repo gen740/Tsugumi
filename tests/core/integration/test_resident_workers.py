@@ -76,23 +76,90 @@ def test_failed_resident_is_discarded(core_factory, tmp_path, crashes):
             assert f"state started fresh: {reason}" in log(c, run_id, "resident", 2)
 
 
-def test_artifact_creation_retires_resident_even_when_transfer_fails(core_factory, tmp_path):
+def test_output_transfer_failure_keeps_living_resident_state(core_factory, tmp_path):
     definition = native_card(r"""
         static unsigned calls;
         tsugumi_artifact_id id;
         const auto file = fs::path(create_artifact(call, id)) / "result";
-        if (++calls != 1) return 1;
-        if (mkfifo(file.c_str(), 0600)) return 2;
+        if (++calls == 1) {
+          if (mkfifo(file.c_str(), 0600)) return 1;
+        } else {
+          std::ofstream(file) << "recovered";
+        }
         out.artifact(id);
     """, outputs=DIRECTORY, reuseWorker=True)
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
-    for _ in range(2):
-        run_id, state = run_and_wait(c, "resident")
-        assert state.state == RunState.failed
+    first, state = run_and_wait(c, "resident")
+    assert state.state == RunState.failed
+    inv, = c.call("RunInvocationsRequest", runId=first, card=path("resident")).records
+    assert inv.failure.kind == FailureKind.output_invalid
+    second, state = run_and_wait(c, "resident")
+    assert state.state == RunState.succeeded, log(c, second, "resident", 2)
+    inv, = c.call("RunInvocationsRequest", runId=second, card=path("resident")).records
+    assert inv.workerReused
+
+
+# Each call reads its own input artifact, checks that the previous call's
+# input and output paths are gone, and writes through the descriptor it kept
+# on the previous call's output.
+RESIDENT_ARTIFACTS = r"""
+    static unsigned calls;
+    static int writer = -1;
+    static fs::path previous_input, previous_output;
+    ++calls;
+    if (calls > 1) {
+      if (fs::exists(previous_input) || fs::exists(previous_output)) return 1;
+      if (pwrite(writer, "changed", 7, 0) != 7) return 2;
+    }
+    const auto input = fs::path(open_artifact(call, in));
+    if (input.empty()) return 3;
+    std::string contents;
+    std::ifstream(input / "report.txt") >> contents;
+    if (contents.empty()) return 4;
+    tsugumi_artifact_id id;
+    const auto directory = fs::path(create_artifact(call, id));
+    const auto seen = directory / "seen.txt";
+    std::ofstream(seen) << contents << ' ' << calls;
+    writer = open(seen.c_str(), O_RDWR);
+    if (writer < 0) return 5;
+    previous_input = input;
+    previous_output = directory;
+    out.artifact(id);
+"""
+
+
+def check_resident_artifacts(core_factory, root):
+    """A resident Card keeps its state across calls with artifacts. After a
+    call its input and output paths are gone, the next call opens its own
+    input, and a descriptor kept on an output cannot change the sealed copy."""
+    source = native_card(r"""
+        tsugumi_artifact_id id;
+        const auto directory = fs::path(create_artifact(call, id));
+        std::ofstream(directory / "report.txt") << getpid();
+        out.artifact(id);
+    """, outputs=DIRECTORY)
+    resident = native_card(RESIDENT_ARTIFACTS, inputs=["doc"], outputs=DIRECTORY, reuseWorker=True)
+    write(root, {"source": source, "resident": resident},
+          [card("source", "source"), card("resident", "resident")],
+          [conn("source", "doc", "resident", "doc")])
+    c = core_factory(project_root=root).connect()
+    store = root / ".tsugumi/artifacts"
+    runs = []
+    for calls in (1, 2, 3):
+        run_id, state = run_and_wait(c, "source")
+        assert state.state == RunState.succeeded, log(c, run_id, "resident", 2)
         inv, = c.call("RunInvocationsRequest", runId=run_id, card=path("resident")).records
-        assert inv.failure.kind == FailureKind.output_invalid
-        assert not inv.workerReused
+        assert inv.workerReused == (calls > 1)
+        given = (store / run_id / "source/@1/0/report.txt").read_text()
+        assert (store / run_id / "resident/@1/0/seen.txt").read_text() == f"{given} {calls}"
+        runs.append((run_id, f"{given} {calls}"))
+    for run_id, seen in runs:
+        assert (store / run_id / "resident/@1/0/seen.txt").read_text() == seen
+
+
+def test_resident_cards_use_artifacts(core_factory, tmp_path):
+    check_resident_artifacts(core_factory, tmp_path / "p")
 
 
 def test_missing_required_output_discards_resident_state(core_factory, tmp_path):

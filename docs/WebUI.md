@@ -25,7 +25,7 @@ Browser ── WebSocket /rpc ── loopback relay ── vsock ── tsugumid
 
 The page supplies its origin in `EnvironmentRequest`; hostd applies them when starting the project daemon. The browser authenticates to that daemon with its project token. Agent requests run in hostd on the host. [RPC authentication](security.md#6-rpc-authentication)
 
-The installed Mac command uses the release app's support directory by default:
+The installed Mac command uses the release app's support directory by default. A `tsugumi` built from source is the development version, like the app built from source, and uses `~/Library/Application Support/Tsugumi-dev/` instead ("Development and release versions" in [Releasing](../RELEASING.md)):
 
 | Data | Location and sharing |
 | --- | --- |

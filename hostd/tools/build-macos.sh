@@ -2,10 +2,22 @@
 # Native host/client use Apple's compiler, SDK, provider HTTPS trust and SQLite.
 # Remote-worker TLS uses the OpenSSL already supplied by the development shell.
 # Nix supplies pinned build tools, FlatBuffers and source-only dependencies.
+#
+#   hostd/tools/build-macos.sh [--release]
+#
+# --release builds the release channel (cli/package-macos.sh --release): the
+# tsugumi command then defaults to the release app's support folder, not the
+# dev app's (cli/src/launch.cc).
 set -euo pipefail
 repo="$(cd "$(dirname "$0")/../.." && pwd)"
+release=OFF
+case "${1:-}" in
+  --release) release=ON ;;
+  "") ;;
+  *) echo "usage: $0 [--release]" >&2; exit 2 ;;
+esac
 if [ "${TSUGUMI_HOST_BUILD_ENV:-}" != 1 ]; then
-  exec nix develop "$repo" -c env TSUGUMI_HOST_BUILD_ENV=1 "$0"
+  exec nix develop "$repo" -c env TSUGUMI_HOST_BUILD_ENV=1 "$0" "$@"
 fi
 sdk_path=$(env -i PATH=/usr/bin:/bin /usr/bin/xcrun --sdk macosx --show-sdk-path)
 flatbuffers_root=$(cd "$(dirname "$(command -v flatc)")/.." && pwd)
@@ -26,7 +38,7 @@ run() {
 }
 run "$cmake_path" --fresh -S "$repo" -B "$repo/build-host" -G Ninja \
   -DTSUGUMI_FORMAT_NIX="@bundle/nixfmt" -DTSUGUMI_TEMPLATE_GIT="@bundle/git" \
-  -DTSUGUMI_BUILD_TESTS=OFF -DCMAKE_BUILD_TYPE=Release \
+  -DTSUGUMI_BUILD_TESTS=OFF -DTSUGUMI_RELEASE="$release" -DCMAKE_BUILD_TYPE=Release \
   -DPython3_EXECUTABLE="$(command -v python3)" \
   -DCMAKE_C_COMPILER=/usr/bin/clang -DCMAKE_CXX_COMPILER=/usr/bin/clang++ -DCMAKE_OSX_SYSROOT="$sdk_path" \
   -Dflatbuffers_DIR="$flatbuffers_root/lib/cmake/flatbuffers" \
