@@ -2,6 +2,8 @@
 
 import json
 import os
+import platform
+import sys
 from pathlib import Path
 import subprocess
 import tempfile
@@ -10,6 +12,55 @@ from Tsugumi.Layout.Layout import Layout
 from tsugumi_client import change, new_id, path, text
 
 PROTOCOL = Path(__file__).resolve().parents[3] / "protocol"
+
+
+MACHINE = {"arm64": "aarch64", "amd64": "x86_64"}.get(
+    platform.machine().lower(), platform.machine().lower())
+NATIVE_SYSTEM = f"{MACHINE}-{'darwin' if sys.platform == 'darwin' else 'linux'}"
+VERSION = (PROTOCOL.parent / "VERSION").read_text().strip()
+
+SYMBOLS = {
+    "code": "chevron.left.forwardslash.chevron.right", "input": "slider.horizontal.3",
+    "trigger": "play.circle", "merge": "arrow.triangle.merge",
+    "collect": "line.3.horizontal.decrease", "draft": "pencil.and.outline",
+    "subgraph": "link",
+}
+
+
+def project_document(**fields):
+    return {
+        "tsugumiVersion": VERSION, "name": "test", "nixPath": [],
+        "trackedPaths": [], "agentExclude": [], "recordLogs": True, "recordIO": False,
+        "logLimitBytes": 134217728, "outputLimitBytes": 68719476736,
+        "outputLimitEntries": 1000, "canvas": {"cards": [], "connections": []},
+        **fields,
+    }
+
+
+def card_document(fields):
+    kind = fields["type"]
+    body = {"type": kind, "symbol": SYMBOLS[kind]}
+    if kind in {"code", "input", "merge", "collect"}:
+        body.update(maxRuns=1, recordIO="project")
+    if kind == "merge":
+        body["inputs"] = [{"name": "a"}, {"name": "b"}]
+    if kind in {"code", "input"}:
+        body.update(inputs=[], reuseWorker=False, timeoutSeconds=0, buildTimeoutSeconds=0,
+                    recordLogs="project", system=NATIVE_SYSTEM, workerCapabilities=[])
+    body.update(fields)
+    if kind in {"code", "input"}:
+        sandbox = body.get("sandbox", {})
+        body["sandbox"] = {
+            "filesystem": True, "pid": True, "ipc": True, "identity": True,
+            **sandbox, "limits": {"cpu": 0, "memoryMiB": 0, **sandbox.get("limits", {})},
+        }
+        body["grants"] = {"network": False, "gui": False, **body.get("grants", {})}
+    return body
+
+
+def card_readme(title, description="", body=""):
+    return f"---\ntitle: {title}\ndescription: {description}\n---\n" + (
+        f"\n{body}" if body else "")
 
 
 def build_buffer(schema, root_type, value):

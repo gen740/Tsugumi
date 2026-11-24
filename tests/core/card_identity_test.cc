@@ -5,6 +5,7 @@
 
 #include "service.hh"
 #include "store.hh"
+#include "test_document.hh"
 #include "tsugumi/util/crypto.hh"
 #include "tsugumi/util/fs.hh"
 
@@ -19,7 +20,7 @@ TEST(InitialDocument, LoadsAnEmptyProjectAndEscapesItsName) {
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
   const std::string name = "New \"project\"\n日本語";
-  const auto text = initial_project_json(name);
+  const auto text = initial_project_json(name, {});
   const auto parsed = parse_project_json(text);
   const auto& project = document_text::root<Tsugumi::Document::Project>(parsed.buffer);
   EXPECT_EQ(project.name()->str(), name);
@@ -50,7 +51,7 @@ TEST(CoreLifecycle, NeverRunProjectDoesNotCreateRunScratch) {
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
+  fs::write_atomic(root / "tsugumi.json", initial_project_json("test", {}));
   fs::write_atomic(root / "substituters", "");
   ServiceOptions options;
   options.root = root;
@@ -77,12 +78,10 @@ TEST(CardIdentity,
     std::filesystem::path root;
     ~Cleanup() { std::filesystem::remove_all(root); }
   } cleanup{root};
-  fs::write_atomic(root / "tsugumi.json", initial_project_json("test"));
-  fs::write_atomic(root / "externals/child/tsugumi.json",
-                   R"({"canvas":{"cards":[],"connections":[]}})");
-  fs::write_atomic(root / ".tsugumi/card-ids", "CASE\n");
+  fs::write_atomic(root / "tsugumi.json", initial_project_json("test", {}));
+  fs::write_atomic(root / ".tsugumi/card-ids", "case\n");
   std::set<std::string> ids;
-  std::regex shape("aggregate(?:-[1-9][0-9]*)?");
+  std::regex shape("aggregate(?:_[1-9][0-9]*)?");
   {
     Store store({root, ""});
     store.open();
@@ -95,16 +94,16 @@ TEST(CardIdentity,
     EXPECT_EQ(store.current()->rev, rev);
     EXPECT_THROW(store.allocate_card_id("A", "../"), Failed);
     EXPECT_THROW(store.allocate_card_id("A", "externals/../"), Failed);
-    EXPECT_THROW(store.allocate_card_id("", ""), Failed);
-    EXPECT_THROW(store.allocate_card_id(std::string(124, 'a'), ""), Failed);
-    EXPECT_EQ(store.allocate_card_id(std::string(123, 'a'), "").size(), 123u);
-    EXPECT_THROW(store.allocate_card_id("集計", ""), Failed);
-    EXPECT_EQ(store.allocate_card_id("CASE", ""), "case-2");
+    EXPECT_EQ(store.allocate_card_id("", ""), "card");
+    const std::string long_name(80, 'a');
+    EXPECT_EQ(store.allocate_card_id(long_name, ""), std::string(64, 'a'));
+    EXPECT_EQ(store.allocate_card_id(long_name, ""),
+              std::string(62, 'a') + "_2");
+    EXPECT_TRUE(valid_name(store.allocate_card_id("集計", "")));
+    EXPECT_EQ(store.allocate_card_id(".8A-Name", ""), "card__8a_name");
+    EXPECT_EQ(store.allocate_card_id("CASE", ""), "case_2");
     EXPECT_EQ(store.allocate_card_id("Already_Chosen", ""), "already_chosen");
-    EXPECT_EQ(store.allocate_card_id("already_chosen", ""), "already_chosen-2");
-    fs::write_atomic(root / "definitions/occupied/_card.json",
-                     R"({"type":"draft"})");
-    EXPECT_EQ(store.allocate_card_id("occupied", ""), "occupied-2");
+    EXPECT_EQ(store.allocate_card_id("already_chosen", ""), "already_chosen_2");
   }
   Store store({root, ""});
   store.open();

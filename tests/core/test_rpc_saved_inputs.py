@@ -31,7 +31,7 @@ def test_subgraph_replays_saved_merge_arrival(core_factory, project, tmp_path):
         defs={
             "start": {"type": "trigger"},
             "source": source,
-            "relay": {"type": "merge", "inputs": [{"name": "in"}], "recordIO": True},
+            "relay": {"type": "merge", "inputs": [{"name": "in"}], "recordIO": "on"},
         },
         cards=[
             card("start", "start"),

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import subprocess
 from pathlib import Path
 
@@ -12,7 +13,8 @@ from harness.values import recorded_input_json
 from projects import MSG_FBS, MSG_INPUT_NIX, SINK, builtin_project, card, conn, put, run_and_wait
 from tsugumi_client import RpcFailure, change, new_id, path, text
 from Tsugumi.Data.RunState import RunState
-from harness.document import layout_bytes, params_nix, write_layout
+from harness.daemon import StartupFailure
+from harness.document import card_document, card_readme, layout_bytes, params_nix, project_document, write_layout
 from harness.nix_path import declarations, test_lock_entries as fixture_locks, write_lock
 
 
@@ -33,13 +35,14 @@ def external(root: Path, name: str, text_value: str) -> None:
     """externals/<name>: an Input with its message as the boundary output."""
     ext = root / "externals" / name
     pins = [entry for entry in fixture_locks() if entry["name"] == "nixpkgs"]
-    put(ext / "tsugumi.json", json.dumps({
-        "name": name, "nixPath": declarations(pins),
-        "canvas": {"cards": [{"id": "say"}], "connections": []},
-        "boundary": {"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]}}))
+    put(ext / "tsugumi.json", json.dumps(project_document(
+        name=name, nixPath=declarations(pins),
+        canvas={"cards": [{"id": "say"}], "connections": []},
+        boundary={"inputs": [], "outputs": [{"name": "said", "card": "say", "port": "msg"}]})))
     write_lock(ext, pins)
     put(ext / "definitions" / "say" / "default.nix", MSG_INPUT_NIX)
-    put(ext / "definitions" / "say" / "_card.json", json.dumps({"type": "input"}))
+    put(ext / "definitions" / "say" / "_card.json", json.dumps(card_document({"type": "input"})))
+    put(ext / "definitions/say/README.md", card_readme("Say"))
     put(ext / "definitions" / "say" / "params.nix", params_nix({"text": text_value, "value": True}))
     put(ext / "definitions" / "say" / "_outputs.fbs", MSG_FBS)
 
@@ -47,7 +50,7 @@ def external(root: Path, name: str, text_value: str) -> None:
 def edit_description(c, card_id, description, prefix=""):
     """Edit the Card README without changing its identity."""
     snap = c.call("ProjectInspectRequest")
-    readme = f"---\ndescription: {description}\n---\n"
+    readme = card_readme(card_id, description)
     if not prefix:
         d = next(d for d in snap.definitions if text(d.id) == card_id)
         changes = [change("PutDefinition", id=card_id, cardJson=text(d.cardJson),
@@ -69,7 +72,7 @@ def test_description_edit_preserves_every_past_record_and_saved_input(tmp_path, 
     """A description edit preserves recorded invocations and saved inputs."""
     root = tmp_path / "p"
     builtin_project(root, text="hi")
-    put(root / "definitions" / "out" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
+    put(root / "definitions" / "out" / "_card.json", json.dumps(card_document(dict(SINK, recordIO="on"))))
     put(root / "definitions" / "src" / "notes.txt", "kept")
     c = core_factory(project_root=root).connect()
     run_id, st = run_and_wait(c, "src")
@@ -99,12 +102,19 @@ def test_new_ids_are_unique_with_shared_descriptions(tmp_path, core_factory):
     c = d.connect()
     ids = [text(c.call("CardIdRequest", stem="aggregate").id) for _ in range(80)]
     assert len(set(ids)) == len(ids)
+    assert ids[:3] == ["aggregate", "aggregate_2", "aggregate_3"]
+    assert text(c.call("CardIdRequest", stem=".9-Mixed Café").id) == "card__9_mixed_caf_"
+    long = "A" * 80
+    first = text(c.call("CardIdRequest", stem=long).id)
+    second = text(c.call("CardIdRequest", stem=long).id)
+    assert first == "a" * 64 and second == "a" * 62 + "_2"
+    assert all(re.fullmatch(r"[a-z][a-z0-9_]{0,63}", value) for value in [*ids, first, second])
     snap = c.call("ProjectInspectRequest")
     doc = json.loads(text(snap.projectJson))
     doc["canvas"]["cards"] += [{"id": x} for x in ids[:2]]
     c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="ui:test", changes=[
         change("SetProject", json=json.dumps(doc)), *[
-            change("PutDefinition", id=x, cardJson='{"type":"draft"}', readme="---\ndescription: Aggregate\n---\n") for x in ids[:2]]])
+            change("PutDefinition", id=x, cardJson=json.dumps(card_document({"type": "draft"})), readme=card_readme("Aggregate", "Aggregate")) for x in ids[:2]]])
     snap = c.call("ProjectInspectRequest")
     assert sum("description: Aggregate" in (text(x.readme) or "") for x in snap.definitions) == 2
     assert "src" in [text(x.id) for x in snap.definitions]  # existing ids are unchanged
@@ -171,18 +181,18 @@ def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_f
         change("SetProject", json=json.dumps(without_card(doc, "src"))), change("RemoveDefinition", id="src"), change("SetLayout", layout=layout_bytes(kept))])
     assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
 
-    # Off the canvas with its definition left behind is deleted too.
+    # Removing a second Card also removes its definition.
     rev, doc = project_json(c)
     del kept["cards"]["src2"]
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("SetLayout", layout=layout_bytes(kept))])
+        change("SetProject", json=json.dumps(without_card(doc, "src2"))), change("RemoveDefinition", id="src2"), change("SetLayout", layout=layout_bytes(kept))])
     assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
 
     # A Card of the same name starts without the prior layout.
     rev, doc = project_json(c)
     doc["canvas"]["cards"].append({"id": "src"})
     res = c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="agent", changes=[
-        change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
+        change("PutDefinition", id="src", cardJson=json.dumps(card_document(SINK)), readme=card_readme("Source")),
         change("SetProject", json=json.dumps(doc))])
     assert res.delta.layoutChanged is False
     assert bytes(c.call("ProjectInspectRequest").layout) == layout_bytes(kept)
@@ -203,7 +213,7 @@ def test_the_saving_client_supplies_deleted_card_layout_cleanup(tmp_path, core_f
     doc["canvas"]["cards"].append({"id": "src"})
     back = layout_bytes({"cards": {"src": {"x": 5, "y": 6}, "out": {"x": 1, "y": 2}}})
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="ui:x", changes=[
-        change("PutDefinition", id="src", cardJson=json.dumps(SINK)),
+        change("PutDefinition", id="src", cardJson=json.dumps(card_document(SINK)), readme=card_readme("Source")),
         change("SetProject", json=json.dumps(doc)),
         change("SetLayout", layout=back)])
     assert bytes(c.call("ProjectInspectRequest").layout) == back
@@ -236,17 +246,19 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     card_path = prefix + "definitions/definitions/_card.json"
     meta_path = prefix + "definitions/definitions/README.md"
     code_path = prefix + "definitions/definitions/src/run.py"
-    project = '{"canvas":{"cards":[{"id":"definitions"}],"connections":[]}}'
-    draft = '{"type":"draft"}'
-    metadata = "---\ndescription: Nested Card\n---\n"
+    project = json.dumps(project_document(canvas={"cards": [{"id": "definitions"}], "connections": []}))
+    draft = json.dumps(card_document({"type": "draft"}))
+    metadata = card_readme("Nested Card")
     root_doc = json.loads((root / "tsugumi.json").read_text())
     root_doc["canvas"]["cards"].append({"id": "outer"})
     put(root / "tsugumi.json", json.dumps(root_doc))
-    put(root / "definitions/outer/_card.json", '{"type":"subgraph","external":"outer"}')
+    put(root / "definitions/outer/_card.json", json.dumps(card_document({"type": "subgraph"})))
+    put(root / "definitions/outer/README.md", card_readme("Outer"))
     outer = "externals/outer/"
     put(root / outer / "tsugumi.json",
-        '{"canvas":{"cards":[{"id":"inner"}],"connections":[]}}')
-    put(root / outer / "definitions/inner/_card.json", '{"type":"subgraph","external":"inner"}')
+        json.dumps(project_document(canvas={"cards": [{"id": "inner"}], "connections": []})))
+    put(root / outer / "definitions/inner/_card.json", json.dumps(card_document({"type": "subgraph"})))
+    put(root / outer / "definitions/inner/README.md", card_readme("Inner"))
     for path, value in [(project_path, project), (card_path, draft),
                         (meta_path, metadata), (code_path, "# code")]:
         put(root / path, value)
@@ -258,15 +270,14 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert bytes(sources[meta_path].document).decode() == metadata
     assert sources[code_path].document is None
 
-    updated = '{"type":"input"}'
+    updated = json.dumps(card_document({"type": "input"}))
     saved = c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
                    changes=[
                        change("PutSource", path=card_path, bytes=updated.encode(),
                               baseHash=text(sources[card_path].hash)),
-                       change("RemoveSource", path=meta_path, baseHash=text(sources[meta_path].hash)),
                    ])
     assert {text(s.path): json.loads(bytes(s.document)) for s in saved.delta.sourcesUpsert} == {card_path: json.loads(updated)}
-    assert [text(p) for p in saved.delta.sourcesRemoved] == [meta_path]
+    assert not saved.delta.sourcesRemoved
 
     # Only a reload accepts an out-of-band change. A save that needs a new
     # graph resolution still sees the document that was accepted.
@@ -278,9 +289,12 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
                     changes=[change("SetLayout", layout=layout_bytes({"flow": "topToBottom"}))])
     assert layout.executionRev == saved.executionRev
     assert diagnostics(c, nested_card) == accepted
+    before = json.loads(text(c.call("ProjectInspectRequest").projectJson))
+    before["canvas"]["cards"].append({"id": "unrelated"})
     changed = c.call("ProjectSaveRequest", baseRev=layout.rev, opId=new_id(), origin="t",
-                     changes=[change("PutDefinition", id="unrelated",
-                                     cardJson='{"type":"draft"}')])
+                     changes=[change("SetProject", json=json.dumps(before)),
+                              change("PutDefinition", id="unrelated",
+                                     cardJson=draft, readme=card_readme("Unrelated"))])
     assert diagnostics(c, nested_card) == accepted
     inspected = c.call("ProjectInspectRequest")
     assert inspected.rev == changed.rev
@@ -290,7 +304,7 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
     assert bytes(content.bytes) == bytes(accepted_source.document)
     with pytest.raises(RpcFailure) as error:
         c.call("ProjectSaveRequest", baseRev=changed.rev, opId=new_id(), origin="t",
-               changes=[change("PutSource", path=card_path, bytes=b'{"type":"trigger"}',
+               changes=[change("PutSource", path=card_path, bytes=json.dumps(card_document({"type": "trigger"})).encode(),
                                baseHash=text(accepted_source.hash))])
     assert error.value.kind == "external_change"
     reloaded = c.call("ProjectReloadRequest", baseRev=changed.rev, opId=new_id(), origin="t")
@@ -299,16 +313,18 @@ def test_external_documents_share_the_snapshot_and_delta_revision(tmp_path, core
 
 
 def test_card_in_card_is_an_external_project(tmp_path, core_factory):
-    """A linked project can run as a nested card and as a standalone project."""
+    """A subgraph runs the child project stored under its Card id."""
     root = tmp_path / "p"
     builtin_project(root)
-    external(root, "greeting", "from the external")
-    put(root / "externals/greeting/.git/config", "# excluded Git metadata")
-    put(root / "definitions" / "greet" / "_card.json", json.dumps({"type": "subgraph", "external": "greeting"}))
+    external(root, "greet", "from the external")
+    put(root / "externals/greet/.git/config", "# excluded Git metadata")
+    put(root / "definitions/greet/_card.json", json.dumps(card_document({"type": "subgraph"})))
+    put(root / "definitions/greet/README.md", card_readme("Greet"))
     project = json.loads((root / "tsugumi.json").read_text())
     project["canvas"]["cards"].append({"id": "greet"})
     project["canvas"]["cards"].append({"id": "show"})
-    put(root / "definitions" / "show" / "_card.json", json.dumps(dict(SINK, recordIO=True)))
+    put(root / "definitions" / "show" / "_card.json", json.dumps(card_document(dict(SINK, recordIO="on"))))
+    put(root / "definitions/show/README.md", card_readme("Show"))
     project["canvas"]["connections"].append(conn("greet", "said", "show", "in"))
     put(root / "tsugumi.json", json.dumps(project))
     d = core_factory(project_root=root)
@@ -316,9 +332,9 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     snap = c.call("ProjectInspectRequest")
     cards = {"/".join(text(s) for s in r.card.segments) for r in snap.resolution}
     assert {"greet", "greet/say"} <= cards
-    assert any(text(x.id) == "greet" and json.loads(text(x.cardJson)).get("external") == "greeting" for x in snap.definitions)
+    assert any(text(x.id) == "greet" and json.loads(text(x.cardJson))["type"] == "subgraph" for x in snap.definitions)
     first = c.call("VersionInitRequest", opId=new_id(), origin="test")
-    source = "externals/greeting/definitions/say/params.nix"
+    source = "externals/greet/definitions/say/params.nix"
     edited = params_nix({"text": "changed on disk", "value": True})
     put(root / source, edited)
     with pytest.raises(RpcFailure) as error:
@@ -338,41 +354,22 @@ def test_card_in_card_is_an_external_project(tmp_path, core_factory):
     # The external is this project's copy: its files change here like any other.
     rev = reloaded.rev
     c.call("ProjectSaveRequest", baseRev=rev, opId=new_id(), origin="t",
-           changes=[change("PutSource", path="externals/greeting/notes.txt", bytes=list(b"x"))])
-    assert bytes(c.call("ProjectFileReadRequest", path="externals/greeting/notes.txt").bytes) == b"x"
-    snap = c.call("ProjectInspectRequest")
-    c.call("ProjectSaveRequest", baseRev=snap.rev, opId=new_id(), origin="t",
-           changes=[change("PutSource", path="externals/fresh/tsugumi.json",
-                           bytes=b'{"canvas":{"cards":[],"connections":[]}}')])
-    # The external opens on its own, with the same result.
-    d.stop()
-    alone = root / "externals" / "greeting"
-    (alone / ".git/config").unlink()
-    (alone / ".git").rmdir()
-    d = core_factory(project_root=alone)
-    c = d.connect()
-    run_id, st = run_and_wait(c, "say")
-    assert st.state == RunState.succeeded
+           changes=[change("PutSource", path="externals/greet/notes.txt", bytes=list(b"x"))])
+    assert bytes(c.call("ProjectFileReadRequest", path="externals/greet/notes.txt").bytes) == b"x"
 
 
-def test_link_diagnostics(tmp_path, core_factory):
-    """Missing external cards are diagnosed and links outside the project are rejected."""
+def test_missing_external_is_a_load_error(tmp_path, core_factory):
     root = tmp_path / "p"
     builtin_project(root)
-    put(root / "definitions" / "missing" / "_card.json", json.dumps({"type": "subgraph", "external": "nowhere"}))
+    put(root / "definitions/missing/_card.json", json.dumps(card_document({"type": "subgraph"})))
+    put(root / "definitions/missing/README.md", card_readme("Missing"))
     project = json.loads((root / "tsugumi.json").read_text())
     project["canvas"]["cards"].append({"id": "missing"})
     put(root / "tsugumi.json", json.dumps(project))
-    c = core_factory(project_root=root).connect()
-    assert "unknown_external" in diagnostics(c, ["missing"])
-    before = c.call("ProjectInspectRequest")
-    with pytest.raises(RpcFailure) as failure:
-        c.call("ProjectSaveRequest", baseRev=before.rev, opId=new_id(), origin="ui:test", changes=[
-            change("PutDefinition", id="bad", cardJson=json.dumps({"type": "subgraph", "external": "../up"}))])
+    with pytest.raises(StartupFailure) as failure:
+        core_factory(project_root=root)
     assert failure.value.kind == "invalid_document"
-    after = c.call("ProjectInspectRequest")
-    assert after.rev == before.rev
-    assert {text(d.id) for d in after.definitions} == {text(d.id) for d in before.definitions}
+    assert "externals/missing/tsugumi.json" in failure.value.record["message"]
 
 
 @pytest.mark.parametrize("settings", [{"maxRuns": 2}, {"grants": {"network": False}}])
@@ -381,7 +378,7 @@ def test_card_in_card_definition_rejects_execution_settings(tmp_path, core_facto
     builtin_project(root)
     c = core_factory(project_root=root).connect()
     before = c.call("ProjectInspectRequest")
-    invalid = json.dumps({"type": "subgraph", "external": "inner", **settings})
+    invalid = json.dumps(card_document({"type": "subgraph", **settings}))
     for write in (change("PutDefinition", id="nested", cardJson=invalid),
                   change("PutSource", path="externals/inner/definitions/nested/_card.json",
                          bytes=list(invalid.encode()))):
@@ -416,8 +413,9 @@ def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_fact
     """Both container and inner names change without touching a past record."""
     root = tmp_path / "p"
     builtin_project(root)
-    external(root, "greeting", "hello")
-    put(root / "definitions/greet/_card.json", '{"type":"subgraph","external":"greeting"}')
+    external(root, "greet", "hello")
+    put(root / "definitions/greet/_card.json", json.dumps(card_document({"type": "subgraph"})))
+    put(root / "definitions/greet/README.md", card_readme("Greet"))
     doc = json.loads((root / "tsugumi.json").read_text())
     doc["canvas"]["cards"].append({"id": "greet"})
     put(root / "tsugumi.json", json.dumps(doc))
@@ -427,11 +425,11 @@ def test_name_changes_inside_a_card_in_card_preserve_history(tmp_path, core_fact
     snap = c.call("ProjectInspectRequest")
     before = recorded_invocations(c, run_id, "greet", "say")
     assert before
-    edit_description(c, "say", "Greeting", "externals/greeting/")
+    edit_description(c, "say", "Greeting", "externals/greet/")
     edit_description(c, "greet", "Greeting")
     assert recorded_invocations(c, run_id, "greet", "say") == before
     assert c.call("RunInvocationsRequest", runId=run_id, card=path("greet", "say")).records
     after = c.call("ProjectInspectRequest")
     assert after.executionRev == snap.executionRev
     assert ("greet", "say") in {tuple(text(s) for s in r.card.segments) for r in after.resolution}
-    assert b"description: Greeting" in bytes(c.call("ProjectFileReadRequest", path="externals/greeting/definitions/say/README.md").bytes)
+    assert b"description: Greeting" in bytes(c.call("ProjectFileReadRequest", path="externals/greet/definitions/say/README.md").bytes)

@@ -14,7 +14,7 @@ def test_mode_zero_scratch_does_not_fail_a_successful_call(core_factory, tmp_pat
         std::ofstream(temp / "nested/data") << "private";
         if (chmod((temp / "nested").c_str(), 0) || chmod(temp.c_str(), 0)) return 1;
         out.number(1);
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     write(tmp_path / "p", {"work": definition}, [card("work", "work")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     for _ in range(2):

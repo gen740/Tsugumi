@@ -58,7 +58,7 @@ def prepare_history(client, project, directory):
     worker_project(client, project, directory, [
         {"op": "log", "stream": "stdout", "text": "a recorded log"},
         {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=True)
+    ], outputs=FILE_OUTPUT, recordIO="on")
 
 
 def successful_run(client):
@@ -166,7 +166,7 @@ def test_history_deletion_keeps_a_run_that_finished_after_selection(core_factory
     worker_project(client, project, tmp_path / "second", [
         gate.action(),
         {"op": "file", "port": "doc", "path": "report.txt", "text": CONTENTS},
-    ], outputs=FILE_OUTPUT, recordIO=True)
+    ], outputs=FILE_OUTPUT, recordIO="on")
     second = run(client)
     gate.wait()
     selected = [text(row.status.runId) for row in client.call("RunHistoryRequest", limit=100).runs
@@ -211,7 +211,7 @@ def test_immediate_reruns_after_finished_keep_accepting(core_factory, project, t
     client = core_factory(mocked_builds=True, mocked_worker=True).connect()
     worker_project(client, project, tmp_path, [
         {"op": "output", "port": "out", "type": "string", "value": "finished"},
-    ], recordIO=True)
+    ], recordIO="on")
     rev = client.open().snapshot.rev
 
     for _ in range(2):

@@ -64,7 +64,6 @@ if(TSUGUMI_TEST_TARGET STREQUAL "tsugumi_arm_shell_tests")
 endif()
 if(NOT TSUGUMI_NATIVE_DARWIN_TESTS)
   include(cmake/input-types.cmake)
-  include(cmake/document.cmake)
 endif()
 
 include(cmake/host-rpc.cmake)

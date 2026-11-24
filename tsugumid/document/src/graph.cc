@@ -192,169 +192,51 @@ class Builder {
     std::string to_port;
   };
 
-  void timeout(Node& n, const char* key, std::optional<uint64_t> v,
-               std::optional<uint64_t>& out) {
-    if (!v) return;
-    if (*v > 0)
-      out = *v;
-    else
-      n.diags.push_back(diag(n.path, "invalid_setting",
-                             std::string(key) + " must be a positive integer"));
-  }
-
   void read_settings(Node& n, const DefinitionDoc* def) {
     auto& s = n.settings;
     s.name = n.path.back();
-    if (!def || def->card().external()) return;
+    if (!def) return;
     const auto& d = def->card();
-    auto boolean = [&](std::optional<bool> v, bool& out) {
-      if (v) out = *v;
+    if (const auto* inputs = d.inputs())
+      for (const auto* input : *inputs)
+        n.inputs.push_back({input->name()->str(), false, nullptr});
+    if (const auto v = d.maxRuns()) s.max_runs = *v;
+    if (const auto v = d.timeoutSeconds(); v && *v) s.timeout_seconds = *v;
+    if (const auto v = d.buildTimeoutSeconds(); v && *v)
+      s.build_timeout_seconds = *v;
+
+    const auto record = [](D::RecordSetting setting, bool project) {
+      return setting == D::RecordSetting::project
+                 ? project
+                 : setting == D::RecordSetting::on;
     };
-    if (const auto* ins = d.inputs(); ins && n.kind != CardType::Draft) {
-      std::set<std::string> seen;
-      for (const auto* in : *ins) {
-        const auto name = in->name()->str();
-        if (!valid_id(name)) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "inputs entries need a valid name"));
-          continue;
-        }
-        if (!seen.insert(name).second)
-          n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate input " + name));
-        n.inputs.push_back({name, false, nullptr});
-      }
-    }
-    if (const auto v = d.maxRuns()) {
-      if (*v > 0)
-        s.max_runs = *v;
-      else
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "maxRuns must be a positive integer (0 is rejected)"));
-    }
-    timeout(n, "timeoutSeconds", d.timeoutSeconds(), s.timeout_seconds);
-    timeout(n, "buildTimeoutSeconds", d.buildTimeoutSeconds(),
-            s.build_timeout_seconds);
-    boolean(d.recordLogs(), s.record_logs);
-    boolean(d.recordIO(), s.record_io);
+    if (const auto v = d.recordLogs())
+      s.record_logs = record(*v, s.record_logs);
+    if (const auto v = d.recordIO()) s.record_io = record(*v, s.record_io);
     if (const auto* sandbox = d.sandbox()) {
-      boolean(sandbox->filesystem(), s.sandbox.filesystem);
-      boolean(sandbox->pid(), s.sandbox.pid);
-      boolean(sandbox->ipc(), s.sandbox.ipc);
-      boolean(sandbox->identity(), s.sandbox.identity);
-      if (const auto* limits = sandbox->limits()) {
-        if (const auto cpu = limits->cpu()) {
-          if (!std::isfinite(*cpu) || *cpu <= 0 || *cpu > 256)
-            n.diags.push_back(
-                diag(n.path, "invalid_setting",
-                     "sandbox.limits.cpu must be in (0, 256] or null"));
-          else
-            s.sandbox.limits.cpu_millis =
-                static_cast<uint32_t>(std::ceil(*cpu * 1000));
-        }
-        if (const auto mib = limits->memoryMiB()) {
-          if (*mib == 0 || *mib > (uint64_t{1} << 20))
-            n.diags.push_back(diag(n.path, "invalid_setting",
-                                   "sandbox.limits.memoryMiB must be a "
-                                   "positive integer up to 1048576 or null"));
-          else
-            s.sandbox.limits.memory_bytes = *mib << 20;
-        }
-      }
+      s.sandbox.filesystem = *sandbox->filesystem();
+      s.sandbox.pid = *sandbox->pid();
+      s.sandbox.ipc = *sandbox->ipc();
+      s.sandbox.identity = *sandbox->identity();
+      s.sandbox.limits.cpu_millis =
+          static_cast<uint32_t>(std::ceil(*sandbox->limits()->cpu() * 1000));
+      s.sandbox.limits.memory_bytes = *sandbox->limits()->memoryMiB() << 20;
     }
-    boolean(d.reuseWorker(), s.reuse_worker);
-    const auto* grants = d.grants();
-    if (grants) {
-      boolean(grants->network(), s.grants.network);
-      boolean(grants->gui(), s.grants.gui);
+    if (const auto v = d.reuseWorker()) s.reuse_worker = *v;
+    if (const auto* grants = d.grants()) {
+      s.grants.network = *grants->network();
+      s.grants.gui = *grants->gui();
+      if (const auto* folders = grants->hostPaths())
+        for (const auto* folder : *folders)
+          s.grants.host_paths.push_back(
+              {folder->path()->str(), folder->name()->str(), *folder->write()});
     }
-    if (const auto* service = d.executionService()) {
-      const auto value = service->str();
-      if (n.kind != CardType::Code)
-        n.diags.push_back(
-            diag(n.path, "invalid_setting",
-                 "executionService is only available on Code Cards"));
-      else if (!valid_id(value))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "executionService must be a valid service ID"));
-      else
-        s.execution_service = value;
-    }
-    if (const auto* condition = d.workerCondition()) {
-      auto compiled = worker_condition::compile(
-          {condition->language()->str(), condition->expression()->str()});
-      if (const auto* diagnostic =
-              std::get_if<worker_condition::Diagnostic>(&compiled))
-        n.diags.push_back(diag(n.path, "invalid_setting",
-                               "workerCondition: " + diagnostic->message +
-                                   " at byte " +
-                                   std::to_string(diagnostic->position)));
-      else
-        s.worker_condition = std::move(
-            std::get<std::unique_ptr<const worker_condition::Condition>>(
-                compiled));
-    }
-    const bool remote = s.execution_service != kLocalExecutionService &&
-                        s.execution_service != "auto";
-    if (const auto* secrets = d.secrets()) {
-      std::set<std::string> names;
-      for (const auto* entry : *secrets) {
-        const auto name = entry->str();
-        if (!valid_name(name)) {
-          n.diags.push_back(diag(n.path, "invalid_setting",
-                                 "secrets entries must match "
-                                 "[a-z][a-z0-9_]{0,63}: " +
-                                     name));
-          continue;
-        }
-        if (!names.insert(name).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_setting", "duplicate secret " + name));
-          continue;
-        }
-        s.secrets.push_back(name);
-      }
-    }
-    if (const auto* system = d.system()) {
-      const auto value = system->str();
-      if (!remote && value == native_system())
-        s.system.clear();
-      else if (value == "x86_64-linux" || value == "aarch64-linux")
-        s.system = value;
-      else
-        n.diags.push_back(diag(
-            n.path, "invalid_setting",
-            "system must be the native system, x86_64-linux or aarch64-linux"));
-    }
-    const auto* folders = grants ? grants->hostPaths() : nullptr;
-    if (folders) {
-      std::set<std::string> names;
-      for (const auto* f : *folders) {
-        const auto path = f->path()->str();
-        const auto name = f->name()->str();
-        if (path.empty() || path.front() != '/' || !valid_id(name)) {
-          n.diags.push_back(diag(
-              n.path, "invalid_setting",
-              "grants.hostPaths entries need an absolute path and a name"));
-          continue;
-        }
-        if (!names.insert(grant_environment(name)).second) {
-          n.diags.push_back(
-              diag(n.path, "invalid_setting",
-                   "duplicate host path grant variable for " + name));
-          continue;
-        }
-        s.grants.host_paths.push_back({path, name, f->write().value_or(false)});
-      }
-    }
-    if (remote && (!s.sandbox.filesystem || !s.sandbox.pid || s.reuse_worker ||
-                   s.grants.gui || !s.grants.host_paths.empty()))
-      n.diags.push_back(
-          diag(n.path, "invalid_setting",
-               "external execution requires filesystem and PID isolation "
-               "and does not support reuseWorker, GUI or host path grants"));
-    read_params(n);
+    if (const auto* secrets = d.secrets())
+      for (const auto* name : *secrets) s.secrets.push_back(name->str());
+    if (const auto* system = d.system()) s.system = system->str();
+    if (const auto* bits = d.workerCapabilities())
+      for (auto bit : *bits) s.worker_capabilities |= uint64_t{1} << bit;
+    if (n.kind != CardType::Subgraph) read_params(n);
   }
 
   void read_params(Node& n) {
@@ -429,23 +311,12 @@ class Builder {
 
   // The definition of a Card written in an external project (read as sources).
   const DefinitionDoc* external_definition(Node& n) {
-    auto card = read_(n.def_dir + "_card.json");
-    if (!card) {
-      n.diags.push_back(
-          diag(n.path, "invalid_document", n.def_dir + " needs _card.json"));
-      return nullptr;
-    }
+    const auto path = n.def_dir + "_card.json";
+    const auto& source = doc_.sources.at(path);
+    auto parsed = parse_card_json(n.path.back(), *source.document, path);
     DefinitionDoc d;
-    const std::string& id = n.path.back();
-    try {
-      auto parsed = parse_card_json(id, *card);
-      d.card_buffer = std::move(parsed.buffer);
-      d.card_json = std::move(parsed.text);
-    } catch (const DocumentError& e) {
-      n.diags.push_back(
-          diag(n.path, "invalid_document", e.what(), true, n.def_dir));
-      return nullptr;
-    }
+    d.card_buffer = std::move(parsed.buffer);
+    d.card_json = std::move(parsed.text);
     external_defs_.push_back(std::move(d));
     return &external_defs_.back();
   }
@@ -455,9 +326,8 @@ class Builder {
   void scope(const D::Project& project, const std::string& prefix,
              const CardPath& scope_path, int depth) {
     std::vector<NixPathEntry> sources;
-    if (const auto* list = project.nixPath())
-      for (const auto* entry : *list)
-        sources.push_back({entry->name()->str(), entry->url()->str()});
+    for (const auto* entry : *project.nixPath())
+      sources.push_back({entry->name()->str(), entry->url()->str()});
 
     for (const auto* card : *project.canvas()->cards()) {
       const auto id = card->id()->str();
@@ -479,14 +349,11 @@ class Builder {
       n.kind = def ? card_type_of(*def) : CardType::Draft;
       // The accepted Document owns this resolution. Edits only affect later
       // runs.
-      n.settings.record_logs = project.recordLogs().value_or(true);
-      n.settings.record_io = project.recordIO().value_or(false);
-      n.settings.log_limit_bytes =
-          project.logLimitBytes().value_or(kDefaultLogLimitBytes);
-      n.settings.output_limit_bytes =
-          project.outputLimitBytes().value_or(kDefaultOutputLimitBytes);
-      n.settings.output_limit_entries =
-          project.outputLimitEntries().value_or(kDefaultOutputLimitEntries);
+      n.settings.record_logs = *project.recordLogs();
+      n.settings.record_io = *project.recordIO();
+      n.settings.log_limit_bytes = *project.logLimitBytes();
+      n.settings.output_limit_bytes = *project.outputLimitBytes();
+      n.settings.output_limit_entries = *project.outputLimitEntries();
       read_settings(n, def);
       switch (n.kind) {
         case CardType::Code:
@@ -512,9 +379,6 @@ class Builder {
           break;
         case CardType::Merge:
           n.outputs = {{"out", false, nullptr}};
-          if (n.inputs.empty())
-            n.diags.push_back(
-                diag(n.path, "invalid_setting", "merge needs declared inputs"));
           break;
         case CardType::Collect:
           n.inputs = {{"in", false, nullptr}};
@@ -535,37 +399,25 @@ class Builder {
       size_t idx = res_->nodes.size();
       res_->index[path_key(n.path)] = idx;
       CardPath inner_scope = n.path;
-      const auto* link = def ? def->card().external() : nullptr;
+      const bool subgraph = n.is_virtual;
       res_->nodes.push_back(std::move(n));
 
-      if (link) {
-        // A Card in Card: the project externals/<link>/ of this project.
-        std::string ext = prefix + "externals/" + link->str() + "/";
-        res_->nodes[idx].external = ext;
-        auto text = read_(ext + "tsugumi.json");
-        if (!text) {
-          res_->nodes[idx].diags.push_back(diag(
-              inner_scope, "unknown_external",
-              ext + " is not a Tsugumi project (no tsugumi.json)", true, ext));
-        } else if (depth >= 15) {
+      if (subgraph) {
+        const auto ext = prefix + "externals/" + id + "/";
+        if (depth >= 15) {
           res_->nodes[idx].diags.push_back(
               diag(inner_scope, "invalid_graph",
                    "Card in Card nesting deeper than 15", true, ext));
         } else {
-          try {
-            projects_.push_back(
-                parse_external_project(ext + "tsugumi.json", *text).buffer);
-            const auto& inner =
-                document_text::root<D::Project>(projects_.back());
-            if (const auto* b = inner.boundary())
-              res_->nodes[idx].boundary =
-                  *std::unique_ptr<D::BoundaryT>(b->UnPack());
-            scope(inner, ext, inner_scope, depth + 1);
-          } catch (const DocumentError& e) {
-            res_->nodes[idx].diags.push_back(diag(inner_scope, "invalid_graph",
-                                                  e.what(), true,
-                                                  ext + "tsugumi.json"));
-          }
+          const auto path = ext + "tsugumi.json";
+          const auto& source = doc_.sources.at(path);
+          projects_.push_back(
+              parse_external_project(path, *source.document).buffer);
+          const auto& inner = document_text::root<D::Project>(projects_.back());
+          if (const auto* b = inner.boundary())
+            res_->nodes[idx].boundary =
+                *std::unique_ptr<D::BoundaryT>(b->UnPack());
+          scope(inner, ext, inner_scope, depth + 1);
         }
       }
     }

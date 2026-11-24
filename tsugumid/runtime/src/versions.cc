@@ -18,8 +18,8 @@
 #include "tsugumi/document/text.hh"
 #include "tsugumi/protocol/runtime_state_generated.h"
 #include "tsugumi/protocol/version_state_generated.h"
-#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/crypto.hh"
+#include "tsugumi/util/flat_file.hh"
 #include "tsugumi/util/fs.hh"
 #include "tsugumi/util/log.hh"
 #include "tsugumi/util/text.hh"
@@ -142,7 +142,7 @@ struct VersionFiles {
     if (buffer.empty()) return;
     if (const auto* paths =
             document_text::root<Tsugumi::Document::Project>(buffer)
-                .versionPaths())
+                .trackedPaths())
       for (const auto* path : *paths) extra.push_back(path->str());
   }
 

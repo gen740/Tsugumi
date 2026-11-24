@@ -14,7 +14,7 @@ def add_worker(graph, name, package, actions, *, outputs=STRING_OUTPUT, views=()
     package.mkdir(parents=True, exist_ok=True)
     (package / "scenario.json").write_text(json.dumps({"actions": actions}))
     return graph.card(
-        name, {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True, **settings},
+        name, {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on", **settings},
         outputs=outputs, plan=mock_plan([str(package)], views=views),
     )
 

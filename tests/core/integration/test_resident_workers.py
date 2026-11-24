@@ -22,7 +22,7 @@ COUNT = "static unsigned count = 0; out.number(++count);"
 
 def test_more_than_32_residents_keep_their_state(core_factory, tmp_path):
     """A 33rd resident does not evict the first Card's process."""
-    definition = native_card(COUNT, reuseWorker=True, recordIO=True)
+    definition = native_card(COUNT, reuseWorker=True, recordIO="on")
     names = [f"c{i}" for i in range(33)]
     write(tmp_path / "p", {"resident": definition},
           [card(name, "resident") for name in names], [])
@@ -44,7 +44,7 @@ def test_resident_definition_change_records_fresh_state(core_factory, tmp_path):
     graph = Project(root)
     for greeting, count, reused in [("first", 1, False), ("first", 2, True), ("changed", 1, False)]:
         definition = native_card(f'puts("{greeting}"); ' + COUNT)
-        graph.card("resident", {"type": "code", "reuseWorker": True, "recordIO": True},
+        graph.card("resident", {"type": "code", "reuseWorker": True, "recordIO": "on"},
                    outputs=definition["_outputs"], sources={"default.nix": definition["_nix"]})
         graph.save(c)
         run_id, state = run_and_wait(c, "resident")
@@ -104,7 +104,7 @@ def test_missing_required_output_discards_resident_state(core_factory, tmp_path)
     definition = native_card(r'''
         static unsigned calls;
         if (++calls == 2) out.number(2);
-    ''', reuseWorker=True, recordIO=True)
+    ''', reuseWorker=True, recordIO="on")
     write(tmp_path / "p", {"resident": definition}, [card("resident", "resident")], [])
     c = core_factory(project_root=tmp_path / "p").connect()
     for _ in range(2):
@@ -142,7 +142,7 @@ def test_stopped_resident_can_interrupt_a_large_send(core_factory, tmp_path, sto
         out.number(1);
         printf("%s/stop\n", std::getenv("HOME"));
     ''', declarations="#include <sys/socket.h>", inputs=["data"],
-        reuseWorker=True, recordIO=True)
+        reuseWorker=True, recordIO="on")
     if stop == "deadline":
         definition["timeoutSeconds"] = 5
     payload = {

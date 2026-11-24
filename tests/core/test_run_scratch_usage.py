@@ -34,7 +34,7 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     payload = "large output\n" * 10000
     worker_project(client, project, tmp_path / "first", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": payload},
-    ], outputs=FILE_OUTPUT, recordIO=True)
+    ], outputs=FILE_OUTPUT, recordIO="on")
     first = run(client)
     assert wait_run(client, first).state == RunState.succeeded
     usage_when(client, lambda u: current(u).scratchBytes == len(payload))
@@ -42,7 +42,7 @@ def test_past_run_scratch_stays_until_explicit_deletion(core_factory, project, t
     # A separate package is fixture setup; saving uses the same public Card.
     worker_project(client, project, tmp_path / "second", [
         {"op": "file", "port": "doc", "path": "report.txt", "text": "small"},
-    ], outputs=FILE_OUTPUT, recordIO=True)
+    ], outputs=FILE_OUTPUT, recordIO="on")
     second = run(client)
     assert wait_run(client, second).state == RunState.succeeded
     usage_when(client, lambda u: current(u).scratchBytes == len(payload) + len("small"))

@@ -3,12 +3,17 @@ import json
 
 import pytest
 
+from harness.document import card_readme
 from tsugumi_client import RpcFailure, change, new_id, text
 
 
 def edit(snapshot, target, value):
     if target == "definition":
-        return [change("PutDefinition", id="settings", cardJson=json.dumps({"type": "draft", "symbol": value}))]
+        project = json.loads(text(snapshot.projectJson))
+        project["canvas"]["cards"] = [{"id": "settings"}]
+        return [change("SetProject", json=json.dumps(project)),
+                change("PutDefinition", id="settings", readme=card_readme("Settings"),
+                       cardJson=json.dumps({"type": "draft", "symbol": value}))]
     project = json.loads(text(snapshot.projectJson))
     project["name"] = value
     return [change("SetProject", json=json.dumps(project))]

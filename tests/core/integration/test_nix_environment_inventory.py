@@ -51,7 +51,7 @@ def test_local_tools_come_from_the_definition_and_are_recorded(core_factory, pro
     from harness.real_cards import DEFINITION_TOOLS_NIX, TXT, check_definition_tools
 
     client = core_factory().connect()
-    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": True},
+    Project(project).card("work", {"type": "code", "sandbox": {"filesystem": False}, "recordIO": "on"},
                           outputs=TXT, sources={"default.nix": DEFINITION_TOOLS_NIX}).save(client)
     observed = []
     for _ in range(2):

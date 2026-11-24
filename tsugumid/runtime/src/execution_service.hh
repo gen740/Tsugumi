@@ -1,7 +1,7 @@
 // Where a Card invocation runs. The scheduler resolves the target before
 // evaluating the Card, then hands the derivation and invocation to the service
-// the Card names; it validates, records and routes what comes back. A backend
-// resolves its target (prepare) and runs the invocation (execute):
+// the scheduler selected; it validates, records and routes what comes back. A
+// backend resolves its target (prepare) and runs the invocation (execute):
 // LocalExecutionService borrowing a connection from local tsugumi-workerd,
 // RemoteExecutionService on a remote execution daemon with durable jobs.
 #pragma once
@@ -95,24 +95,12 @@ class PreparedExecution {
   virtual auto execute(const ExecutionRequest& request) -> ExecutionResult = 0;
 };
 
-class ExecutionService {
- public:
-  virtual ~ExecutionService() = default;
-  // Checks that the invocation can run here and configures the backend's
-  // part of `build` (worker kind, target system and closure transport). Called
-  // before the Card is evaluated, for every activation.
-  virtual auto prepare(const Node& node, const std::filesystem::path& directory,
-                       BuildRequest& build)
-      -> std::unique_ptr<PreparedExecution> = 0;
-};
-
-class LocalExecutionService final : public ExecutionService {
+class LocalExecutionService final {
  public:
   LocalExecutionService(Service& service, std::filesystem::path scratch_root);
 
   auto prepare(const Node& node, const std::filesystem::path& directory,
-               BuildRequest& build)
-      -> std::unique_ptr<PreparedExecution> override;
+               BuildRequest& build) -> std::unique_ptr<PreparedExecution>;
   // Runs the invocation directly on the connection workerd lends this Card.
   auto run(const ExecutionRequest& request) -> ExecutionResult;
   // Ends every worker before the build cache is cleared.
