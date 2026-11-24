@@ -84,11 +84,7 @@ auto MakeSubgraph(const std::string& project,
       inner_wires.push_back(raw);
       continue;
     }
-    // A boundary port names a port, and a Draft has none.
-    if ((f && !from.contains("port")) || (t && !to.contains("port")))
-      throw std::runtime_error(
-          "A Draft wired to a Card outside the selection cannot be moved into "
-          "a Card in Card");
+
     if (f) wire["from"] = Endpoint(id, BoundaryPort(outputs, wire.at("from")));
     if (t) wire["to"] = Endpoint(id, BoundaryPort(inputs, wire.at("to")));
     outer_wires.push_back(json::Encode(wire));

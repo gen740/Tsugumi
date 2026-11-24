@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "熱伝導の逆問題",
   "nixPath": [
     {

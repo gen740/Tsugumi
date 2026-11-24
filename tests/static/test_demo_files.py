@@ -13,16 +13,15 @@ ROOT = Path(__file__).resolve().parents[2]
 DEMOS = json.loads((ROOT / "demos" / "ja" / "index.json").read_text())["demos"]
 DEMO_PROJECTS = sorted((ROOT / "demos").rglob("tsugumi.json"))
 NAME = re.compile(r"[a-z][a-z0-9_]{0,63}")
-VERSION = (ROOT / "VERSION").read_text().strip()
 PROJECT_FIELDS = [
-    "tsugumiVersion", "name", "nixPath", "trackedPaths", "agentExclude",
+    "formatVersion", "name", "nixPath", "trackedPaths", "agentExclude",
     "recordLogs", "recordIO", "logLimitBytes", "outputLimitBytes",
     "outputLimitEntries", "canvas",
 ]
 BASE_FIELDS = {"type", "symbol"}
 EXECUTABLE_FIELDS = BASE_FIELDS | {
     "inputs", "maxRuns", "reuseWorker", "timeoutSeconds", "buildTimeoutSeconds",
-    "recordLogs", "recordIO", "sandbox", "grants", "system", "workerCapabilities",
+    "recordLogs", "recordIO", "sandbox", "grants", "systems", "workerCapabilities",
 }
 CARD_FIELDS = {
     "code": EXECUTABLE_FIELDS,
@@ -116,7 +115,9 @@ def check_card(definition):
         bits = card["workerCapabilities"]
         assert all(type(bit) is int and 0 <= bit < 64 for bit in bits), path
         assert len(set(bits)) == len(bits), path
-        assert card["system"] == "aarch64-linux", path
+        systems = card["systems"]
+        assert systems and len(set(systems)) == len(systems), path
+        assert set(systems) <= {"aarch64-linux", "x86_64-linux", "aarch64-darwin", "x86_64-darwin"}, path
 
     check_front_matter(definition / "README.md")
     schema = definition / "_outputs.fbs"
@@ -134,7 +135,7 @@ def test_demo_project_files_are_explicit(manifest):
     child = manifest.parent.parent.name == "externals"
     optional = ["boundary"] if child and "boundary" in doc else []
     assert list(doc) == PROJECT_FIELDS + optional
-    assert doc["tsugumiVersion"] == VERSION
+    assert doc["formatVersion"] == 1
     assert all(isinstance(doc[key], list) for key in ("nixPath", "trackedPaths", "agentExclude"))
     assert all(type(doc[key]) is bool for key in ("recordLogs", "recordIO"))
     assert all(type(doc[key]) is int for key in ("logLimitBytes", "outputLimitBytes", "outputLimitEntries"))
@@ -156,17 +157,19 @@ def test_demo_project_files_are_explicit(manifest):
     for wire in doc["canvas"]["connections"]:
         assert wire.keys() == {"from", "to"}
         for item in wire.values():
-            assert item.keys() == {"card", "port"} and item["card"] in by_id
+            assert item.get("card") in by_id
             if kinds[item["card"]] == "draft":
-                assert item["port"] == ""
+                assert item.keys() == {"card"}
             else:
-                assert NAME.fullmatch(item["port"])
+                assert item.keys() == {"card", "port"} and NAME.fullmatch(item["port"])
     if "boundary" in doc:
         boundary = doc["boundary"]
         assert boundary.keys() == {"inputs", "outputs"}
         for ports in boundary.values():
             assert isinstance(ports, list)
             for port in ports:
-                assert port.keys() == {"name", "card", "port"}
-                assert port["card"] in by_id
-                assert NAME.fullmatch(port["name"]) and NAME.fullmatch(port["port"])
+                assert port.get("card") in by_id and NAME.fullmatch(port["name"])
+                if kinds[port["card"]] == "draft":
+                    assert port.keys() == {"name", "card"}
+                else:
+                    assert port.keys() == {"name", "card", "port"} and NAME.fullmatch(port["port"])

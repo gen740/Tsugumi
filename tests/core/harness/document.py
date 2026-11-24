@@ -17,7 +17,6 @@ PROTOCOL = Path(__file__).resolve().parents[3] / "protocol"
 MACHINE = {"arm64": "aarch64", "amd64": "x86_64"}.get(
     platform.machine().lower(), platform.machine().lower())
 NATIVE_SYSTEM = f"{MACHINE}-{'darwin' if sys.platform == 'darwin' else 'linux'}"
-VERSION = (PROTOCOL.parent / "VERSION").read_text().strip()
 
 SYMBOLS = {
     "code": "chevron.left.forwardslash.chevron.right", "input": "slider.horizontal.3",
@@ -29,7 +28,7 @@ SYMBOLS = {
 
 def project_document(**fields):
     return {
-        "tsugumiVersion": VERSION, "name": "test", "nixPath": [],
+        "formatVersion": 1, "name": "test", "nixPath": [],
         "trackedPaths": [], "agentExclude": [], "recordLogs": True, "recordIO": False,
         "logLimitBytes": 134217728, "outputLimitBytes": 68719476736,
         "outputLimitEntries": 1000, "canvas": {"cards": [], "connections": []},
@@ -46,7 +45,7 @@ def card_document(fields):
         body["inputs"] = [{"name": "a"}, {"name": "b"}]
     if kind in {"code", "input"}:
         body.update(inputs=[], reuseWorker=False, timeoutSeconds=0, buildTimeoutSeconds=0,
-                    recordLogs="project", system=NATIVE_SYSTEM, workerCapabilities=[])
+                    recordLogs="project", systems=[NATIVE_SYSTEM], workerCapabilities=[])
     body.update(fields)
     if kind in {"code", "input"}:
         sandbox = body.get("sandbox", {})

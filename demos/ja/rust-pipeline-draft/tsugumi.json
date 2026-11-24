@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Rust pipeline",
   "nixPath": [
     {
@@ -43,28 +43,23 @@
           "port": "out"
         },
         "to": {
-          "card": "make",
-          "port": ""
+          "card": "make"
         }
       },
       {
         "from": {
-          "card": "make",
-          "port": ""
+          "card": "make"
         },
         "to": {
-          "card": "scale",
-          "port": ""
+          "card": "scale"
         }
       },
       {
         "from": {
-          "card": "scale",
-          "port": ""
+          "card": "scale"
         },
         "to": {
-          "card": "check",
-          "port": ""
+          "card": "check"
         }
       }
     ]

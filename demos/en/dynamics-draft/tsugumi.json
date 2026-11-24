@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Dynamical systems gallery",
   "nixPath": [
     {
@@ -65,8 +65,7 @@
           "port": "config"
         },
         "to": {
-          "card": "lorenz",
-          "port": ""
+          "card": "lorenz"
         }
       },
       {
@@ -75,8 +74,7 @@
           "port": "config"
         },
         "to": {
-          "card": "mandelbrot",
-          "port": ""
+          "card": "mandelbrot"
         }
       },
       {
@@ -85,8 +83,7 @@
           "port": "config"
         },
         "to": {
-          "card": "logistic",
-          "port": ""
+          "card": "logistic"
         }
       },
       {
@@ -95,8 +92,7 @@
           "port": "config"
         },
         "to": {
-          "card": "life",
-          "port": ""
+          "card": "life"
         }
       },
       {
@@ -105,8 +101,7 @@
           "port": "config"
         },
         "to": {
-          "card": "grayscott",
-          "port": ""
+          "card": "grayscott"
         }
       },
       {
@@ -115,8 +110,7 @@
           "port": "config"
         },
         "to": {
-          "card": "pendulum",
-          "port": ""
+          "card": "pendulum"
         }
       }
     ]

@@ -241,7 +241,7 @@ TEST_F(DocumentStorage,
   fs::write_atomic(
       root / "tsugumi.json",
       test::project_json(
-          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b","port":""}}]}})"));
+          R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"b"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"b"}}]}})"));
   test::write_card(root / "definitions/b/_card.json",
                    test::card_json(R"({"type":"code"})"));
   Store store({root, ""});
@@ -371,7 +371,7 @@ TEST_F(DocumentStorage, ASecondWireSuggestsMerge) {
       root / "tsugumi.json",
       test::project_json(
           R"({"nixPath":[],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"sink"}],"connections":[
-    {"from":{"card":"plan","port":""},"to":{"card":"sink","port":"in"}},
+    {"from":{"card":"plan"},"to":{"card":"sink","port":"in"}},
     {"from":{"card":"start","port":"out"},"to":{"card":"sink","port":"in"}}
   ]}})"));
   test::write_card(root / "definitions/plan/_card.json",
@@ -393,8 +393,8 @@ TEST_F(DocumentStorage,
        ImplementingRequiresExplicitInputAndOutputInTheSameSave) {
   const std::string project = test::project_json(
       R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[
-    {"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},
-    {"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}
+    {"from":{"card":"start","port":"out"},"to":{"card":"plan"}},
+    {"from":{"card":"plan"},"to":{"card":"next"}}
   ]}})");
   fs::write_atomic(root / "tsugumi.json", project);
   test::write_card(root / "definitions/plan/_card.json",
@@ -421,18 +421,18 @@ TEST_F(DocumentStorage,
   ChangeIn wiring{};
   wiring.kind = ChangeIn::Kind::SetProject;
   wiring.json = project;
-  const auto input = wiring.json.find(R"("card":"plan","port":"")");
-  wiring.json.replace(input, std::string(R"("card":"plan","port":"")").size(),
-                      R"("card":"plan","port":"in")");
+  const auto input = wiring.json.find(R"("card":"plan"})");
+  wiring.json.replace(input, std::string(R"("card":"plan"})").size(),
+                      R"("card":"plan","port":"in"})");
   try {
     commit(store, {implementation, wiring});
     FAIL() << "The output must also be stated";
   } catch (const Failed& error) {
     EXPECT_EQ(error.failure.kind, FailureKind::validation_failed);
   }
-  const auto output = wiring.json.find(R"("card":"plan","port":"")");
-  wiring.json.replace(output, std::string(R"("card":"plan","port":"")").size(),
-                      R"("card":"plan","port":"out")");
+  const auto output = wiring.json.find(R"("card":"plan"})");
+  wiring.json.replace(output, std::string(R"("card":"plan"})").size(),
+                      R"("card":"plan","port":"out"})");
   auto after = commit(store, {implementation, wiring});
   EXPECT_EQ(after->resolution->edges.size(), 2);
   EXPECT_EQ(after->resolution->find({"plan"})->kind, CardType::Collect);
@@ -445,7 +445,7 @@ TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
       test::project_json(
           R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"outer"},{"id":"next"}],"connections":[
     {"from":{"card":"start","port":"out"},"to":{"card":"outer","port":"in"}},
-    {"from":{"card":"outer","port":"out"},"to":{"card":"next","port":""}}
+    {"from":{"card":"outer","port":"out"},"to":{"card":"next"}}
   ]}})"));
   test::write_card(root / "definitions/outer/_card.json",
                    test::card_json(R"({"type":"subgraph"})"));
@@ -454,7 +454,7 @@ TEST_F(DocumentStorage, NestedImplementationRebindsBoundaryEndsAtomically) {
   fs::write_atomic(
       root / "externals/outer/tsugumi.json",
       test::project_json(
-          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan","port":""}],"outputs":[{"name":"out","card":"plan","port":""}]}})"));
+          R"({"canvas":{"cards":[{"id":"plan"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"plan"}],"outputs":[{"name":"out","card":"plan"}]}})"));
   test::write_card(root / "externals/outer/definitions/plan/_card.json",
                    test::card_json(R"({"type":"draft"})"));
   Store store({root, ""});

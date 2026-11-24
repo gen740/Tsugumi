@@ -41,7 +41,7 @@ TEST(HostProjectFiles, CreationUsesTheCoreInitialDocumentAndCopiesPreserveIt) {
                         ->value_as_ProjectDefaults();
   ASSERT_NE(pin, nullptr);
   const auto initial = json::Object(Read(source / "tsugumi.json"));
-  EXPECT_EQ(json::Text(initial, "tsugumiVersion"), kTsugumiVersion);
+  EXPECT_EQ(initial.at("formatVersion"), std::to_string(kProjectFormatVersion));
   EXPECT_EQ(initial.at("nixPath"), "[]");
   EXPECT_EQ(initial.at("trackedPaths"), "[]");
   EXPECT_TRUE(json::Bool(initial.at("recordLogs")));

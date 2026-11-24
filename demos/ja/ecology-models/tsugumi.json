@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "生態系のモデル比較",
   "nixPath": [
     {

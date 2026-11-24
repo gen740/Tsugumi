@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Newton 法 · 初期値と収束",
   "nixPath": [
     {

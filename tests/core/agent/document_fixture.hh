@@ -27,9 +27,9 @@ inline auto FixtureCodeCard(const std::string& overrides = "{}")
     "workerCapabilities":[]
   })");
 #if defined(__aarch64__) || defined(__arm64__)
-  fields["system"] = R"("aarch64-linux")";
+  fields["systems"] = R"(["aarch64-linux"])";
 #else
-  fields["system"] = R"("x86_64-linux")";
+  fields["systems"] = R"(["x86_64-linux"])";
 #endif
   for (auto&& [key, value] : json::Object(overrides))
     fields[key] = std::move(value);

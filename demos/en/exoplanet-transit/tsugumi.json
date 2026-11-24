@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Kepler-6 b · an exoplanet transit",
   "nixPath": [
     {

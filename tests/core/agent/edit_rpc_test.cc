@@ -81,7 +81,7 @@ TEST_F(AgentProjectFixture,
         R"({"type":"draft","symbol":"pencil.and.outline"})");
   StartProject(
       false,
-      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan","port":""}},{"from":{"card":"plan","port":""},"to":{"card":"next","port":""}}]}})");
+      R"({"nixPath": [],"canvas":{"cards":[{"id":"start"},{"id":"plan"},{"id":"next"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"plan"}},{"from":{"card":"plan"},"to":{"card":"next"}}]}})");
   const auto conversation = Conversation("reference-draft-edit");
   Grant(conversation);
   Grant(conversation, Tsugumi::Service::Access::Write);

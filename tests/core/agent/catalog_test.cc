@@ -17,7 +17,7 @@ TEST(AgentCatalog, DraftSavePreservesEmptyEnds) {
   ASSERT_NE(tool, nullptr);
   const auto request = catalog.Request(
       "project_save",
-      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\",\"port\":\"\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
+      R"({"base_rev":0,"op_id":"save","origin":"agent","changes":[{"value_type":"SetProject","value":{"json":"{\"canvas\":{\"connections\":[{\"from\":{\"card\":\"plan\"},\"to\":{\"card\":\"next\",\"port\":\"in\"}}]}}"}}]})",
       1);
   const auto* save = Tsugumi::RPC::GetMessage(request.data())
                          ->payload_as_Request()

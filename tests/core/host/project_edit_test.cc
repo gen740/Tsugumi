@@ -321,7 +321,7 @@ TEST(ProjectEdit, SeparateWireEndsBecomeOneAtomicProjectChange) {
   base.snapshot["rev"] = "7";
   const std::string before =
       test::FixtureProjectDocument(
-          R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":""},"to":{"card":"compare","port":""}}]}})");
+          R"({"canvas":{"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn"},"to":{"card":"compare"}}]}})");
   base.files["tsugumi.json"] = before;
   base.files["definitions/knn/_card.json"] =
       R"({"type":"draft","symbol":"pencil.and.outline"})";
@@ -452,7 +452,7 @@ TEST(ProjectEdit, BindsOnlyAnUnambiguousUnmentionedInputOnDraftImplementation) {
     SaveBase base;
     base.snapshot["rev"] = "7";
     base.files[prefix + "tsugumi.json"] =
-        R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare","port":""}}]} })";
+        R"({ "canvas": {"cards":[{"id":"knn"},{"id":"compare"}],"connections":[{"from":{"card":"knn","port":"out"},"to":{"card":"compare"}}]} })";
     const auto definition = prefix + "definitions/compare/_card.json";
     base.files[definition] =
         std::string(variant) == "already_code"

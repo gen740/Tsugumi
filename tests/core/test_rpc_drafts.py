@@ -13,9 +13,9 @@ def test_wired_drafts_can_be_saved_written(client, daemon):
     project["canvas"] = {
         "cards": [{"id": id_} for id_ in ("p", "q", "r")],
         "connections": [
-            {"from": {"card": "p", "port": ""}, "to": {"card": "q", "port": ""}},
-            {"from": {"card": "p", "port": ""}, "to": {"card": "r", "port": ""}},
-            {"from": {"card": "r", "port": ""}, "to": {"card": "q", "port": ""}},
+            {"from": {"card": "p"}, "to": {"card": "q"}},
+            {"from": {"card": "p"}, "to": {"card": "r"}},
+            {"from": {"card": "r"}, "to": {"card": "q"}},
         ],
     }
     cards = {

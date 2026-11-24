@@ -1,5 +1,7 @@
 #include <gtest/gtest.h>
 
+#include <set>
+
 #include "test_document.hh"
 #include "tsugumi/document/graph.hh"
 #include "tsugumi/util/crypto.hh"
@@ -23,7 +25,7 @@ auto Invalid(const std::function<void()>& load, std::string_view message,
   }
 }
 
-TEST(ProjectDocument, RequiresEveryProjectFieldAndChecksItsVersion) {
+TEST(ProjectDocument, RequiresEveryProjectFieldAndChecksItsFormat) {
   const auto complete = json::Object(test::project_json());
   for (const auto& [field, _] : complete) {
     SCOPED_TRACE(field);
@@ -33,12 +35,15 @@ TEST(ProjectDocument, RequiresEveryProjectFieldAndChecksItsVersion) {
             "tsugumi.json");
   }
   auto project = complete;
-  project["tsugumiVersion"] = R"("older")";
+  project["formatVersion"] = std::to_string(kProjectFormatVersion + 1);
   for (const std::string path :
        {"tsugumi.json", "externals/child/tsugumi.json"})
     Invalid([&] { parse_external_project(path, json::Encode(project)); },
-            path + " was saved by Tsugumi older; this is Tsugumi " +
-                kTsugumiVersion + "; there is no migration before v1.0");
+            path + " has project format " +
+                std::to_string(kProjectFormatVersion + 1) +
+                "; this Tsugumi reads format " +
+                std::to_string(kProjectFormatVersion) +
+                "; there is no migration before v1.0");
 }
 
 TEST(ProjectDocument, EnforcesRequiredAndEffectiveFieldsForEveryCardType) {
@@ -79,8 +84,10 @@ TEST(ProjectDocument, RejectsInvalidValuesAndNames) {
           CardCase{R"({"type":"code","maxRuns":0})", "maxRuns"},
           CardCase{R"({"type":"code","recordIO":true})", "recordIO"},
           CardCase{R"({"type":"code","timeoutSeconds":-1})", "timeoutSeconds"},
-          CardCase{R"({"type":"code","system":""})", "system"},
-          CardCase{R"({"type":"code","system":"riscv64-linux"})", "system"},
+          CardCase{R"({"type":"code","systems":[]})", "systems"},
+          CardCase{R"({"type":"code","systems":["riscv64-linux"]})", "systems"},
+          CardCase{R"({"type":"code","systems":["x86_64-linux","x86_64-linux"]})",
+                   "duplicate systems"},
           CardCase{R"({"type":"code","workerCapabilities":[64]})",
                    "workerCapabilities"},
           CardCase{R"({"type":"code","workerCapabilities":[0,0]})",
@@ -227,26 +234,91 @@ TEST_F(ProjectStructure, ResolvesRecordSettingsAgainstTheCardProject) {
   EXPECT_EQ(b.build_timeout_seconds, 17);
 }
 
-TEST_F(ProjectStructure, NixReferencesStopAtSubgraphBoundaries) {
+auto References(const Resolution& graph, const CardPath& card)
+    -> std::set<std::pair<std::string, std::string>> {
+  std::set<std::pair<std::string, std::string>> references;
+  for (const auto& ref : graph.find(card)->nix_references)
+    references.emplace(ref.name, path_key(ref.target));
+  return references;
+}
+
+using Refs = std::set<std::pair<std::string, std::string>>;
+
+TEST_F(ProjectStructure, SubgraphExportsGoUnderTheSubgraphCardId) {
   Put("tsugumi.json",
       test::project_json(
-          R"({"canvas":{"cards":[{"id":"start"},{"id":"sub"},{"id":"sink"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"sub","port":"in"}},{"from":{"card":"sub","port":"out"},"to":{"card":"sink","port":"in"}}]}})"));
+          R"({"canvas":{"cards":[{"id":"start"},{"id":"sub"},{"id":"sink"}],"connections":[{"from":{"card":"start","port":"out"},"to":{"card":"sub","port":"in"}},{"from":{"card":"sub","port":"out"},"to":{"card":"sink","port":"in"}},{"from":{"card":"sub","port":"out2"},"to":{"card":"sink","port":"in2"}}]}})"));
   Define("", "start", R"({"type":"trigger"})");
   Define("", "sub", R"({"type":"subgraph"})");
-  Define("", "sink", R"({"type":"code","inputs":[{"name":"in"}]})");
+  Define("", "sink",
+         R"({"type":"code","inputs":[{"name":"in"},{"name":"in2"}]})");
   Put("externals/sub/tsugumi.json",
       test::project_json(
-          R"({"canvas":{"cards":[{"id":"leaf"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"leaf","port":"in"}],"outputs":[{"name":"out","card":"leaf","port":"out"}]}})"));
-  Define("externals/sub/", "leaf",
-         R"({"type":"code","inputs":[{"name":"in"}]})");
-  Put("externals/sub/definitions/leaf/_outputs.fbs",
-      "table Value {} table Outputs { out:Value; } root_type Outputs;");
+          R"({"canvas":{"cards":[{"id":"leaf"},{"id":"leaf2"}],"connections":[]},"boundary":{"inputs":[{"name":"in","card":"leaf","port":"in"}],"outputs":[{"name":"out","card":"leaf","port":"out"},{"name":"out2","card":"leaf2","port":"out"}]}})"));
+  for (const auto* id : {"leaf", "leaf2"}) {
+    Define("externals/sub/", id,
+           R"({"type":"code","inputs":[{"name":"in"}]})");
+    Put(std::string("externals/sub/definitions/") + id + "/_outputs.fbs",
+        "table Value {} table Outputs { out:Value; } root_type Outputs;");
+  }
   const auto graph = resolve(
       *load_from_disk(root),
       [&](const std::string& path) { return fs::read_file(root / path); });
-  ASSERT_EQ(graph->edges.size(), 2u);
-  EXPECT_TRUE(graph->find({"sink"})->nix_references.empty());
+  // Inner ids never appear outside, and inner Cards get nothing from outside.
+  EXPECT_EQ(References(*graph, {"sink"}),
+            (Refs{{"sub", "sub/leaf"}, {"sub", "sub/leaf2"}}));
   EXPECT_TRUE(graph->find({"sub", "leaf"})->nix_references.empty());
+}
+
+TEST_F(ProjectStructure, MergeAndCollectPassOnExports) {
+  Put("tsugumi.json",
+      test::project_json(
+          R"({"canvas":{"cards":[{"id":"shared"},{"id":"a"},{"id":"b"},{"id":"m"},{"id":"c"},{"id":"sink"}],"connections":[{"from":{"card":"shared","port":"out"},"to":{"card":"a","port":"in"}},{"from":{"card":"shared","port":"out"},"to":{"card":"b","port":"in"}},{"from":{"card":"a","port":"out"},"to":{"card":"m","port":"a"}},{"from":{"card":"b","port":"out"},"to":{"card":"m","port":"b"}},{"from":{"card":"a","port":"out"},"to":{"card":"c","port":"in"}},{"from":{"card":"m","port":"out"},"to":{"card":"sink","port":"m"}},{"from":{"card":"c","port":"out"},"to":{"card":"sink","port":"c"}}]}})"));
+  for (const auto* id : {"shared", "a", "b"}) {
+    Define("", id, R"({"type":"code","inputs":[{"name":"in"}]})");
+    Put(std::string("definitions/") + id + "/_outputs.fbs",
+        "table Value {} table Outputs { out:Value; } root_type Outputs;");
+  }
+  Define("", "m", R"({"type":"merge","inputs":[{"name":"a"},{"name":"b"}]})");
+  Define("", "c", R"({"type":"collect"})");
+  Define("", "sink",
+         R"({"type":"code","inputs":[{"name":"m"},{"name":"c"}]})");
+  const auto graph = resolve(
+      *load_from_disk(root),
+      [&](const std::string& path) { return fs::read_file(root / path); });
+  // Merge passes on only what a and b share; Collect passes on what a shows.
+  EXPECT_EQ(References(*graph, {"sink"}),
+            (Refs{{"a", "a"}, {"shared", "shared"}}));
+}
+
+TEST_F(ProjectStructure, DraftWireEndsHaveNoPort) {
+  const auto project = [&](std::string_view draft_end,
+                           std::string_view code_end) {
+    Put("tsugumi.json",
+        test::project_json(
+            R"({"canvas":{"cards":[{"id":"idea"},{"id":"work"}],"connections":[{"from":)" +
+            std::string(draft_end) + R"(,"to":)" + std::string(code_end) +
+            "}]}}"));
+  };
+  Define("", "idea", R"({"type":"draft"})");
+  Define("", "work", R"({"type":"code","inputs":[{"name":"in"}]})");
+  const auto load = [&] { load_from_disk(root); };
+  project(R"({"card":"idea"})", R"({"card":"work","port":"in"})");
+  ASSERT_NO_THROW(load());
+  project(R"({"card":"idea","port":"out"})", R"({"card":"work","port":"in"})");
+  Invalid(load, "must not name a port");
+  project(R"({"card":"idea","port":""})", R"({"card":"work","port":"in"})");
+  Invalid(load, "connections port");
+  project(R"({"card":"idea"})", R"({"card":"work"})");
+  Invalid(load, "needs a port");
+}
+
+TEST(RunSystem, NativeWhenListedOtherwiseTheFirstEntry) {
+  Settings settings;
+  settings.systems = {"aarch64-linux", "x86_64-linux"};
+  EXPECT_EQ(run_system(settings, "x86_64-linux"), "x86_64-linux");
+  EXPECT_EQ(run_system(settings, "aarch64-linux"), "aarch64-linux");
+  EXPECT_EQ(run_system(settings, "aarch64-darwin"), "aarch64-linux");
 }
 
 TEST(WorkerSelection, MatchesEveryRequiredBitAndPrefersTheFewestBits) {

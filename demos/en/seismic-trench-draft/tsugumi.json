@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "Japan Trench · hypocentre sections and the b-value",
   "nixPath": [
     {
@@ -43,28 +43,23 @@
           "port": "out"
         },
         "to": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         }
       },
       {
         "from": {
-          "card": "load",
-          "port": ""
+          "card": "load"
         },
         "to": {
-          "card": "section",
-          "port": ""
+          "card": "section"
         }
       },
       {
         "from": {
-          "card": "section",
-          "port": ""
+          "card": "section"
         },
         "to": {
-          "card": "b_value",
-          "port": ""
+          "card": "b_value"
         }
       }
     ]

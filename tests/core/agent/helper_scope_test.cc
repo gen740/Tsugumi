@@ -550,7 +550,7 @@ TEST(HelperGraphScope, NestedGraphAndBoundaryRebindingKeepOtherEndpoints) {
     if (path == "definitions/outer/_card.json")
       return R"({"type":"subgraph","symbol":"link"})";
     if (path == "externals/outer/tsugumi.json")
-      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft","port":""},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
+      return R"({"boundary":{"inputs":[{"name":"visible","card":"draft"},{"name":"hidden","card":"secret","port":"in"}],"outputs":[]},"canvas":{"cards":[{"id":"draft"},{"id":"secret"}],"connections":[]}})";
     return "";
   };
   HelperScope scope(json::Object(

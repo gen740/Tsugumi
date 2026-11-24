@@ -66,7 +66,10 @@ def card_in_card(id_: str, cards: list, conns: list, boundary: dict) -> dict:
 
 
 def conn(a: str, ap: str, b: str, bp: str) -> dict:
-    return {"from": {"card": a, "port": ap}, "to": {"card": b, "port": bp}}
+    """A wire; an empty port is a Draft end, written without a port."""
+    def end(card, port):
+        return {"card": card, "port": port} if port else {"card": card}
+    return {"from": end(a, ap), "to": end(b, bp)}
 
 
 def write(root: Path, defs: dict, cards: list, conns: list, files: dict | None = None, name: str = "test",

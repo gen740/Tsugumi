@@ -1,5 +1,5 @@
 {
-  "tsugumiVersion": "0.9.4",
+  "formatVersion": 1,
   "name": "日本海溝 · 震源断面と b 値",
   "nixPath": [
     {

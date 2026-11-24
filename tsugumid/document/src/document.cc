@@ -266,7 +266,8 @@ void check_boundary(const D::Project& p, const std::string& where) {
     for (const auto* port : *side) {
       check_name(port->name()->string_view(), where + " boundary name");
       check_name(port->card()->string_view(), where + " boundary card");
-      check_name(port->port()->string_view(), where + " boundary port");
+      if (port->port())
+        check_name(port->port()->string_view(), where + " boundary port");
       if (!names.insert(port->name()->str()).second)
         invalid(where + " boundary: duplicate port " + port->name()->str());
     }
@@ -639,6 +640,22 @@ auto check_scope(const Document& doc, const D::Project& project,
                 {{"card", card}});
     }
   }
+  if (const auto* boundary = project.boundary())
+    for (const auto* side : {boundary->inputs(), boundary->outputs()})
+      for (const auto* port : *side) {
+        const auto card = port->card()->str();
+        const auto it = cards.find(card);
+        if (it == cards.end()) continue;  // reported with the wiring
+        const bool draft = it->second == D::CardType::draft;
+        if (draft && port->port())
+          invalid(prefix + "boundary " + port->name()->str() + " on Draft " +
+                      card + " must not name a port",
+                  {{"card", card}});
+        if (!draft && !port->port())
+          invalid(prefix + "boundary " + port->name()->str() + " on " + card +
+                      " needs a port",
+                  {{"card", card}});
+      }
   for (const auto& id : folders_at(doc, root, externals)) {
     check_name(id, externals + " folder name");
     if (!cards.contains(id) || cards.at(id) != D::CardType::subgraph)
