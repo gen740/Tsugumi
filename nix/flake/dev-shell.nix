@@ -23,14 +23,18 @@
               emscripten
               git
               ruby
-              (python3.withPackages (ps: [
-                ps.flatbuffers
-                ps.pytest
-                ps.websockets
-                ps.matplotlib
-                ps.plotly
-                ps.altair
-              ]))
+              (python3.withPackages (
+                ps:
+                [
+                  ps.flatbuffers
+                  ps.pytest
+                  ps.websockets
+                  ps.matplotlib
+                  ps.plotly
+                  ps.altair
+                ]
+                ++ lib.optional stdenv.hostPlatform.isDarwin ps.pyyaml
+              ))
               jq
               clang-tools
               nixfmt
@@ -42,6 +46,7 @@
         }
         // core.devEnv
         // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
+          TSUGUMI_WASMTIME_LICENSE = "${pkgs.wasmtime.src}/LICENSE";
           TSUGUMI_TEMPLATE_GIT_SOURCE = pkgs.git.src;
           TSUGUMI_TEMPLATE_GIT_SOURCE_URL = builtins.head pkgs.git.src.urls;
         }

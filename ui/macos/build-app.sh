@@ -66,6 +66,27 @@ rm -rf "$app"
 mkdir -p "$app/Contents/MacOS" "$app/Contents/Resources" "$app/Contents/Frameworks"
 cp "$repo/build-host/Frameworks/"*.dylib "$app/Contents/Frameworks/"
 cp "$bin/Tsugumi" "$app/Contents/MacOS/Tsugumi"
+wasmtime="$app/Contents/Frameworks/libwasmtime.dylib"
+cp -L "$repo/build-host/client/libwasmtime.dylib" "$wasmtime"
+chmod u+w "$wasmtime"
+wasmtime_id=$(/usr/bin/otool -D "$wasmtime" | tail -n 1)
+libiconv_id=$(/usr/bin/otool -L "$wasmtime" | awk '$1 ~ /^\/nix\/store\/.*\/libiconv\.2\.dylib$/ {print $1}')
+wasmtime_changes=()
+if [ -n "$libiconv_id" ]; then
+  wasmtime_changes=(-change "$libiconv_id" /usr/lib/libiconv.2.dylib)
+fi
+/usr/bin/install_name_tool -id @rpath/libwasmtime.dylib ${wasmtime_changes[@]+"${wasmtime_changes[@]}"} "$wasmtime"
+/usr/bin/install_name_tool -change "$wasmtime_id" @rpath/libwasmtime.dylib "$app/Contents/MacOS/Tsugumi"
+frameworks_rpath=@executable_path/../Frameworks
+if ! /usr/bin/otool -l "$app/Contents/MacOS/Tsugumi" | awk '$1 == "path" {print $2}' | grep -Fx "$frameworks_rpath" >/dev/null; then
+  /usr/bin/install_name_tool -add_rpath "$frameworks_rpath" "$app/Contents/MacOS/Tsugumi"
+fi
+for binary in "$app/Contents/MacOS/Tsugumi" "$app/Contents/Frameworks/"*.dylib; do
+  if /usr/bin/otool -L "$binary" | /usr/bin/grep -q '/nix/store/'; then
+    echo "The distributable binary still depends on the Nix store: $binary" >&2
+    exit 1
+  fi
+done
 vm_bin="$(cd "$repo/vm/macos/runtime" && "${swiftenv[@]}" swift build "${build_opts[@]}" --show-bin-path)"
 cp "$vm_bin/tsugumi-vmhost" "$repo/build-host/hostd/tsugumi-hostd" "$app/Contents/MacOS/"
 cp "$repo/build-host/generated/bfbs/"{agent,host}.bfbs "$app/Contents/Resources/"
@@ -95,6 +116,7 @@ cp -R "$repo/hostd/formatters/third-party" "$licenses/formatters"
 cp -R "$repo/build-host/Resources/formatters" "$app/Contents/Resources/formatters"
 cp -R "$repo/build-host/Resources/git" "$app/Contents/Resources/git"
 cp -R "$repo/build-host/Resources/git-licenses" "$licenses/git"
+cp -R "$repo/build-host/Resources/view-licenses/". "$licenses/"
 cp -R "$repo/demos" "$app/Contents/Resources/demos"
 # The page hostd serves (CoreHostClient passes it as --web-root) and its licences.
 cp -R "$web_out/share/tsugumi/ui/web/dist/public" "$app/Contents/Resources/web"

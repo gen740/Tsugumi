@@ -37,6 +37,7 @@ in
     let
       core = pkgs.callPackage ../core.nix {
         inherit cardNixpkgs hosq testNixPathLock;
+        webgpu-headers = inputs.webgpu-headers or null;
       };
       ci-runtime = pkgs.callPackage ../ci-runtime.nix { inherit core; };
       ci-core = pkgs.callPackage ../core-tests.nix {
@@ -81,7 +82,13 @@ in
         tsugumid = core;
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isDarwin {
-        ci-core-native = ci-core.override { nativeDarwin = true; };
+        ci-core-native = (ci-core.override { nativeDarwin = true; }).overrideAttrs (old: {
+          postInstall = old.postInstall + ''
+            for binary in ${core}/libexec/tsugumi-tests/tsugumi-view-*-tests; do
+              ln -s "$binary" "$out/libexec/tsugumi-tests/"
+            done
+          '';
+        });
       }
       // lib.optionalAttrs pkgs.stdenv.hostPlatform.isLinux {
         workerd = pkgs.callPackage ../workerd.nix { inherit core; };
