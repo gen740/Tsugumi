@@ -44,15 +44,15 @@ def c_bytes(value):
     return ", ".join(str(byte) for byte in value)
 
 
-def library(tmp_path, source, name="main", *, result=None):
+def library(tmp_path, source, name="main", *, result=None, include_abi=True):
     if not shutil.which("cc"):
         pytest.skip("needs a C compiler")
     lib = tmp_path / "lib"
     lib.mkdir(exist_ok=True)
     c = tmp_path / (name + ".c")
     result = packed(CardResultT(outputs=[])) if result is None else result
-    c.write_text("#include <tsugumi/card_abi.h>\n" + RESULT_WRITER
-                 + textwrap.dedent(source).replace("RESULT_BYTES", c_bytes(result)))
+    preamble = "#include <tsugumi/card_abi.h>\n" + RESULT_WRITER if include_abi else ""
+    c.write_text(preamble + textwrap.dedent(source).replace("RESULT_BYTES", c_bytes(result)))
     subprocess.run(
         ["cc", "-shared", "-fPIC", "-pthread", "-I", str(ROOT / "protocol/include"),
          str(c), "-o", str(lib / (name + ".so"))],
@@ -216,7 +216,7 @@ def test_v8_card_reports_failure_cleanly(tmp_path):
           if (*(const uint32_t*)call != 8) return 8;
           __builtin_trap();
         }
-    ''')
+    ''', include_abi=False)
     with worker(tmp_path) as (_, data, _):
         for call_id in (1, 2):
             send_call(data, tmp_path, call_id)
@@ -267,7 +267,6 @@ def test_an_undecodable_result_fails_cleanly(tmp_path):
         assert message.value.failure.kind == FailureKind.output_invalid
 
 
-@pytest.mark.parametrize("stop", ["deadline", "cancel"])
 def test_resident_worker_releases_results(tmp_path):
     library(tmp_path, r"""
         #include <sys/resource.h>
@@ -307,6 +306,7 @@ def test_resident_worker_releases_results(tmp_path):
                 assert reply.valueType == WorkerPayload.WorkerResult
 
 
+@pytest.mark.parametrize("stop", ["deadline", "cancel"])
 def test_stop_callbacks_are_callable_from_card_threads(tmp_path, stop):
     library(tmp_path, '''
         #include <tsugumi/card_abi.h>
